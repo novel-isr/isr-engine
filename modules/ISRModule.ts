@@ -2,6 +2,7 @@ import fs from 'fs';
 import path from 'path';
 
 import { Logger } from '../utils/Logger';
+import { MetricsCollector } from '../utils/MetricsCollector';
 
 /**
  * 增量静态再生模块
@@ -14,6 +15,14 @@ export class ISRModule {
   private isRevalidating: Map<string, boolean>;
   private metadataCache: Map<string, any>;
   private viteServer?: any; // ViteDevServer
+  
+  // 并发控制
+  private regenerationLocks: Map<string, Promise<any>>;
+  private maxConcurrentRegenerations: number;
+  private currentRegenerations: number;
+  
+  // 指标收集器（可选，由外部传入）
+  private metrics?: MetricsCollector;
 
   constructor(config: Record<string, any>) {
     this.config = config;
@@ -21,6 +30,11 @@ export class ISRModule {
     this.revalidationQueue = new Set();
     this.isRevalidating = new Map();
     this.metadataCache = new Map();
+    
+    // 初始化并发控制
+    this.regenerationLocks = new Map();
+    this.maxConcurrentRegenerations = config.isr?.maxConcurrentRegenerations || 3;
+    this.currentRegenerations = 0;
   }
 
   /**
@@ -29,6 +43,13 @@ export class ISRModule {
   setViteServer(server: any): void {
     this.viteServer = server;
     this.logger.debug('ISR模块已设置 Vite 服务器实例');
+  }
+
+  /**
+   * 设置指标收集器
+   */
+  setMetricsCollector(metrics: MetricsCollector): void {
+    this.metrics = metrics;
   }
 
   async regenerate(
@@ -42,8 +63,48 @@ export class ISRModule {
     statusCode: number;
     meta: Record<string, any>;
   }> {
+    // 并发控制：检查是否已有相同URL的再生任务
+    const existingLock = this.regenerationLocks.get(url);
+    if (existingLock) {
+      console.log(`🔄 ISR模块: 等待现有再生任务完成 - ${url}`);
+      return await existingLock;
+    }
+
+    // 检查并发限制
+    if (this.currentRegenerations >= this.maxConcurrentRegenerations) {
+      console.log(`⚠️ ISR模块: 达到最大并发限制 (${this.maxConcurrentRegenerations})，等待...`);
+      // 简单的等待策略，实际应用中可以使用队列
+      await new Promise(resolve => setTimeout(resolve, 100));
+      return await this.regenerate(url, context);
+    }
     this.logger.debug(`ISR regenerating: ${url}`);
 
+    // 创建再生任务并加锁
+    const regenerationPromise = this.performRegeneration(url, context);
+    this.regenerationLocks.set(url, regenerationPromise);
+    this.currentRegenerations++;
+
+    try {
+      const result = await regenerationPromise;
+      return result;
+    } finally {
+      // 清理锁和计数
+      this.regenerationLocks.delete(url);
+      this.currentRegenerations--;
+    }
+  }
+
+  private async performRegeneration(
+    url: string,
+    context: Record<string, any>
+  ): Promise<{
+    success: boolean;
+    html: string;
+    helmet: any;
+    preloadLinks: string;
+    statusCode: number;
+    meta: Record<string, any>;
+  }> {
     try {
       // 检查是否已在重新验证中
       if (this.isRevalidating.get(url)) {
@@ -101,7 +162,7 @@ export class ISRModule {
         }
       }
 
-      // 渲染新内容
+      // 渲染新内容（带超时控制）
       const renderContext = {
         ...context,
         renderMode: 'isr', // 明确标记为ISR渲染
@@ -109,7 +170,15 @@ export class ISRModule {
         manifest: context.manifest
       };
       console.log('🎯 ISR模块: 开始渲染新内容...');
-      const result = await renderModule.render(url, renderContext);
+      
+      // 添加超时控制
+      const renderTimeout = this.config.isr?.renderTimeout || 30000; // 30秒默认超时
+      const result = await Promise.race([
+        renderModule.render(url, renderContext),
+        new Promise((_, reject) => 
+          setTimeout(() => reject(new Error(`ISR渲染超时: ${url} (${renderTimeout}ms)`)), renderTimeout)
+        )
+      ]) as any;
 
       if (result.html) {
         // 保存到 ISR 缓存
@@ -131,7 +200,7 @@ export class ISRModule {
         statusCode: result.statusCode || 200,
         meta: {
           renderMode: 'isr',
-          strategy: 'cached',
+          strategy: 'regenerate',
           fromCache: false,
           regenerated: true,
           timestamp: Date.now(),
@@ -240,8 +309,12 @@ export class ISRModule {
           renderMode: 'isr',
           strategy: 'cached',
           fromCache: true,
+          cacheHit: true,
           generated: (metadata as any)?.generated,
+          lastRegenerated: (metadata as any)?.lastRegenerated,
+          revalidateAfter: (metadata as any)?.revalidateAfter,
           needsRevalidation: this.shouldRevalidate(url, metadata),
+          cacheAge: (metadata as any)?.generated ? Date.now() - (metadata as any).generated : 0,
           timestamp: Date.now(),
         },
       };
@@ -277,14 +350,21 @@ export class ISRModule {
       // Save HTML
       await fs.promises.writeFile(cachedPath, fullHTML, 'utf-8');
 
-      // Save metadata
+      // Save enhanced metadata
+      const now = Date.now();
       const metadata = {
         url,
-        generated: Date.now(),
+        generated: now,
+        lastRegenerated: now,
+        revalidateAfter: now + (this.config.isr?.revalidate || 3600) * 1000,
         statusCode: renderResult.statusCode,
         helmet: renderResult.helmet,
         preloadLinks: renderResult.preloadLinks,
+        strategy: 'regenerate',
+        version: '1.0',
         size: Buffer.byteLength(fullHTML, 'utf8'),
+        contentLength: fullHTML.length,
+        renderTime: 0, // Will be updated by caller if available
       };
 
       await fs.promises.writeFile(

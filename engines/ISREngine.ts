@@ -21,6 +21,7 @@ import {
   RenderMeta,
 } from '../types';
 import { Logger } from '../utils/Logger';
+import { MetricsCollector } from '../utils/MetricsCollector';
 
 /**
  * 企业级 SSR 引擎
@@ -32,6 +33,7 @@ export default class ISREngine {
   private renderMode: RenderMode;
   private cache: CacheManager;
   private logger: Logger;
+  private metrics: MetricsCollector;
   private csrFallback: CSRFallback;
   private ssgModule: SSGModule;
   private isrModule: ISRModule;
@@ -52,6 +54,7 @@ export default class ISREngine {
     this.renderMode = new RenderMode(config.mode || 'isr', config);
     this.cache = new CacheManager(config.cache || {});
     this.logger = new Logger(config.dev?.verbose);
+    this.metrics = new MetricsCollector();
 
     // 初始化模块
     this.csrFallback = new CSRFallback(config);
@@ -93,6 +96,7 @@ export default class ISREngine {
           // 将 Vite 服务器实例传递给 ISR 模块
           if (this.viteServer) {
             (this.isrModule as any).setViteServer(this.viteServer);
+            (this.isrModule as any).setMetricsCollector(this.metrics);
           }
         } catch (error) {
           this.logger.error(
@@ -144,6 +148,11 @@ export default class ISREngine {
   ): Promise<RenderResult> {
     this.stats.requests++;
     const startTime = Date.now();
+    const renderMode = context.renderMode || 'isr';
+    const strategy = context.strategy || 'auto';
+    
+    // 开始指标收集
+    const metricsId = this.metrics.startRender(url, renderMode, strategy);
 
     try {
       this.logger.debug(`Rendering: ${url}`);
@@ -184,6 +193,22 @@ export default class ISREngine {
         result.meta.renderTime = renderTime;
       }
       
+      // 记录成功的渲染指标
+      this.metrics.endRender(
+        metricsId,
+        url,
+        result.meta.renderMode as any || renderMode as any,
+        result.meta.strategy as any || strategy as any,
+        startTime,
+        true, // success
+        result.statusCode || 200,
+        result.html?.length || 0,
+        result.meta.fromCache || false,
+        undefined, // no error
+        result.meta.cacheAge,
+        context.userAgent
+      );
+      
       this.logger.debug(
         `Rendered ${url} in ${renderTime}ms (strategy: ${result.meta.strategy})`
       );
@@ -192,6 +217,22 @@ export default class ISREngine {
     } catch (error) {
       this.stats.ssrErrors++;
       this.logger.error(`Render error for ${url}:`, error);
+
+      // 记录失败的渲染指标
+      this.metrics.endRender(
+        metricsId,
+        url,
+        renderMode as any,
+        strategy as any,
+        startTime,
+        false, // success = false
+        500, // error status code
+        0, // no content length
+        false, // not from cache
+        (error as Error).message,
+        undefined, // no cache age
+        context.userAgent
+      );
 
       if (this.config.errorHandling?.enableFallback) {
         this.stats.fallbacks++;
@@ -789,6 +830,40 @@ export default class ISREngine {
       });
     });
 
+    // 详细指标端点
+    this.expressApp.get('/metrics', (req: Request, res: Response) => {
+      const format = req.query.format as string;
+      const detailed = req.query.detailed === 'true';
+      
+      if (detailed) {
+        res.json(this.metrics.getDetailedReport());
+      } else {
+        const stats = this.metrics.getStats();
+        
+        if (format === 'prometheus') {
+          // Prometheus格式输出
+          res.set('Content-Type', 'text/plain');
+          res.send(this.formatPrometheusMetrics(stats));
+        } else {
+          res.json(stats);
+        }
+      }
+    });
+
+    // 性能趋势端点
+    this.expressApp.get('/metrics/trends', (req: Request, res: Response) => {
+      const interval = parseInt(req.query.interval as string) || 5;
+      res.json(this.metrics.getPerformanceTrends(interval));
+    });
+
+    // 重置指标端点（仅开发模式）
+    if (this.config.dev?.verbose) {
+      this.expressApp.post('/metrics/reset', (req: Request, res: Response) => {
+        this.metrics.reset();
+        res.json({ message: '指标已重置', timestamp: new Date().toISOString() });
+      });
+    }
+
     // 统计信息端点
     this.expressApp.get('/ssr-stats', (req: Request, res: Response) => {
       res.json(this.getStats());
@@ -869,6 +944,13 @@ export default class ISREngine {
               case 'cached':
                 res.setHeader('X-Cache-Type', 'ISR-Cache');
                 res.setHeader('X-Cache-Status', result.meta.fromCache ? 'HIT' : 'REGENERATED');
+                if (result.meta.cacheAge) {
+                  res.setHeader('X-Cache-Age', Math.floor(result.meta.cacheAge / 1000).toString() + 's');
+                }
+                break;
+              case 'regenerate':
+                res.setHeader('X-Cache-Type', 'ISR-Regenerate');
+                res.setHeader('X-Cache-Status', 'REGENERATED');
                 break;
               case 'static':
                 res.setHeader('X-Cache-Type', 'SSG-Static');
@@ -885,6 +967,14 @@ export default class ISREngine {
               default:
                 res.setHeader('X-Cache-Type', 'Unknown');
                 res.setHeader('X-Cache-Status', 'UNKNOWN');
+            }
+
+            // 添加详细的缓存信息
+            if (result.meta.needsRevalidation !== undefined) {
+              res.setHeader('X-Cache-Needs-Revalidation', result.meta.needsRevalidation.toString());
+            }
+            if (result.meta.contentLength) {
+              res.setHeader('X-Content-Length', result.meta.contentLength.toString());
             }
 
             if (result.meta.fallbackUsed) {
@@ -906,6 +996,74 @@ export default class ISREngine {
         res.status(500).send('服务器内部错误');
       }
     });
+  }
+
+  /**
+   * 格式化Prometheus指标
+   */
+  private formatPrometheusMetrics(stats: any): string {
+    const timestamp = Date.now();
+    return `
+# HELP isr_requests_total Total number of requests
+# TYPE isr_requests_total counter
+isr_requests_total ${stats.totalRequests} ${timestamp}
+
+# HELP isr_successful_renders_total Total number of successful renders
+# TYPE isr_successful_renders_total counter
+isr_successful_renders_total ${stats.successfulRenders} ${timestamp}
+
+# HELP isr_failed_renders_total Total number of failed renders
+# TYPE isr_failed_renders_total counter
+isr_failed_renders_total ${stats.failedRenders} ${timestamp}
+
+# HELP isr_cache_hits_total Total number of ISR cache hits
+# TYPE isr_cache_hits_total counter
+isr_cache_hits_total ${stats.isrCacheHits} ${timestamp}
+
+# HELP isr_regenerations_total Total number of ISR regenerations
+# TYPE isr_regenerations_total counter
+isr_regenerations_total ${stats.isrRegenerations} ${timestamp}
+
+# HELP isr_ssr_renders_total Total number of SSR renders
+# TYPE isr_ssr_renders_total counter
+isr_ssr_renders_total ${stats.ssrRenders} ${timestamp}
+
+# HELP isr_ssg_serves_total Total number of SSG serves
+# TYPE isr_ssg_serves_total counter
+isr_ssg_serves_total ${stats.ssgServes} ${timestamp}
+
+# HELP isr_csr_fallbacks_total Total number of CSR fallbacks
+# TYPE isr_csr_fallbacks_total counter
+isr_csr_fallbacks_total ${stats.csrFallbacks} ${timestamp}
+
+# HELP isr_render_duration_ms Average render duration in milliseconds
+# TYPE isr_render_duration_ms gauge
+isr_render_duration_ms ${stats.averageRenderTime} ${timestamp}
+
+# HELP isr_max_render_duration_ms Maximum render duration in milliseconds
+# TYPE isr_max_render_duration_ms gauge
+isr_max_render_duration_ms ${stats.maxRenderTime} ${timestamp}
+
+# HELP isr_min_render_duration_ms Minimum render duration in milliseconds
+# TYPE isr_min_render_duration_ms gauge
+isr_min_render_duration_ms ${stats.minRenderTime === Infinity ? 0 : stats.minRenderTime} ${timestamp}
+
+# HELP isr_concurrent_requests Current number of concurrent requests
+# TYPE isr_concurrent_requests gauge
+isr_concurrent_requests ${stats.currentConcurrentRequests} ${timestamp}
+
+# HELP isr_max_concurrent_requests Maximum number of concurrent requests
+# TYPE isr_max_concurrent_requests gauge
+isr_max_concurrent_requests ${stats.maxConcurrentRequests} ${timestamp}
+
+# HELP isr_timeout_errors_total Total number of timeout errors
+# TYPE isr_timeout_errors_total counter
+isr_timeout_errors_total ${stats.timeoutErrors} ${timestamp}
+
+# HELP isr_render_errors_total Total number of render errors
+# TYPE isr_render_errors_total counter
+isr_render_errors_total ${stats.renderErrors} ${timestamp}
+`.trim();
   }
 
   /**
