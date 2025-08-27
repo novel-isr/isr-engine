@@ -5,3 +5,4 @@
 
 export { EnterpriseConfig } from './EnterpriseConfig';
 export { ISRConfig as ISRConfigClass } from './ISRConfig';
+export * from './RuntimeConfig';

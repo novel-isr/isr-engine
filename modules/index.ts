@@ -8,3 +8,6 @@ export { SSGModule } from './SSGModule';
 export { SEOModule } from './SEOModule';
 export { CSRFallback } from './CSRFallback';
 export { SpiderEngine } from './SpiderEngine';
+export * from './ISREnhancements';
+export * from './SeoEnhancements';
+export * from './BundleOptimizer';
