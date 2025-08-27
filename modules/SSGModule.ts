@@ -2,67 +2,81 @@ import fs from 'fs';
 import path from 'path';
 
 import { Logger } from '../utils/Logger';
+import { UnifiedSSGGenerator, SSGConfig } from './SSGModuleFixed';
 
 /**
- * 静态站点生成模块
- * 处理静态页面的预生成
+ * 静态站点生成模块 - 重构版本
+ * 使用统一的 SSG 生成器，解决双实现和开发污染问题
+ * 
+ * @deprecated 建议使用 SSGManager 获得更好的功能
  */
 export class SSGModule {
   private config: Record<string, any>;
   private logger: Logger;
   private staticPages: Map<string, any>;
+  private generator: UnifiedSSGGenerator;
 
   constructor(config: Record<string, any>) {
     this.config = config;
     this.logger = new Logger(config.dev?.verbose);
     this.staticPages = new Map();
+    
+    // 使用统一的 SSG 生成器
+    const ssgConfig: Partial<SSGConfig> = {
+      routes: config.ssg?.routes || ['/'],
+      outputDir: {
+        production: config.paths?.client || 'dist/client',
+        development: '.ssg-cache', // 开发时使用独立目录，不污染 dist
+      },
+      onDemandGeneration: config.ssg?.onDemandGeneration !== false,
+      cleanupOldFiles: config.ssg?.cleanupOldFiles || false,
+      concurrent: config.ssg?.concurrent || 3,
+      caching: {
+        enabled: config.ssg?.caching?.enabled !== false,
+        ttl: config.ssg?.caching?.ttl || 3600,
+      },
+    };
+    
+    this.generator = new UnifiedSSGGenerator(ssgConfig, config.dev?.verbose);
+    
+    this.logger.info('📦 SSG 模块已升级为统一生成器模式');
+    if (process.env.NODE_ENV !== 'production') {
+      this.logger.info('🔧 开发模式: 使用独立缓存目录 (.ssg-cache) 避免污染 dist');
+    }
   }
 
   async generateStaticPages() {
-    this.logger.info('Starting static page generation...');
+    this.logger.info('🚀 开始静态页面生成 (使用统一生成器)...');
 
     try {
-      const routes = await this.getRoutesToGenerate();
-      const results = await Promise.allSettled(
-        routes.map((route: string) => this.generatePage(route))
-      );
+      // 设置渲染函数
+      if (!this._renderFunction) {
+        throw new Error('渲染函数未设置，请调用 setRenderFunction');
+      }
+      this.generator.setRenderFunction(this._renderFunction);
 
-      const successful = results.filter((r) => r.status === 'fulfilled').length;
-      const failed = results.length - successful;
+      // 使用统一生成器生成所有页面
+      const results = await this.generator.generateAll();
 
       this.logger.info(
-        `SSG completed: ${successful} successful, ${failed} failed`
+        `✅ SSG 完成: ${results.successful} 成功, ${results.failed} 失败 (总计: ${results.total})`
       );
 
-      // 生成 sitemap
-      if (this.config.seo?.generateSitemap !== false) {
-        try {
-          await this.generateSitemap(
-            routes.filter(
-              (_: string, i: number) => results[i].status === 'fulfilled'
-            )
-          );
-        } catch (error) {
-          this.logger.error('Sitemap generation failed:', error);
-          // 在开发环境下不因sitemap失败而中断
-          if (process.env.NODE_ENV !== 'production') {
-            this.logger.warn('Skipping sitemap generation in development mode');
-          } else {
-            throw error;
-          }
-        }
-      }
-
-      // 生成 robots.txt
-      if (this.config.seo?.generateRobots !== false) {
-        await this.generateRobotsTxt();
-      }
-
-      return { successful, failed, total: results.length };
+      return results;
     } catch (error) {
-      this.logger.error('SSG generation failed:', error);
+      this.logger.error('❌ SSG 生成失败:', error);
       throw error;
     }
+  }
+
+  /**
+   * 设置渲染函数
+   */
+  private _renderFunction: ((url: string, context: any) => Promise<any>) | null = null;
+  
+  setRenderFunction(renderFunction: (url: string, context: any) => Promise<any>) {
+    this._renderFunction = renderFunction;
+    this.generator.setRenderFunction(renderFunction);
   }
 
   async generatePage(route: string) {
@@ -127,42 +141,32 @@ export class SSGModule {
     statusCode: number;
     meta: Record<string, any>;
   }> {
-    // 清理 URL，移除查询参数
+    // 使用统一生成器的按需生成功能
     const cleanUrl = url.split('?')[0];
-    const filePath = this.getStaticFilePath(cleanUrl);
-
-    console.log(`📄 SSG模块: 尝试提供静态文件 - 原始URL: ${url}, 清理后: ${cleanUrl}, 文件路径: ${filePath}`);
+    
+    console.log(`📄 SSG模块: 尝试提供静态页面 - ${cleanUrl} (使用统一生成器)`);
 
     try {
-      if (await this.fileExists(filePath)) {
-        console.log(`✅ SSG模块: 静态文件存在，直接返回 - ${filePath}`);
-        const html = await fs.promises.readFile(filePath, 'utf-8');
-        return {
-          success: true,
-          html,
-          helmet: null,
-          preloadLinks: '',
-          statusCode: 200,
-          meta: {
-            renderMode: 'ssg',
-            strategy: 'static',
-            static: true,
-            path: filePath,
-            timestamp: Date.now(),
-          },
-        };
-      }
-
-      // If static file doesn't exist, generate it on-demand
-      console.log(`⚠️ SSG模块: 静态文件不存在，开始按需生成 - ${filePath}`);
-      this.logger.warn(
-        `Static file not found: ${filePath}, generating on-demand`
-      );
-      await this.generatePage(cleanUrl);
-      return await this.renderStatic(cleanUrl, context);
+      const result = await this.generator.generateOnDemand(cleanUrl);
+      
+      console.log(`✅ SSG模块: 页面已提供 - ${cleanUrl} (来自${result.fromCache ? '缓存' : '新生成'})`);
+      
+      return {
+        success: result.success,
+        html: result.html,
+        helmet: null, // 统一生成器已经包含在 HTML 中
+        preloadLinks: '',
+        statusCode: 200,
+        meta: {
+          ...result.meta,
+          fromCache: result.fromCache,
+          path: result.path,
+          timestamp: Date.now(),
+        },
+      };
     } catch (error) {
-      console.error(`❌ SSG模块: 提供静态页面失败 ${url}:`, error);
-      this.logger.error(`Failed to serve static page ${url}:`, error);
+      console.error(`❌ SSG模块: 提供静态页面失败 ${cleanUrl}:`, error);
+      this.logger.error(`Static page generation failed ${cleanUrl}:`, error);
       throw error;
     }
   }

@@ -11,3 +11,6 @@ export { SpiderEngine } from './SpiderEngine';
 export * from './ISREnhancements';
 export * from './SeoEnhancements';
 export * from './BundleOptimizer';
+// 新的 SSG 实现
+export { UnifiedSSGGenerator } from './SSGModuleFixed';
+export { SSGManager } from './SSGManager';
