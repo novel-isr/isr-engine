@@ -138,6 +138,10 @@ export interface RenderContext {
   bypassCache?: boolean;
   viteHMR?: boolean;
   manifest?: any;
+  forceMode?: string; // 强制渲染模式: ssg, isr, ssr, csr
+  forceFallback?: string; // 强制降级策略: static, cached, regenerate, server, client
+  originalUrl?: string; // 原始 URL（包含查询参数）
+  cleanUrl?: string; // 清理后的 URL（不含查询参数）
   [key: string]: any;
 }
 

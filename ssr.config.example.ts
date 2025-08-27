@@ -2,7 +2,9 @@
  * Novel ISR 引擎配置示例
  * 将此文件重命名为 ssr.config.ts 或 ssr.config.js 来使用
  */
-import type { NovelSSRConfig } from '@novel-isr/engine';
+// import type { NovelSSRConfig } from '@novel-isr/engine';
+
+import { NovelSSRConfig } from "./types";
 
 export default {
   // 默认渲染模式: 'isr' | 'ssg'

@@ -94,7 +94,7 @@ export function render(url: string) {
   </head>
   <body>
     <div id="root">${html}</div>
-    <script type="module" src="/src/entry-client.tsx"></script>
+    <script type="module" src="/src/entry.tsx"></script>
   </body>
 </html>`,
     statusCode: 200

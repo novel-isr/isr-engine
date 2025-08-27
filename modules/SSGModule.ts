@@ -69,10 +69,10 @@ export class SSGModule {
     this.logger.debug(`Generating static page: ${route}`);
 
     try {
-      // 在开发模式下，跳过SSG生成，因为没有构建的服务端文件
+      // 在开发模式下，使用 Vite SSR 来生成静态页面
       if (process.env.NODE_ENV !== 'production') {
-        this.logger.warn(`跳过SSG生成 ${route}：开发模式下无需预生成静态页面`);
-        return { route, success: true, path: 'skipped-dev-mode' };
+        console.log(`🔄 SSG模块: 开发模式下使用 Vite SSR 生成静态页面 - ${route}`);
+        return await this.generatePageWithVite(route);
       }
 
       // 加载服务端入口
@@ -127,10 +127,15 @@ export class SSGModule {
     statusCode: number;
     meta: Record<string, any>;
   }> {
-    const filePath = this.getStaticFilePath(url);
+    // 清理 URL，移除查询参数
+    const cleanUrl = url.split('?')[0];
+    const filePath = this.getStaticFilePath(cleanUrl);
+
+    console.log(`📄 SSG模块: 尝试提供静态文件 - 原始URL: ${url}, 清理后: ${cleanUrl}, 文件路径: ${filePath}`);
 
     try {
       if (await this.fileExists(filePath)) {
+        console.log(`✅ SSG模块: 静态文件存在，直接返回 - ${filePath}`);
         const html = await fs.promises.readFile(filePath, 'utf-8');
         return {
           success: true,
@@ -140,6 +145,7 @@ export class SSGModule {
           statusCode: 200,
           meta: {
             renderMode: 'ssg',
+            strategy: 'static',
             static: true,
             path: filePath,
             timestamp: Date.now(),
@@ -148,12 +154,14 @@ export class SSGModule {
       }
 
       // If static file doesn't exist, generate it on-demand
+      console.log(`⚠️ SSG模块: 静态文件不存在，开始按需生成 - ${filePath}`);
       this.logger.warn(
         `Static file not found: ${filePath}, generating on-demand`
       );
-      await this.generatePage(url);
-      return await this.renderStatic(url, context);
+      await this.generatePage(cleanUrl);
+      return await this.renderStatic(cleanUrl, context);
     } catch (error) {
+      console.error(`❌ SSG模块: 提供静态页面失败 ${url}:`, error);
       this.logger.error(`Failed to serve static page ${url}:`, error);
       throw error;
     }
@@ -223,7 +231,7 @@ export class SSGModule {
 
   getServerEntryPath(): string {
     const serverPath = this.config.paths?.server || './dist/server';
-    return path.resolve(serverPath, 'entry-server.js');
+    return path.resolve(serverPath, 'entry.js');
   }
 
   async ensureDirectoryExists(dirPath: string): Promise<void> {
@@ -318,6 +326,55 @@ ${routes
   getRouteFromPath(filePath: string): string {
     if (filePath === 'index.html') return '/';
     return '/' + filePath.replace('.html', '').replace(/\/index$/, '');
+  }
+
+  /**
+   * 在开发模式下使用 Vite SSR 生成静态页面
+   */
+  async generatePageWithVite(route: string) {
+    console.log(`🔄 SSG模块: 开发模式下生成静态页面 - ${route}`);
+    
+    try {
+      // 获取 Vite 服务器实例
+      const viteServer = (global as any).__viteServer;
+      if (!viteServer) {
+        throw new Error('Vite 服务器不可用');
+      }
+
+      // 使用 Vite 的 ssrLoadModule 加载入口文件
+      const entryModule = await viteServer.ssrLoadModule('/src/entry.tsx');
+      if (!entryModule.renderServer) {
+        throw new Error('入口文件没有导出 renderServer 函数');
+      }
+
+      // 执行服务端渲染
+      const renderResult = await entryModule.renderServer(route, {
+        renderMode: 'ssg',
+        strategy: 'static',
+        viteServer,
+      });
+
+      if (!renderResult.html) {
+        throw new Error(`SSG 渲染失败: 没有生成 HTML`);
+      }
+
+      // 在开发模式下，我们将内容写入临时文件以模拟静态文件
+      const filePath = this.getStaticFilePath(route);
+      await this.ensureDirectoryExists(path.dirname(filePath));
+      await fs.promises.writeFile(filePath, renderResult.html, 'utf-8');
+
+      this.staticPages.set(route, {
+        path: filePath,
+        size: Buffer.byteLength(renderResult.html, 'utf8'),
+        generated: Date.now(),
+      });
+
+      console.log(`✅ SSG模块: 开发模式静态页面生成完成 ${route} -> ${filePath}`);
+      return { route, success: true, path: filePath };
+    } catch (error) {
+      console.error(`❌ SSG模块: 开发模式生成失败 ${route}:`, error);
+      throw error;
+    }
   }
 
   async generateRobotsTxt(): Promise<void> {

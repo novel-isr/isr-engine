@@ -4,4 +4,4 @@
  */
 
 export { EnterpriseConfig } from './EnterpriseConfig';
-export { ISRConfig } from './ISRConfig';
+export { ISRConfig as ISRConfigClass } from './ISRConfig';

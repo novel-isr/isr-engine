@@ -73,24 +73,52 @@ export class ISRModule {
         // 开发模式：使用Vite的SSR加载
         const viteServer = this.viteServer || context.viteServer;
         if (!viteServer) {
+          console.log('❌ ISR模块: 开发模式下Vite服务器不可用，将降级到下一个策略');
           this.logger.warn('开发模式下Vite服务器不可用，降级到CSR渲染');
           // 直接抛出错误，让上层降级到CSR
           throw new Error('开发模式下无法初始化Vite服务器，请检查配置');
         } else {
-          const { render } = await viteServer.ssrLoadModule(
-            '/src/entry-server.tsx'
-          );
-          renderModule = { render };
+          // 加载统一入口文件
+          console.log('🔄 ISR模块: 正在加载统一入口文件 /src/entry.tsx');
+          this.logger.debug('正在加载统一入口文件: /src/entry.tsx');
+          const entryModule = await viteServer.ssrLoadModule('/src/entry.tsx');
+          console.log('📦 ISR模块: 入口模块导出函数:', Object.keys(entryModule));
+          this.logger.debug('入口模块导出:', Object.keys(entryModule));
+          
+          if (entryModule.renderServer) {
+            renderModule = { render: entryModule.renderServer };
+            console.log('✅ ISR模块: 使用统一入口文件的 renderServer 进行渲染');
+            this.logger.debug('✅ 使用统一入口文件的renderServer进行SSR渲染');
+          } else if (entryModule.render) {
+            renderModule = { render: entryModule.render };
+            console.log('✅ ISR模块: 使用统一入口文件的 render 进行渲染');
+            this.logger.debug('✅ 使用统一入口文件的render进行SSR渲染');
+          } else {
+            console.log('❌ ISR模块: 入口文件缺少必要的导出函数:', Object.keys(entryModule));
+            this.logger.error('入口文件导出函数:', Object.keys(entryModule));
+            throw new Error('统一入口文件必须导出renderServer或render函数');
+          }
         }
       }
 
       // 渲染新内容
-      const result = await renderModule.render(url, context.manifest);
+      const renderContext = {
+        ...context,
+        renderMode: 'isr', // 明确标记为ISR渲染
+        strategy: 'regenerate', // 重新生成策略
+        manifest: context.manifest
+      };
+      console.log('🎯 ISR模块: 开始渲染新内容...');
+      const result = await renderModule.render(url, renderContext);
 
       if (result.html) {
         // 保存到 ISR 缓存
+        console.log('💾 ISR模块: 保存渲染结果到缓存...');
         await this.saveToISRCache(url, result);
+        console.log(`✅ ISR模块: 缓存已更新 - ${url}`);
         this.logger.debug(`ISR cache updated: ${url}`);
+      } else {
+        console.log('⚠️ ISR模块: 渲染结果为空，跳过缓存保存');
       }
 
       this.isRevalidating.set(url, false);
@@ -103,6 +131,8 @@ export class ISRModule {
         statusCode: result.statusCode || 200,
         meta: {
           renderMode: 'isr',
+          strategy: 'cached',
+          fromCache: false,
           regenerated: true,
           timestamp: Date.now(),
         },
@@ -152,11 +182,16 @@ export class ISRModule {
     statusCode: number;
     meta: Record<string, any>;
   }> {
+    console.log(`💾 ISR模块: 检查缓存 - ${url}`);
     const cachedPath = this.getISRCachePath(url);
     const metadataPath = this.getISRMetadataPath(url);
 
+    console.log(`📁 ISR缓存路径: ${cachedPath}`);
+    console.log(`📁 ISR元数据路径: ${metadataPath}`);
+
     try {
       // Check if cached version exists
+      console.log(`🔍 ISR模块: 检查缓存文件是否存在...`);
       const [htmlExists, metadataExists] = await Promise.all([
         this.fileExists(cachedPath),
         this.fileExists(metadataPath),
@@ -164,6 +199,7 @@ export class ISRModule {
 
       if (!htmlExists) {
         // No cached version, generate fresh
+        console.log(`❌ ISR模块: 无缓存文件 - ${url}，开始重新生成`);
         return await this.regenerate(url, context);
       }
 
@@ -180,15 +216,18 @@ export class ISRModule {
       if (this.shouldRevalidate(url, metadata)) {
         if (this.config.isr?.backgroundRevalidation !== false) {
           // Background revalidation
+          console.log(`🔄 ISR模块: 缓存需要重新验证，启动后台重新生成 - ${url}`);
           this.scheduleBackgroundRevalidation(url, context);
         } else {
           // Blocking revalidation
+          console.log(`🔄 ISR模块: 缓存需要重新验证，开始阻塞式重新生成 - ${url}`);
           this.logger.debug(`需要重新验证，将重新生成: ${url}`);
           return await this.regenerate(url, context);
         }
       }
 
       // Serve cached content
+      console.log(`✅ ISR模块: 缓存命中，返回缓存内容 - ${url}`);
       const html = await fs.promises.readFile(cachedPath, 'utf-8');
 
       return {
@@ -199,6 +238,7 @@ export class ISRModule {
         statusCode: (metadata as any)?.statusCode || 200,
         meta: {
           renderMode: 'isr',
+          strategy: 'cached',
           fromCache: true,
           generated: (metadata as any)?.generated,
           needsRevalidation: this.shouldRevalidate(url, metadata),
@@ -231,8 +271,8 @@ export class ISRModule {
       // Ensure cache directory exists
       await this.ensureDirectoryExists(path.dirname(cachedPath));
 
-      // Create full HTML document
-      const fullHTML = this.createISRHTML(renderResult, url);
+      // 使用渲染结果中的完整HTML，不再重新包装
+      const fullHTML = renderResult.html;
 
       // Save HTML
       await fs.promises.writeFile(cachedPath, fullHTML, 'utf-8');
@@ -261,32 +301,7 @@ export class ISRModule {
     }
   }
 
-  createISRHTML(renderResult: Record<string, any>, url: string): string {
-    const { html, helmet, preloadLinks } = renderResult;
 
-    return `<!DOCTYPE html>
-<html${helmet?.htmlAttributes?.toString() || ''}>
-<head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  ${helmet?.title?.toString() || '<title>ISR Page</title>'}
-  ${helmet?.meta?.toString() || ''}
-  ${helmet?.link?.toString() || ''}
-  ${preloadLinks || ''}
-  ${helmet?.style?.toString() || ''}
-  <meta name="generator" content="ISR-Engine ISR">
-  <meta name="generated-at" content="${new Date().toISOString()}">
-</head>
-<body${helmet?.bodyAttributes?.toString() || ''}>
-  <div id="root">${html}</div>
-  ${helmet?.script?.toString() || ''}
-  <script>
-    window.__ISR__ = true;
-    window.__ROUTE__ = "${url}";
-  </script>
-</body>
-</html>`;
-  }
 
   scheduleBackgroundRevalidation(
     url: string,
@@ -311,15 +326,19 @@ export class ISRModule {
   }
 
   getISRCachePath(url: string): string {
+    // 使用绝对路径，确保ISR缓存独立于其他缓存
     const distPath = this.config.paths?.dist || './dist';
-    const cacheDir = path.join(distPath, '.isr-cache');
+    const absoluteDistPath = path.resolve(process.cwd(), distPath);
+    const cacheDir = path.join(absoluteDistPath, '.isr-cache');
     const fileName = this.urlToFileName(url);
     return path.join(cacheDir, `${fileName}.html`);
   }
 
   getISRMetadataPath(url: string): string {
+    // 使用绝对路径，确保ISR缓存独立于其他缓存
     const distPath = this.config.paths?.dist || './dist';
-    const cacheDir = path.join(distPath, '.isr-cache');
+    const absoluteDistPath = path.resolve(process.cwd(), distPath);
+    const cacheDir = path.join(absoluteDistPath, '.isr-cache');
     const fileName = this.urlToFileName(url);
     return path.join(cacheDir, `${fileName}.meta.json`);
   }
@@ -331,7 +350,7 @@ export class ISRModule {
 
   getServerEntryPath(): string {
     const serverPath = this.config.paths?.server || './dist/server';
-    return path.resolve(serverPath, 'entry-server.js');
+    return path.resolve(serverPath, 'entry.js');
   }
 
   async ensureDirectoryExists(dirPath: string): Promise<void> {

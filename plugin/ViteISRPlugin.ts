@@ -22,7 +22,7 @@ export function createViteISRPlugin(
 ): Plugin {
   const { 
     config = {}, 
-    entry = '/src/entry-server.tsx',
+    entry = '/src/entry.tsx',
     enableHMR = true,
     enableDevMiddleware = false 
   } = options;
