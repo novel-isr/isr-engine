@@ -107,7 +107,7 @@ export class ErrorHandler {
     customRetryConfig?: Partial<RetryConfig>
   ): Promise<T> {
     const config = { ...this.retryConfig, ...customRetryConfig };
-    let lastError: ISRError;
+    let lastError: ISRError | undefined;
     
     for (let attempt = 0; attempt <= config.maxRetries; attempt++) {
       try {
@@ -147,8 +147,15 @@ export class ErrorHandler {
     }
 
     // 所有重试都失败，尝试降级策略
-    console.error(`❌ 操作最终失败，尝试降级策略:`, lastError);
-    return this.executeFallbackStrategy(lastError, context);
+    if (lastError) {
+      console.error(`❌ 操作最终失败，尝试降级策略:`, lastError);
+      return this.executeFallbackStrategy(lastError, context);
+    } else {
+      // 这种情况理论上不应该发生，但为了类型安全
+      const unknownError = this.normalizeError(new Error('未知错误'), context);
+      console.error(`❌ 操作最终失败，尝试降级策略:`, unknownError);
+      return this.executeFallbackStrategy(unknownError, context);
+    }
   }
 
   /**

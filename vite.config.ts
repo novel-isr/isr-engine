@@ -6,8 +6,9 @@ export default defineConfig({
   plugins: [
     dts({
       insertTypesEntry: true,
-      rollupTypes: true,
+      rollupTypes: false, // 禁用rollupTypes来避免API Extractor警告
       exclude: ['**/*.test.ts', '**/*.spec.ts'],
+      tsconfigPath: './tsconfig.json',
     }),
   ],
   build: {
@@ -26,6 +27,7 @@ export default defineConfig({
         'fs/promises',
         'url',
         'http',
+        'events',
         'child_process',
         'compression',
         'express',

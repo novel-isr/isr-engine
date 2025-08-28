@@ -368,7 +368,7 @@ export class ISRResourceMonitor {
     }
     
     // 发送事件让其他组件处理清理
-    process.emit('isr:resource-pressure' as any, {
+    (process as any).emit('isr:resource-pressure', {
       reason,
       stats: this.resourceStats,
     });
@@ -466,4 +466,4 @@ export class ISRHealthChecker {
   }
 }
 
-export { ISRQueue, ISRResourceMonitor, ISRHealthChecker };
+// Classes are already exported above, no need for duplicate exports

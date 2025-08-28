@@ -41,8 +41,8 @@ export class SSGManager {
   private isWatching = false;
   private watchHandlers: any[] = [];
 
-  constructor(config: SSGManagerConfig = {}, verbose = false) {
-    this.config = {
+  constructor(config: Partial<SSGManagerConfig> = {}, verbose = false) {
+    const defaultConfig: SSGManagerConfig = {
       routes: ['/'],
       outputDir: {
         production: 'dist/client',
@@ -67,7 +67,28 @@ export class SSGManager {
         hotReload: true,
         watchFiles: false,
       },
+    };
+    
+    this.config = {
+      ...defaultConfig,
       ...config,
+      // 深度合并嵌套对象
+      routeDiscovery: {
+        ...defaultConfig.routeDiscovery,
+        ...config.routeDiscovery,
+      },
+      buildIntegration: {
+        ...defaultConfig.buildIntegration,
+        ...config.buildIntegration,
+      },
+      development: {
+        ...defaultConfig.development,
+        ...config.development,
+      },
+      caching: {
+        enabled: config.caching?.enabled ?? true,
+        ttl: config.caching?.ttl ?? 3600,
+      },
     };
 
     this.logger = new Logger(verbose);
@@ -419,7 +440,7 @@ export class SSGManager {
         routes: Array.isArray(this.config.routes) ? this.config.routes.length : 0,
         routeDiscovery: this.config.routeDiscovery.enabled,
         onDemandGeneration: this.config.onDemandGeneration,
-        caching: this.config.caching.enabled,
+        caching: this.config.caching?.enabled ?? false,
         development: {
           hotReload: this.config.development.hotReload,
           watchFiles: this.config.development.watchFiles,
@@ -460,4 +481,4 @@ export class SSGManager {
   }
 }
 
-export { SSGManager };
+// Class is already exported above, no need for duplicate export

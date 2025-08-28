@@ -45,16 +45,18 @@ export class SSGModule {
     }
   }
 
+  /**
+   * 设置渲染函数 - 由ISR引擎调用
+   */
+  setRenderFunction(renderFunction: (url: string, context: any) => Promise<any>) {
+    this.generator.setRenderFunction(renderFunction);
+    this.logger.debug('✅ SSG模块: 渲染函数已设置');
+  }
+
   async generateStaticPages() {
     this.logger.info('🚀 开始静态页面生成 (使用统一生成器)...');
 
     try {
-      // 设置渲染函数
-      if (!this._renderFunction) {
-        throw new Error('渲染函数未设置，请调用 setRenderFunction');
-      }
-      this.generator.setRenderFunction(this._renderFunction);
-
       // 使用统一生成器生成所有页面
       const results = await this.generator.generateAll();
 
@@ -69,15 +71,7 @@ export class SSGModule {
     }
   }
 
-  /**
-   * 设置渲染函数
-   */
-  private _renderFunction: ((url: string, context: any) => Promise<any>) | null = null;
-  
-  setRenderFunction(renderFunction: (url: string, context: any) => Promise<any>) {
-    this._renderFunction = renderFunction;
-    this.generator.setRenderFunction(renderFunction);
-  }
+
 
   async generatePage(route: string) {
     this.logger.debug(`Generating static page: ${route}`);
@@ -355,6 +349,7 @@ ${routes
       const renderResult = await entryModule.renderServer(route, {
         renderMode: 'ssg',
         strategy: 'static',
+        isSSG: true, // 标记为SSG模式，避免嵌套HTML
         viteServer,
       });
 

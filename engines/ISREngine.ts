@@ -97,6 +97,13 @@ export default class ISREngine {
           if (this.viteServer) {
             (this.isrModule as any).setViteServer(this.viteServer);
             (this.isrModule as any).setMetricsCollector(this.metrics);
+            
+            // 为SSG模块设置渲染函数
+            const renderFunction = async (url: string, context: any) => {
+              return await this.renderWithVite(url, context);
+            };
+            (this.ssgModule as any).setRenderFunction(renderFunction);
+            this.logger.debug('✅ SSG模块: 渲染函数已设置');
           }
         } catch (error) {
           this.logger.error(
@@ -1064,6 +1071,38 @@ isr_timeout_errors_total ${stats.timeoutErrors} ${timestamp}
 # TYPE isr_render_errors_total counter
 isr_render_errors_total ${stats.renderErrors} ${timestamp}
 `.trim();
+  }
+
+  /**
+   * 使用Vite进行渲染 - 供SSG模块使用
+   */
+  private async renderWithVite(url: string, context: any = {}): Promise<any> {
+    if (!this.viteServer) {
+      throw new Error('Vite服务器未初始化');
+    }
+
+    try {
+      // 加载统一入口文件
+      this.logger.debug(`正在加载统一入口文件进行SSG渲染: ${url}`);
+      const entryModule = await this.viteServer.ssrLoadModule('/src/entry.tsx');
+      
+      if (!entryModule.renderServer) {
+        throw new Error('统一入口文件缺少 renderServer 导出函数');
+      }
+
+      // 执行服务端渲染
+      const renderResult = await entryModule.renderServer(url, {
+        ...context,
+        renderMode: 'ssg',
+        strategy: 'static',
+        isSSG: true, // 标记为SSG模式，避免嵌套HTML
+      });
+
+      return renderResult;
+    } catch (error) {
+      this.logger.error(`Vite渲染失败 ${url}:`, error);
+      throw error;
+    }
   }
 
   /**

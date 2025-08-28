@@ -515,10 +515,3 @@ export class CachePrefetchManager {
     };
   }
 }
-
-export {
-  MultiTierCacheStrategy as default,
-  CacheKeyGenerator,
-  CacheWarmupManager,
-  CachePrefetchManager,
-};

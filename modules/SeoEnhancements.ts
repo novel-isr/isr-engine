@@ -165,7 +165,6 @@ export class SitemapGenerator {
 
     const stream = new SitemapStream({ 
       hostname: this.config.baseUrl,
-      cacheTime: 600000, // 10分钟缓存
     });
 
     // 添加所有路由
@@ -566,4 +565,4 @@ export class SeoManager {
   }
 }
 
-export { SitemapGenerator, RobotsGenerator, RedirectManager, SeoManager };
+// Classes are already exported above, no need for duplicate exports

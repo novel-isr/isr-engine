@@ -266,12 +266,18 @@ export class RuntimeConfigManager extends EventEmitter {
     
     try {
       const fetch = (await import('node-fetch')).default;
+      // 创建一个带超时的AbortController
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 10000);
+      
       const response = await fetch(this.options.remoteConfigUrl, {
-        timeout: 10000,
+        signal: controller.signal,
         headers: {
           'User-Agent': 'Novel-ISR-Engine/1.0',
         },
       });
+      
+      clearTimeout(timeoutId);
       
       if (!response.ok) {
         throw new Error(`HTTP ${response.status}: ${response.statusText}`);
@@ -618,4 +624,3 @@ export class ConfigTemplateGenerator {
   }
 }
 
-export { RuntimeConfigManager, ConfigTemplateGenerator };

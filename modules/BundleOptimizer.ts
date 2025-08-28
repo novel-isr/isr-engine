@@ -759,4 +759,4 @@ export class IntelligentPreloader {
   }
 }
 
-export { BundleAnalyzer, IntelligentPreloader };
+// Classes are already exported above, no need for duplicate exports
