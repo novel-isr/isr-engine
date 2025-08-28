@@ -46,7 +46,7 @@ export class SSGManager {
       routes: ['/'],
       outputDir: {
         production: 'dist/client',
-        development: '.ssg-cache',
+        development: '.isr-hyou/ssg',
       },
       onDemandGeneration: true,
       cleanupOldFiles: false,

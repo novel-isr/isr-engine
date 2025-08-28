@@ -26,7 +26,7 @@ export class SSGModule {
       routes: config.ssg?.routes || ['/'],
       outputDir: {
         production: config.paths?.client || 'dist/client',
-        development: '.ssg-cache', // 开发时使用独立目录，不污染 dist
+        development: '.isr-hyou/ssg', // 开发时使用统一缓存目录
       },
       onDemandGeneration: config.ssg?.onDemandGeneration !== false,
       cleanupOldFiles: config.ssg?.cleanupOldFiles || false,
@@ -41,7 +41,7 @@ export class SSGModule {
     
     this.logger.info('📦 SSG 模块已升级为统一生成器模式');
     if (process.env.NODE_ENV !== 'production') {
-      this.logger.info('🔧 开发模式: 使用独立缓存目录 (.ssg-cache) 避免污染 dist');
+      this.logger.info('🔧 开发模式: 使用统一缓存目录 (.isr-hyou/ssg)');
     }
   }
 
@@ -186,7 +186,35 @@ export class SSGModule {
   ${helmet?.script?.toString() || ''}
   <script>
     window.__SSG__ = true;
+    window.__RENDER_STRATEGY__ = 'static';
+    window.__ISR_MODE__ = 'ssg';
     window.__ROUTE__ = "${route}";
+    window.__GENERATED_AT__ = "${new Date().toISOString()}";
+    window.__RENDER_TIME__ = "${new Date().toISOString()}";
+    window.__FALLBACK_USED__ = false;
+    window.__FORCE_MODE__ = 'ssg';
+    window.__FORCE_FALLBACK__ = '';
+    
+    // SSG 渲染成功日志
+    console.log('✅ 渲染成功: 按预期模式完成渲染', {
+      mode: 'ssg',
+      strategy: 'static',
+      fallbackUsed: false,
+      renderTime: "${new Date().toISOString()}"
+    });
+  </script>
+  <script type="module">
+    // 客户端水合脚本 - SSG页面需要客户端JavaScript来更新动态内容
+    (async () => {
+      try {
+        const mod = await import('/src/entry.tsx');
+        if (typeof mod.renderClient === 'function') {
+          mod.renderClient();
+        }
+      } catch (e) {
+        console.warn('SSG客户端脚本加载失败:', e?.message || e);
+      }
+    })();
   </script>
 </body>
 </html>`;
@@ -346,10 +374,15 @@ ${routes
       }
 
       // 执行服务端渲染
+      const renderTime = new Date().toISOString();
       const renderResult = await entryModule.renderServer(route, {
         renderMode: 'ssg',
         strategy: 'static',
         isSSG: true, // 标记为SSG模式，避免嵌套HTML
+        renderTime,
+        fallbackUsed: false,
+        forceMode: 'ssg',
+        forceFallback: '',
         viteServer,
       });
 
@@ -400,5 +433,17 @@ Sitemap: ${this.config.seo?.baseUrl || 'http://localhost:3000'}/sitemap.xml`;
       }
       throw error;
     }
+  }
+
+  /**
+   * 获取SSG统计信息
+   */
+  getStats() {
+    return {
+      generatedPages: 0, // TODO: 实现页面计数
+      cacheHits: 0,
+      errors: 0,
+      lastGeneration: null
+    };
   }
 }

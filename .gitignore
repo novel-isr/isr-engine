@@ -77,3 +77,6 @@ junit.xml
 # Temporary folders
 tmp/
 temp/
+
+# ISR/SSG Cache directory
+.isr-hyou/

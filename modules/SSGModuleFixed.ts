@@ -46,7 +46,7 @@ export class UnifiedSSGGenerator {
       routes: ['/'],
       outputDir: {
         production: 'dist/client',
-        development: '.ssg-cache', // 开发时使用独立缓存目录，不污染 dist
+        development: '.isr-hyou/ssg', // 开发时使用统一缓存目录
       },
       onDemandGeneration: true,
       cleanupOldFiles: false,
@@ -378,6 +378,14 @@ export class UnifiedSSGGenerator {
   <meta name="generator" content="Novel ISR Engine SSG">
   <meta name="generated-at" content="${now}">
   <meta name="ssg-route" content="${route}">
+  <script type="module">
+    import RefreshRuntime from '/@react-refresh';
+    RefreshRuntime.injectIntoGlobalHook(window);
+    window.$RefreshReg$ = () => {};
+    window.$RefreshSig$ = () => (type) => type;
+    window.__vite_plugin_react_preamble_installed__ = true;
+  </script>
+  <script type="module" src="/@vite/client"></script>
 </head>
 <body${helmet?.bodyAttributes?.toString() || ''}>
   <div id="root">${html}</div>
@@ -387,6 +395,31 @@ export class UnifiedSSGGenerator {
     window.__ISR_MODE__ = 'ssg';
     window.__ROUTE__ = "${route}";
     window.__GENERATED_AT__ = "${now}";
+    window.__RENDER_TIME__ = "${now}";
+    window.__FALLBACK_USED__ = false;
+    window.__FORCE_MODE__ = 'ssg';
+    window.__FORCE_FALLBACK__ = '';
+    
+    // SSG 渲染成功日志
+    console.log('✅ 渲染成功: 按预期模式完成渲染', {
+      mode: 'ssg',
+      strategy: 'static',
+      fallbackUsed: false,
+      renderTime: "${now}"
+    });
+  </script>
+  <script type="module">
+    // 客户端水合脚本 - SSG页面需要客户端JavaScript来更新动态内容
+    (async () => {
+      try {
+        const mod = await import('/src/entry.tsx');
+        if (typeof mod.renderClient === 'function') {
+          mod.renderClient();
+        }
+      } catch (e) {
+        console.warn('SSG客户端脚本加载失败:', e?.message || e);
+      }
+    })();
   </script>
   ${helmet?.script?.toString() || ''}
 </body>

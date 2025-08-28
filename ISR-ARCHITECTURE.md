@@ -188,7 +188,7 @@ export class ISRModule {
 **缓存文件结构**：
 
 ```
-dist/
+project-root/
 └── .isr-cache/
     ├── index.html           # / 路由的缓存
     ├── index.meta.json      # 元数据信息

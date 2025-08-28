@@ -406,19 +406,15 @@ export class ISRModule {
   }
 
   getISRCachePath(url: string): string {
-    // 使用绝对路径，确保ISR缓存独立于其他缓存
-    const distPath = this.config.paths?.dist || './dist';
-    const absoluteDistPath = path.resolve(process.cwd(), distPath);
-    const cacheDir = path.join(absoluteDistPath, '.isr-cache');
+    // 使用统一的缓存目录结构
+    const cacheDir = path.resolve(process.cwd(), '.isr-hyou/isr');
     const fileName = this.urlToFileName(url);
     return path.join(cacheDir, `${fileName}.html`);
   }
 
   getISRMetadataPath(url: string): string {
-    // 使用绝对路径，确保ISR缓存独立于其他缓存
-    const distPath = this.config.paths?.dist || './dist';
-    const absoluteDistPath = path.resolve(process.cwd(), distPath);
-    const cacheDir = path.join(absoluteDistPath, '.isr-cache');
+    // 使用统一的缓存目录结构
+    const cacheDir = path.resolve(process.cwd(), '.isr-hyou/isr');
     const fileName = this.urlToFileName(url);
     return path.join(cacheDir, `${fileName}.meta.json`);
   }
@@ -467,8 +463,7 @@ export class ISRModule {
       this.logger.debug(`ISR cache cleared for: ${url}`);
     } else {
       // Clear entire cache
-      const distPath = this.config.paths?.dist || './dist';
-      const cacheDir = path.join(distPath, '.isr-cache');
+      const cacheDir = path.resolve(process.cwd(), '.isr-hyou/isr');
 
       try {
         await fs.promises.rm(cacheDir, { recursive: true, force: true });

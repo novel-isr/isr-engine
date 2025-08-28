@@ -22,6 +22,7 @@ import {
 } from '../types';
 import { Logger } from '../utils/Logger';
 import { MetricsCollector } from '../utils/MetricsCollector';
+import { CacheCleanup } from '../utils/CacheCleanup';
 
 /**
  * 企业级 SSR 引擎
@@ -77,6 +78,9 @@ export default class ISREngine {
   async initialize(): Promise<void> {
     try {
       this.logger.info('正在初始化 ISR 引擎...');
+
+      // 开发环境启动时清理缓存
+      await CacheCleanup.cleanupOnDevStart();
 
       // 初始化缓存
       try {
@@ -871,6 +875,8 @@ export default class ISREngine {
       });
     }
 
+
+
     // 统计信息端点
     this.expressApp.get('/ssr-stats', (req: Request, res: Response) => {
       res.json(this.getStats());
@@ -1111,6 +1117,13 @@ isr_render_errors_total ${stats.renderErrors} ${timestamp}
   private shouldSkipISR(url: string): boolean {
     // API 路由
     if (url.startsWith('/api/') || url.startsWith('/_')) {
+      return true;
+    }
+
+    // 内置管理端点
+    if (url.startsWith('/health') || 
+        url.startsWith('/metrics') || 
+        url.startsWith('/ssr-stats')) {
       return true;
     }
 

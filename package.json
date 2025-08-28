@@ -28,7 +28,7 @@
   ],
   "scripts": {
     "build": "vite build",
-    "dev": "vite build --watch",
+    "watch": "vite build --watch",
     "clean": "rimraf dist"
   },
   "keywords": [

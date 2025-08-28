@@ -88,7 +88,7 @@ scheduleBackgroundRevalidation(url: string, context: RenderContext): void {
 ### 3. ISR 缓存文件结构
 
 ```
-dist/
+project-root/
 └── .isr-cache/
     ├── index.html              # 首页的缓存内容
     ├── index.meta.json         # 首页的元数据
