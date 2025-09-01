@@ -14,6 +14,12 @@ export default [
   {
     ignores: [
       'dist/**',
+      'build/**',
+      'out/**',
+      '.cache/**',
+      '.parcel-cache/**',
+      '.vite/**',
+      '.turbo/**',
       'node_modules/**',
       '*.config.js',
       '*.config.mjs',
@@ -21,6 +27,14 @@ export default [
       'vite.config.*',
       'coverage/**',
       '.git/**',
+      '.coverage/**',
+      '.nyc_output/**',
+      'coverage/**',
+      'logs/**',
+      'pids/**',
+      'tmp/**',
+      'temp/**',
+      '*.log',
     ],
   },
 
