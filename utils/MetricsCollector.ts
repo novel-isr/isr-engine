@@ -40,41 +40,41 @@ export class MetricsCollector {
   private renderMetrics: RenderMetrics[] = [];
   private cacheMetrics: CacheMetrics[] = [];
   private systemMetrics: SystemMetrics[] = [];
-  
+
   // 实时统计
   private stats = {
     // 渲染统计
     totalRequests: 0,
     successfulRenders: 0,
     failedRenders: 0,
-    
+
     // 策略统计
     isrCacheHits: 0,
     isrRegenerations: 0,
     ssrRenders: 0,
     ssgServes: 0,
     csrFallbacks: 0,
-    
+
     // 性能统计
     totalRenderTime: 0,
     averageRenderTime: 0,
     maxRenderTime: 0,
     minRenderTime: Infinity,
-    
+
     // 缓存统计
     cacheHitRate: 0,
     totalCacheSize: 0,
-    
+
     // 并发统计
     maxConcurrentRequests: 0,
     currentConcurrentRequests: 0,
-    
+
     // 错误统计
     timeoutErrors: 0,
     renderErrors: 0,
     cacheErrors: 0,
   };
-  
+
   private maxMetricsHistory = 10000; // 保留最近10000条记录
   private metricsStartTime = Date.now();
 
@@ -111,13 +111,13 @@ export class MetricsCollector {
   startRender(url: string, mode: string, strategy: string): string {
     const id = `${url}-${Date.now()}-${Math.random()}`;
     const startTime = Date.now();
-    
+
     this.stats.currentConcurrentRequests++;
     this.stats.maxConcurrentRequests = Math.max(
       this.stats.maxConcurrentRequests,
       this.stats.currentConcurrentRequests
     );
-    
+
     return id;
   }
 
@@ -140,9 +140,9 @@ export class MetricsCollector {
   ): void {
     const endTime = Date.now();
     const duration = endTime - startTime;
-    
+
     this.stats.currentConcurrentRequests--;
-    
+
     const metrics: RenderMetrics = {
       url,
       mode,
@@ -160,7 +160,7 @@ export class MetricsCollector {
       userAgent,
       timestamp: endTime,
     };
-    
+
     this.recordRender(metrics);
   }
 
@@ -171,15 +171,18 @@ export class MetricsCollector {
     return {
       ...this.stats,
       uptime: Date.now() - this.metricsStartTime,
-      cacheHitRate: this.stats.totalRequests > 0 
-        ? ((this.stats.isrCacheHits / this.stats.totalRequests) * 100).toFixed(2) + '%'
-        : '0%',
-      successRate: this.stats.totalRequests > 0
-        ? ((this.stats.successfulRenders / this.stats.totalRequests) * 100).toFixed(2) + '%'
-        : '0%',
-      averageRenderTime: this.stats.totalRequests > 0
-        ? Math.round(this.stats.totalRenderTime / this.stats.totalRequests)
-        : 0,
+      cacheHitRate:
+        this.stats.totalRequests > 0
+          ? ((this.stats.isrCacheHits / this.stats.totalRequests) * 100).toFixed(2) + '%'
+          : '0%',
+      successRate:
+        this.stats.totalRequests > 0
+          ? ((this.stats.successfulRenders / this.stats.totalRequests) * 100).toFixed(2) + '%'
+          : '0%',
+      averageRenderTime:
+        this.stats.totalRequests > 0
+          ? Math.round(this.stats.totalRenderTime / this.stats.totalRequests)
+          : 0,
     };
   }
 
@@ -201,9 +204,18 @@ export class MetricsCollector {
         lastHour: this.calculatePeriodStats(recent1hour),
       },
       performance: {
-        p50: this.calculatePercentile(this.renderMetrics.map(m => m.duration), 50),
-        p90: this.calculatePercentile(this.renderMetrics.map(m => m.duration), 90),
-        p99: this.calculatePercentile(this.renderMetrics.map(m => m.duration), 99),
+        p50: this.calculatePercentile(
+          this.renderMetrics.map(m => m.duration),
+          50
+        ),
+        p90: this.calculatePercentile(
+          this.renderMetrics.map(m => m.duration),
+          90
+        ),
+        p99: this.calculatePercentile(
+          this.renderMetrics.map(m => m.duration),
+          99
+        ),
       },
       errors: this.getErrorAnalysis(),
       cache: this.getCacheAnalysis(),
@@ -218,10 +230,11 @@ export class MetricsCollector {
     const interval = intervalMinutes * 60 * 1000;
     const trends = [];
 
-    for (let i = 0; i < 12; i++) { // 最近12个时间段
-      const endTime = now - (i * interval);
+    for (let i = 0; i < 12; i++) {
+      // 最近12个时间段
+      const endTime = now - i * interval;
       const startTime = endTime - interval;
-      
+
       const periodMetrics = this.renderMetrics.filter(
         m => m.timestamp >= startTime && m.timestamp < endTime
       );
@@ -229,15 +242,25 @@ export class MetricsCollector {
       trends.unshift({
         period: new Date(startTime).toISOString(),
         requests: periodMetrics.length,
-        averageTime: periodMetrics.length > 0
-          ? Math.round(periodMetrics.reduce((sum, m) => sum + m.duration, 0) / periodMetrics.length)
-          : 0,
-        successRate: periodMetrics.length > 0
-          ? ((periodMetrics.filter(m => m.success).length / periodMetrics.length) * 100).toFixed(1)
-          : '0',
-        cacheHitRate: periodMetrics.length > 0
-          ? ((periodMetrics.filter(m => m.fromCache).length / periodMetrics.length) * 100).toFixed(1)
-          : '0',
+        averageTime:
+          periodMetrics.length > 0
+            ? Math.round(
+                periodMetrics.reduce((sum, m) => sum + m.duration, 0) / periodMetrics.length
+              )
+            : 0,
+        successRate:
+          periodMetrics.length > 0
+            ? ((periodMetrics.filter(m => m.success).length / periodMetrics.length) * 100).toFixed(
+                1
+              )
+            : '0',
+        cacheHitRate:
+          periodMetrics.length > 0
+            ? (
+                (periodMetrics.filter(m => m.fromCache).length / periodMetrics.length) *
+                100
+              ).toFixed(1)
+            : '0',
       });
     }
 
@@ -246,7 +269,7 @@ export class MetricsCollector {
 
   private updateRenderStats(metrics: RenderMetrics): void {
     this.stats.totalRequests++;
-    
+
     if (metrics.success) {
       this.stats.successfulRenders++;
     } else {
@@ -328,7 +351,7 @@ export class MetricsCollector {
 
   private calculatePercentile(values: number[], percentile: number): number {
     if (values.length === 0) return 0;
-    
+
     const sorted = values.sort((a, b) => a - b);
     const index = Math.ceil((percentile / 100) * sorted.length) - 1;
     return sorted[index] || 0;
@@ -337,7 +360,7 @@ export class MetricsCollector {
   private getErrorAnalysis() {
     const errors = this.renderMetrics.filter(m => !m.success);
     const errorTypes = new Map<string, number>();
-    
+
     errors.forEach(error => {
       const type = error.error || 'Unknown';
       errorTypes.set(type, (errorTypes.get(type) || 0) + 1);
@@ -368,7 +391,7 @@ export class MetricsCollector {
   private calculateAverageCacheAge(): number {
     const withAge = this.cacheMetrics.filter(m => m.cacheAge !== undefined);
     if (withAge.length === 0) return 0;
-    
+
     const totalAge = withAge.reduce((sum, m) => sum + (m.cacheAge || 0), 0);
     return Math.round(totalAge / withAge.length / 1000); // 转换为秒
   }

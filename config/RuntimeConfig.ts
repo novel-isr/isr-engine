@@ -43,7 +43,7 @@ export class RuntimeConfigManager extends EventEmitter {
 
   constructor(options: RuntimeConfigOptions = {}) {
     super();
-    
+
     this.options = {
       configFile: './config.json',
       watchForChanges: true,
@@ -51,9 +51,9 @@ export class RuntimeConfigManager extends EventEmitter {
       refreshInterval: 60000, // 1分钟
       ...options,
     };
-    
+
     this.logger = new Logger(this.options.verbose);
-    
+
     if (this.options.schema) {
       this.schema = this.options.schema;
     }
@@ -64,35 +64,34 @@ export class RuntimeConfigManager extends EventEmitter {
    */
   async initialize(): Promise<void> {
     this.logger.info('初始化运行时配置管理器...');
-    
+
     try {
       // 加载配置文件
       if (this.options.configFile) {
         await this.loadConfigFile(this.options.configFile);
       }
-      
+
       // 加载环境变量
       this.loadEnvironmentVariables();
-      
+
       // 验证配置
       const validation = this.validateConfig();
       if (!validation.isValid) {
         this.logger.warn('配置验证失败:', validation.errors);
       }
-      
+
       // 启动文件监听
       if (this.options.watchForChanges && this.options.configFile) {
         this.startFileWatcher();
       }
-      
+
       // 启动远程配置
       if (this.options.enableRemoteConfig) {
         await this.startRemoteConfigRefresh();
       }
-      
+
       this.logger.info('运行时配置管理器初始化完成');
       this.emit('initialized', this.config);
-      
     } catch (error) {
       this.logger.error('配置管理器初始化失败:', error);
       throw error;
@@ -105,17 +104,17 @@ export class RuntimeConfigManager extends EventEmitter {
   private async loadConfigFile(configPath: string): Promise<void> {
     try {
       const fullPath = path.resolve(configPath);
-      
+
       if (!fs.existsSync(fullPath)) {
         this.logger.warn(`配置文件不存在: ${fullPath}`);
         return;
       }
-      
+
       const stats = fs.statSync(fullPath);
       const content = await fs.promises.readFile(fullPath, 'utf-8');
-      
+
       let fileConfig: Record<string, any>;
-      
+
       if (fullPath.endsWith('.json')) {
         fileConfig = JSON.parse(content);
       } else if (fullPath.endsWith('.js')) {
@@ -128,14 +127,13 @@ export class RuntimeConfigManager extends EventEmitter {
       } else {
         throw new Error(`不支持的配置文件格式: ${fullPath}`);
       }
-      
+
       // 合并配置
       this.config = { ...this.config, ...fileConfig };
       this.lastModified.set(fullPath, stats.mtime.getTime());
-      
+
       this.logger.debug(`已加载配置文件: ${fullPath}`);
       this.emit('fileLoaded', fullPath, fileConfig);
-      
     } catch (error) {
       this.logger.error(`加载配置文件失败: ${configPath}`, error);
       throw error;
@@ -148,14 +146,14 @@ export class RuntimeConfigManager extends EventEmitter {
   private loadEnvironmentVariables(): void {
     const envConfig: Record<string, any> = {};
     const prefix = 'NOVEL_ISR_';
-    
+
     for (const [key, value] of Object.entries(process.env)) {
       if (key.startsWith(prefix)) {
         const configKey = key.substring(prefix.length).toLowerCase().replace(/_/g, '.');
         envConfig[configKey] = this.parseEnvironmentValue(value!);
       }
     }
-    
+
     if (Object.keys(envConfig).length > 0) {
       this.config = { ...this.config, ...this.flattenObject(envConfig) };
       this.logger.debug(`已加载 ${Object.keys(envConfig).length} 个环境变量`);
@@ -185,17 +183,17 @@ export class RuntimeConfigManager extends EventEmitter {
    */
   private flattenObject(obj: Record<string, any>, prefix = ''): Record<string, any> {
     const result: Record<string, any> = {};
-    
+
     for (const [key, value] of Object.entries(obj)) {
       const newKey = prefix ? `${prefix}.${key}` : key;
-      
+
       if (typeof value === 'object' && value !== null && !Array.isArray(value)) {
         Object.assign(result, this.flattenObject(value, newKey));
       } else {
         result[newKey] = value;
       }
     }
-    
+
     return result;
   }
 
@@ -204,15 +202,15 @@ export class RuntimeConfigManager extends EventEmitter {
    */
   private startFileWatcher(): void {
     if (!this.options.configFile) return;
-    
+
     try {
       const configPath = path.resolve(this.options.configFile);
       const configDir = path.dirname(configPath);
-      
+
       const watcher = fs.watch(configDir, async (eventType, filename) => {
         if (filename && path.join(configDir, filename) === configPath) {
           this.logger.debug(`配置文件发生变化: ${eventType} - ${filename}`);
-          
+
           try {
             // 防抖处理
             await new Promise(resolve => setTimeout(resolve, 100));
@@ -223,10 +221,9 @@ export class RuntimeConfigManager extends EventEmitter {
           }
         }
       });
-      
+
       this.watchers.push(watcher);
       this.logger.debug('已启动配置文件监听');
-      
     } catch (error) {
       this.logger.error('启动配置文件监听失败:', error);
     }
@@ -240,10 +237,10 @@ export class RuntimeConfigManager extends EventEmitter {
       this.logger.warn('远程配置URL未设置');
       return;
     }
-    
+
     // 立即加载一次
     await this.loadRemoteConfig();
-    
+
     // 设置定时刷新
     if (this.options.refreshInterval && this.options.refreshInterval > 0) {
       this.refreshTimer = setInterval(async () => {
@@ -253,7 +250,7 @@ export class RuntimeConfigManager extends EventEmitter {
           this.logger.error('远程配置刷新失败:', error);
         }
       }, this.options.refreshInterval);
-      
+
       this.logger.debug(`已启动远程配置刷新，间隔: ${this.options.refreshInterval}ms`);
     }
   }
@@ -263,41 +260,40 @@ export class RuntimeConfigManager extends EventEmitter {
    */
   private async loadRemoteConfig(): Promise<void> {
     if (!this.options.remoteConfigUrl) return;
-    
+
     try {
       const fetch = (await import('node-fetch')).default;
       // 创建一个带超时的AbortController
       const controller = new AbortController();
       const timeoutId = setTimeout(() => controller.abort(), 10000);
-      
+
       const response = await fetch(this.options.remoteConfigUrl, {
         signal: controller.signal,
         headers: {
           'User-Agent': 'Novel-ISR-Engine/1.0',
         },
       });
-      
+
       clearTimeout(timeoutId);
-      
+
       if (!response.ok) {
         throw new Error(`HTTP ${response.status}: ${response.statusText}`);
       }
-      
-      const remoteConfig = await response.json() as Record<string, any>;
+
+      const remoteConfig = (await response.json()) as Record<string, any>;
       const oldConfig = { ...this.config };
-      
+
       // 合并远程配置
       this.config = { ...this.config, ...remoteConfig };
-      
+
       // 检查是否有变化
       const hasChanges = JSON.stringify(oldConfig) !== JSON.stringify(this.config);
-      
+
       if (hasChanges) {
         this.logger.info('远程配置已更新');
         this.emit('remoteConfigUpdated', remoteConfig, oldConfig);
         this.emit('configChanged', this.config, oldConfig);
       }
-      
     } catch (error) {
       this.logger.error('加载远程配置失败:', error);
       this.emit('remoteConfigError', error);
@@ -309,26 +305,25 @@ export class RuntimeConfigManager extends EventEmitter {
    */
   async reloadConfig(): Promise<void> {
     const oldConfig = { ...this.config };
-    
+
     try {
       // 重新加载配置文件
       if (this.options.configFile) {
         await this.loadConfigFile(this.options.configFile);
       }
-      
+
       // 重新加载环境变量
       this.loadEnvironmentVariables();
-      
+
       // 验证配置
       const validation = this.validateConfig();
       if (!validation.isValid) {
         this.logger.warn('配置重新加载后验证失败:', validation.errors);
       }
-      
+
       this.logger.info('配置已重新加载');
       this.emit('configReloaded', this.config, oldConfig);
       this.emit('configChanged', this.config, oldConfig);
-      
     } catch (error) {
       // 恢复旧配置
       this.config = oldConfig;
@@ -342,22 +337,22 @@ export class RuntimeConfigManager extends EventEmitter {
    */
   validateConfig(): { isValid: boolean; errors: string[] } {
     const errors: string[] = [];
-    
+
     for (const [key, schemaItem] of Object.entries(this.schema)) {
       const value = this.get(key);
-      
+
       // 检查必需字段
       if (schemaItem.required && (value === undefined || value === null)) {
         errors.push(`必需字段缺失: ${key}`);
         continue;
       }
-      
+
       // 如果值不存在且不是必需的，使用默认值
       if ((value === undefined || value === null) && schemaItem.default !== undefined) {
         this.set(key, schemaItem.default);
         continue;
       }
-      
+
       // 类型检查
       if (value !== undefined && value !== null) {
         const actualType = Array.isArray(value) ? 'array' : typeof value;
@@ -365,7 +360,7 @@ export class RuntimeConfigManager extends EventEmitter {
           errors.push(`字段类型错误: ${key} 应为 ${schemaItem.type}，实际为 ${actualType}`);
         }
       }
-      
+
       // 自定义验证
       if (schemaItem.validation && value !== undefined && value !== null) {
         try {
@@ -377,7 +372,7 @@ export class RuntimeConfigManager extends EventEmitter {
         }
       }
     }
-    
+
     return {
       isValid: errors.length === 0,
       errors,
@@ -390,7 +385,7 @@ export class RuntimeConfigManager extends EventEmitter {
   get<T = any>(key: string, defaultValue?: T): T {
     const keys = key.split('.');
     let value = this.config;
-    
+
     for (const k of keys) {
       if (value && typeof value === 'object' && k in value) {
         value = value[k];
@@ -398,7 +393,7 @@ export class RuntimeConfigManager extends EventEmitter {
         return defaultValue as T;
       }
     }
-    
+
     return value as T;
   }
 
@@ -409,17 +404,17 @@ export class RuntimeConfigManager extends EventEmitter {
     const keys = key.split('.');
     const lastKey = keys.pop()!;
     let target = this.config;
-    
+
     for (const k of keys) {
       if (!target[k] || typeof target[k] !== 'object') {
         target[k] = {};
       }
       target = target[k];
     }
-    
+
     const oldValue = target[lastKey];
     target[lastKey] = value;
-    
+
     this.emit('configValueChanged', key, value, oldValue);
   }
 
@@ -437,21 +432,21 @@ export class RuntimeConfigManager extends EventEmitter {
     const keys = key.split('.');
     const lastKey = keys.pop()!;
     let target = this.config;
-    
+
     for (const k of keys) {
       if (!target[k] || typeof target[k] !== 'object') {
         return false;
       }
       target = target[k];
     }
-    
+
     if (lastKey in target) {
       const oldValue = target[lastKey];
       delete target[lastKey];
       this.emit('configValueDeleted', key, oldValue);
       return true;
     }
-    
+
     return false;
   }
 
@@ -467,13 +462,13 @@ export class RuntimeConfigManager extends EventEmitter {
    */
   getSafeConfig(): Record<string, any> {
     const safeConfig = { ...this.config };
-    
+
     for (const [key, schemaItem] of Object.entries(this.schema)) {
       if (schemaItem.sensitive && this.has(key)) {
         this.maskSensitiveValue(safeConfig, key);
       }
     }
-    
+
     return safeConfig;
   }
 
@@ -484,17 +479,18 @@ export class RuntimeConfigManager extends EventEmitter {
     const keys = key.split('.');
     const lastKey = keys.pop()!;
     let target = obj;
-    
+
     for (const k of keys) {
       if (!target[k]) return;
       target = target[k];
     }
-    
+
     if (target[lastKey]) {
       const value = String(target[lastKey]);
-      target[lastKey] = value.length > 4 ? 
-        `${value.substring(0, 2)}${'*'.repeat(value.length - 4)}${value.substring(value.length - 2)}` :
-        '***';
+      target[lastKey] =
+        value.length > 4
+          ? `${value.substring(0, 2)}${'*'.repeat(value.length - 4)}${value.substring(value.length - 2)}`
+          : '***';
     }
   }
 
@@ -505,12 +501,11 @@ export class RuntimeConfigManager extends EventEmitter {
     try {
       const configToExport = safe ? this.getSafeConfig() : this.getAll();
       const content = JSON.stringify(configToExport, null, 2);
-      
+
       await fs.promises.mkdir(path.dirname(filePath), { recursive: true });
       await fs.promises.writeFile(filePath, content, 'utf-8');
-      
+
       this.logger.info(`配置已导出到: ${filePath}`);
-      
     } catch (error) {
       this.logger.error(`配置导出失败: ${filePath}`, error);
       throw error;
@@ -529,7 +524,7 @@ export class RuntimeConfigManager extends EventEmitter {
     const totalKeys = Object.keys(this.flattenObject(this.config)).length;
     const requiredKeys = Object.values(this.schema).filter(s => s.required).length;
     const sensitiveKeys = Object.values(this.schema).filter(s => s.sensitive).length;
-    
+
     return {
       totalKeys,
       requiredKeys,
@@ -543,22 +538,22 @@ export class RuntimeConfigManager extends EventEmitter {
    */
   async shutdown(): Promise<void> {
     this.logger.info('关闭运行时配置管理器...');
-    
+
     // 停止文件监听
     for (const watcher of this.watchers) {
       watcher.close();
     }
     this.watchers.length = 0;
-    
+
     // 停止远程配置刷新
     if (this.refreshTimer) {
       clearInterval(this.refreshTimer);
       this.refreshTimer = undefined;
     }
-    
+
     // 移除所有监听器
     this.removeAllListeners();
-    
+
     this.logger.info('运行时配置管理器已关闭');
   }
 }
@@ -569,7 +564,7 @@ export class RuntimeConfigManager extends EventEmitter {
 export class ConfigTemplateGenerator {
   static generateTemplate(schema: ConfigSchema): Record<string, any> {
     const template: Record<string, any> = {};
-    
+
     for (const [key, schemaItem] of Object.entries(schema)) {
       if (schemaItem.default !== undefined) {
         template[key] = schemaItem.default;
@@ -593,34 +588,33 @@ export class ConfigTemplateGenerator {
         }
       }
     }
-    
+
     return template;
   }
-  
+
   static generateDocumentation(schema: ConfigSchema): string {
     let doc = '# 配置文档\n\n';
-    
+
     for (const [key, schemaItem] of Object.entries(schema)) {
       doc += `## ${key}\n`;
       doc += `- **类型**: ${schemaItem.type}\n`;
       doc += `- **必需**: ${schemaItem.required ? '是' : '否'}\n`;
-      
+
       if (schemaItem.default !== undefined) {
         doc += `- **默认值**: \`${JSON.stringify(schemaItem.default)}\`\n`;
       }
-      
+
       if (schemaItem.description) {
         doc += `- **描述**: ${schemaItem.description}\n`;
       }
-      
+
       if (schemaItem.sensitive) {
         doc += `- **敏感信息**: 是\n`;
       }
-      
+
       doc += '\n';
     }
-    
+
     return doc;
   }
 }
-

@@ -91,10 +91,7 @@ export class CacheManager {
 
     // Load existing index
     try {
-      const indexContent = await fs.promises.readFile(
-        this.fsCache.indexPath,
-        'utf-8'
-      );
+      const indexContent = await fs.promises.readFile(this.fsCache.indexPath, 'utf-8');
       const indexData = JSON.parse(indexContent);
       this.fsCache.index = new Map(indexData);
     } catch {
@@ -110,9 +107,7 @@ export class CacheManager {
       try {
         redis = await import('redis');
       } catch {
-        throw new Error(
-          'Redis package not installed. Please install redis: npm install redis'
-        );
+        throw new Error('Redis package not installed. Please install redis: npm install redis');
       }
 
       this.redisClient = redis.createClient(this.config.redis || {});
@@ -314,9 +309,7 @@ export class CacheManager {
 
     if (currentSize > maxSize) {
       const evictCount = Math.floor(maxSize * 0.2); // Remove 20%
-      this.logger.debug(
-        `内存缓存超限 (${currentSize}/${maxSize})，准备清理 ${evictCount} 个条目`
-      );
+      this.logger.debug(`内存缓存超限 (${currentSize}/${maxSize})，准备清理 ${evictCount} 个条目`);
       this.evictOldestEntries(evictCount);
     }
 
@@ -369,10 +362,7 @@ export class CacheManager {
 
     try {
       const indexData = Array.from(this.fsCache.index.entries());
-      await fs.promises.writeFile(
-        this.fsCache.indexPath,
-        JSON.stringify(indexData, null, 2)
-      );
+      await fs.promises.writeFile(this.fsCache.indexPath, JSON.stringify(indexData, null, 2));
     } catch (error) {
       this.logger.error('Failed to save cache index:', error);
     }
@@ -461,20 +451,14 @@ export class CacheManager {
   getStats() {
     const hitRate =
       this.stats.hits + this.stats.misses > 0
-        ? (
-            (this.stats.hits / (this.stats.hits + this.stats.misses)) *
-            100
-          ).toFixed(2) + '%'
+        ? ((this.stats.hits / (this.stats.hits + this.stats.misses)) * 100).toFixed(2) + '%'
         : '0%';
 
     return {
       ...this.stats,
       hitRate,
       strategy: this.strategy,
-      size:
-        this.strategy === CacheStrategies.MEMORY
-          ? this.memoryCache.size
-          : 'N/A',
+      size: this.strategy === CacheStrategies.MEMORY ? this.memoryCache.size : 'N/A',
     };
   }
 

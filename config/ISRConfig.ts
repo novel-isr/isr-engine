@@ -16,8 +16,7 @@ export class ISRConfig {
 
   constructor(options: Record<string, any> = {}) {
     this.mode = options.mode || RenderModes.ISR;
-    this.fallbackStrategy =
-      options.fallbackStrategy || InternalStrategies.CLIENT;
+    this.fallbackStrategy = options.fallbackStrategy || InternalStrategies.CLIENT;
     this.cache = {
       strategy: options.cache?.strategy || CacheStrategies.MEMORY,
       ttl: options.cache?.ttl || 3600, // 1 hour

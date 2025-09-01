@@ -34,12 +34,7 @@ const [, , command, ...args] = process.argv;
 // 运行 CLI 主函数
 async function runCLI(): Promise<void> {
   // 处理帮助命令
-  if (
-    !command ||
-    command === '--help' ||
-    command === '-h' ||
-    command === 'help'
-  ) {
+  if (!command || command === '--help' || command === '-h' || command === 'help') {
     showHelp();
     return;
   }
@@ -89,10 +84,7 @@ async function runCLI(): Promise<void> {
         showHelp();
     }
   } catch (error) {
-    console.error(
-      '❌ 错误:',
-      error instanceof Error ? error.message : String(error)
-    );
+    console.error('❌ 错误:', error instanceof Error ? error.message : String(error));
     process.exit(1);
   }
 }
@@ -108,9 +100,7 @@ async function initializeProject(): Promise<void> {
   // 检查是否已有配置文件
   if (existsSync(configJsPath) || existsSync(configTsPath)) {
     console.log('⚠️  配置文件已存在，跳过生成');
-    console.log(
-      '   如需重新生成，请先删除现有的 ssr.config.js 或 ssr.config.ts'
-    );
+    console.log('   如需重新生成，请先删除现有的 ssr.config.js 或 ssr.config.ts');
     return;
   }
 
@@ -220,8 +210,7 @@ export default {
     if (existsSync(packageJsonPath)) {
       const packageJson = JSON.parse(readFileSync(packageJsonPath, 'utf8'));
       useTypeScript = !!(
-        packageJson.devDependencies?.typescript ||
-        packageJson.dependencies?.typescript
+        packageJson.devDependencies?.typescript || packageJson.dependencies?.typescript
       );
     }
 
@@ -238,10 +227,7 @@ export default {
     console.log('   npx novel-isr dev    # 启动开发服务器');
     console.log('   npx novel-isr build  # 构建生产版本\n');
   } catch (error) {
-    console.error(
-      '❌ 初始化失败:',
-      error instanceof Error ? error.message : String(error)
-    );
+    console.error('❌ 初始化失败:', error instanceof Error ? error.message : String(error));
     process.exit(1);
   }
 }
@@ -287,7 +273,7 @@ function showHelp(): void {
 }
 
 // 运行 CLI
-runCLI().catch((error) => {
+runCLI().catch(error => {
   console.error('❌ CLI 错误:', error);
   process.exit(1);
 });

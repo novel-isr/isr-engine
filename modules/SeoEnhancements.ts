@@ -75,12 +75,10 @@ export class SitemapGenerator {
    */
   addRoute(entry: SitemapEntry): void {
     this.routes.add(entry.url);
-    
+
     // 更新配置中的routes
-    const existingIndex = this.config.sitemap.routes.findIndex(
-      route => route.url === entry.url
-    );
-    
+    const existingIndex = this.config.sitemap.routes.findIndex(route => route.url === entry.url);
+
     if (existingIndex >= 0) {
       this.config.sitemap.routes[existingIndex] = entry;
     } else {
@@ -127,16 +125,16 @@ export class SitemapGenerator {
       // 这里需要实际解析路由配置文件
       // 由于路由配置可能是React组件，需要特殊处理
       const content = await fs.promises.readFile(configPath, 'utf-8');
-      
+
       // 简单的正则匹配路径（实际应用中可能需要更复杂的解析）
       const pathMatches = content.match(/path:\s*['"`]([^'"`]+)['"`]/g);
-      
+
       if (pathMatches) {
         for (const match of pathMatches) {
           const pathMatch = match.match(/['"`]([^'"`]+)['"`]/);
           if (pathMatch) {
             const routePath = pathMatch[1];
-            
+
             // 跳过动态路由和通配符
             if (!routePath.includes(':') && !routePath.includes('*')) {
               this.addRoute({
@@ -148,7 +146,7 @@ export class SitemapGenerator {
           }
         }
       }
-      
+
       this.logger.debug(`从 ${configPath} 发现了 ${pathMatches?.length || 0} 个路由`);
     } catch (error) {
       this.logger.error('解析路由配置失败:', error);
@@ -163,7 +161,7 @@ export class SitemapGenerator {
       throw new Error('Sitemap生成未启用');
     }
 
-    const stream = new SitemapStream({ 
+    const stream = new SitemapStream({
       hostname: this.config.baseUrl,
     });
 
@@ -180,10 +178,10 @@ export class SitemapGenerator {
     }
 
     stream.end();
-    
+
     const xmlBuffer = await streamToPromise(stream);
     const xmlString = xmlBuffer.toString();
-    
+
     this.logger.info(`生成sitemap，包含 ${this.config.sitemap.routes.length} 个URL`);
     return xmlString;
   }
@@ -199,16 +197,16 @@ export class SitemapGenerator {
 
     let xml = '<?xml version="1.0" encoding="UTF-8"?>\n';
     xml += '<sitemapindex xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n';
-    
+
     for (const entry of entries) {
       xml += '  <sitemap>\n';
       xml += `    <loc>${entry.url}</loc>\n`;
       xml += `    <lastmod>${entry.lastmod}</lastmod>\n`;
       xml += '  </sitemap>\n';
     }
-    
+
     xml += '</sitemapindex>\n';
-    
+
     return xml;
   }
 
@@ -218,11 +216,11 @@ export class SitemapGenerator {
   async saveSitemap(outputPath: string): Promise<void> {
     const xml = await this.generateSitemap();
     const fullPath = path.resolve(outputPath, this.config.sitemap.filename);
-    
+
     // 确保目录存在
     await fs.promises.mkdir(path.dirname(fullPath), { recursive: true });
     await fs.promises.writeFile(fullPath, xml, 'utf-8');
-    
+
     this.logger.info(`Sitemap已保存到: ${fullPath}`);
   }
 
@@ -231,7 +229,7 @@ export class SitemapGenerator {
    */
   async validateSitemap(): Promise<{ isValid: boolean; issues: string[] }> {
     const issues: string[] = [];
-    
+
     // 检查URL数量限制
     if (this.config.sitemap.routes.length > 50000) {
       issues.push('Sitemap包含超过50,000个URL，建议使用sitemap索引');
@@ -284,23 +282,23 @@ export class RobotsGenerator {
     // 添加用户代理规则
     for (const rule of this.config.robots.rules) {
       content += `User-agent: ${rule.userAgent}\n`;
-      
+
       if (rule.disallow) {
         for (const path of rule.disallow) {
           content += `Disallow: ${path}\n`;
         }
       }
-      
+
       if (rule.allow) {
         for (const path of rule.allow) {
           content += `Allow: ${path}\n`;
         }
       }
-      
+
       if (rule.crawlDelay) {
         content += `Crawl-delay: ${rule.crawlDelay}\n`;
       }
-      
+
       content += '\n';
     }
 
@@ -321,10 +319,10 @@ export class RobotsGenerator {
   async saveRobots(outputPath: string): Promise<void> {
     const content = this.generateRobots();
     const fullPath = path.resolve(outputPath, 'robots.txt');
-    
+
     await fs.promises.mkdir(path.dirname(fullPath), { recursive: true });
     await fs.promises.writeFile(fullPath, content, 'utf-8');
-    
+
     this.logger.info(`Robots.txt已保存到: ${fullPath}`);
   }
 }
@@ -374,7 +372,11 @@ export class RedirectManager {
     return url === pattern;
   }
 
-  private checkCanonicalization(url: string): { shouldRedirect: boolean; redirectTo?: string; status?: number } {
+  private checkCanonicalization(url: string): {
+    shouldRedirect: boolean;
+    redirectTo?: string;
+    status?: number;
+  } {
     if (!this.config.canonicalization.enabled) {
       return { shouldRedirect: false };
     }
@@ -382,7 +384,7 @@ export class RedirectManager {
     try {
       const urlObj = new URL(url, this.config.baseUrl);
       let modified = false;
-      
+
       // 处理尾部斜杠
       if (this.config.canonicalization.trailingSlash === 'add') {
         if (!urlObj.pathname.endsWith('/') && !path.extname(urlObj.pathname)) {
@@ -433,7 +435,7 @@ export class RedirectManager {
       status,
       permanent,
     });
-    
+
     this.logger.debug(`添加重定向规则: ${from} -> ${to} (${status})`);
   }
 
@@ -454,23 +456,23 @@ export class RedirectManager {
 
   private generateNginxConfig(): string {
     let config = '# Nginx redirects generated by Novel ISR Engine\n\n';
-    
+
     for (const redirect of this.config.redirects) {
       const permanent = redirect.status === 301 ? ' permanent' : '';
       config += `rewrite ^${this.escapeRegex(redirect.from)}$ ${redirect.to}${permanent};\n`;
     }
-    
+
     return config;
   }
 
   private generateApacheConfig(): string {
     let config = '# Apache redirects generated by Novel ISR Engine\n\n';
-    
+
     for (const redirect of this.config.redirects) {
       const flag = redirect.status === 301 ? 'R=301,L' : 'R,L';
       config += `RewriteRule ^${this.escapeRegex(redirect.from)}$ ${redirect.to} [${flag}]\n`;
     }
-    
+
     return config;
   }
 
@@ -492,7 +494,7 @@ export class SeoManager {
   constructor(config: SeoConfig, verbose = false) {
     this.config = config;
     this.logger = new Logger(verbose);
-    
+
     this.sitemapGenerator = new SitemapGenerator(config, verbose);
     this.robotsGenerator = new RobotsGenerator(config, verbose);
     this.redirectManager = new RedirectManager(config, verbose);
@@ -500,26 +502,26 @@ export class SeoManager {
 
   async initialize(): Promise<void> {
     this.logger.info('初始化SEO管理器...');
-    
+
     // 自动发现路由
     if (this.config.sitemap.autoDiscovery) {
       await this.sitemapGenerator.autoDiscoverRoutes();
     }
-    
+
     this.logger.info('SEO管理器初始化完成');
   }
 
   async generateAllFiles(outputPath: string): Promise<void> {
     const promises: Promise<void>[] = [];
-    
+
     if (this.config.sitemap.enabled) {
       promises.push(this.sitemapGenerator.saveSitemap(outputPath));
     }
-    
+
     if (this.config.robots.enabled) {
       promises.push(this.robotsGenerator.saveRobots(outputPath));
     }
-    
+
     await Promise.all(promises);
     this.logger.info('所有SEO文件生成完成');
   }
@@ -538,7 +540,7 @@ export class SeoManager {
 
   async validateSeoSetup(): Promise<{ isValid: boolean; issues: string[] }> {
     const issues: string[] = [];
-    
+
     // 验证基础配置
     if (!this.config.baseUrl) {
       issues.push('baseUrl未配置');
@@ -549,7 +551,7 @@ export class SeoManager {
         issues.push('baseUrl格式无效');
       }
     }
-    
+
     // 验证sitemap
     if (this.config.sitemap.enabled) {
       const sitemapValidation = await this.sitemapGenerator.validateSitemap();
@@ -557,7 +559,7 @@ export class SeoManager {
         issues.push(...sitemapValidation.issues);
       }
     }
-    
+
     return {
       isValid: issues.length === 0,
       issues,

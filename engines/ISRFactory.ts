@@ -123,16 +123,14 @@ export class NovelEngine {
         backgroundRevalidation: config.isr?.backgroundRevalidation !== false,
       },
       cache: {
-        strategy:
-          config.cache?.strategy || config.render?.cache?.strategy || 'memory',
+        strategy: config.cache?.strategy || config.render?.cache?.strategy || 'memory',
         ttl: config.cache?.ttl || config.render?.cache?.ttl || 3600,
       },
       seo: {
         enabled: config.seo?.enabled !== false,
         generateSitemap: config.seo?.generateSitemap !== false,
         generateRobots: config.seo?.generateRobots !== false,
-        baseUrl:
-          config.seo?.baseUrl || config.app?.domain || 'http://localhost:3000',
+        baseUrl: config.seo?.baseUrl || config.app?.domain || 'http://localhost:3000',
       },
       dev: {
         verbose: config.dev?.verbose !== false, // 默认开启详细日志
@@ -161,14 +159,11 @@ export class NovelEngine {
 
       isr: {
         revalidate: this.userConfig.isr?.revalidate || 3600,
-        backgroundRevalidation:
-          this.userConfig.isr?.backgroundRevalidation !== false,
+        backgroundRevalidation: this.userConfig.isr?.backgroundRevalidation !== false,
       },
 
       cache: {
-        strategy: isProduction
-          ? 'redis'
-          : this.userConfig.cache?.strategy || 'memory',
+        strategy: isProduction ? 'redis' : this.userConfig.cache?.strategy || 'memory',
         ttl: this.userConfig.cache?.ttl || 3600,
       },
 
@@ -206,9 +201,7 @@ export class NovelEngine {
     const { server } = this.userConfig;
 
     console.log('✅ Development server started!');
-    console.log(
-      `🌐 Local:    http://${server?.host || 'localhost'}:${server?.port || 3000}`
-    );
+    console.log(`🌐 Local:    http://${server?.host || 'localhost'}:${server?.port || 3000}`);
     console.log(
       `📊 Health:   http://${server?.host || 'localhost'}:${server?.port || 3000}/health`
     );
@@ -262,9 +255,7 @@ export class NovelEngine {
     const { server } = this.userConfig;
 
     console.log('✅ Production server started!');
-    console.log(
-      `🌐 Server: http://${server?.host || 'localhost'}:${server?.port || 3000}`
-    );
+    console.log(`🌐 Server: http://${server?.host || 'localhost'}:${server?.port || 3000}`);
 
     this.setupGracefulShutdown();
 
@@ -320,11 +311,7 @@ export class NovelEngine {
 
     const fs = await import('fs/promises');
     const deployPath = resolve(process.cwd(), 'dist/deployment-info.json');
-    await fs.writeFile(
-      deployPath,
-      JSON.stringify(deployInfo, null, 2),
-      'utf-8'
-    );
+    await fs.writeFile(deployPath, JSON.stringify(deployInfo, null, 2), 'utf-8');
 
     console.log('📄 Generated deployment-info.json');
   }

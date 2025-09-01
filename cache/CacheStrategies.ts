@@ -45,7 +45,7 @@ export class MultiTierCacheStrategy {
   constructor(config: any) {
     this.config = config;
     this.logger = new Logger(config.verbose);
-    
+
     // Initialize cache layers
     this.l1Cache = new CacheManager({
       ...config,
@@ -114,7 +114,11 @@ export class MultiTierCacheStrategy {
     return null;
   }
 
-  async set(key: string, value: any, options: { l1Ttl?: number; l2Ttl?: number; l3Ttl?: number } = {}) {
+  async set(
+    key: string,
+    value: any,
+    options: { l1Ttl?: number; l2Ttl?: number; l3Ttl?: number } = {}
+  ) {
     // Set in all available layers
     const promises: Promise<void>[] = [];
 
@@ -147,7 +151,7 @@ export class MultiTierCacheStrategy {
     const promises: Promise<void>[] = [this.l1Cache.clear()];
     if (this.l2Cache) promises.push(this.l2Cache.clear());
     if (this.l3Cache) promises.push(this.l3Cache.clear());
-    
+
     await Promise.all(promises);
     this.logger.info('All cache layers cleared');
   }
@@ -212,7 +216,7 @@ export class CacheKeyGenerator {
     // Add query parameters
     if (context.query) {
       const queryParams = new URLSearchParams();
-      
+
       for (const [key, value] of Object.entries(context.query)) {
         // Include specific query params
         if (this.config.includeQuery?.includes(key)) {
@@ -235,7 +239,7 @@ export class CacheKeyGenerator {
     }
 
     const key = parts.join('|');
-    
+
     // Ensure key is not too long
     if (key.length > 250) {
       return this.hashString(key);
@@ -248,7 +252,7 @@ export class CacheKeyGenerator {
     let hash = 0;
     for (let i = 0; i < str.length; i++) {
       const char = str.charCodeAt(i);
-      hash = ((hash << 5) - hash) + char;
+      hash = (hash << 5) - hash + char;
       hash = hash & hash; // Convert to 32bit integer
     }
     return Math.abs(hash).toString(36);
@@ -298,7 +302,7 @@ export class CacheWarmupManager {
     this.warmupQueue.sort((a, b) => b.priority - a.priority);
 
     await this.processWarmupQueue();
-    
+
     this.isWarming = false;
     this.logger.info('Cache warmup completed');
   }
@@ -308,10 +312,10 @@ export class CacheWarmupManager {
 
     for (const batch of batches) {
       const promises = batch.map(({ url }) => this.warmupRoute(url));
-      
+
       // Process batch with concurrency limit
       await this.processWithLimit(promises, this.config.maxConcurrent);
-      
+
       // Wait between batches
       if (this.config.interval > 0) {
         await new Promise(resolve => setTimeout(resolve, this.config.interval));
@@ -322,10 +326,10 @@ export class CacheWarmupManager {
   private async warmupRoute(url: string) {
     try {
       this.logger.debug(`Warming up route: ${url}`);
-      
+
       const keyGenerator = new CacheKeyGenerator();
       const cacheKey = keyGenerator.generateKey({ url, renderMode: 'isr' });
-      
+
       // Check if already cached
       const cached = await this.cache.get(cacheKey);
       if (cached) {
@@ -336,7 +340,7 @@ export class CacheWarmupManager {
       // Render and cache
       const result = await this.renderFunction(url);
       await this.cache.set(cacheKey, result);
-      
+
       this.logger.debug(`Successfully warmed up: ${url}`);
     } catch (error) {
       this.logger.error(`Failed to warm up route ${url}:`, error);
@@ -358,7 +362,7 @@ export class CacheWarmupManager {
       const p = promise.then(() => {
         executing.splice(executing.indexOf(p), 1);
       });
-      
+
       executing.push(p);
 
       if (executing.length >= limit) {
@@ -416,7 +420,7 @@ export class CachePrefetchManager {
 
     // Collect all related paths to prefetch
     const pathsToPrefetch = new Set<string>();
-    
+
     for (const rule of matchingRules) {
       for (const relatedPath of rule.relatedPaths) {
         // Support template substitution
@@ -436,7 +440,7 @@ export class CachePrefetchManager {
   private processPathTemplate(template: string, currentUrl: string): string | null {
     try {
       const url = new URL(currentUrl, 'http://localhost');
-      
+
       // Replace template variables
       return template
         .replace(':pathname', url.pathname)
@@ -466,11 +470,11 @@ export class CachePrefetchManager {
 
   private async processPrefetchBatch(paths: string[], maxAge: number) {
     const keyGenerator = new CacheKeyGenerator();
-    
+
     for (const path of paths) {
       try {
         const cacheKey = keyGenerator.generateKey({ url: path, renderMode: 'isr' });
-        
+
         // Check if already cached
         const cached = await this.cache.get(cacheKey);
         if (cached) {
@@ -480,7 +484,7 @@ export class CachePrefetchManager {
         }
 
         this.logger.debug(`Prefetching: ${path}`);
-        
+
         // Render and cache with custom TTL
         const result = await this.renderFunction(path);
         await this.cache.set(cacheKey, result, {
@@ -488,7 +492,7 @@ export class CachePrefetchManager {
           l2Ttl: maxAge * 2,
           l3Ttl: maxAge * 4,
         });
-        
+
         this.logger.debug(`Successfully prefetched: ${path}`);
       } catch (error) {
         this.logger.error(`Failed to prefetch ${path}:`, error);

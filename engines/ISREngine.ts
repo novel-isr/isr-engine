@@ -2,11 +2,7 @@ import { Server } from 'http';
 
 import compression from 'compression';
 import express, { Express, Request, Response } from 'express';
-import {
-  createServer as createViteServer,
-  ViteDevServer,
-  build as viteBuild,
-} from 'vite';
+import { createServer as createViteServer, ViteDevServer, build as viteBuild } from 'vite';
 
 import { RenderMode } from './RenderMode';
 import { CacheManager } from '../cache';
@@ -14,12 +10,7 @@ import { CSRFallback } from '../modules/CSRFallback';
 import { ISRModule } from '../modules/ISRModule';
 import { SEOModule } from '../modules/SEOModule';
 import { SSGGenerator } from '../modules/SSGGenerator';
-import {
-  NovelISRConfig,
-  RenderResult,
-  RenderContext,
-  RenderMeta,
-} from '../types';
+import { NovelISRConfig, RenderResult, RenderContext, RenderMeta } from '../types';
 import { Logger } from '../utils/Logger';
 import { MetricsCollector } from '../utils/MetricsCollector';
 import { CacheCleanup } from '../utils/CacheCleanup';
@@ -59,7 +50,7 @@ export default class ISREngine {
 
     // 初始化模块
     this.csrFallback = new CSRFallback(config);
-    
+
     // 初始化 SSG 生成器
     const ssgConfig = {
       routes: config.ssg?.routes || ['/'],
@@ -76,7 +67,7 @@ export default class ISREngine {
       },
     };
     this.ssgGenerator = new SSGGenerator(ssgConfig, config.dev?.verbose);
-    
+
     this.isrModule = new ISRModule(config);
     this.seoModule = new SEOModule(config.seo || {});
 
@@ -113,12 +104,12 @@ export default class ISREngine {
         try {
           await this.initializeViteServer();
           this.logger.debug('Vite 服务器初始化成功');
-          
+
           // 将 Vite 服务器实例传递给 ISR 模块
           if (this.viteServer) {
             (this.isrModule as any).setViteServer(this.viteServer);
             (this.isrModule as any).setMetricsCollector(this.metrics);
-            
+
             // 为SSG生成器设置渲染函数
             const renderFunction = async (url: string, context: any) => {
               return await this.renderWithVite(url, context);
@@ -127,10 +118,7 @@ export default class ISREngine {
             this.logger.debug('✅ SSG生成器: 渲染函数已设置');
           }
         } catch (error) {
-          this.logger.error(
-            'Vite 服务器初始化失败，将使用生产模式渲染:',
-            error
-          );
+          this.logger.error('Vite 服务器初始化失败，将使用生产模式渲染:', error);
           // 在开发模式下 Vite 失败时，不抛出错误，而是降级到生产模式渲染
         }
       }
@@ -149,7 +137,9 @@ export default class ISREngine {
       if (hasSSGRoutes) {
         try {
           const results = await this.ssgGenerator.generateAll();
-          this.logger.debug(`静态页面预生成完成: ${results.successful} 成功, ${results.failed} 失败`);
+          this.logger.debug(
+            `静态页面预生成完成: ${results.successful} 成功, ${results.failed} 失败`
+          );
         } catch (error) {
           this.logger.error('静态页面预生成失败:', error);
           // 在开发模式下，SSG失败不应该阻止引擎启动
@@ -170,15 +160,12 @@ export default class ISREngine {
     }
   }
 
-  async render(
-    url: string,
-    context: RenderContext = {}
-  ): Promise<RenderResult> {
+  async render(url: string, context: RenderContext = {}): Promise<RenderResult> {
     this.stats.requests++;
     const startTime = Date.now();
     const renderMode = context.renderMode || 'isr';
     const strategy = context.strategy || 'auto';
-    
+
     // 开始指标收集
     const metricsId = this.metrics.startRender(url, renderMode, strategy);
 
@@ -187,7 +174,7 @@ export default class ISREngine {
 
       // Check cache first (但SSR模式应该跳过缓存)
       const shouldUseCache = context.renderMode !== 'ssr' && context.strategy !== 'server';
-      
+
       if (shouldUseCache) {
         const cacheKey = this.generateCacheKey(url, context);
         const cached = await this.cache.get(cacheKey);
@@ -215,18 +202,18 @@ export default class ISREngine {
 
       this.stats.ssrSuccess++;
       const renderTime = Date.now() - startTime;
-      
+
       // 添加渲染时间到结果元数据
       if (result.meta) {
         result.meta.renderTime = renderTime;
       }
-      
+
       // 记录成功的渲染指标
       this.metrics.endRender(
         metricsId,
         url,
-        result.meta.renderMode as any || renderMode as any,
-        result.meta.strategy as any || strategy as any,
+        (result.meta.renderMode as any) || (renderMode as any),
+        (result.meta.strategy as any) || (strategy as any),
         startTime,
         true, // success
         result.statusCode || 200,
@@ -236,10 +223,8 @@ export default class ISREngine {
         result.meta.cacheAge,
         context.userAgent
       );
-      
-      this.logger.debug(
-        `Rendered ${url} in ${renderTime}ms (strategy: ${result.meta.strategy})`
-      );
+
+      this.logger.debug(`Rendered ${url} in ${renderTime}ms (strategy: ${result.meta.strategy})`);
 
       return result;
     } catch (error) {
@@ -275,10 +260,7 @@ export default class ISREngine {
    * Enterprise automatic fallback rendering
    * Handles ISR → SSR → CSR fallback chain transparently
    */
-  async renderWithFallback(
-    url: string,
-    context: RenderContext
-  ): Promise<RenderResult> {
+  async renderWithFallback(url: string, context: RenderContext): Promise<RenderResult> {
     let fallbackChain = this.renderMode.getFallbackChain(url);
     let lastError = null;
 
@@ -298,14 +280,15 @@ export default class ISREngine {
 
     for (const strategy of fallbackChain) {
       try {
-        const strategyText = {
-          'static': 'SSG静态文件',
-          'cached': 'ISR缓存',
-          'regenerate': 'ISR重新生成',
-          'server': 'SSR实时渲染',
-          'client': 'CSR客户端渲染'
-        }[strategy] || strategy;
-        
+        const strategyText =
+          {
+            static: 'SSG静态文件',
+            cached: 'ISR缓存',
+            regenerate: 'ISR重新生成',
+            server: 'SSR实时渲染',
+            client: 'CSR客户端渲染',
+          }[strategy] || strategy;
+
         this.logger.debug(`🔄 正在尝试策略: ${strategyText} (${strategy}) - ${url}`);
         console.log(`🎯 ISR引擎策略: ${strategyText} | 路径: ${url}`);
 
@@ -331,18 +314,15 @@ export default class ISREngine {
               ...context,
               renderMode: 'isr',
               strategy: 'regenerate',
-              viteServer:
-                process.env.NODE_ENV !== 'production'
-                  ? this.viteServer
-                  : undefined,
+              viteServer: process.env.NODE_ENV !== 'production' ? this.viteServer : undefined,
             };
             result = await this.isrModule.regenerate(url, isrContext);
             break;
           case 'server':
             console.log('⚡ 执行 SSR 实时服务端渲染...');
-            result = await this.renderServer(url, { 
-              ...context, 
-              renderMode: 'ssr', 
+            result = await this.renderServer(url, {
+              ...context,
+              renderMode: 'ssr',
               strategy: 'server',
               // ISR引擎统一传递完整上下文
               fallbackUsed: fallbackChain.indexOf(strategy) > 0,
@@ -350,7 +330,11 @@ export default class ISREngine {
             break;
           case 'client':
             console.log('🌐 降级到 CSR 客户端渲染...');
-            result = await this.renderCSR(url, { ...context, renderMode: 'csr', strategy: 'client' });
+            result = await this.renderCSR(url, {
+              ...context,
+              renderMode: 'csr',
+              strategy: 'client',
+            });
             break;
           default:
             throw new Error(`Unknown strategy: ${strategy}`);
@@ -360,9 +344,12 @@ export default class ISREngine {
         if (result && 'meta' in result && result.meta) {
           result.meta.strategy = strategy;
           result.meta.fallbackUsed = fallbackChain.indexOf(strategy) > 0;
-          
+
           // 补充完整的上下文信息，供客户端使用
-          result.meta.renderMode = result.meta.renderMode || context.renderMode || this.getRenderModeFromStrategy(strategy);
+          result.meta.renderMode =
+            result.meta.renderMode ||
+            context.renderMode ||
+            this.getRenderModeFromStrategy(strategy);
           result.meta.forceMode = context.forceMode;
           result.meta.forceFallback = context.forceFallback;
           result.meta.renderUrl = url;
@@ -370,19 +357,24 @@ export default class ISREngine {
           result.meta.bypassCache = context.bypassCache;
         }
 
-        console.log(`✅ 策略成功: ${strategyText} | 路径: ${url} | 是否降级: ${fallbackChain.indexOf(strategy) > 0 ? '是' : '否'}`);
+        console.log(
+          `✅ 策略成功: ${strategyText} | 路径: ${url} | 是否降级: ${fallbackChain.indexOf(strategy) > 0 ? '是' : '否'}`
+        );
         return result as RenderResult;
       } catch (error) {
         lastError = error;
-        const strategyText = {
-          'static': 'SSG静态文件',
-          'cached': 'ISR缓存',
-          'regenerate': 'ISR重新生成',
-          'server': 'SSR实时渲染',
-          'client': 'CSR客户端渲染'
-        }[strategy] || strategy;
-        
-        console.log(`❌ 策略失败: ${strategyText} | 路径: ${url} | 错误: ${(error as any)?.message || error}`);
+        const strategyText =
+          {
+            static: 'SSG静态文件',
+            cached: 'ISR缓存',
+            regenerate: 'ISR重新生成',
+            server: 'SSR实时渲染',
+            client: 'CSR客户端渲染',
+          }[strategy] || strategy;
+
+        console.log(
+          `❌ 策略失败: ${strategyText} | 路径: ${url} | 错误: ${(error as any)?.message || error}`
+        );
         this.logger.warn(
           `Strategy ${strategy} failed for ${url}: ${(error as any)?.message || error}`
         );
@@ -402,19 +394,18 @@ export default class ISREngine {
     throw new Error('All rendering strategies failed');
   }
 
-  async renderStatic(
-    url: string,
-    context: RenderContext
-  ): Promise<RenderResult> {
+  async renderStatic(url: string, context: RenderContext): Promise<RenderResult> {
     try {
       const cleanUrl = url.split('?')[0];
       console.log(`📄 SSG引擎: 尝试提供静态页面 - ${cleanUrl}, forceMode: ${context.forceMode}`);
-      
+
       // 传递完整的 context 给 SSGGenerator，确保 forceMode 等参数能正确传递
       const result = await this.ssgGenerator.generateOnDemandWithContext(cleanUrl, context);
-      
-      console.log(`✅ SSG引擎: 页面已提供 - ${cleanUrl} (来自${result.fromCache ? '缓存' : '新生成'})`);
-      
+
+      console.log(
+        `✅ SSG引擎: 页面已提供 - ${cleanUrl} (来自${result.fromCache ? '缓存' : '新生成'})`
+      );
+
       return {
         success: result.success,
         html: result.html,
@@ -476,10 +467,7 @@ export default class ISREngine {
     }
   }
 
-  createRenderResult(
-    data: Partial<RenderResult>,
-    meta: Partial<RenderMeta> = {}
-  ): RenderResult {
+  createRenderResult(data: Partial<RenderResult>, meta: Partial<RenderMeta> = {}): RenderResult {
     return {
       success: data.success !== undefined ? data.success : !meta.error,
       html: data.html || '',
@@ -555,7 +543,7 @@ export default class ISREngine {
   private hasSSGRoutes(): boolean {
     if (!this.config.routes) return false;
 
-    return Object.values(this.config.routes).some((mode) => mode === 'ssg');
+    return Object.values(this.config.routes).some(mode => mode === 'ssg');
   }
 
   /**
@@ -607,13 +595,11 @@ export default class ISREngine {
       ...this.stats,
       cacheHitRate:
         this.stats.requests > 0
-          ? ((this.stats.cacheHits / this.stats.requests) * 100).toFixed(2) +
-            '%'
+          ? ((this.stats.cacheHits / this.stats.requests) * 100).toFixed(2) + '%'
           : '0%',
       successRate:
         this.stats.requests > 0
-          ? ((this.stats.ssrSuccess / this.stats.requests) * 100).toFixed(2) +
-            '%'
+          ? ((this.stats.ssrSuccess / this.stats.requests) * 100).toFixed(2) + '%'
           : '0%',
     };
   }
@@ -631,12 +617,8 @@ export default class ISREngine {
       // 检查是否存在 vite 配置文件
       const fs = await import('fs');
       const path = await import('path');
-      const configFiles = [
-        'vite.config.ts',
-        'vite.config.js',
-        'vite.config.mjs',
-      ];
-      const hasViteConfig = configFiles.some((file) =>
+      const configFiles = ['vite.config.ts', 'vite.config.js', 'vite.config.mjs'];
+      const hasViteConfig = configFiles.some(file =>
         fs.existsSync(path.resolve(projectRoot, file))
       );
 
@@ -646,7 +628,7 @@ export default class ISREngine {
 
       // 检查是否存在统一入口文件
       const entryPath = path.resolve(projectRoot, 'src/entry.tsx');
-      
+
       if (fs.existsSync(entryPath)) {
         this.logger.info(`✅ 使用统一入口文件: ${entryPath}`);
       } else {
@@ -672,7 +654,7 @@ export default class ISREngine {
         clearScreen: false,
         logLevel: this.config.dev?.verbose ? 'info' : 'warn',
       });
-      
+
       // 将 Vite 服务器实例保存到全局变量，供 SSG 模块使用
       (global as any).__viteServer = this.viteServer;
 
@@ -705,7 +687,7 @@ export default class ISREngine {
     try {
       // 加载统一入口文件
       const entryModule = await this.viteServer.ssrLoadModule('/src/entry.tsx');
-      
+
       if (entryModule.renderServer) {
         return { render: entryModule.renderServer };
       } else if (entryModule.render) {
@@ -761,10 +743,7 @@ export default class ISREngine {
   /**
    * 渲染服务端 (使用 Vite)
    */
-  async renderServer(
-    url: string,
-    context: RenderContext
-  ): Promise<RenderResult> {
+  async renderServer(url: string, context: RenderContext): Promise<RenderResult> {
     try {
       let renderModule;
 
@@ -777,9 +756,7 @@ export default class ISREngine {
           renderModule = { render };
         } catch (error) {
           this.logger.error('加载服务端入口文件失败:', error);
-          throw new Error(
-            `服务端入口文件加载失败: ${(error as Error).message}`
-          );
+          throw new Error(`服务端入口文件加载失败: ${(error as Error).message}`);
         }
       } else {
         // 开发模式：使用 Vite 热重载
@@ -855,7 +832,7 @@ export default class ISREngine {
         resolve(this.httpServer!);
       });
 
-      this.httpServer.on('error', (error) => {
+      this.httpServer.on('error', error => {
         this.logger.error('服务器启动失败:', error);
         reject(error);
       });
@@ -919,12 +896,12 @@ export default class ISREngine {
     this.expressApp.get('/metrics', (req: Request, res: Response) => {
       const format = req.query.format as string;
       const detailed = req.query.detailed === 'true';
-      
+
       if (detailed) {
         res.json(this.metrics.getDetailedReport());
       } else {
         const stats = this.metrics.getStats();
-        
+
         if (format === 'prometheus') {
           // Prometheus格式输出
           res.set('Content-Type', 'text/plain');
@@ -948,8 +925,6 @@ export default class ISREngine {
         res.json({ message: '指标已重置', timestamp: new Date().toISOString() });
       });
     }
-
-
 
     // 统计信息端点
     this.expressApp.get('/ssr-stats', (req: Request, res: Response) => {
@@ -990,20 +965,17 @@ export default class ISREngine {
     });
 
     // 清理缓存端点
-    this.expressApp.post(
-      '/cache/clear',
-      async (req: Request, res: Response) => {
-        try {
-          await this.cache.clear();
-          res.json({ success: true, message: '缓存已清理' });
-        } catch (error) {
-          res.status(500).json({
-            success: false,
-            error: (error as Error).message,
-          });
-        }
+    this.expressApp.post('/cache/clear', async (req: Request, res: Response) => {
+      try {
+        await this.cache.clear();
+        res.json({ success: true, message: '缓存已清理' });
+      } catch (error) {
+        res.status(500).json({
+          success: false,
+          error: (error as Error).message,
+        });
       }
-    );
+    });
 
     // 主要的 ISR 路由处理器
     this.expressApp.get('*', async (req: Request, res: Response) => {
@@ -1020,7 +992,9 @@ export default class ISREngine {
         const forceMode = req.query.mode as string;
         const forceFallback = req.query.fallback as string;
 
-        console.log(`🌐 请求处理: 原始URL=${url}, 清理URL=${cleanUrl}, 强制模式=${forceMode}, 强制策略=${forceFallback}`);
+        console.log(
+          `🌐 请求处理: 原始URL=${url}, 清理URL=${cleanUrl}, 强制模式=${forceMode}, 强制策略=${forceFallback}`
+        );
 
         const context: RenderContext = {
           userAgent: req.get('User-Agent'),
@@ -1031,7 +1005,7 @@ export default class ISREngine {
           forceMode, // 强制渲染模式
           forceFallback, // 强制降级策略
           originalUrl: url, // 保存原始 URL
-          cleanUrl: cleanUrl, // 保存清理后的 URL
+          cleanUrl, // 保存清理后的 URL
         };
 
         // 使用清理后的 URL 进行渲染，但保留原始 URL 用于日志和调试
@@ -1060,7 +1034,10 @@ export default class ISREngine {
                 res.setHeader('X-Cache-Type', 'ISR-Cache');
                 res.setHeader('X-Cache-Status', result.meta.fromCache ? 'HIT' : 'REGENERATED');
                 if (result.meta.cacheAge) {
-                  res.setHeader('X-Cache-Age', Math.floor(result.meta.cacheAge / 1000).toString() + 's');
+                  res.setHeader(
+                    'X-Cache-Age',
+                    Math.floor(result.meta.cacheAge / 1000).toString() + 's'
+                  );
                 }
                 break;
               case 'regenerate':
@@ -1193,7 +1170,7 @@ isr_render_errors_total ${stats.renderErrors} ${timestamp}
       // 加载统一入口文件
       this.logger.debug(`正在加载统一入口文件进行SSG渲染: ${url}`);
       const entryModule = await this.viteServer.ssrLoadModule('/src/entry.tsx');
-      
+
       if (!entryModule.renderServer) {
         throw new Error('统一入口文件缺少 renderServer 导出函数');
       }
@@ -1223,9 +1200,7 @@ isr_render_errors_total ${stats.renderErrors} ${timestamp}
     }
 
     // 内置管理端点
-    if (url.startsWith('/health') || 
-        url.startsWith('/metrics') || 
-        url.startsWith('/ssr-stats')) {
+    if (url.startsWith('/health') || url.startsWith('/metrics') || url.startsWith('/ssr-stats')) {
       return true;
     }
 
@@ -1257,17 +1232,15 @@ isr_render_errors_total ${stats.renderErrors} ${timestamp}
       '.xml',
     ];
 
-    return staticExtensions.some((ext) => url.endsWith(ext));
+    return staticExtensions.some(ext => url.endsWith(ext));
   }
-
-
 
   async shutdown(): Promise<void> {
     this.logger.info('正在关闭 ISR 引擎...');
 
     // 关闭 HTTP 服务器
     if (this.httpServer) {
-      await new Promise<void>((resolve) => {
+      await new Promise<void>(resolve => {
         this.httpServer!.close(() => {
           this.logger.info('HTTP 服务器已关闭');
           resolve();

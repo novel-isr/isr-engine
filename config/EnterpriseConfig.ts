@@ -1,9 +1,4 @@
-import {
-  RenderModes,
-  RenderModeType,
-  NovelISRConfig,
-  EnterpriseConfigOptions,
-} from '../types';
+import { RenderModes, RenderModeType, NovelISRConfig, EnterpriseConfigOptions } from '../types';
 
 /**
  * Enterprise ISR Configuration
@@ -38,9 +33,7 @@ export class EnterpriseConfig {
   configureRoutes(routes: Record<string, RenderModeType>) {
     for (const [pattern, mode] of Object.entries(routes)) {
       if (!Object.values(RenderModes).includes(mode as RenderModeType)) {
-        throw new Error(
-          `Invalid mode '${mode}' for route '${pattern}'. Use 'ssg' or 'isr'.`
-        );
+        throw new Error(`Invalid mode '${mode}' for route '${pattern}'. Use 'ssg' or 'isr'.`);
       }
       this.routes.set(pattern, mode as RenderModeType);
     }
@@ -77,9 +70,7 @@ export class EnterpriseConfig {
 
     if (pattern.includes('[') && pattern.includes(']')) {
       // Convert Next.js style patterns to regex
-      const regexPattern = pattern
-        .replace(/\[([^\]]+)\]/g, '([^/]+)')
-        .replace(/\//g, '\\/');
+      const regexPattern = pattern.replace(/\[([^\]]+)\]/g, '([^/]+)').replace(/\//g, '\\/');
 
       const regex = new RegExp(`^${regexPattern}$`);
       return regex.test(path);

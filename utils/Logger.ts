@@ -42,7 +42,6 @@ export class Logger {
   }
 
   setLevel(level: string | number) {
-    this.currentLevel =
-      typeof level === 'string' ? this.levels[level.toUpperCase()] : level;
+    this.currentLevel = typeof level === 'string' ? this.levels[level.toUpperCase()] : level;
   }
 }

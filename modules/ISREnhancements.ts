@@ -71,7 +71,7 @@ export class ISRQueue extends EventEmitter {
     if (this.queue.length >= this.maxQueueSize) {
       this.logger.warn(`ISR队列已满，丢弃低优先级任务: ${item.url}`);
       this.evictLowPriorityItems();
-      
+
       if (this.queue.length >= this.maxQueueSize) {
         return false; // 仍然满，拒绝任务
       }
@@ -96,10 +96,10 @@ export class ISRQueue extends EventEmitter {
 
     this.queue.push(queueItem);
     this.queue.sort((a, b) => b.priority - a.priority); // 按优先级排序
-    
+
     this.metrics.queueLength = this.queue.length;
     this.emit('enqueue', queueItem);
-    
+
     if (!this.processing) {
       this.startProcessing();
     }
@@ -112,14 +112,14 @@ export class ISRQueue extends EventEmitter {
     const evictCount = Math.ceil(this.queue.length * 0.1);
     this.queue.sort((a, b) => a.priority - b.priority); // 升序，低优先级在前
     const evicted = this.queue.splice(0, evictCount);
-    
+
     this.logger.debug(`清理${evicted.length}个低优先级ISR任务`);
     evicted.forEach(item => this.emit('evicted', item));
   }
 
   private async startProcessing(): Promise<void> {
     if (this.processing) return;
-    
+
     this.processing = true;
     this.logger.debug('开始处理ISR队列');
 
@@ -129,7 +129,7 @@ export class ISRQueue extends EventEmitter {
 
       this.metrics.queueLength = this.queue.length;
       this.currentJobs++;
-      
+
       // 异步处理任务
       this.processItem(item).finally(() => {
         this.currentJobs--;
@@ -149,10 +149,10 @@ export class ISRQueue extends EventEmitter {
 
   private async processItem(item: ISRQueueItem): Promise<void> {
     const startTime = Date.now();
-    
+
     try {
       this.logger.debug(`处理ISR任务: ${item.url} (优先级: ${item.priority})`);
-      
+
       // 检查任务是否过期
       if (item.deadline && Date.now() > item.deadline) {
         this.logger.warn(`ISR任务已过期，跳过: ${item.url}`);
@@ -162,7 +162,7 @@ export class ISRQueue extends EventEmitter {
 
       this.metrics.backgroundJobs++;
       this.emit('processing', item);
-      
+
       // 这里应该调用实际的ISR重新生成逻辑
       // 由于ISRModule的regenerate方法是私有的，我们通过事件系统调用
       await new Promise((resolve, reject) => {
@@ -171,26 +171,27 @@ export class ISRQueue extends EventEmitter {
 
       const processingTime = Date.now() - startTime;
       this.updateMetrics(processingTime, true);
-      
+
       this.logger.debug(`ISR任务完成: ${item.url} (耗时: ${processingTime}ms)`);
       this.emit('completed', item, processingTime);
-      
     } catch (error) {
       const processingTime = Date.now() - startTime;
       this.updateMetrics(processingTime, false);
-      
+
       this.logger.error(`ISR任务失败: ${item.url}`, error);
-      
+
       // 重试逻辑
       if (item.retryCount < item.maxRetries) {
         item.retryCount++;
         item.priority = Math.max(1, item.priority - 1); // 降低优先级
-        
+
         const retryDelay = Math.min(1000 * Math.pow(2, item.retryCount), 60000); // 指数退避，最大60秒
         setTimeout(() => {
           this.queue.push(item);
           this.queue.sort((a, b) => b.priority - a.priority);
-          this.logger.debug(`ISR任务将重试: ${item.url} (第${item.retryCount}/${item.maxRetries}次)`);
+          this.logger.debug(
+            `ISR任务将重试: ${item.url} (第${item.retryCount}/${item.maxRetries}次)`
+          );
         }, retryDelay);
       } else {
         this.emit('failed', item, error);
@@ -201,12 +202,12 @@ export class ISRQueue extends EventEmitter {
   private updateMetrics(processingTime: number, success: boolean): void {
     this.metrics.regenerations++;
     this.metrics.lastActivity = Date.now();
-    
+
     // 更新平均处理时间（简单移动平均）
     const alpha = 0.1; // 平滑因子
-    this.metrics.avgProcessingTime = 
+    this.metrics.avgProcessingTime =
       this.metrics.avgProcessingTime * (1 - alpha) + processingTime * alpha;
-    
+
     // 更新错误率
     if (!success) {
       this.metrics.errorRate = Math.min(this.metrics.errorRate * 0.95 + 0.05, 1.0);
@@ -324,7 +325,9 @@ export class ISRResourceMonitor {
 
       // 检查阈值
       if (heapUsedMB > this.config.maxMemoryUsage) {
-        this.logger.warn(`内存使用过高: ${Math.round(heapUsedMB)}MB > ${this.config.maxMemoryUsage}MB`);
+        this.logger.warn(
+          `内存使用过高: ${Math.round(heapUsedMB)}MB > ${this.config.maxMemoryUsage}MB`
+        );
         this.triggerCleanup('memory');
       }
 
@@ -332,7 +335,6 @@ export class ISRResourceMonitor {
         this.logger.warn(`磁盘使用过高: ${diskUsage.usage}% > ${this.config.maxDiskUsage}%`);
         this.triggerCleanup('disk');
       }
-
     } catch (error) {
       this.logger.error('资源检查失败:', error);
     }
@@ -342,11 +344,11 @@ export class ISRResourceMonitor {
     try {
       const fs = await import('fs');
       const stats = await fs.promises.statfs(process.cwd());
-      
+
       const total = stats.blocks * stats.bsize;
       const available = stats.bavail * stats.bsize;
       const used = total - available;
-      
+
       return {
         usage: Math.round((used / total) * 100),
         available: Math.round(available / 1024 / 1024 / 1024), // GB
@@ -360,13 +362,13 @@ export class ISRResourceMonitor {
 
   private triggerCleanup(reason: string): void {
     this.logger.info(`触发资源清理，原因: ${reason}`);
-    
+
     // 触发垃圾回收
     if (global.gc) {
       global.gc();
       this.logger.debug('强制垃圾回收');
     }
-    
+
     // 发送事件让其他组件处理清理
     (process as any).emit('isr:resource-pressure', {
       reason,
@@ -443,7 +445,7 @@ export class ISRHealthChecker {
 
   async performHealthCheck(): Promise<boolean> {
     const health = await this.getHealthStatus();
-    
+
     if (health.status === 'unhealthy') {
       this.logger.error('ISR引擎健康状况不佳:', {
         status: health.status,

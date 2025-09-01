@@ -45,7 +45,7 @@ export default defineConfig({
       output: {
         preserveModules: true,
         preserveModulesRoot: '.',
-        entryFileNames: (chunkInfo) => {
+        entryFileNames: chunkInfo => {
           return `${chunkInfo.name}.js`;
         },
       },

@@ -16,7 +16,7 @@ export class CacheCleanup {
   private static async safeClearCacheRoot(): Promise<void> {
     try {
       const fullPath = path.resolve(process.cwd(), this.CACHE_ROOT_DIR);
-      
+
       // 安全检查：确保路径包含预期的缓存目录名
       if (!fullPath.includes('.isr-hyou')) {
         console.warn(`⚠️ 跳过清理可疑路径: ${fullPath}`);

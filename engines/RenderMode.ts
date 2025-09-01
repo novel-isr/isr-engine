@@ -12,9 +12,7 @@ export class RenderMode {
   constructor(mode: string, config: Record<string, any>) {
     // Validate mode - only allow SSG or ISR
     if (!Object.values(RenderModes).includes(mode as any)) {
-      throw new Error(
-        `Invalid render mode: ${mode}. Only 'ssg' and 'isr' are supported.`
-      );
+      throw new Error(`Invalid render mode: ${mode}. Only 'ssg' and 'isr' are supported.`);
     }
 
     this.mode = mode;
@@ -54,9 +52,7 @@ export class RenderMode {
 
     if (this.isISR()) {
       // Check if we should try cache first or regenerate
-      return this.shouldTryCache(route)
-        ? InternalStrategies.CACHED
-        : InternalStrategies.REGENERATE;
+      return this.shouldTryCache(route) ? InternalStrategies.CACHED : InternalStrategies.REGENERATE;
     }
 
     // Default to ISR cached strategy

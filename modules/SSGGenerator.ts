@@ -35,7 +35,8 @@ export interface SSGGenerationContext {
 export class SSGGenerator {
   private config: SSGConfig;
   private logger: Logger;
-  private generatedPages: Map<string, { path: string; timestamp: number; size: number }> = new Map();
+  private generatedPages: Map<string, { path: string; timestamp: number; size: number }> =
+    new Map();
   private renderFunction: ((url: string, context: any) => Promise<any>) | null = null;
 
   // 缓存机制，避免重复生成
@@ -99,10 +100,8 @@ export class SSGGenerator {
     // 注意：ISR/SSR模式通过动态路由提供这些文件，只有SSG才需要静态文件
     // 修复：开发模式下也生成 SEO 文件，方便测试
     if (successful > 0) {
-      const successfulRoutes = results
-        .filter(r => r.success)
-        .map(r => r.route);
-      
+      const successfulRoutes = results.filter(r => r.success).map(r => r.route);
+
       await this.generateSEOFiles(successfulRoutes, outputDir);
       this.logger.info(`✅ SSG模式 (${mode}): 已生成静态SEO文件 (robots.txt, sitemap.xml)`);
     }
@@ -113,7 +112,10 @@ export class SSGGenerator {
   /**
    * 按需生成单个页面 - 带完整 context 支持
    */
-  async generateOnDemandWithContext(route: string, context?: any): Promise<{
+  async generateOnDemandWithContext(
+    route: string,
+    context?: any
+  ): Promise<{
     success: boolean;
     html: string;
     path?: string;
@@ -139,7 +141,10 @@ export class SSGGenerator {
   /**
    * 按需生成单个页面 - 内部实现
    */
-  private async generateOnDemandInternal(route: string, externalContext?: any): Promise<{
+  private async generateOnDemandInternal(
+    route: string,
+    externalContext?: any
+  ): Promise<{
     success: boolean;
     html: string;
     path?: string;
@@ -167,21 +172,24 @@ export class SSGGenerator {
     }
 
     // 开始生成（加锁防止并发），传递外部 context
-    const generationPromise = this.generateSinglePageWithContext({
-      route,
-      mode,
-      renderFunction: this.renderFunction!,
-      outputDir,
-    }, externalContext);
+    const generationPromise = this.generateSinglePageWithContext(
+      {
+        route,
+        mode,
+        renderFunction: this.renderFunction!,
+        outputDir,
+      },
+      externalContext
+    );
 
     this.generationCache.set(cacheKey, generationPromise);
 
     try {
       const result = await generationPromise;
-      
+
       // 按需生成后，检查并生成 SEO 文件（如果需要的话）
       await this.ensureSEOFiles(route, outputDir);
-      
+
       return {
         ...result,
         fromCache: false,
@@ -194,7 +202,10 @@ export class SSGGenerator {
   /**
    * 检查静态文件是否存在且有效
    */
-  async checkCache(route: string, outputDir: string): Promise<{
+  async checkCache(
+    route: string,
+    outputDir: string
+  ): Promise<{
     success: boolean;
     html: string;
     path: string;
@@ -214,7 +225,7 @@ export class SSGGenerator {
         if (ageSeconds < this.config.caching.ttl) {
           const html = await fs.promises.readFile(filePath, 'utf-8');
           this.logger.debug(`💾 SSG 缓存命中: ${route} (年龄: ${Math.round(ageSeconds)}s)`);
-          
+
           return {
             success: true,
             html,
@@ -236,7 +247,7 @@ export class SSGGenerator {
       if (await this.fileExists(filePath)) {
         const html = await fs.promises.readFile(filePath, 'utf-8');
         this.logger.debug(`📄 SSG 文件存在但缓存过期: ${route}`);
-        
+
         return {
           success: true,
           html,
@@ -269,7 +280,7 @@ export class SSGGenerator {
     const chunks = this.chunkArray(routes, context.concurrent);
 
     for (const chunk of chunks) {
-      const chunkPromises = chunk.map(async (route) => {
+      const chunkPromises = chunk.map(async route => {
         try {
           await this.generateSinglePage({
             route,
@@ -303,7 +314,10 @@ export class SSGGenerator {
   /**
    * 生成单个页面 - 带外部 context 支持
    */
-  private async generateSinglePageWithContext(context: SSGGenerationContext, externalContext?: any): Promise<{
+  private async generateSinglePageWithContext(
+    context: SSGGenerationContext,
+    externalContext?: any
+  ): Promise<{
     success: boolean;
     html: string;
     path: string;
@@ -327,7 +341,10 @@ export class SSGGenerator {
   /**
    * 生成单个页面 - 内部实现
    */
-  private async generateSinglePageInternal(context: SSGGenerationContext, externalContext?: any): Promise<{
+  private async generateSinglePageInternal(
+    context: SSGGenerationContext,
+    externalContext?: any
+  ): Promise<{
     success: boolean;
     html: string;
     path: string;
@@ -422,7 +439,7 @@ export class SSGGenerator {
     }
 
     const cleanRoute = route.replace(/^\/+|\/+$/g, '');
-    
+
     // 处理嵌套路由
     if (cleanRoute.includes('/')) {
       return path.join(resolvedOutputDir, cleanRoute, 'index.html');
@@ -534,12 +551,12 @@ export class SSGGenerator {
 
     // 基于当前已生成的页面路由来生成 SEO 文件
     const knownRoutes = Array.from(this.generatedPages.keys());
-    
+
     // 如果还没有任何页面记录，至少包含当前路由
     if (knownRoutes.length === 0) {
       knownRoutes.push(currentRoute);
     }
-    
+
     // 确保当前路由也被包含
     if (!knownRoutes.includes(currentRoute)) {
       knownRoutes.push(currentRoute);
@@ -555,12 +572,14 @@ export class SSGGenerator {
     const sitemapContent = `<?xml version="1.0" encoding="UTF-8"?>
 <urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
 ${routes
-  .map(route => `  <url>
+  .map(
+    route => `  <url>
     <loc>${baseUrl}${route}</loc>
     <lastmod>${new Date().toISOString()}</lastmod>
     <changefreq>daily</changefreq>
     <priority>${route === '/' ? '1.0' : '0.8'}</priority>
-  </url>`)
+  </url>`
+  )
   .join('\n')}
 </urlset>`;
 
@@ -642,10 +661,11 @@ Sitemap: ${baseUrl}/sitemap.xml`;
   getStats() {
     return {
       generatedPages: this.generatedPages.size,
-      totalSize: Array.from(this.generatedPages.values())
-        .reduce((sum, page) => sum + page.size, 0),
-      lastGenerated: Math.max(...Array.from(this.generatedPages.values())
-        .map(page => page.timestamp), 0),
+      totalSize: Array.from(this.generatedPages.values()).reduce((sum, page) => sum + page.size, 0),
+      lastGenerated: Math.max(
+        ...Array.from(this.generatedPages.values()).map(page => page.timestamp),
+        0
+      ),
       cacheEnabled: this.config.caching.enabled,
       cacheTTL: this.config.caching.ttl,
     };
@@ -657,10 +677,10 @@ Sitemap: ${baseUrl}/sitemap.xml`;
   async generateSEOFilesManually(routes?: string[]): Promise<void> {
     const mode = process.env.NODE_ENV === 'production' ? 'production' : 'development';
     const outputDir = this.config.outputDir[mode];
-    
+
     // 如果没有指定路由，使用已生成的页面路由
     const targetRoutes = routes || Array.from(this.generatedPages.keys());
-    
+
     if (targetRoutes.length === 0) {
       // 如果还是没有路由，使用配置中的默认路由
       const defaultRoutes = Array.isArray(this.config.routes) ? this.config.routes : ['/'];
@@ -678,7 +698,7 @@ Sitemap: ${baseUrl}/sitemap.xml`;
   async clearCache(): Promise<void> {
     this.generatedPages.clear();
     this.generationCache.clear();
-    
+
     // 清理开发模式的缓存目录
     const devCacheDir = path.resolve(process.cwd(), this.config.outputDir.development);
     try {

@@ -109,11 +109,11 @@ export class BundleAnalyzer {
     try {
       const manifestPath = path.join(buildPath, 'manifest.json');
       let manifest = {};
-      
+
       if (fs.existsSync(manifestPath)) {
         manifest = JSON.parse(await fs.promises.readFile(manifestPath, 'utf-8'));
       }
-      
+
       return this.processViteManifest(manifest, buildPath);
     } catch (error) {
       this.logger.error('分析Vite构建失败:', error);
@@ -122,20 +122,22 @@ export class BundleAnalyzer {
   }
 
   private processWebpackStats(stats: any): BundleAnalysis {
-    const chunks = stats.chunks?.map((chunk: any) => ({
-      name: chunk.names?.[0] || chunk.id,
-      size: chunk.size || 0,
-      files: chunk.files || [],
-      modules: chunk.modules?.map((m: any) => m.name) || [],
-      dependencies: this.extractDependencies(chunk.modules),
-    })) || [];
+    const chunks =
+      stats.chunks?.map((chunk: any) => ({
+        name: chunk.names?.[0] || chunk.id,
+        size: chunk.size || 0,
+        files: chunk.files || [],
+        modules: chunk.modules?.map((m: any) => m.name) || [],
+        dependencies: this.extractDependencies(chunk.modules),
+      })) || [];
 
-    const assets = stats.assets?.map((asset: any) => ({
-      name: asset.name,
-      size: asset.size,
-      type: this.getAssetType(asset.name),
-      critical: this.isCriticalAsset(asset.name),
-    })) || [];
+    const assets =
+      stats.assets?.map((asset: any) => ({
+        name: asset.name,
+        size: asset.size,
+        type: this.getAssetType(asset.name),
+        critical: this.isCriticalAsset(asset.name),
+      })) || [];
 
     const duplicates = this.findDuplicateModules(chunks);
     const recommendations = this.generateRecommendations(chunks, assets, duplicates);
@@ -150,7 +152,7 @@ export class BundleAnalyzer {
     // 遍历manifest中的条目
     for (const [key, entry] of Object.entries(manifest)) {
       const typedEntry = entry as any;
-      
+
       if (typedEntry.isEntry) {
         chunks.push({
           name: key,
@@ -237,7 +239,7 @@ export class BundleAnalyzer {
 
   private extractDependencies(modules: any[] = []): string[] {
     const dependencies = new Set<string>();
-    
+
     for (const module of modules) {
       if (module.reasons) {
         for (const reason of module.reasons) {
@@ -247,7 +249,7 @@ export class BundleAnalyzer {
         }
       }
     }
-    
+
     return Array.from(dependencies);
   }
 
@@ -296,7 +298,9 @@ export class BundleAnalyzer {
     // 检查chunk大小
     for (const chunk of chunks) {
       if (chunk.size > this.config.bundleAnalysis.threshold.chunkSizeWarning) {
-        recommendations.push(`Chunk "${chunk.name}" 过大 (${(chunk.size / 1024).toFixed(1)}KB)，考虑进一步分割`);
+        recommendations.push(
+          `Chunk "${chunk.name}" 过大 (${(chunk.size / 1024).toFixed(1)}KB)，考虑进一步分割`
+        );
       }
     }
 
@@ -308,17 +312,23 @@ export class BundleAnalyzer {
     // 检查关键资源
     const criticalAssets = assets.filter(a => a.critical);
     const totalCriticalSize = criticalAssets.reduce((sum, a) => sum + a.size, 0);
-    
-    if (totalCriticalSize > 200 * 1024) { // 200KB
-      recommendations.push(`关键资源过大 (${(totalCriticalSize / 1024).toFixed(1)}KB)，考虑优化首屏加载`);
+
+    if (totalCriticalSize > 200 * 1024) {
+      // 200KB
+      recommendations.push(
+        `关键资源过大 (${(totalCriticalSize / 1024).toFixed(1)}KB)，考虑优化首屏加载`
+      );
     }
 
     // 检查资源类型分布
     const imageAssets = assets.filter(a => a.type === 'image');
     const totalImageSize = imageAssets.reduce((sum, a) => sum + a.size, 0);
-    
-    if (totalImageSize > 1024 * 1024) { // 1MB
-      recommendations.push(`图片资源过大 (${(totalImageSize / 1024 / 1024).toFixed(1)}MB)，考虑压缩或懒加载`);
+
+    if (totalImageSize > 1024 * 1024) {
+      // 1MB
+      recommendations.push(
+        `图片资源过大 (${(totalImageSize / 1024 / 1024).toFixed(1)}MB)，考虑压缩或懒加载`
+      );
     }
 
     return recommendations;
@@ -384,32 +394,40 @@ export class BundleAnalyzer {
   
   <div class="section">
     <h2>Recommendations</h2>
-    ${report.analysis.recommendations.map((r: string) => 
-      `<div class="recommendation">${r}</div>`
-    ).join('')}
+    ${report.analysis.recommendations
+      .map((r: string) => `<div class="recommendation">${r}</div>`)
+      .join('')}
   </div>
   
   <div class="section">
     <h2>Chunks</h2>
-    ${report.analysis.chunks.map((chunk: any) => `
+    ${report.analysis.chunks
+      .map(
+        (chunk: any) => `
       <div class="chunk ${chunk.size > 100000 ? 'large' : ''}">
         <strong>${chunk.name}</strong>
         <span class="size">${(chunk.size / 1024).toFixed(1)} KB</span>
         <div>Files: ${chunk.files.join(', ')}</div>
         <div>Modules: ${chunk.modules.length}</div>
       </div>
-    `).join('')}
+    `
+      )
+      .join('')}
   </div>
   
   <div class="section">
     <h2>Assets</h2>
-    ${report.analysis.assets.map((asset: any) => `
+    ${report.analysis.assets
+      .map(
+        (asset: any) => `
       <div class="asset ${asset.critical ? 'critical' : ''}">
         <strong>${asset.name}</strong>
         <span class="size">${(asset.size / 1024).toFixed(1)} KB</span>
         <div>Type: ${asset.type} ${asset.critical ? '(Critical)' : ''}</div>
       </div>
-    `).join('')}
+    `
+      )
+      .join('')}
   </div>
   
 </body>
@@ -438,31 +456,31 @@ export class IntelligentPreloader {
     this.addStrategy({
       name: 'critical-resources',
       condition: () => true,
-      resources: (context) => this.getCriticalResources(context),
+      resources: context => this.getCriticalResources(context),
       priority: 100,
     });
 
     // 基于用户行为的预加载
     this.addStrategy({
       name: 'user-behavior',
-      condition: (context) => context.timeOnPage > 5000, // 5秒后
-      resources: (context) => this.getUserBehaviorResources(context),
+      condition: context => context.timeOnPage > 5000, // 5秒后
+      resources: context => this.getUserBehaviorResources(context),
       priority: 80,
     });
 
     // 网络适应性预加载
     this.addStrategy({
       name: 'adaptive-loading',
-      condition: (context) => this.config.preload.adaptiveLoading,
-      resources: (context) => this.getAdaptiveResources(context),
+      condition: context => this.config.preload.adaptiveLoading,
+      resources: context => this.getAdaptiveResources(context),
       priority: 60,
     });
 
     // 路由预测预加载
     this.addStrategy({
       name: 'route-prediction',
-      condition: (context) => context.previousRoutes.length > 2,
-      resources: (context) => this.getPredictedRouteResources(context),
+      condition: context => context.previousRoutes.length > 2,
+      resources: context => this.getPredictedRouteResources(context),
       priority: 40,
     });
   }
@@ -537,7 +555,7 @@ export class IntelligentPreloader {
 
     // 基于用户之前的路由预测可能的下一个页面
     const likelyNextRoutes = this.predictNextRoutes(context.previousRoutes, context.currentRoute);
-    
+
     for (const route of likelyNextRoutes) {
       resources.push({
         url: route,
@@ -700,9 +718,10 @@ export class IntelligentPreloader {
    */
   recordPreloadPerformance(url: string, loadTime: number): void {
     this.performanceMetrics.set(url, loadTime);
-    
+
     // 基于性能调整策略
-    if (loadTime > 3000) { // 3秒以上
+    if (loadTime > 3000) {
+      // 3秒以上
       this.logger.warn(`预加载资源 ${url} 加载时间过长: ${loadTime}ms`);
     }
   }
@@ -718,7 +737,7 @@ export class IntelligentPreloader {
   } {
     const metrics = Array.from(this.performanceMetrics.entries());
     const totalPreloads = metrics.length;
-    
+
     if (totalPreloads === 0) {
       return {
         totalPreloads: 0,
@@ -730,17 +749,20 @@ export class IntelligentPreloader {
 
     const totalTime = metrics.reduce((sum, [, time]) => sum + time, 0);
     const avgLoadTime = totalTime / totalPreloads;
-    
-    const slowestResource = metrics.reduce((slowest, [url, time]) => {
-      return !slowest || time > slowest.time ? { url, time } : slowest;
-    }, null as { url: string; time: number } | null);
+
+    const slowestResource = metrics.reduce(
+      (slowest, [url, time]) => {
+        return !slowest || time > slowest.time ? { url, time } : slowest;
+      },
+      null as { url: string; time: number } | null
+    );
 
     const recommendations: string[] = [];
-    
+
     if (avgLoadTime > 2000) {
       recommendations.push('平均预加载时间过长，考虑减少预加载项目或优化资源');
     }
-    
+
     if (slowestResource && slowestResource.time > 5000) {
       recommendations.push(`最慢资源 ${slowestResource.url} 需要优化`);
     }

@@ -5,12 +5,7 @@
 
 // 渲染模式类型定义
 export type RenderModeType = 'ssg' | 'isr';
-export type InternalStrategyType =
-  | 'static'
-  | 'cached'
-  | 'regenerate'
-  | 'server'
-  | 'client';
+export type InternalStrategyType = 'static' | 'cached' | 'regenerate' | 'server' | 'client';
 export type CacheStrategyType = 'no-cache' | 'memory' | 'redis' | 'filesystem';
 
 // 公共 API - 只向用户暴露这两种模式

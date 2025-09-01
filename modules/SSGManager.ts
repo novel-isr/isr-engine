@@ -14,7 +14,7 @@ export interface SSGManagerConfig extends Partial<SSGConfig> {
     patterns?: string[];
     exclude?: string[];
   };
-  
+
   // 构建集成
   buildIntegration: {
     enabled: boolean;
@@ -68,7 +68,7 @@ export class SSGManager {
         watchFiles: false,
       },
     };
-    
+
     this.config = {
       ...defaultConfig,
       ...config,
@@ -187,16 +187,16 @@ export class SSGManager {
    */
   private async discoverFromFilesystem(): Promise<string[]> {
     const routes: string[] = [];
-    
+
     try {
       const fs = await import('fs');
       const path = await import('path');
-      
+
       // 查找页面文件
       const pagesDir = path.join(process.cwd(), 'src', 'pages');
       if (fs.existsSync(pagesDir)) {
         const files = await this.walkDirectory(pagesDir);
-        
+
         for (const file of files) {
           if (file.match(/\.(tsx?|jsx?)$/)) {
             const relativePath = path.relative(pagesDir, file);
@@ -236,14 +236,9 @@ export class SSGManager {
    */
   private async discoverFromConfig(): Promise<string[]> {
     const routes: string[] = [];
-    
+
     try {
-      const configFiles = [
-        'ssg.config.js',
-        'ssg.config.ts',
-        'ssr.config.js', 
-        'ssr.config.ts',
-      ];
+      const configFiles = ['ssg.config.js', 'ssg.config.ts', 'ssr.config.js', 'ssr.config.ts'];
 
       const path = await import('path');
       const fs = await import('fs');
@@ -280,22 +275,22 @@ export class SSGManager {
   private filePathToRoute(filePath: string): string | null {
     // 移除文件扩展名
     let route = filePath.replace(/\.(tsx?|jsx?)$/, '');
-    
+
     // 处理 index 文件
     if (route.endsWith('/index') || route === 'index') {
       route = route.replace(/\/index$/, '') || '/';
     }
-    
+
     // 确保以 / 开头
     if (!route.startsWith('/')) {
       route = '/' + route;
     }
-    
+
     // 跳过动态路由（包含 [、] 的文件）
     if (route.includes('[') || route.includes(']')) {
       return null;
     }
-    
+
     return route;
   }
 
@@ -306,10 +301,10 @@ export class SSGManager {
     try {
       const fs = await import('fs');
       const content = await fs.promises.readFile(configPath, 'utf-8');
-      
+
       // 简单的正则匹配路径
       const pathMatches = content.match(/path:\s*['"`]([^'"`]+)['"`]/g);
-      
+
       if (pathMatches) {
         return pathMatches
           .map(match => {
@@ -323,7 +318,7 @@ export class SSGManager {
     } catch (error) {
       this.logger.warn(`解析路由配置失败 ${configPath}:`, error);
     }
-    
+
     return [];
   }
 
@@ -334,14 +329,14 @@ export class SSGManager {
     const fs = await import('fs');
     const path = await import('path');
     const files: string[] = [];
-    
+
     try {
       const items = await fs.promises.readdir(dir);
-      
+
       for (const item of items) {
         const fullPath = path.join(dir, item);
         const stats = await fs.promises.stat(fullPath);
-        
+
         if (stats.isDirectory()) {
           const subFiles = await this.walkDirectory(fullPath);
           files.push(...subFiles);
@@ -352,7 +347,7 @@ export class SSGManager {
     } catch (error) {
       // 目录不存在或无法读取
     }
-    
+
     return files;
   }
 
@@ -365,7 +360,7 @@ export class SSGManager {
     try {
       const fs = await import('fs');
       const path = await import('path');
-      
+
       const watchPaths = this.config.development.watchPatterns || [
         'src/pages/**/*',
         'src/config/routes.*',
@@ -383,7 +378,7 @@ export class SSGManager {
               this.handleFileChange(filename, eventType);
             }
           });
-          
+
           this.watchHandlers.push(watcher);
         }
       }
@@ -404,7 +399,7 @@ export class SSGManager {
     if (this.config.development.hotReload) {
       // 清理相关缓存
       await this.generator.clearCache();
-      
+
       // 重新发现路由
       if (this.config.routeDiscovery.enabled) {
         const newRoutes = await this.discoverRoutes();
@@ -472,11 +467,13 @@ export class SSGManager {
   /**
    * 手动触发重新生成
    */
-  async regenerate(routes?: string[]): Promise<{ successful: number; failed: number; total: number }> {
+  async regenerate(
+    routes?: string[]
+  ): Promise<{ successful: number; failed: number; total: number }> {
     if (routes) {
       this.config.routes = routes;
     }
-    
+
     return await this.generator.generateAll();
   }
 }

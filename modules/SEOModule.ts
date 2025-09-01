@@ -22,7 +22,7 @@ export class SEOModule {
 
   async initialize() {
     this.logger.info('Initializing SEO Module...');
-    
+
     // 注意：ISR/SSR模式下不生成静态文件，而是通过动态路由提供
     // 只有在SSG模式下才生成静态文件
     this.logger.info('SEO Module initialized (动态路由模式)');
@@ -53,7 +53,7 @@ export class SEOModule {
 # Generated at: ${new Date().toISOString()}
 
 User-agent: *
-${disallowPaths.map((path) => `Disallow: ${path}`).join('\n')}
+${disallowPaths.map(path => `Disallow: ${path}`).join('\n')}
 Allow: /
 
 # Crawl-delay for polite crawling
@@ -124,9 +124,7 @@ Disallow: /
       await fs.promises.writeFile(sitemapPath, sitemapContent, 'utf-8');
 
       this.lastGenerated = Date.now();
-      this.logger.info(
-        `Sitemap generated with ${routes.length} URLs: ${sitemapPath}`
-      );
+      this.logger.info(`Sitemap generated with ${routes.length} URLs: ${sitemapPath}`);
     } catch (error) {
       this.logger.error('Failed to generate sitemap:', error);
       throw error;
@@ -185,7 +183,7 @@ ${routes.map((route: string) => this.createSitemapEntry(route, siteUrl)).join('\
     configRoutes.forEach((route: string) => routes.add(route));
 
     // Add dynamically discovered routes
-    this.routes.forEach((route) => routes.add(route));
+    this.routes.forEach(route => routes.add(route));
 
     return Array.from(routes).sort();
   }
@@ -226,14 +224,12 @@ ${routes.map((route: string) => this.createSitemapEntry(route, siteUrl)).join('\
       const results = await spider.crawl(this.config.domain);
 
       // Add discovered routes
-      results.discoveredUrls.forEach((url) => {
+      results.discoveredUrls.forEach(url => {
         const route = new URL(url).pathname;
         this.addRoute(route);
       });
 
-      this.logger.info(
-        `Spider completed: ${results.discoveredUrls.length} URLs found`
-      );
+      this.logger.info(`Spider completed: ${results.discoveredUrls.length} URLs found`);
 
       // Regenerate sitemap with new routes
       if (results.discoveredUrls.length > 0) {

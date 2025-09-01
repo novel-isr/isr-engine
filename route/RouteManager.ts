@@ -68,9 +68,7 @@ export class RouteManager {
     return Object.entries(this.routes)
       .filter(
         ([pattern, config]) =>
-          config.strategy === 'ssg' &&
-          !pattern.includes('*') &&
-          !pattern.includes(':')
+          config.strategy === 'ssg' && !pattern.includes('*') && !pattern.includes(':')
       )
       .map(([pattern]) => pattern);
   }

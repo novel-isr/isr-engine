@@ -17,14 +17,12 @@ interface ViteISRPluginOptions {
 /**
  * 创建 Vite ISR 插件
  */
-export function createViteISRPlugin(
-  options: ViteISRPluginOptions = {}
-): Plugin {
-  const { 
-    config = {}, 
+export function createViteISRPlugin(options: ViteISRPluginOptions = {}): Plugin {
+  const {
+    config = {},
     entry = '/src/entry.tsx',
     enableHMR = true,
-    enableDevMiddleware = false 
+    enableDevMiddleware = false,
   } = options;
 
   let isrEngine: ISREngine;
@@ -66,10 +64,7 @@ export function createViteISRPlugin(
               // 添加 ISR 头信息
               if (result.meta) {
                 res.setHeader('X-ISR-Mode', result.meta.renderMode || 'isr');
-                res.setHeader(
-                  'X-ISR-Strategy',
-                  result.meta.strategy || 'unknown'
-                );
+                res.setHeader('X-ISR-Strategy', result.meta.strategy || 'unknown');
                 if (result.meta.fromCache) {
                   res.setHeader('X-ISR-Cache', 'HIT');
                 }

@@ -4,7 +4,7 @@
  */
 // import type { NovelSSRConfig } from '@novel-isr/engine';
 
-import { NovelSSRConfig } from "./types";
+import { NovelSSRConfig } from './types';
 
 export default {
   // 默认渲染模式: 'isr' | 'ssg'

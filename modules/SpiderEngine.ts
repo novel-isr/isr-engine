@@ -64,10 +64,7 @@ export class SpiderEngine {
 
       const crawlPromises = [];
 
-      while (
-        crawlQueue.length > 0 &&
-        results.stats.totalPages < this.config.maxPages
-      ) {
+      while (crawlQueue.length > 0 && results.stats.totalPages < this.config.maxPages) {
         const batch = crawlQueue.splice(0, this.config.concurrency);
 
         for (const { url, depth } of batch) {
@@ -86,10 +83,7 @@ export class SpiderEngine {
 
                   // Add new URLs to queue
                   (pageResult.links as string[]).forEach((link: string) => {
-                    if (
-                      !this.visited.has(link) &&
-                      this.shouldCrawl(link, baseUrl)
-                    ) {
+                    if (!this.visited.has(link) && this.shouldCrawl(link, baseUrl)) {
                       crawlQueue.push({ url: link, depth: depth + 1 });
                     }
                   });
@@ -109,9 +103,7 @@ export class SpiderEngine {
 
         // Wait for current batch
         if (crawlPromises.length >= this.config.concurrency) {
-          await Promise.allSettled(
-            crawlPromises.splice(0, this.config.concurrency)
-          );
+          await Promise.allSettled(crawlPromises.splice(0, this.config.concurrency));
 
           // Delay between batches
           if (this.config.delay > 0) {
@@ -163,8 +155,7 @@ export class SpiderEngine {
       const response = await fetch(url, {
         headers: {
           'User-Agent': this.config.userAgent,
-          Accept:
-            'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+          Accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
           'Accept-Language': 'en-US,en;q=0.5',
           'Accept-Encoding': 'gzip, deflate',
           Connection: 'keep-alive',
@@ -188,10 +179,7 @@ export class SpiderEngine {
 
       return pageData;
     } catch (error) {
-      this.logger.error(
-        `Failed to crawl ${url}:`,
-        (error as any)?.message || error
-      );
+      this.logger.error(`Failed to crawl ${url}:`, (error as any)?.message || error);
       throw error;
     }
   }
@@ -302,16 +290,12 @@ export class SpiderEngine {
 
   extractH1(html: string): string[] {
     const matches = html.match(/<h1[^>]*>([^<]+)<\/h1>/gi);
-    return matches
-      ? matches.map((h: string) => h.replace(/<[^>]+>/g, '').trim())
-      : [];
+    return matches ? matches.map((h: string) => h.replace(/<[^>]+>/g, '').trim()) : [];
   }
 
   extractH2(html: string): string[] {
     const matches = html.match(/<h2[^>]*>([^<]+)<\/h2>/gi);
-    return matches
-      ? matches.map((h: string) => h.replace(/<[^>]+>/g, '').trim())
-      : [];
+    return matches ? matches.map((h: string) => h.replace(/<[^>]+>/g, '').trim()) : [];
   }
 
   extractImages(html: string): string[] {
@@ -331,8 +315,7 @@ export class SpiderEngine {
       .replace(/<[^>]+>/g, ' ')
       .replace(/\s+/g, ' ')
       .trim();
-    return textContent.split(' ').filter((word: string) => word.length > 0)
-      .length;
+    return textContent.split(' ').filter((word: string) => word.length > 0).length;
   }
 
   hasStructuredData(html: string): boolean {
@@ -343,9 +326,7 @@ export class SpiderEngine {
     );
   }
 
-  async loadRobotsTxt(
-    origin: string
-  ): Promise<{ disallow: string[]; allow: string[] }> {
+  async loadRobotsTxt(origin: string): Promise<{ disallow: string[]; allow: string[] }> {
     if (this.robotsCache.has(origin)) {
       const cached = this.robotsCache.get(origin)!;
       return { disallow: cached.disallow || [], allow: cached.allow || [] };
@@ -386,8 +367,7 @@ export class SpiderEngine {
       if (trimmedLine.startsWith('user-agent:')) {
         currentUserAgent = trimmedLine.split(':')[1].trim();
         isRelevantSection =
-          currentUserAgent === '*' ||
-          currentUserAgent === this.config.userAgent.toLowerCase();
+          currentUserAgent === '*' || currentUserAgent === this.config.userAgent.toLowerCase();
       } else if (isRelevantSection) {
         if (trimmedLine.startsWith('disallow:')) {
           const path = trimmedLine.split(':').slice(1).join(':').trim();
@@ -442,7 +422,7 @@ export class SpiderEngine {
       ];
       const pathname = urlObj.pathname.toLowerCase();
 
-      if (skipExtensions.some((ext) => pathname.endsWith(ext))) {
+      if (skipExtensions.some(ext => pathname.endsWith(ext))) {
         return false;
       }
 
@@ -458,7 +438,7 @@ export class SpiderEngine {
   }
 
   sleep(ms: number): Promise<void> {
-    return new Promise((resolve) => setTimeout(resolve, ms));
+    return new Promise(resolve => setTimeout(resolve, ms));
   }
 
   getStats() {

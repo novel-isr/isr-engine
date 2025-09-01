@@ -108,40 +108,40 @@ export class ErrorHandler {
   ): Promise<T> {
     const config = { ...this.retryConfig, ...customRetryConfig };
     let lastError: ISRError | undefined;
-    
+
     for (let attempt = 0; attempt <= config.maxRetries; attempt++) {
       try {
         const result = await operation();
-        
+
         // 如果成功且之前有错误，记录恢复
         if (attempt > 0) {
           console.log(`🔄 操作成功恢复，尝试次数: ${attempt + 1}`);
         }
-        
+
         return result;
       } catch (error) {
         lastError = this.normalizeError(error, context);
-        
+
         // 记录错误指标
         this.recordErrorMetrics(lastError);
-        
+
         // 检查是否可以重试
         if (attempt < config.maxRetries && this.isRetryable(lastError, config)) {
           const delay = Math.min(
             config.baseDelay * Math.pow(config.backoffMultiplier, attempt),
             config.maxDelay
           );
-          
+
           console.warn(`⚠️ 操作失败，${delay}ms后重试 (${attempt + 1}/${config.maxRetries}):`, {
             error: lastError.message,
             type: lastError.type,
             code: lastError.code,
           });
-          
+
           await this.sleep(delay);
           continue;
         }
-        
+
         break;
       }
     }
@@ -178,7 +178,7 @@ export class ErrorHandler {
    */
   cleanupMetrics(olderThanHours: number = 24): void {
     const cutoff = new Date(Date.now() - olderThanHours * 60 * 60 * 1000);
-    
+
     for (const [key, metrics] of this.errorMetrics) {
       if (metrics.lastOccurred < cutoff) {
         this.errorMetrics.delete(key);
@@ -190,10 +190,10 @@ export class ErrorHandler {
     // ISR 降级到 SSR
     this.registerFallbackStrategy({
       name: 'isr-to-ssr',
-      condition: (error) => error.context.renderMode === 'isr' && error.type === ErrorType.CACHE,
+      condition: error => error.context.renderMode === 'isr' && error.type === ErrorType.CACHE,
       handler: async (error, context) => {
         console.warn('🔄 ISR缓存失败，降级到SSR');
-        return { 
+        return {
           fallbackStrategy: 'ssr',
           renderMode: 'ssr',
           reason: 'ISR cache failure',
@@ -205,7 +205,7 @@ export class ErrorHandler {
     // SSR 降级到 CSR
     this.registerFallbackStrategy({
       name: 'ssr-to-csr',
-      condition: (error) => error.context.renderMode === 'ssr' && error.type === ErrorType.RENDER,
+      condition: error => error.context.renderMode === 'ssr' && error.type === ErrorType.RENDER,
       handler: async (error, context) => {
         console.warn('🔄 SSR渲染失败，降级到CSR');
         return {
@@ -220,7 +220,7 @@ export class ErrorHandler {
     // 网络错误降级
     this.registerFallbackStrategy({
       name: 'network-fallback',
-      condition: (error) => error.type === ErrorType.NETWORK,
+      condition: error => error.type === ErrorType.NETWORK,
       handler: async (error, context) => {
         console.warn('🔄 网络错误，使用缓存内容');
         return {
@@ -303,7 +303,7 @@ export class ErrorHandler {
   private recordErrorMetrics(error: ISRError): void {
     const key = `${error.type}-${error.code}`;
     const existing = this.errorMetrics.get(key);
-    
+
     this.errorMetrics.set(key, {
       count: (existing?.count || 0) + 1,
       lastOccurred: new Date(),
@@ -354,13 +354,37 @@ export const globalErrorHandler = new ErrorHandler();
 
 // 错误工厂函数
 export const createNetworkError = (message: string, context: Partial<ErrorContext> = {}) =>
-  globalErrorHandler.createError(message, ErrorType.NETWORK, ErrorSeverity.MEDIUM, 'NETWORK_ERROR', context);
+  globalErrorHandler.createError(
+    message,
+    ErrorType.NETWORK,
+    ErrorSeverity.MEDIUM,
+    'NETWORK_ERROR',
+    context
+  );
 
 export const createRenderError = (message: string, context: Partial<ErrorContext> = {}) =>
-  globalErrorHandler.createError(message, ErrorType.RENDER, ErrorSeverity.HIGH, 'RENDER_ERROR', context);
+  globalErrorHandler.createError(
+    message,
+    ErrorType.RENDER,
+    ErrorSeverity.HIGH,
+    'RENDER_ERROR',
+    context
+  );
 
 export const createCacheError = (message: string, context: Partial<ErrorContext> = {}) =>
-  globalErrorHandler.createError(message, ErrorType.CACHE, ErrorSeverity.MEDIUM, 'CACHE_ERROR', context);
+  globalErrorHandler.createError(
+    message,
+    ErrorType.CACHE,
+    ErrorSeverity.MEDIUM,
+    'CACHE_ERROR',
+    context
+  );
 
 export const createTimeoutError = (message: string, context: Partial<ErrorContext> = {}) =>
-  globalErrorHandler.createError(message, ErrorType.TIMEOUT, ErrorSeverity.MEDIUM, 'TIMEOUT_ERROR', context);
+  globalErrorHandler.createError(
+    message,
+    ErrorType.TIMEOUT,
+    ErrorSeverity.MEDIUM,
+    'TIMEOUT_ERROR',
+    context
+  );

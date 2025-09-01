@@ -15,12 +15,12 @@ export class ISRModule {
   private isRevalidating: Map<string, boolean>;
   private metadataCache: Map<string, any>;
   private viteServer?: any; // ViteDevServer
-  
+
   // 并发控制
   private regenerationLocks: Map<string, Promise<any>>;
   private maxConcurrentRegenerations: number;
   private currentRegenerations: number;
-  
+
   // 指标收集器（可选，由外部传入）
   private metrics?: MetricsCollector;
 
@@ -30,7 +30,7 @@ export class ISRModule {
     this.revalidationQueue = new Set();
     this.isRevalidating = new Map();
     this.metadataCache = new Map();
-    
+
     // 初始化并发控制
     this.regenerationLocks = new Map();
     this.maxConcurrentRegenerations = config.isr?.maxConcurrentRegenerations || 3;
@@ -123,9 +123,7 @@ export class ISRModule {
 
         // 检查服务端入口文件是否存在
         if (!(await this.fileExists(serverEntryPath))) {
-          throw new Error(
-            `服务端入口文件不存在: ${serverEntryPath}。请先运行构建命令。`
-          );
+          throw new Error(`服务端入口文件不存在: ${serverEntryPath}。请先运行构建命令。`);
         }
 
         const { render } = await import(serverEntryPath);
@@ -145,7 +143,7 @@ export class ISRModule {
           const entryModule = await viteServer.ssrLoadModule('/src/entry.tsx');
           console.log('📦 ISR模块: 入口模块导出函数:', Object.keys(entryModule));
           this.logger.debug('入口模块导出:', Object.keys(entryModule));
-          
+
           if (entryModule.renderServer) {
             renderModule = { render: entryModule.renderServer };
             console.log('✅ ISR模块: 使用统一入口文件的 renderServer 进行渲染');
@@ -167,18 +165,21 @@ export class ISRModule {
         ...context,
         renderMode: 'isr', // 明确标记为ISR渲染
         strategy: 'regenerate', // 重新生成策略
-        manifest: context.manifest
+        manifest: context.manifest,
       };
       console.log('🎯 ISR模块: 开始渲染新内容...');
-      
+
       // 添加超时控制
       const renderTimeout = this.config.isr?.renderTimeout || 30000; // 30秒默认超时
-      const result = await Promise.race([
+      const result = (await Promise.race([
         renderModule.render(url, renderContext),
-        new Promise((_, reject) => 
-          setTimeout(() => reject(new Error(`ISR渲染超时: ${url} (${renderTimeout}ms)`)), renderTimeout)
-        )
-      ]) as any;
+        new Promise((_, reject) =>
+          setTimeout(
+            () => reject(new Error(`ISR渲染超时: ${url} (${renderTimeout}ms)`)),
+            renderTimeout
+          )
+        ),
+      ])) as any;
 
       if (result.html) {
         // 保存到 ISR 缓存
@@ -234,7 +235,7 @@ export class ISRModule {
       } catch (cacheError) {
         this.logger.error(`缓存回退也失败: ${cacheError}`);
       }
-      
+
       // 最后抛出原始错误
       throw error;
     }
@@ -274,10 +275,7 @@ export class ISRModule {
 
       let metadata = {};
       if (metadataExists) {
-        const metadataContent = await fs.promises.readFile(
-          metadataPath,
-          'utf-8'
-        );
+        const metadataContent = await fs.promises.readFile(metadataPath, 'utf-8');
         metadata = JSON.parse(metadataContent);
       }
 
@@ -333,10 +331,7 @@ export class ISRModule {
     return now - metadata.generated > revalidateTime;
   }
 
-  async saveToISRCache(
-    url: string,
-    renderResult: Record<string, any>
-  ): Promise<void> {
+  async saveToISRCache(url: string, renderResult: Record<string, any>): Promise<void> {
     const cachedPath = this.getISRCachePath(url);
     const metadataPath = this.getISRMetadataPath(url);
 
@@ -367,11 +362,7 @@ export class ISRModule {
         renderTime: 0, // Will be updated by caller if available
       };
 
-      await fs.promises.writeFile(
-        metadataPath,
-        JSON.stringify(metadata, null, 2),
-        'utf-8'
-      );
+      await fs.promises.writeFile(metadataPath, JSON.stringify(metadata, null, 2), 'utf-8');
 
       // Update in-memory cache
       this.metadataCache.set(url, metadata);
@@ -381,12 +372,7 @@ export class ISRModule {
     }
   }
 
-
-
-  scheduleBackgroundRevalidation(
-    url: string,
-    context: Record<string, any>
-  ): void {
+  scheduleBackgroundRevalidation(url: string, context: Record<string, any>): void {
     if (this.revalidationQueue.has(url) || this.isRevalidating.get(url)) {
       return;
     }

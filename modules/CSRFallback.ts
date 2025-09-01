@@ -24,10 +24,11 @@ export class CSRFallback {
 
     try {
       // 对于强制 CSR 模式，使用默认模板而不是尝试加载项目模板
-      const template = context.forceMode === 'csr' || context.forceFallback === 'client' 
-        ? this.getDefaultTemplate() 
-        : await this.getFallbackTemplate();
-      
+      const template =
+        context.forceMode === 'csr' || context.forceFallback === 'client'
+          ? this.getDefaultTemplate()
+          : await this.getFallbackTemplate();
+
       const html = this.createCSRHTML(template, url, context, error);
 
       console.log(`✅ CSR 模式: HTML 已生成，长度: ${html.length}`);
@@ -76,12 +77,7 @@ export class CSRFallback {
     }
   }
 
-  createCSRHTML(
-    template: string,
-    url: string,
-    context: Record<string, any>,
-    error?: Error
-  ) {
+  createCSRHTML(template: string, url: string, context: Record<string, any>, error?: Error) {
     const isProduction = process.env.NODE_ENV === 'production';
 
     // Replace template variables
@@ -210,7 +206,7 @@ export class CSRFallback {
 
   getDefaultTemplate() {
     const isDev = process.env.NODE_ENV !== 'production';
-    
+
     // 注入渲染模式变量的脚本（必须在其他脚本之前）
     const variablesScript = `
   <script>
@@ -235,8 +231,9 @@ export class CSRFallback {
     window.__INITIAL_URL__ = location.pathname + location.search;
     window.__FALLBACK_TIMESTAMP__ = ${Date.now()};
   </script>`;
-    
-    const devScripts = isDev ? `${variablesScript}
+
+    const devScripts = isDev
+      ? `${variablesScript}
   <script type="module">
     import RefreshRuntime from '/@react-refresh';
     RefreshRuntime.injectIntoGlobalHook(window);
@@ -272,7 +269,8 @@ export class CSRFallback {
         }
       })();
     }
-  </script>` : `${variablesScript}
+  </script>`
+      : `${variablesScript}
   <script type="module" src="/assets/entry.js"></script>`;
 
     return `<!DOCTYPE html>
@@ -367,10 +365,7 @@ export class CSRFallback {
       await this.getFallbackTemplate();
       this.logger.debug('CSR fallback template preloaded');
     } catch (error) {
-      this.logger.warn(
-        'Failed to preload CSR template:',
-        (error as any)?.message || error
-      );
+      this.logger.warn('Failed to preload CSR template:', (error as any)?.message || error);
     }
   }
 
@@ -383,7 +378,7 @@ export class CSRFallback {
       (error as any)?.statusCode >= 500,
     ];
 
-    return fallbackConditions.some((condition) => condition);
+    return fallbackConditions.some(condition => condition);
   }
 
   getMetrics() {
