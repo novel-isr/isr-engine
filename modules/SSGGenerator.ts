@@ -97,13 +97,14 @@ export class SSGGenerator {
 
     // 生成 sitemap 和 robots.txt（仅SSG模式需要静态文件）
     // 注意：ISR/SSR模式通过动态路由提供这些文件，只有SSG才需要静态文件
-    if (mode === 'production' && successful > 0) {
+    // 修复：开发模式下也生成 SEO 文件，方便测试
+    if (successful > 0) {
       const successfulRoutes = results
         .filter(r => r.success)
         .map(r => r.route);
       
       await this.generateSEOFiles(successfulRoutes, outputDir);
-      this.logger.info('✅ SSG模式: 已生成静态SEO文件 (robots.txt, sitemap.xml)');
+      this.logger.info(`✅ SSG模式 (${mode}): 已生成静态SEO文件 (robots.txt, sitemap.xml)`);
     }
 
     return { successful, failed, total: results.length };
@@ -177,6 +178,10 @@ export class SSGGenerator {
 
     try {
       const result = await generationPromise;
+      
+      // 按需生成后，检查并生成 SEO 文件（如果需要的话）
+      await this.ensureSEOFiles(route, outputDir);
+      
       return {
         ...result,
         fromCache: false,
@@ -510,6 +515,41 @@ export class SSGGenerator {
     await Promise.all(tasks);
   }
 
+  /**
+   * 确保 SEO 文件存在（按需生成时调用）
+   */
+  private async ensureSEOFiles(currentRoute: string, outputDir: string): Promise<void> {
+    const sitemapPath = path.join(outputDir, 'sitemap.xml');
+    const robotsPath = path.join(outputDir, 'robots.txt');
+
+    // 检查 SEO 文件是否已存在
+    const sitemapExists = await this.fileExists(sitemapPath);
+    const robotsExists = await this.fileExists(robotsPath);
+
+    if (sitemapExists && robotsExists) {
+      // SEO 文件都已存在，无需重新生成
+      this.logger.debug(`SEO 文件已存在，跳过生成`);
+      return;
+    }
+
+    // 基于当前已生成的页面路由来生成 SEO 文件
+    const knownRoutes = Array.from(this.generatedPages.keys());
+    
+    // 如果还没有任何页面记录，至少包含当前路由
+    if (knownRoutes.length === 0) {
+      knownRoutes.push(currentRoute);
+    }
+    
+    // 确保当前路由也被包含
+    if (!knownRoutes.includes(currentRoute)) {
+      knownRoutes.push(currentRoute);
+    }
+
+    this.logger.info(`🔄 按需生成 SEO 文件，基于路由: ${knownRoutes.join(', ')}`);
+    await this.generateSEOFiles(knownRoutes, outputDir);
+    this.logger.info(`✅ 按需生成完成: SEO 文件 (robots.txt, sitemap.xml)`);
+  }
+
   private async generateSitemap(routes: string[], outputDir: string): Promise<void> {
     const baseUrl = process.env.SITE_BASE_URL || 'http://localhost:3000';
     const sitemapContent = `<?xml version="1.0" encoding="UTF-8"?>
@@ -609,6 +649,27 @@ Sitemap: ${baseUrl}/sitemap.xml`;
       cacheEnabled: this.config.caching.enabled,
       cacheTTL: this.config.caching.ttl,
     };
+  }
+
+  /**
+   * 手动生成 SEO 文件（用于测试和调试）
+   */
+  async generateSEOFilesManually(routes?: string[]): Promise<void> {
+    const mode = process.env.NODE_ENV === 'production' ? 'production' : 'development';
+    const outputDir = this.config.outputDir[mode];
+    
+    // 如果没有指定路由，使用已生成的页面路由
+    const targetRoutes = routes || Array.from(this.generatedPages.keys());
+    
+    if (targetRoutes.length === 0) {
+      // 如果还是没有路由，使用配置中的默认路由
+      const defaultRoutes = Array.isArray(this.config.routes) ? this.config.routes : ['/'];
+      targetRoutes.push(...defaultRoutes);
+    }
+
+    this.logger.info(`🔄 手动生成 SEO 文件，路由: ${targetRoutes.join(', ')}`);
+    await this.generateSEOFiles(targetRoutes, outputDir);
+    this.logger.info(`✅ 手动生成完成: ${outputDir}/robots.txt, ${outputDir}/sitemap.xml`);
   }
 
   /**

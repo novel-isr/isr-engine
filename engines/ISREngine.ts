@@ -313,7 +313,12 @@ export default class ISREngine {
         switch (strategy) {
           case 'static':
             console.log('📄 执行 SSG 静态文件服务...');
-            result = await this.renderStatic(url, context);
+            result = await this.renderStatic(url, {
+              ...context,
+              renderMode: 'ssg',
+              strategy: 'static',
+              fallbackUsed: fallbackChain.indexOf(strategy) > 0,
+            });
             break;
           case 'cached':
             console.log('💾 检查 ISR 缓存...');
@@ -335,7 +340,13 @@ export default class ISREngine {
             break;
           case 'server':
             console.log('⚡ 执行 SSR 实时服务端渲染...');
-            result = await this.renderServer(url, { ...context, renderMode: 'ssr', strategy: 'server' });
+            result = await this.renderServer(url, { 
+              ...context, 
+              renderMode: 'ssr', 
+              strategy: 'server',
+              // ISR引擎统一传递完整上下文
+              fallbackUsed: fallbackChain.indexOf(strategy) > 0,
+            });
             break;
           case 'client':
             console.log('🌐 降级到 CSR 客户端渲染...');
@@ -345,10 +356,18 @@ export default class ISREngine {
             throw new Error(`Unknown strategy: ${strategy}`);
         }
 
-        // Add strategy info to result
+        // 在 ISR 框架层面统一添加完整的渲染上下文信息
         if (result && 'meta' in result && result.meta) {
           result.meta.strategy = strategy;
           result.meta.fallbackUsed = fallbackChain.indexOf(strategy) > 0;
+          
+          // 补充完整的上下文信息，供客户端使用
+          result.meta.renderMode = result.meta.renderMode || context.renderMode || this.getRenderModeFromStrategy(strategy);
+          result.meta.forceMode = context.forceMode;
+          result.meta.forceFallback = context.forceFallback;
+          result.meta.renderUrl = url;
+          result.meta.userAgent = context.userAgent;
+          result.meta.bypassCache = context.bypassCache;
         }
 
         console.log(`✅ 策略成功: ${strategyText} | 路径: ${url} | 是否降级: ${fallbackChain.indexOf(strategy) > 0 ? '是' : '否'}`);
@@ -537,6 +556,25 @@ export default class ISREngine {
     if (!this.config.routes) return false;
 
     return Object.values(this.config.routes).some((mode) => mode === 'ssg');
+  }
+
+  /**
+   * 从策略推断渲染模式
+   */
+  private getRenderModeFromStrategy(strategy: string): string {
+    switch (strategy) {
+      case 'static':
+        return 'ssg';
+      case 'cached':
+      case 'regenerate':
+        return 'isr';
+      case 'server':
+        return 'ssr';
+      case 'client':
+        return 'csr';
+      default:
+        return 'unknown';
+    }
   }
 
   /**
