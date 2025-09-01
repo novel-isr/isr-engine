@@ -171,11 +171,24 @@ export interface EnterpriseConfigOptions {
 }
 
 // 主配置接口
+// SSG 配置接口
+export interface SSGConfig {
+  routes?: string[] | (() => Promise<string[]>);
+  onDemandGeneration?: boolean;
+  cleanupOldFiles?: boolean;
+  concurrent?: number;
+  caching?: {
+    enabled?: boolean;
+    ttl?: number; // seconds
+  };
+}
+
 export interface NovelISRConfig {
   mode?: RenderModeType;
   routes?: Record<string, RenderModeType>;
   server?: ServerConfig;
   isr?: ISRConfig;
+  ssg?: SSGConfig;
   cache?: CacheConfig;
   seo?: SEOConfig;
   dev?: DevConfig;

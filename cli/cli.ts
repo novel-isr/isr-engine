@@ -69,12 +69,13 @@ async function runCLI(): Promise<void> {
         await engine.deploy();
         break;
 
-      case 'stats':
+      case 'stats': {
         await engine.initialize();
         const stats = engine.getStats();
         console.log('\n📊 Novel ISR 统计信息:');
         console.log(JSON.stringify(stats, null, 2));
         break;
+      }
 
       case 'init':
         await initializeProject();

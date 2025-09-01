@@ -24,7 +24,7 @@ export default [
     ],
   },
 
-  // TypeScript 文件配置
+  // TypeScript 文件配置 - Node.js 环境
   {
     files: ['**/*.ts', '**/*.tsx'],
     languageOptions: {
@@ -35,6 +35,7 @@ export default [
         ecmaFeatures: {
           jsx: true,
         },
+        project: './tsconfig.json',
       },
     },
     plugins: {
@@ -46,12 +47,14 @@ export default [
     rules: {
       // TypeScript 规则
       ...tseslint.configs.recommended.rules,
-      '@typescript-eslint/no-unused-vars': 'warn',
+      '@typescript-eslint/no-unused-vars': ['warn', { argsIgnorePattern: '^_' }],
       '@typescript-eslint/no-explicit-any': 'warn',
       '@typescript-eslint/explicit-function-return-type': 'off',
       '@typescript-eslint/explicit-module-boundary-types': 'off',
       '@typescript-eslint/no-empty-function': 'warn',
       '@typescript-eslint/no-non-null-assertion': 'warn',
+      '@typescript-eslint/no-require-imports': 'warn',
+      '@typescript-eslint/no-empty-object-type': 'warn',
 
       // React 规则
       ...react.configs.recommended.rules,
@@ -61,10 +64,11 @@ export default [
       'react/jsx-uses-react': 'off', // React 17+
       'react/jsx-uses-vars': 'error',
 
-      // 通用规则
+      // Node.js 环境规则
       'no-console': 'off', // ISR 引擎需要日志
       'no-debugger': 'warn',
       'no-unused-vars': 'off', // 使用 TypeScript 版本
+      'no-undef': 'off', // TypeScript 处理未定义变量
       'prefer-const': 'error',
       'no-var': 'error',
       'object-shorthand': 'error',
@@ -88,7 +92,7 @@ export default [
     },
   },
 
-  // JavaScript 文件配置
+  // JavaScript 文件配置 - Node.js 环境
   {
     files: ['**/*.js', '**/*.mjs'],
     languageOptions: {
@@ -99,10 +103,11 @@ export default [
       prettier,
     },
     rules: {
-      // 基础规则
+      // Node.js 环境规则
       'no-console': 'off',
       'no-debugger': 'warn',
       'no-unused-vars': 'warn',
+      'no-undef': 'off', // Node.js 环境，由 @types/node 处理
       'prefer-const': 'error',
       'no-var': 'error',
 

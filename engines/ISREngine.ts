@@ -307,7 +307,7 @@ export default class ISREngine {
             console.log('💾 检查 ISR 缓存...');
             result = await this.isrModule.serveCached(url, context);
             break;
-          case 'regenerate':
+          case 'regenerate': {
             console.log('🔄 执行 ISR 增量重新生成...');
             // 在开发模式下，传递Vite服务器实例给ISR模块
             const isrContext = {
@@ -318,6 +318,7 @@ export default class ISREngine {
             };
             result = await this.isrModule.regenerate(url, isrContext);
             break;
+          }
           case 'server':
             console.log('⚡ 执行 SSR 实时服务端渲染...');
             result = await this.renderServer(url, {
