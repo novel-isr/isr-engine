@@ -13,7 +13,7 @@ import { CacheManager } from '../cache';
 import { CSRFallback } from '../modules/CSRFallback';
 import { ISRModule } from '../modules/ISRModule';
 import { SEOModule } from '../modules/SEOModule';
-import { SSGModule } from '../modules/SSGModule';
+import { SSGGenerator } from '../modules/SSGGenerator';
 import {
   NovelISRConfig,
   RenderResult,
@@ -36,7 +36,7 @@ export default class ISREngine {
   private logger: Logger;
   private metrics: MetricsCollector;
   private csrFallback: CSRFallback;
-  private ssgModule: SSGModule;
+  private ssgGenerator: SSGGenerator;
   private isrModule: ISRModule;
   private seoModule: SEOModule;
   private viteServer?: ViteDevServer;
@@ -59,7 +59,24 @@ export default class ISREngine {
 
     // 初始化模块
     this.csrFallback = new CSRFallback(config);
-    this.ssgModule = new SSGModule(config);
+    
+    // 初始化 SSG 生成器
+    const ssgConfig = {
+      routes: config.ssg?.routes || ['/'],
+      outputDir: {
+        production: config.paths?.client || 'dist/client',
+        development: '.isr-hyou/ssg', // 开发时使用统一缓存目录
+      },
+      onDemandGeneration: config.ssg?.onDemandGeneration !== false,
+      cleanupOldFiles: config.ssg?.cleanupOldFiles || false,
+      concurrent: config.ssg?.concurrent || 3,
+      caching: {
+        enabled: config.ssg?.caching?.enabled !== false,
+        ttl: config.ssg?.caching?.ttl || 3600,
+      },
+    };
+    this.ssgGenerator = new SSGGenerator(ssgConfig, config.dev?.verbose);
+    
     this.isrModule = new ISRModule(config);
     this.seoModule = new SEOModule(config.seo || {});
 
@@ -102,12 +119,12 @@ export default class ISREngine {
             (this.isrModule as any).setViteServer(this.viteServer);
             (this.isrModule as any).setMetricsCollector(this.metrics);
             
-            // 为SSG模块设置渲染函数
+            // 为SSG生成器设置渲染函数
             const renderFunction = async (url: string, context: any) => {
               return await this.renderWithVite(url, context);
             };
-            (this.ssgModule as any).setRenderFunction(renderFunction);
-            this.logger.debug('✅ SSG模块: 渲染函数已设置');
+            this.ssgGenerator.setRenderFunction(renderFunction);
+            this.logger.debug('✅ SSG生成器: 渲染函数已设置');
           }
         } catch (error) {
           this.logger.error(
@@ -131,8 +148,8 @@ export default class ISREngine {
       const hasSSGRoutes = this.hasSSGRoutes();
       if (hasSSGRoutes) {
         try {
-          await this.ssgModule.generateStaticPages();
-          this.logger.debug('静态页面预生成完成');
+          const results = await this.ssgGenerator.generateAll();
+          this.logger.debug(`静态页面预生成完成: ${results.successful} 成功, ${results.failed} 失败`);
         } catch (error) {
           this.logger.error('静态页面预生成失败:', error);
           // 在开发模式下，SSG失败不应该阻止引擎启动
@@ -371,8 +388,27 @@ export default class ISREngine {
     context: RenderContext
   ): Promise<RenderResult> {
     try {
-      const result = await this.ssgModule.renderStatic(url, context);
-      return result as RenderResult;
+      const cleanUrl = url.split('?')[0];
+      console.log(`📄 SSG引擎: 尝试提供静态页面 - ${cleanUrl}, forceMode: ${context.forceMode}`);
+      
+      // 传递完整的 context 给 SSGGenerator，确保 forceMode 等参数能正确传递
+      const result = await this.ssgGenerator.generateOnDemandWithContext(cleanUrl, context);
+      
+      console.log(`✅ SSG引擎: 页面已提供 - ${cleanUrl} (来自${result.fromCache ? '缓存' : '新生成'})`);
+      
+      return {
+        success: result.success,
+        html: result.html,
+        helmet: null, // HTML 已经包含头部信息
+        preloadLinks: '',
+        statusCode: 200,
+        meta: {
+          ...result.meta,
+          fromCache: result.fromCache,
+          path: result.path,
+          timestamp: Date.now(),
+        },
+      };
     } catch (error) {
       // 在开发模式下，SSG 可能不可用，抛出错误让降级链继续
       console.log(`⚠️ SSG 渲染失败，将继续降级链: ${(error as Error).message}`);
@@ -887,6 +923,34 @@ export default class ISREngine {
       res.json(this.cache.getStats());
     });
 
+    // 动态 robots.txt 路由
+    this.expressApp.get('/robots.txt', (req: Request, res: Response) => {
+      try {
+        const robotsContent = this.seoModule.createRobotsContent();
+        res.setHeader('Content-Type', 'text/plain; charset=utf-8');
+        res.setHeader('Cache-Control', 'public, max-age=3600'); // 缓存1小时
+        res.send(robotsContent);
+        this.logger.debug('动态提供 robots.txt');
+      } catch (error) {
+        this.logger.error('生成 robots.txt 失败:', error);
+        res.status(500).send('Internal Server Error');
+      }
+    });
+
+    // 动态 sitemap.xml 路由
+    this.expressApp.get('/sitemap.xml', async (req: Request, res: Response) => {
+      try {
+        const sitemapContent = await this.seoModule.generateSitemapContent();
+        res.setHeader('Content-Type', 'application/xml; charset=utf-8');
+        res.setHeader('Cache-Control', 'public, max-age=3600'); // 缓存1小时
+        res.send(sitemapContent);
+        this.logger.debug('动态提供 sitemap.xml');
+      } catch (error) {
+        this.logger.error('生成 sitemap.xml 失败:', error);
+        res.status(500).send('Internal Server Error');
+      }
+    });
+
     // 清理缓存端点
     this.expressApp.post(
       '/cache/clear',
@@ -1124,6 +1188,11 @@ isr_render_errors_total ${stats.renderErrors} ${timestamp}
     if (url.startsWith('/health') || 
         url.startsWith('/metrics') || 
         url.startsWith('/ssr-stats')) {
+      return true;
+    }
+
+    // SEO 文件（动态路由）
+    if (url === '/robots.txt' || url === '/sitemap.xml') {
       return true;
     }
 

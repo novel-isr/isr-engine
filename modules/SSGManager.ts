@@ -3,7 +3,7 @@
  * 解决双实现重复问题，提供统一的 API
  */
 
-import { UnifiedSSGGenerator, SSGConfig } from './SSGModuleFixed';
+import { SSGGenerator as UnifiedSSGGenerator, SSGConfig } from './SSGGenerator';
 import { Logger } from '../utils/Logger';
 
 export interface SSGManagerConfig extends Partial<SSGConfig> {

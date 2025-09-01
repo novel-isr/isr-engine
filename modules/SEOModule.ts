@@ -22,16 +22,11 @@ export class SEOModule {
 
   async initialize() {
     this.logger.info('Initializing SEO Module...');
-
-    if (this.config.generateRobots) {
-      await this.generateRobots();
-    }
-
-    if (this.config.generateSitemap) {
-      await this.generateSitemap();
-    }
-
-    this.logger.info('SEO Module initialized');
+    
+    // 注意：ISR/SSR模式下不生成静态文件，而是通过动态路由提供
+    // 只有在SSG模式下才生成静态文件
+    this.logger.info('SEO Module initialized (动态路由模式)');
+    this.logger.info('访问 /robots.txt 和 /sitemap.xml 将通过动态路由提供');
   }
 
   async generateRobots() {

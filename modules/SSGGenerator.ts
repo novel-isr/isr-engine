@@ -1,6 +1,6 @@
 /**
- * 修复版的 SSG 模块
- * 解决双实现重复、开发污染 dist 等问题
+ * 统一 SSG 生成器
+ * 企业级静态站点生成核心实现
  */
 
 import fs from 'fs';
@@ -30,9 +30,9 @@ export interface SSGGenerationContext {
 }
 
 /**
- * 统一的 SSG 生成器 - 解决双实现问题
+ * 统一的 SSG 生成器 - 企业级静态站点生成核心
  */
-export class UnifiedSSGGenerator {
+export class SSGGenerator {
   private config: SSGConfig;
   private logger: Logger;
   private generatedPages: Map<string, { path: string; timestamp: number; size: number }> = new Map();
@@ -95,22 +95,50 @@ export class UnifiedSSGGenerator {
 
     this.logger.info(`✅ SSG 批量生成完成: ${successful} 成功, ${failed} 失败`);
 
-    // 生成 sitemap 和 robots.txt
+    // 生成 sitemap 和 robots.txt（仅SSG模式需要静态文件）
+    // 注意：ISR/SSR模式通过动态路由提供这些文件，只有SSG才需要静态文件
     if (mode === 'production' && successful > 0) {
       const successfulRoutes = results
         .filter(r => r.success)
         .map(r => r.route);
       
       await this.generateSEOFiles(successfulRoutes, outputDir);
+      this.logger.info('✅ SSG模式: 已生成静态SEO文件 (robots.txt, sitemap.xml)');
     }
 
     return { successful, failed, total: results.length };
   }
 
   /**
-   * 按需生成单个页面
+   * 按需生成单个页面 - 带完整 context 支持
+   */
+  async generateOnDemandWithContext(route: string, context?: any): Promise<{
+    success: boolean;
+    html: string;
+    path?: string;
+    fromCache: boolean;
+    meta: any;
+  }> {
+    return this.generateOnDemandInternal(route, context);
+  }
+
+  /**
+   * 按需生成单个页面 - 向后兼容方法
    */
   async generateOnDemand(route: string): Promise<{
+    success: boolean;
+    html: string;
+    path?: string;
+    fromCache: boolean;
+    meta: any;
+  }> {
+    return this.generateOnDemandInternal(route);
+  }
+
+  /**
+   * 按需生成单个页面 - 内部实现
+   */
+  private async generateOnDemandInternal(route: string, externalContext?: any): Promise<{
     success: boolean;
     html: string;
     path?: string;
@@ -137,13 +165,13 @@ export class UnifiedSSGGenerator {
       return cachedResult;
     }
 
-    // 开始生成（加锁防止并发）
-    const generationPromise = this.generateSinglePage({
+    // 开始生成（加锁防止并发），传递外部 context
+    const generationPromise = this.generateSinglePageWithContext({
       route,
       mode,
       renderFunction: this.renderFunction!,
       outputDir,
-    });
+    }, externalContext);
 
     this.generationCache.set(cacheKey, generationPromise);
 
@@ -268,9 +296,33 @@ export class UnifiedSSGGenerator {
   }
 
   /**
-   * 生成单个页面
+   * 生成单个页面 - 带外部 context 支持
+   */
+  private async generateSinglePageWithContext(context: SSGGenerationContext, externalContext?: any): Promise<{
+    success: boolean;
+    html: string;
+    path: string;
+    meta: any;
+  }> {
+    return this.generateSinglePageInternal(context, externalContext);
+  }
+
+  /**
+   * 生成单个页面 - 向后兼容方法
    */
   private async generateSinglePage(context: SSGGenerationContext): Promise<{
+    success: boolean;
+    html: string;
+    path: string;
+    meta: any;
+  }> {
+    return this.generateSinglePageInternal(context);
+  }
+
+  /**
+   * 生成单个页面 - 内部实现
+   */
+  private async generateSinglePageInternal(context: SSGGenerationContext, externalContext?: any): Promise<{
     success: boolean;
     html: string;
     path: string;
@@ -284,20 +336,36 @@ export class UnifiedSSGGenerator {
 
     this.logger.debug(`🔄 生成静态页面: ${route} (${mode})`);
 
-    // 执行渲染
-    const renderResult = await renderFunction(route, {
+    // 统一时间管理 - 确保 SSG 生成的页面也有一致的时间戳
+    const renderTime = new Date().toISOString();
+
+    // 构建渲染上下文，合并外部传入的 context（如 forceMode）
+    const renderContext = {
       renderMode: 'ssg',
       strategy: 'static',
       mode,
       isSSG: true,
-    });
+      renderTime, // 传递统一的时间戳
+      // 合并外部 context，确保 forceMode 等参数能正确传递
+      ...(externalContext && {
+        forceMode: externalContext.forceMode,
+        forceFallback: externalContext.forceFallback,
+        userAgent: externalContext.userAgent,
+        bypassCache: externalContext.bypassCache,
+      }),
+    };
+
+    console.log(`🔄 SSG生成页面: ${route}, renderContext:`, renderContext);
+
+    // 执行渲染
+    const renderResult = await renderFunction(route, renderContext);
 
     if (!renderResult || !renderResult.html) {
       throw new Error(`渲染失败: ${route} - 没有生成 HTML`);
     }
 
-    // 创建完整 HTML 文档
-    const fullHTML = this.createStaticHTML(renderResult, route);
+    // 创建完整 HTML 文档，传递统一的时间戳
+    const fullHTML = this.createStaticHTML(renderResult, route, renderTime);
 
     // 写入文件
     const filePath = this.getStaticFilePath(route, outputDir);
@@ -361,9 +429,10 @@ export class UnifiedSSGGenerator {
   /**
    * 创建完整的静态 HTML 文档
    */
-  private createStaticHTML(renderResult: any, route: string): string {
+  private createStaticHTML(renderResult: any, route: string, renderTime?: string): string {
     const { html, helmet, preloadLinks } = renderResult;
-    const now = new Date().toISOString();
+    // 使用传入的时间戳，或者生成新的（向后兼容）
+    const now = renderTime || new Date().toISOString();
 
     return `<!DOCTYPE html>
 <html${helmet?.htmlAttributes?.toString() || ''}>
@@ -561,3 +630,6 @@ Sitemap: ${baseUrl}/sitemap.xml`;
     }
   }
 }
+
+// 兼容性别名 - 向后兼容现有代码
+export const UnifiedSSGGenerator = SSGGenerator;
