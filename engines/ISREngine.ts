@@ -2,6 +2,7 @@ import { Server } from 'http';
 
 import compression from 'compression';
 import express, { Express, Request, Response } from 'express';
+import React from 'react';
 import { createServer as createViteServer, ViteDevServer, build as viteBuild } from 'vite';
 
 import { RenderMode } from './RenderMode';
@@ -10,6 +11,7 @@ import { CSRFallback } from '../modules/CSRFallback';
 import { ISRModule } from '../modules/ISRModule';
 import { SEOModule } from '../modules/SEOModule';
 import { SSGGenerator } from '../modules/SSGGenerator';
+import { RSCRuntime } from '../modules/RSCRuntime';
 import { NovelISRConfig, RenderResult, RenderContext, RenderMeta } from '../types';
 import { Logger } from '../utils/Logger';
 import { MetricsCollector } from '../utils/MetricsCollector';
@@ -30,6 +32,7 @@ export default class ISREngine {
   private ssgGenerator: SSGGenerator;
   private isrModule: ISRModule;
   private seoModule: SEOModule;
+  private rscRuntime: RSCRuntime;
   private viteServer?: ViteDevServer;
   private expressApp?: Express;
   private httpServer?: Server;
@@ -70,6 +73,28 @@ export default class ISREngine {
 
     this.isrModule = new ISRModule(config);
     this.seoModule = new SEOModule(config.seo || {});
+    // 初始化企业级 RSC Runtime
+    const projectRoot = process.cwd();
+    const rscConfig = {
+      maxWorkers: config.rsc?.maxWorkers || 4,
+      componentCacheSize: config.rsc?.cacheSize || 1000,
+      enablePerformanceMetrics: config.dev?.verbose || false,
+      securityPolicy: {
+        allowedModules: [
+          'react', 'react-dom', 'fs/promises', 'path', 'crypto',
+          'url', 'querystring', 'util', 'buffer',
+          ...(config.rsc?.securityPolicy?.allowedModules || [])
+        ],
+        restrictedGlobals: config.rsc?.securityPolicy?.restrictedGlobals || [],
+      },
+    };
+    // 启用企业级 RSC 调试模式
+    const debugRSCConfig = {
+      ...rscConfig,
+      debug: true, // 启用调试输出转换后的代码
+      verbose: config.dev?.verbose || true
+    };
+    this.rscRuntime = new RSCRuntime(projectRoot, debugRSCConfig);
 
     this.stats = {
       requests: 0,
@@ -130,6 +155,26 @@ export default class ISREngine {
       } catch (error) {
         this.logger.warn('SEO 模块初始化失败，SEO 功能将被禁用:', error);
         // SEO 模块失败不应该阻止整个引擎启动
+      }
+
+      // 初始化企业级 RSC Runtime
+      if (this.config.rsc?.enabled !== false) {
+        try {
+          this.logger.info('🔧 初始化企业级 RSC Runtime...');
+          await this.rscRuntime.initialize();
+          this.logger.info('✅ RSC Runtime 初始化完成');
+          this.logger.debug('🎯 RSC 自动组件发现和路由感知已启用');
+        } catch (error) {
+          this.logger.error('❌ RSC Runtime 初始化失败:', error);
+          // 在生产环境中，RSC 失败应该阻止启动
+          if (process.env.NODE_ENV === 'production') {
+            throw new Error(`RSC Runtime 初始化失败: ${(error as Error).message}`);
+          } else {
+            this.logger.warn('⚠️ 开发模式: RSC Runtime 初始化失败，将禁用 RSC 功能');
+          }
+        }
+      } else {
+        this.logger.info('🔄 RSC 功能已禁用，使用传统 SSR 模式');
       }
 
       // Pre-generate static pages if needed
@@ -786,8 +831,18 @@ export default class ISREngine {
         throw new Error('渲染函数未找到或不是有效的函数');
       }
 
-      this.logger.debug(`开始渲染页面: ${url}`);
-      const result = await renderModule.render(url, context);
+      // 检查是否启用 RSC
+      const useRSC = this.config.rsc?.enabled !== false;
+      this.logger.debug(`开始渲染页面: ${url} (RSC: ${useRSC ? '启用' : '禁用'})`);
+
+      let result;
+      if (useRSC) {
+        // 使用企业级 RSC Runtime 进行渲染
+        result = await this.renderWithEnterpriseRSC(url, context, renderModule.render);
+      } else {
+        // 传统 SSR 渲染
+        result = await renderModule.render(url, context);
+      }
 
       if (!result || !result.html) {
         throw new Error('渲染结果无效：缺少 HTML 内容');
@@ -797,13 +852,105 @@ export default class ISREngine {
       this.logger.debug(`页面渲染成功: ${url} (${result.html.length} 字符)`);
 
       return this.createRenderResult(result, {
-        renderMode: 'ssr',
+        renderMode: context.renderMode || 'ssr',
         timestamp: Date.now(),
         viteHMR: process.env.NODE_ENV !== 'production' && !!this.viteServer,
+        rscEnabled: useRSC,
       });
     } catch (error) {
       this.logger.error(`❌ 服务端渲染失败 ${url}:`, error);
       this.stats.ssrErrors++;
+      throw error;
+    }
+  }
+
+  /**
+   * 企业级 RSC 渲染实现
+   */
+  private async renderWithEnterpriseRSC(
+    url: string,
+    context: RenderContext,
+    renderFunction: any
+  ): Promise<any> {
+    try {
+      this.logger.debug('🚀 企业级 RSC Runtime: 开始渲染...');
+
+      // 创建应用树工厂函数
+      const appTreeFactory = (): React.ReactElement => {
+        // 暂时返回一个简单的测试组件树，验证 RSC Runtime 基础功能
+        return React.createElement('div', {
+          id: 'rsc-test-root',
+          'data-rsc-runtime': 'enterprise',
+        }, [
+          React.createElement('h1', { key: 'title' }, 'RSC Runtime 测试'),
+          React.createElement('p', { key: 'desc' }, '企业级 RSC Runtime 正在运行'),
+          React.createElement('div', { 
+            key: 'status',
+            style: { 
+              padding: '10px', 
+              backgroundColor: '#e8f5e8', 
+              borderRadius: '4px' 
+            }
+          }, `路由: ${url} | 时间: ${new Date().toISOString()}`)
+        ]);
+      };
+
+      // 使用企业级 RSC Runtime 渲染 (Vite 集成)
+      const rscResult = await this.rscRuntime.renderRSC(
+        url,
+        context,
+        appTreeFactory,
+        this.viteServer  // 传入 Vite 服务器实例
+      );
+
+      // 将 RSC 结果转换为标准的 ISR 渲染结果
+      const result = {
+        html: rscResult.html,
+        helmet: null, // RSC 已包含头部信息
+        preloadLinks: '',
+        rscPayload: rscResult.rscPayload,
+        clientManifest: rscResult.clientManifest,
+        statusCode: 200,
+        meta: {
+          renderMode: context.renderMode || 'ssr',
+          strategy: context.strategy || 'server',
+          rscEnabled: true,
+          rscRuntime: 'enterprise',
+          serverComponentCount: rscResult.performance.componentsExecuted,
+          rscRenderTime: rscResult.performance.serverExecutionTime,
+          dataFetchTime: rscResult.performance.dataFetchTime,
+          url,
+          timestamp: Date.now(),
+        },
+      };
+
+      this.logger.info(`✅ 企业级 RSC 渲染完成: ${url}`);
+      this.logger.debug(`📊 性能指标: 服务端组件 ${rscResult.performance.componentsExecuted} 个, 执行时间 ${rscResult.performance.serverExecutionTime}ms`);
+
+      return result;
+
+    } catch (error) {
+      this.logger.error('❌ 企业级 RSC 渲染失败:', error);
+      
+      // 企业级错误处理：记录详细错误信息
+      this.logger.error('🔍 RSC 错误详情:', {
+        url,
+        context: JSON.stringify(context, null, 2),
+        error: (error as Error).message,
+        stack: (error as Error).stack,
+      });
+      
+      // 生产环境不允许降级，必须修复问题
+      if (process.env.NODE_ENV === 'production') {
+        throw new Error(`企业级 RSC 渲染失败，生产环境不允许降级: ${(error as Error).message}`);
+      }
+      
+      // 开发环境：提供详细的错误信息后抛出错误
+      this.logger.error('💡 可能的解决方案:');
+      this.logger.error('1. 检查组件是否正确实现 RSC 规范');
+      this.logger.error('2. 验证数据获取函数是否正确'); 
+      this.logger.error('3. 确认组件依赖是否在安全模块列表中');
+      
       throw error;
     }
   }
@@ -1247,6 +1394,17 @@ isr_render_errors_total ${stats.renderErrors} ${timestamp}
           resolve();
         });
       });
+    }
+
+    // 清理企业级 RSC Runtime
+    if (this.config.rsc?.enabled !== false) {
+      try {
+        this.logger.info('🧹 清理 RSC Runtime...');
+        await this.rscRuntime.cleanup();
+        this.logger.info('✅ RSC Runtime 清理完成');
+      } catch (error) {
+        this.logger.warn('⚠️ RSC Runtime 清理失败:', error);
+      }
     }
 
     // 关闭 Vite 服务器

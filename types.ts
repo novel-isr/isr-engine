@@ -171,6 +171,14 @@ export interface EnterpriseConfigOptions {
 }
 
 // 主配置接口
+// Layout 配置接口
+export interface LayoutConfig {
+  enabled: boolean;
+  component?: string; // Layout 组件路径
+  props?: Record<string, any>; // Layout 属性
+  routes?: Record<string, string>; // 路由特定的 Layout 映射
+}
+
 // SSG 配置接口
 export interface SSGConfig {
   routes?: string[] | (() => Promise<string[]>);
@@ -183,12 +191,42 @@ export interface SSGConfig {
   };
 }
 
+// RSC 配置接口 - 企业级
+export interface RSCConfig {
+  enabled?: boolean;
+  maxWorkers?: number;
+  cacheSize?: number;
+  securityPolicy?: {
+    allowedModules?: string[];
+    restrictedGlobals?: string[];
+  };
+  performance?: {
+    enableMetrics?: boolean;
+    componentTimeout?: number;
+    maxComponentDepth?: number;
+  };
+  serverComponents?: {
+    directory?: string;
+    extensions?: string[];
+  };
+  clientComponents?: {
+    directory?: string;
+    bundling?: boolean;
+  };
+  serialization?: {
+    maxDepth?: number;
+    allowedTypes?: string[];
+  };
+}
+
 export interface NovelISRConfig {
   mode?: RenderModeType;
   routes?: Record<string, RenderModeType>;
   server?: ServerConfig;
   isr?: ISRConfig;
   ssg?: SSGConfig;
+  rsc?: RSCConfig;
+  layout?: LayoutConfig;
   cache?: CacheConfig;
   seo?: SEOConfig;
   dev?: DevConfig;
