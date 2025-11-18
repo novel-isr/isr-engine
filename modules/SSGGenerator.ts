@@ -469,14 +469,6 @@ export class SSGGenerator {
   <meta name="generator" content="Novel ISR Engine SSG">
   <meta name="generated-at" content="${now}">
   <meta name="ssg-route" content="${route}">
-  <script type="module">
-    import RefreshRuntime from '/@react-refresh';
-    RefreshRuntime.injectIntoGlobalHook(window);
-    window.$RefreshReg$ = () => {};
-    window.$RefreshSig$ = () => (type) => type;
-    window.__vite_plugin_react_preamble_installed__ = true;
-  </script>
-  <script type="module" src="/@vite/client"></script>
 </head>
 <body${helmet?.bodyAttributes?.toString() || ''}>
   <div id="root">${html}</div>

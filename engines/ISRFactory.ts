@@ -74,7 +74,7 @@ export class NovelEngine {
 
       if (existsSync(configPath)) {
         try {
-          const { default: config } = await import(configPath);
+          const { default: config } = await import(/* @vite-ignore */ configPath);
           this.userConfig = { ...config, ...this.userConfig };
           break;
         } catch (error) {

@@ -198,7 +198,7 @@ ${routes.map((route: string) => this.createSitemapEntry(route, siteUrl)).join('\
 
       for (const configPath of configPaths) {
         if (await this.fileExists(configPath)) {
-          const config = await import(configPath);
+          const config = await import(/* @vite-ignore */ configPath);
           return config.routes || config.default?.routes || [];
         }
       }

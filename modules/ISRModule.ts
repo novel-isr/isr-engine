@@ -126,37 +126,62 @@ export class ISRModule {
           throw new Error(`服务端入口文件不存在: ${serverEntryPath}。请先运行构建命令。`);
         }
 
-        const { render } = await import(serverEntryPath);
+        const { render } = await import(/* @vite-ignore */ serverEntryPath);
         renderModule = { render };
       } else {
         // 开发模式：使用Vite的SSR加载
         const viteServer = this.viteServer || context.viteServer;
-        if (!viteServer) {
-          console.log('❌ ISR模块: 开发模式下Vite服务器不可用，将降级到下一个策略');
-          this.logger.warn('开发模式下Vite服务器不可用，降级到CSR渲染');
-          // 直接抛出错误，让上层降级到CSR
-          throw new Error('开发模式下无法初始化Vite服务器，请检查配置');
-        } else {
-          // 加载统一入口文件
-          console.log('🔄 ISR模块: 正在加载统一入口文件 /src/entry.tsx');
-          this.logger.debug('正在加载统一入口文件: /src/entry.tsx');
-          const entryModule = await viteServer.ssrLoadModule('/src/entry.tsx');
-          console.log('📦 ISR模块: 入口模块导出函数:', Object.keys(entryModule));
-          this.logger.debug('入口模块导出:', Object.keys(entryModule));
 
-          if (entryModule.renderServer) {
-            renderModule = { render: entryModule.renderServer };
-            console.log('✅ ISR模块: 使用统一入口文件的 renderServer 进行渲染');
-            this.logger.debug('✅ 使用统一入口文件的renderServer进行SSR渲染');
-          } else if (entryModule.render) {
-            renderModule = { render: entryModule.render };
-            console.log('✅ ISR模块: 使用统一入口文件的 render 进行渲染');
-            this.logger.debug('✅ 使用统一入口文件的render进行SSR渲染');
-          } else {
-            console.log('❌ ISR模块: 入口文件缺少必要的导出函数:', Object.keys(entryModule));
-            this.logger.error('入口文件导出函数:', Object.keys(entryModule));
-            throw new Error('统一入口文件必须导出renderServer或render函数');
-          }
+        // 检查Vite服务器可用性
+        if (!viteServer) {
+          console.log('❌ ISR模块: 开发模式下Vite服务器不可用');
+          this.logger.error('开发模式下无法获取Vite服务器实例，无法进行SSR渲染');
+          throw new Error('Vite服务器不可用，请确保在Vite开发服务器启动后再请求');
+        }
+
+        // 添加Vite服务器可用性检查
+        if (typeof viteServer.ssrLoadModule !== 'function') {
+          console.log('❌ ISR模块: Vite服务器的ssrLoadModule方法不可用');
+          this.logger.error('Vite服务器方法不完整，无法进行SSR加载');
+          throw new Error('Vite服务器方法不完整');
+        }
+
+        // 加载统一入口文件，带超时保护
+        console.log('🔄 ISR模块: 正在加载统一入口文件 /src/entry.tsx');
+        this.logger.debug('正在加载统一入口文件: /src/entry.tsx');
+
+        let entryModule;
+        try {
+          // 设置Vite模块加载超时（10秒）
+          const loadTimeout = new Promise((_, reject) =>
+            setTimeout(() => reject(new Error('Vite模块加载超时')), 10000)
+          );
+
+          entryModule = (await Promise.race([
+            viteServer.ssrLoadModule('/src/entry.tsx'),
+            loadTimeout,
+          ])) as any;
+        } catch (loadError) {
+          console.log('❌ ISR模块: Vite模块加载失败:', (loadError as Error).message);
+          this.logger.error('Vite模块加载失败:', loadError);
+          throw new Error(`入口文件加载失败: ${(loadError as Error).message}`);
+        }
+
+        console.log('📦 ISR模块: 入口模块导出函数:', Object.keys(entryModule));
+        this.logger.debug('入口模块导出:', Object.keys(entryModule));
+
+        if (entryModule.renderServer) {
+          renderModule = { render: entryModule.renderServer };
+          console.log('✅ ISR模块: 使用统一入口文件的 renderServer 进行渲染');
+          this.logger.debug('✅ 使用统一入口文件的renderServer进行SSR渲染');
+        } else if (entryModule.render) {
+          renderModule = { render: entryModule.render };
+          console.log('✅ ISR模块: 使用统一入口文件的 render 进行渲染');
+          this.logger.debug('✅ 使用统一入口文件的render进行SSR渲染');
+        } else {
+          console.log('❌ ISR模块: 入口文件缺少必要的导出函数:', Object.keys(entryModule));
+          this.logger.error('入口文件导出函数:', Object.keys(entryModule));
+          throw new Error('统一入口文件必须导出renderServer或render函数');
         }
       }
 
@@ -323,7 +348,14 @@ export class ISRModule {
   }
 
   shouldRevalidate(url: string, metadata: Record<string, any>): boolean {
-    if (!metadata.generated) return true;
+    // 如果元数据不存在或缺少生成时间,需要重新验证
+    if (!metadata || !metadata.generated) return true;
+
+    // 安全检查:确保 config.isr 和 revalidate 存在
+    if (!this.config?.isr?.revalidate) {
+      this.logger.warn(`ISR配置缺失revalidate字段,跳过重新验证: ${url}`);
+      return false; // 没有配置时不重新验证
+    }
 
     const now = Date.now();
     const revalidateTime = this.config.isr.revalidate * 1000;

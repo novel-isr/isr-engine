@@ -246,7 +246,7 @@ export class SSGManager {
       for (const configFile of configFiles) {
         const configPath = path.join(process.cwd(), configFile);
         if (fs.existsSync(configPath)) {
-          const config = await import(configPath);
+          const config = await import(/* @vite-ignore */ configPath);
           if (config.routes) {
             routes.push(...(Array.isArray(config.routes) ? config.routes : [config.routes]));
           }

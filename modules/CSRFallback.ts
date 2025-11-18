@@ -235,14 +235,6 @@ export class CSRFallback {
     const devScripts = isDev
       ? `${variablesScript}
   <script type="module">
-    import RefreshRuntime from '/@react-refresh';
-    RefreshRuntime.injectIntoGlobalHook(window);
-    window.$RefreshReg$ = () => {};
-    window.$RefreshSig$ = () => (type) => type;
-    window.__vite_plugin_react_preamble_installed__ = true;
-  </script>
-  <script type="module" src="/@vite/client"></script>
-  <script type="module">
     console.log('🎯 CSR 降级模式 - 正在加载通用入口...');
     
     // 防止重复初始化

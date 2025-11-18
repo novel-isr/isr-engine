@@ -39,6 +39,34 @@ export default defineConfig({
         'querystring',
         'vm',
         'worker_threads',
+        'zlib',
+        'readline',
+        'tty',
+        'process',
+        'async_hooks',
+        'string_decoder',
+        // Node内置模块的node:前缀版本
+        'node:path',
+        'node:fs',
+        'node:url',
+        'node:http',
+        'node:https',
+        'node:events',
+        'node:child_process',
+        'node:os',
+        'node:crypto',
+        'node:stream',
+        'node:util',
+        'node:buffer',
+        'node:querystring',
+        'node:vm',
+        'node:worker_threads',
+        'node:zlib',
+        'node:readline',
+        'node:tty',
+        'node:process',
+        'node:async_hooks',
+        'node:string_decoder',
         
         // 第三方依赖
         'compression',
@@ -53,6 +81,12 @@ export default defineConfig({
         'p-limit',
         'rate-limiter-flexible',
         'helmet',
+        
+        // CLI 工具依赖
+        'commander',
+        'inquirer',
+        'ora',
+        'chalk',
         
         // Vite 相关
         'vite',

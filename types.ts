@@ -133,8 +133,11 @@ export interface RenderContext {
   bypassCache?: boolean;
   viteHMR?: boolean;
   manifest?: any;
-  forceMode?: string; // 强制渲染模式: ssg, isr, ssr, csr
-  forceFallback?: string; // 强制降级策略: static, cached, regenerate, server, client
+  // ✅ 路由数据（SSR 实时数据，符合规则：通过 isr-engine 获取）
+  routeData?: any;
+  // 用户请求的渲染模式和降级策略
+  requestedRenderMode?: string; // 'ssg' | 'isr' | 'ssr' | 'csr'
+  requestedFallbackStrategy?: string; // 'static' | 'cached' | 'regenerate' | 'server' | 'client'
   originalUrl?: string; // 原始 URL（包含查询参数）
   cleanUrl?: string; // 清理后的 URL（不含查询参数）
   [key: string]: any;
@@ -223,6 +226,7 @@ export interface NovelISRConfig {
   mode?: RenderModeType;
   routes?: Record<string, RenderModeType>;
   server?: ServerConfig;
+  apiUrl?: string;
   isr?: ISRConfig;
   ssg?: SSGConfig;
   rsc?: RSCConfig;

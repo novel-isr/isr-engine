@@ -6,7 +6,7 @@
 export { ISRModule } from './ISRModule';
 export { SEOModule } from './SEOModule';
 export { CSRFallback } from './CSRFallback';
-export { RSCRuntime } from './RSCRuntime';
+export { RSCRenderer } from './RSCRenderer';
 export { SpiderEngine } from './SpiderEngine';
 export * from './ISREnhancements';
 export * from './SeoEnhancements';
