@@ -6,14 +6,14 @@
  * - HTTP/1.1: 标准明文 HTTP
  * - HTTPS: TLS 加密 HTTP/1.1
  * - HTTP/2: 基于 TLS 的多路复用（兼容 HTTP/1.1 回退）
- * - HTTP/3: 基于 HTTP/2 + Alt-Svc 广播 h3 + 可选 QUIC 监听
+ * - HTTP/3: 基于 HTTP/2 + 真实 QUIC 监听；只有 QUIC 可用时才广播 Alt-Svc
  *
  * HTTP/3 策略说明：
  * Node.js 尚无稳定的原生 QUIC 支持。业界成熟方案是：
  * 1. 用 HTTP/2 (TLS) 服务请求
- * 2. 通过 Alt-Svc 响应头告知浏览器/客户端可用的 h3 端点
- * 3. 可选：绑定 UDP 端口启动 QUIC 监听（需要 @aspect-build/quic 等第三方库）
- * 4. 客户端首次请求通过 HTTP/2，后续请求自动升级到 HTTP/3
+ * 2. 尝试绑定 QUIC 监听（需要 Node/第三方 QUIC 能力）
+ * 3. 只有真实 QUIC 监听成功后才通过 Alt-Svc 广播 h3 端点
+ * 4. QUIC 不可用时保持 HTTP/2 TLS，不发送 Alt-Svc
  * 这也是 Cloudflare / Fastly / Nginx 的标准做法。
  */
 
@@ -196,13 +196,13 @@ const DEFAULT_H3_CONFIG: Http3Config = {
  *
  * 实现策略：
  * 1. 启动 HTTP/2 服务器作为主传输层（兼容 Express）
- * 2. 注入 Alt-Svc 中间件，广播 h3 端点
- * 3. 尝试启动 QUIC UDP 监听器（可选，需要第三方依赖）
+ * 2. 尝试启动 QUIC UDP 监听器（需要第三方依赖或运行时支持）
+ * 3. 只有 QUIC 成功时才注入 Alt-Svc 中间件，广播 h3 端点
  * 4. 支持 103 Early Hints 预加载
  *
  * 浏览器行为：
  * - 首次请求通过 HTTP/2 连接
- * - 收到 Alt-Svc: h3=":443"; ma=86400 头
+ * - QUIC 可用时收到 Alt-Svc: h3=":443"; ma=86400 头
  * - 后续请求自动升级到 HTTP/3 (QUIC)
  */
 export async function startHttp3Server(
@@ -378,9 +378,9 @@ function createEarlyHintsMiddleware() {
  * 方案优先级：
  * 1. Node.js 实验性 QUIC API (--experimental-quic)
  * 2. 第三方 @aspect-build/quic 或 quic 包
- * 3. 基础 UDP Socket（仅版本协商，不处理完整 QUIC）
  *
- * 生产环境建议：使用 Nginx / Caddy / Cloudflare 做 HTTP/3 终端
+ * 生产环境建议：使用 Nginx / Caddy / Cloudflare 做 HTTP/3 终端。
+ * 注意：不会启动“仅版本协商”的 UDP socket，因为那不代表可用 HTTP/3。
  */
 async function startQuicListener(
   config: ServerConfig,

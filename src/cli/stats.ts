@@ -2,14 +2,20 @@
  * 性能统计命令
  *
  * 从运行中的 ISR 引擎获取真实性能指标：
- * - 连接本地 metrics HTTP 端点 (默认 /__isr_metrics)
- * - 或读取 MetricsCollector 的共享内存快照
+ * - 连接本地 ISR stats JSON 端点 (默认 /__isr/stats)
+ * - Prometheus 指标请直接抓取 /metrics
  */
 
 import { logger } from '@/logger';
-import type { MetricsSnapshot } from '@/metrics';
 import { loadConfig } from '../config/loadConfig';
 import type { ISRConfig } from '@/types';
+
+interface IsrStatsSnapshot {
+  size: number;
+  max: number;
+  revalidating: number;
+  backend: 'memory' | 'hybrid';
+}
 
 export interface StatsOptions {
   watch: boolean;
@@ -33,22 +39,7 @@ function resolveMetricsUrl(options: StatsOptions, config: ISRConfig): string | n
   }
 
   const protocol = config.server?.ssl || config.server?.protocol === 'https' ? 'https' : 'http';
-  return `${protocol}://${host}:${port}/__isr_metrics`;
-}
-
-/**
- * 格式化运行时长
- */
-function formatUptime(ms: number): string {
-  const seconds = Math.floor(ms / 1000);
-  const minutes = Math.floor(seconds / 60);
-  const hours = Math.floor(minutes / 60);
-  const days = Math.floor(hours / 24);
-
-  if (days > 0) return `${days}d ${hours % 24}h ${minutes % 60}m`;
-  if (hours > 0) return `${hours}h ${minutes % 60}m ${seconds % 60}s`;
-  if (minutes > 0) return `${minutes}m ${seconds % 60}s`;
-  return `${seconds}s`;
+  return `${protocol}://${host}:${port}/__isr/stats`;
 }
 
 export async function showStats(options: StatsOptions) {
@@ -87,11 +78,20 @@ export async function showStats(options: StatsOptions) {
   }
 }
 
-async function fetchMetricsByUrl(metricsUrl: string): Promise<MetricsSnapshot | null> {
+async function fetchMetricsByUrl(metricsUrl: string): Promise<IsrStatsSnapshot | null> {
   try {
     const response = await fetch(metricsUrl);
     if (!response.ok) return null;
-    return (await response.json()) as MetricsSnapshot;
+    const json = (await response.json()) as Partial<IsrStatsSnapshot>;
+    if (
+      typeof json.size !== 'number' ||
+      typeof json.max !== 'number' ||
+      typeof json.revalidating !== 'number' ||
+      (json.backend !== 'memory' && json.backend !== 'hybrid')
+    ) {
+      return null;
+    }
+    return json as IsrStatsSnapshot;
   } catch {
     return null;
   }
@@ -103,36 +103,16 @@ async function displayStats(detailed: boolean, metricsUrl: string) {
   if (!snapshot) {
     logger.warn('[Stats]', `⚠️ 无法连接到 ISR 服务器 metrics: ${metricsUrl}`);
     logger.warn('[Stats]', '请确保服务器正在运行 (novel-isr start)');
-    logger.warn('[Stats]', '服务器需要启用 metrics 端点: GET /__isr_metrics');
+    logger.warn('[Stats]', '服务器需要启用 stats 端点: GET /__isr/stats');
     return;
   }
 
-  // 核心指标
-  logger.info('[Stats]', '核心指标:');
-  logger.info('[Stats]', `运行时长: ${formatUptime(snapshot.uptime)}`);
-  logger.info('[Stats]', `请求总数: ${snapshot.totalRequests.toLocaleString()}`);
-  logger.info('[Stats]', `平均响应时间: ${snapshot.avgResponseTime}ms`);
-  logger.info('[Stats]', `成功率: ${snapshot.successRate}%`);
-  logger.info('[Stats]', `缓存命中率: ${snapshot.cacheHitRate}%`);
+  logger.info('[Stats]', 'ISR 缓存指标:');
+  logger.info('[Stats]', `缓存后端: ${snapshot.backend}`);
+  logger.info('[Stats]', `缓存条目: ${snapshot.size}/${snapshot.max}`);
+  logger.info('[Stats]', `后台重生中: ${snapshot.revalidating}`);
 
   if (detailed) {
-    // 响应时间百分位
-    logger.info('[Stats]', '响应时间分布:');
-    logger.info('[Stats]', `  P50: ${snapshot.p50ResponseTime}ms`);
-    logger.info('[Stats]', `  P95: ${snapshot.p95ResponseTime}ms`);
-    logger.info('[Stats]', `  P99: ${snapshot.p99ResponseTime}ms`);
-
-    // 渲染模式分布
-    logger.info('[Stats]', '渲染模式分布:');
-    for (const [mode, count] of Object.entries(snapshot.renderModeBreakdown)) {
-      const percentage =
-        snapshot.totalRequests > 0 ? ((count / snapshot.totalRequests) * 100).toFixed(1) : '0';
-      logger.info('[Stats]', `  ${mode.toUpperCase()}: ${count.toLocaleString()} (${percentage}%)`);
-    }
-
-    // 系统资源
-    logger.info('[Stats]', '系统资源:');
-    logger.info('[Stats]', `  内存使用: ${snapshot.memoryUsageMB}MB`);
-    logger.info('[Stats]', `  堆内存: ${snapshot.heapUsedMB}MB`);
+    logger.info('[Stats]', `Prometheus 指标: ${metricsUrl.replace('/__isr/stats', '/metrics')}`);
   }
 }

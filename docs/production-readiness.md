@@ -33,7 +33,7 @@
 
 | Gap | 影响 | 当前状态 |
 |---|---|---|
-| Test coverage ~12%（17 tests / 141 src files）| race / 边界路径未覆盖 | P0 |
+| Test coverage 仍偏低（22 test files）| race / 边界路径未覆盖 | P0 |
 | Bench 不阻塞 CI | 性能退化无门槛 | P0 |
 | `revalidateTag/Path` fire-and-forget | 回调抛错丢失，并发顺序未定义 | P0 |
 | SSG spider 无 retry/timeout/circuit breaker | 单页失败可能拖累整个 build | P0 |
@@ -58,7 +58,7 @@
    - 整体失败率 > 5% 抛 `SsgBuildFailedError`，即使 `continueOnError = true` 也强制 fail build
    - 全部参数可在 `ssr.config.ts` 的 `ssg: {...}` 覆盖
 3. ✅ **lint 升级** — `@typescript-eslint/no-explicit-any: 'error'`（`src/defaults/**` 和配置文件除外）。
-4. ✅ **ISREngine 生命周期集成测试** — `src/__tests__/lifecycle.integration.test.ts`：覆盖 cache + invalidator 协作 / tag & path 失效 / 并发 revalidate / 单 invalidator 失败不污染 registry / register-unregister 无泄漏。
+4. ✅ **ISREngine 生命周期集成测试** — `src/__tests__/cache-invalidator.integration.test.ts`：覆盖 cache + invalidator 协作 / tag & path 失效 / 并发 revalidate / 单 invalidator 失败不污染 registry / register-unregister 无泄漏 / cross-pod bus 协作。
 
 ⏳ **进行中**：
 
@@ -106,7 +106,7 @@
 | StackOverflow 答案 | 数十万 | 0 |
 | 文档完整度 | 极高 | 中（你在看的就是） |
 | Edge runtime 一等支持 | ✅ | ⚠️ adapter 存在但未深度测试 |
-| 测试覆盖 | 数千用例 | 17 文件 |
+| 测试覆盖 | 数千用例 | 22 文件 |
 | `next/image` 兼容 | — | ❌ API 不同 |
 | Vercel 一键部署 | ✅ | ❌ |
 

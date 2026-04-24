@@ -142,7 +142,7 @@ FallbackChain（自动降级）：
 | 构建栈灵活度 | ❌ 绑死自家栈 | ✅ Vite | ❌ 绑死自家栈 | ✅ Vite |
 | 内置图片 / 字体优化 | ✅ | ❌ | ⚠️ | ✅ |
 | Edge runtime 支持 | ✅ | ⚠️ | ❌ | ✅（CF / Vercel / Deno / Bun） |
-| 单元测试覆盖 | 数千用例 | ⚠️ | ✅ | 17 文件（~12% 比率） |
+| 单元测试覆盖 | 数千用例 | ⚠️ | ✅ | 22 文件（仍需提升覆盖） |
 
 定位：**中等规模业务的 ISR / SSG / Fallback 编排层**，构建于 React 19 + `@vitejs/plugin-rsc` 官方流水线之上。
 
@@ -157,10 +157,11 @@ FallbackChain（自动降级）：
 - 观测齐全（trace-id / render-ms / X-Cache-Status 自动注入）
 
 ⚠️ **生产前你必须知道的事**：
-- 测试覆盖 ~12%（17 测试文件 / 141 源文件），race condition 路径未覆盖
-- `revalidateTag` / `revalidatePath` 是 **fire-and-forget**，回调抛错会丢失
-- SSG spider 没有 retry / timeout / circuit breaker
-- Cross-pod cache invalidation 用 `Symbol.for(globalThis)`，**只在单 pod 工作**——多 pod 部署需要走 Redis Pub/Sub（路线图）
+- 测试覆盖仍偏低（22 测试文件），race condition / HTTP e2e 路径还需继续补
+- `revalidateTag` / `revalidatePath` 已聚合错误并抛 `RevalidationError`，调用方仍需要显式处理失败反馈
+- SSG spider 已有 timeout / retry / fail threshold，但还缺大型真实站点的长期构建数据
+- Cross-pod cache invalidation 已支持 Redis Pub/Sub，但不是持久化队列；Redis 维护窗口内仍可能丢事件
+- HTTP/2 / HTTP/3 origin 直出仍需你的代理链路矩阵压测；生产推荐 CDN/Nginx/Caddy 终止协议
 - Bench 不阻塞 CI，性能可能悄悄退化
 
 详细 gap 列表与改造建议：[docs/production-readiness.md](./docs/production-readiness.md)。
@@ -169,7 +170,7 @@ FallbackChain（自动降级）：
 
 ```bash
 pnpm install
-pnpm test                # vitest run（17 文件）
+pnpm test                # vitest run
 pnpm test:coverage       # 覆盖率报告
 pnpm lint                # eslint
 pnpm type-check          # tsc --noEmit
