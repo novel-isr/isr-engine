@@ -47,7 +47,9 @@ export { RouteManager } from './route/RouteManager';
 // ========== 缓存 ==========
 export { CacheManager } from './cache';
 export { RedisCacheAdapter } from './cache/RedisCacheAdapter';
+export { RedisInvalidationBus } from './cache/RedisInvalidationBus';
 export type { ICacheAdapter, CacheSetOptions } from './cache/ICacheAdapter';
+export type { RedisInvalidationBusConfig } from './cache/RedisInvalidationBus';
 
 // ========== ISR HTTP 缓存 store（L1 内存 / L1+L2 Redis 双层） ==========
 export {
@@ -174,6 +176,8 @@ export {
   type CreateIsrPluginOptions,
   type IsrCacheHandler,
   type IsrCacheMiddlewareOptions,
+  type IsrInvalidationBus,
+  type IsrInvalidationTarget,
 } from './plugin';
 
 // ========== 用户中间件 ==========

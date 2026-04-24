@@ -38,7 +38,8 @@
 | `revalidateTag/Path` fire-and-forget | 回调抛错丢失，并发顺序未定义 | P0 |
 | SSG spider 无 retry/timeout/circuit breaker | 单页失败可能拖累整个 build | P0 |
 | Redis 写 async fire-and-forget，无持久化 queue | Pod 重启丢写 | P1 |
-| Cross-pod cache invalidation 单进程 | 多 pod 部署 invalidation 不传播 | P1 |
+| Cross-pod cache invalidation 已有 Redis Pub/Sub，但不是持久化队列 | Redis 短故障期间事件可能丢失 | P1 |
+| HTTP/2/HTTP/3 origin 直出未做生产矩阵压测 | 代理链路、ALPN、长连接行为仍需验证 | P1 |
 | `no-explicit-any: 'warn'` | 框架库应该 `'error'` | P0 |
 | **生产部署案例 / SLO 数据** | 没人在生产跑过 | 你将是第一个；先内部业务灰度 1-2 周 |
 | **Partial Prerendering** 暂无 | 部分静态 + 部分流式混合，需自己设计 | 路线图 |
@@ -74,7 +75,7 @@
 
 ### P1 — 一周内做（成熟度跨档）
 
-6. **多 pod invalidator**：现在 `Symbol.for(globalThis)` 只能单进程。生产部署要么明确单 pod，要么走 Redis Pub/Sub 传播失效事件。
+6. ✅ **多 pod invalidator**：已有 Redis Pub/Sub 传播失效事件；仍需在你的 staging 多 pod 环境验证断线重连、事件丢失补偿和 Redis 维护窗口行为。
 7. **测试覆盖率冲到 ≥ 30%**：补 race condition、SSG 错误、cache stampede 防护测试。
 8. **文档分主题拆分** ✅ 已完成（你在看的就是）
 9. **真正的 ISREngine HTTP e2e 测试**：当前 `cache-invalidator.integration.test.ts` 验证的是 cache + invalidator 协作（中间件层），**没有**起 Express server / 跑 RSC handler。补一个 fixture entry.server.tsx + `ISREngine.start()` → curl 真请求 → `revalidateTag` → 再请求验证清缓存 → `shutdown()` 的全链路 e2e。需要 ~30 分钟 + 一个最小 fixture。也是 bench CI 的前置依赖（`scripts/bench-fixture/`，跟 #5 共用）。

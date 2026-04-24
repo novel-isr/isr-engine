@@ -108,19 +108,35 @@ export default defineConfig({
 - **L2 失败**：`onRedisError` 回调上报，L1 行为不受影响
 - **`revalidateTag` / `revalidatePath`**：同步清 L1，异步清 L2（最终一致）
 
-### Cross-pod invalidation 当前限制
+### Cross-pod invalidation
 
-`revalidate.ts` 用 `Symbol.for(globalThis)` 注册 invalidator，**只在单进程内分发**。多 pod 部署时：
+`revalidate.ts` 用 `Symbol.for(globalThis)` 注册本进程 invalidator；生产启动器在检测到
+`REDIS_URL` / `REDIS_HOST` 或 `defineSiteHooks({ redis })` 时，会额外启用 Redis Pub/Sub
+失效广播：
 
-- L1 在每个 pod 独立——某个 pod 的 `revalidateTag('books')` 只会清自己的 L1
-- L2 (Redis) 是共享的，会被清，但其他 pod 的 L1 不知道
-- 结果：其他 pod 在自己的 L1 TTL 过期前仍返回旧内容
+- 当前 pod 先清本地 L1，再 publish `{ kind, value }`
+- 其他 pod 收到消息后只清自己的 L1，不会再次 publish，避免广播风暴
+- L2 Redis 仍由 `createHybridCacheStore` 的 delete / tag 逻辑维护，整体是最终一致
 
-**短期 workaround**：
-- 缩短 L1 TTL（< 60s），让本地缓存自然 fresh
-- 或：写 Server Action 时同步清 Redis，依赖 L1 短 TTL 自然 reconcile
+最小配置：
 
-**长期方案**（路线图）：Redis Pub/Sub 把失效事件广播到所有 pod。
+```ts
+// src/entry.server.tsx
+import { defineSiteHooks } from '@novel-isr/engine/server-entry';
+
+export default defineSiteHooks({
+  redis: {
+    url: process.env.REDIS_URL,
+    keyPrefix: 'isr:',
+    // 可选；默认 `${keyPrefix}invalidate`
+    invalidationChannel: 'isr:invalidate',
+  },
+});
+```
+
+注意：Pub/Sub 不是持久化队列。Redis 短暂不可用或 pod 断线期间的失效事件可能丢失，
+因此企业部署仍建议保留较短 L1 TTL、监控 `isr_invalidator_failures_total`，并在高一致性
+业务中使用消息队列或控制面重放作为补偿。
 
 ## 推荐：每 pod 暖热 30s 后 L1 命中率 > 95%，L2 主要承担冷启动 + 跨 pod 一致性。
 

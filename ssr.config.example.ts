@@ -47,6 +47,23 @@ export default {
   server: {
     port: 3000,
     protocol: 'http1.1',
+    // Public origins should run behind CDN/Nginx/ALB. These defaults keep
+    // the Node origin bounded if it is exposed directly.
+    timeouts: {
+      requestTimeoutMs: 60_000,
+      headersTimeoutMs: 15_000,
+      keepAliveTimeoutMs: 5_000,
+      idleTimeoutMs: 30_000,
+      shutdownTimeoutMs: 5_000,
+      maxRequestsPerSocket: 1000,
+    },
+    http2: {
+      maxConcurrentStreams: 100,
+      maxHeaderListSize: 16 * 1024,
+    },
+    http3: {
+      enabled: false, // Prefer CDN / Nginx / Caddy HTTP/3 termination in production.
+    },
     admin: {
       // 生产默认只公开 /health；metrics/stats/clear 默认关闭
       authToken: process.env.ISR_ADMIN_TOKEN,

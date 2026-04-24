@@ -33,7 +33,14 @@ interface StartOptions {
  */
 async function readUserEngineConfig(rscDistEntry: string): Promise<
   | {
-      redis?: { url?: string; host?: string; port?: number; password?: string; keyPrefix?: string };
+      redis?: {
+        url?: string;
+        host?: string;
+        port?: number;
+        password?: string;
+        keyPrefix?: string;
+        invalidationChannel?: string;
+      };
       sentry?: { dsn: string; tracesSampleRate?: number; environment?: string };
       apiOrigin?: string;
       experiments?: Record<string, { variants: readonly string[]; weights?: readonly number[] }>;
@@ -228,7 +235,10 @@ export async function startProductionServer(options: StartOptions): Promise<void
 
   // ISR 缓存：FaaS 配置 (entry.server 的 defineSiteHooks({ redis })) 优先级高于 env REDIS_URL
   const { createAutoCacheStore } = await import('@/cache/createAutoCacheStore');
+  const { RedisInvalidationBus } = await import('@/cache/RedisInvalidationBus');
   const redisCfg = userEngineCfg?.redis;
+  const hasRedisConfig =
+    Boolean(redisCfg?.url || redisCfg?.host || process.env.REDIS_URL || process.env.REDIS_HOST);
   const cache = createIsrCacheHandler(config, {
     store: createAutoCacheStore({
       redisUrl: redisCfg?.url,
@@ -237,6 +247,16 @@ export async function startProductionServer(options: StartOptions): Promise<void
       redisPassword: redisCfg?.password,
       redisKeyPrefix: redisCfg?.keyPrefix,
     }),
+    invalidationBus: hasRedisConfig
+      ? new RedisInvalidationBus({
+          url: redisCfg?.url,
+          host: redisCfg?.host,
+          port: redisCfg?.port,
+          password: redisCfg?.password,
+          keyPrefix: redisCfg?.keyPrefix,
+          channel: redisCfg?.invalidationChannel,
+        })
+      : undefined,
   });
   app.use(cache);
 
@@ -333,6 +353,9 @@ export async function startProductionServer(options: StartOptions): Promise<void
     host: config.server?.host,
     protocol: config.server?.protocol ?? 'http1.1',
     ssl: config.server?.ssl ?? null,
+    timeouts: config.server?.timeouts,
+    http2: config.server?.http2,
+    http3: config.server?.http3,
   };
   const result = await startServer(app, serverConfig);
 

@@ -142,8 +142,22 @@ export default function middleware(req: Request) {
 - [ ] `ISR_ADMIN_TOKEN` 设到强 secret（如果开了 `/__isr/*` 或 `/metrics`）
 - [ ] 跑一周以上 staging 压测，监控内存增长（L1 LRU 默认 1000 条够不够你的业务）
 - [ ] 跑全量 SSG spider 验证（`pnpm vite build`），确认 `ssg.routes` 列表里没有失败 URL
-- [ ] 验证 `revalidateTag` 在 staging 多 pod 下的行为（当前 cross-pod 限制：[caching.md#cross-pod-invalidation-当前限制](./caching.md#cross-pod-invalidation-当前限制)）
+- [ ] 验证 `revalidateTag` 在 staging 多 pod 下会通过 Redis Pub/Sub 广播（见 [caching.md#cross-pod-invalidation](./caching.md#cross-pod-invalidation)）
 - [ ] 确认 graceful shutdown 在 SIGTERM 下 < 3s 退出（k8s preStop hook 至少给 10s）
+
+## HTTP/2 / HTTP/3 production stance
+
+推荐拓扑：
+
+```txt
+Browser -- HTTP/2/HTTP/3 --> CDN / Nginx / Caddy / ALB -- HTTP/1.1 --> novel-isr Node origin
+```
+
+原因：
+
+- Node + Express 对 HTTP/2 不是一等运行时；engine 的 `protocol: 'http2'` 适合受控环境验证，不建议未经压测直接暴露公网。
+- `protocol: 'http3'` 只有在真实 QUIC 实现可用时才发送 `Alt-Svc`。没有 QUIC 时会降级为 HTTP/2 TLS，且不广播 HTTP/3，避免客户端被误导。
+- origin 侧新增 `server.timeouts` / `server.http2` 配置，用于限制慢请求、header 资源消耗、keep-alive 连接和 HTTP/2 stream 并发。公网入口仍应由上游代理承担第一层防护。
 
 ## 进一步
 

@@ -19,6 +19,32 @@ export interface ServerConfig {
   host?: string;
   protocol?: ServerProtocol;
   ssl?: { key: string; cert: string } | null;
+  /**
+   * Public edge hardening knobs. Defaults are intentionally conservative for
+   * SSR/RSC workloads and should normally be paired with an upstream proxy.
+   */
+  timeouts?: {
+    requestTimeoutMs?: number;
+    headersTimeoutMs?: number;
+    keepAliveTimeoutMs?: number;
+    idleTimeoutMs?: number;
+    shutdownTimeoutMs?: number;
+    maxRequestsPerSocket?: number;
+  };
+  http2?: {
+    maxConcurrentStreams?: number;
+    maxSessionMemory?: number;
+    maxHeaderListSize?: number;
+  };
+  http3?: {
+    enabled?: boolean;
+    quicPort?: number;
+    altSvcMaxAge?: number;
+    enable0RTT?: boolean;
+    maxIdleTimeout?: number;
+    initialMaxStreamData?: number;
+    initialMaxData?: number;
+  };
 }
 
 /** HTTP/HTTPS/HTTP2 服务器实例 */

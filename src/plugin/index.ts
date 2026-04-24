@@ -13,4 +13,6 @@ export {
   createIsrCacheHandler,
   type IsrCacheMiddlewareOptions,
   type IsrCacheHandler,
+  type IsrInvalidationBus,
+  type IsrInvalidationTarget,
 } from './isrCacheMiddleware';

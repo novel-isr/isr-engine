@@ -21,6 +21,11 @@
 
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { createMemoryCacheStore, type IsrCachedEntry } from '../plugin/isrCacheStore';
+import {
+  createIsrCacheHandler,
+  type IsrInvalidationBus,
+  type IsrInvalidationTarget,
+} from '../plugin/isrCacheMiddleware';
 import { registerInvalidator, revalidatePath, revalidateTag, RevalidationError } from '../rsc';
 
 /** 模拟一条 ISR 缓存条目 —— 字段与 isrCacheMiddleware 的真实写入对齐 */
@@ -250,5 +255,57 @@ describe('ISR engine lifecycle —— invalidator unregister cleanup', () => {
     expect(cache.get('GET:/final')).toBeDefined();
 
     await cache.destroy();
+  });
+});
+
+describe('ISR engine lifecycle —— cross-pod invalidation bus', () => {
+  function createFakeBus(): IsrInvalidationBus & {
+    published: IsrInvalidationTarget[];
+    emit(target: IsrInvalidationTarget): Promise<void>;
+  } {
+    const listeners = new Set<(target: IsrInvalidationTarget) => Promise<void> | void>();
+    return {
+      published: [],
+      publish(target) {
+        this.published.push(target);
+      },
+      subscribe(listener) {
+        listeners.add(listener);
+        return () => listeners.delete(listener);
+      },
+      async emit(target) {
+        for (const listener of Array.from(listeners)) {
+          await listener(target);
+        }
+      },
+    };
+  }
+
+  it('local revalidate clears L1 and publishes to the bus', async () => {
+    const cache = createMemoryCacheStore({ max: 10 });
+    const bus = createFakeBus();
+    const handler = createIsrCacheHandler({}, { store: cache, invalidationBus: bus });
+
+    cache.set('GET:/books', entry(['books']));
+    await revalidateTag('books');
+
+    expect(cache.get('GET:/books')).toBeUndefined();
+    expect(bus.published).toEqual([{ kind: 'tag', value: 'books' }]);
+
+    await handler.destroy();
+  });
+
+  it('remote bus event clears this pod without re-publishing', async () => {
+    const cache = createMemoryCacheStore({ max: 10 });
+    const bus = createFakeBus();
+    const handler = createIsrCacheHandler({}, { store: cache, invalidationBus: bus });
+
+    cache.set('GET:/books/1', entry(['books', 'book:1']));
+    await bus.emit({ kind: 'tag', value: 'books' });
+
+    expect(cache.get('GET:/books/1')).toBeUndefined();
+    expect(bus.published).toEqual([]);
+
+    await handler.destroy();
   });
 });

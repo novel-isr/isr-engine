@@ -73,6 +73,8 @@ export interface RedisConfig {
   password?: string;
   /** 默认 'isr:' */
   keyPrefix?: string;
+  /** 跨 pod revalidate 广播频道；默认 `${keyPrefix}invalidate` */
+  invalidationChannel?: string;
 }
 
 export interface SentryConfig {

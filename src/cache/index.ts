@@ -19,3 +19,5 @@ export { MemoryCacheAdapter } from './MemoryCacheAdapter';
 export type { MemoryCacheConfig } from './MemoryCacheAdapter';
 export { RedisCacheAdapter } from './RedisCacheAdapter';
 export type { RedisCacheConfig } from './RedisCacheAdapter';
+export { RedisInvalidationBus } from './RedisInvalidationBus';
+export type { RedisInvalidationBusConfig } from './RedisInvalidationBus';

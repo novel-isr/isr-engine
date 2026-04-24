@@ -10,7 +10,7 @@
 | `/sitemap.xml` 500 | `SEO_BASE_URL` 未设 | dev 自动兜底；prod 必须注入环境变量 |
 | ISR 永远 MISS / 不进缓存 | 上游 API 失败，Server Component 调了 `markUncacheable` | 修复上游或不调 markUncacheable |
 | 端口被占 | 上次 SIGINT 没清干净 | `kill $(lsof -tiTCP:3000)` |
-| 多 pod `revalidateTag` 部分 pod 不生效 | 当前 invalidator 是单进程 `Symbol.for(globalThis)` | 短期：缩短 L1 TTL；长期：等 Redis Pub/Sub 路线图 |
+| 多 pod `revalidateTag` 部分 pod 不生效 | Redis Pub/Sub 未启用、频道不一致，或 Redis 维护窗口期间消息丢失 | 确认所有 pod 使用同一 `REDIS_URL` / `invalidationChannel`；保留较短 L1 TTL 作为补偿 |
 | `revalidateTag` 调了但缓存没清 | fire-and-forget 回调静默失败 | 包 `try { await revalidateTag(...) } catch` 抓异常 |
 | SSG build 卡住或 OOM | spider 单页超时未设上限 | 临时减少 `ssg.routes` 数量；或调 `ssg.concurrent` 降低并发 |
 

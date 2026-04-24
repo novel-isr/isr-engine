@@ -151,6 +151,42 @@ export interface ISRConfig {
     host?: string;
     protocol?: 'http1.1' | 'http2' | 'http3' | 'https';
     /**
+     * Node server timeout limits. These protect the origin from slowloris,
+     * stuck SSR/RSC requests, and long-lived keep-alive exhaustion. Put CDN /
+     * reverse proxy timeouts in front as the first line of defense.
+     */
+    timeouts?: {
+      requestTimeoutMs?: number;
+      headersTimeoutMs?: number;
+      keepAliveTimeoutMs?: number;
+      idleTimeoutMs?: number;
+      shutdownTimeoutMs?: number;
+      maxRequestsPerSocket?: number;
+    };
+    /**
+     * HTTP/2 origin settings. Production deployments should normally terminate
+     * HTTP/2 at CDN / Nginx / ALB and proxy HTTP/1.1 to Node unless this path
+     * has been tested with the exact proxy and client matrix.
+     */
+    http2?: {
+      maxConcurrentStreams?: number;
+      maxSessionMemory?: number;
+      maxHeaderListSize?: number;
+    };
+    /**
+     * HTTP/3 is only advertised when a real QUIC implementation is available.
+     * If unavailable, engine falls back to HTTP/2 TLS and does not emit Alt-Svc.
+     */
+    http3?: {
+      enabled?: boolean;
+      quicPort?: number;
+      altSvcMaxAge?: number;
+      enable0RTT?: boolean;
+      maxIdleTimeout?: number;
+      initialMaxStreamData?: number;
+      initialMaxData?: number;
+    };
+    /**
      * 管理端点（/health /metrics /__isr/*）暴露策略
      *
      * 安全默认值：

@@ -19,15 +19,46 @@
 
 import { createServer as createHttpServer, Server } from 'http';
 import { createServer as createHttpsServer } from 'https';
-import { createSecureServer, Http2SecureServer, constants as h2constants } from 'http2';
-import { createSocket as createUdpSocket, Socket as UdpSocket } from 'dgram';
+import { createSecureServer, Http2SecureServer } from 'http2';
+import { Socket as UdpSocket } from 'dgram';
 import type { AddressInfo } from 'net';
 import type { Express, Request, Response, NextFunction } from 'express';
-import { randomInt } from 'crypto';
 import { Logger } from '@/logger/Logger';
 import type { ServerConfig, ServerInstance, ServerStartResult } from './types';
 
 const logger = Logger.getInstance();
+
+const DEFAULT_TIMEOUTS = {
+  requestTimeoutMs: 60_000,
+  headersTimeoutMs: 15_000,
+  keepAliveTimeoutMs: 5_000,
+  idleTimeoutMs: 30_000,
+  shutdownTimeoutMs: 5_000,
+  maxRequestsPerSocket: 1_000,
+};
+
+function resolveTimeouts(config: ServerConfig): Required<NonNullable<ServerConfig['timeouts']>> {
+  return { ...DEFAULT_TIMEOUTS, ...config.timeouts };
+}
+
+function applyHttpTimeouts(server: Server | Http2SecureServer, config: ServerConfig): void {
+  const timeouts = resolveTimeouts(config);
+  const s = server as Server & {
+    requestTimeout?: number;
+    headersTimeout?: number;
+    keepAliveTimeout?: number;
+    maxRequestsPerSocket?: number;
+    setTimeout?: (msecs: number) => void;
+  };
+
+  s.requestTimeout = timeouts.requestTimeoutMs;
+  s.headersTimeout = timeouts.headersTimeoutMs;
+  s.keepAliveTimeout = timeouts.keepAliveTimeoutMs;
+  s.maxRequestsPerSocket = timeouts.maxRequestsPerSocket;
+  s.setTimeout?.(timeouts.idleTimeoutMs);
+  (server as unknown as { __shutdownTimeoutMs?: number }).__shutdownTimeoutMs =
+    timeouts.shutdownTimeoutMs;
+}
 
 function getServerAddress(server: Server): { address: string; port: number } {
   const addr = server.address();
@@ -51,6 +82,7 @@ function formatHostForUrl(address: string): string {
 export function startHttp1Server(app: Express, config: ServerConfig): Promise<ServerStartResult> {
   return new Promise((resolve, reject) => {
     const server = createHttpServer(app);
+    applyHttpTimeouts(server, config);
 
     server.listen(config.port, config.host, () => {
       const { address, port } = getServerAddress(server);
@@ -80,6 +112,7 @@ export function startHttpsServer(app: Express, config: ServerConfig): Promise<Se
       },
       app
     );
+    applyHttpTimeouts(server, config);
 
     server.listen(config.port, config.host, () => {
       const { address, port } = getServerAddress(server);
@@ -108,12 +141,18 @@ export function startHttp2Server(app: Express, config: ServerConfig): Promise<Se
         key: config.ssl.key,
         cert: config.ssl.cert,
         allowHTTP1: true,
+        settings: {
+          maxConcurrentStreams: config.http2?.maxConcurrentStreams ?? 100,
+          maxHeaderListSize: config.http2?.maxHeaderListSize ?? 16 * 1024,
+        },
+        maxSessionMemory: config.http2?.maxSessionMemory ?? 10,
       },
       // HTTP/2 兼容模式：通过 allowHTTP1 将请求委托给 Express
       // Express 的 request/response API 兼容 HTTP/1.1 风格
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       app as any
     );
+    applyHttpTimeouts(server as unknown as Server, config);
 
     server.listen(config.port, config.host, () => {
       const { address, port } = getServerAddress(server as unknown as Server);
@@ -178,8 +217,22 @@ export async function startHttp3Server(
   const h3Opts = { ...DEFAULT_H3_CONFIG, ...h3Config };
   const quicPort = h3Opts.quicPort ?? config.port;
 
-  // ─── Step 1: 注入 Alt-Svc 中间件 ─────────────────
-  app.use(createAltSvcMiddleware(quicPort, h3Opts.altSvcMaxAge));
+  // ─── Step 1: 尝试启动真实 QUIC 监听器 ───────────────
+  let quicSocket: UdpSocket | null = null;
+  if (config.http3?.enabled !== false) {
+    try {
+      quicSocket = await startQuicListener(config, h3Opts, quicPort);
+      if (quicSocket) {
+        logger.info(`🔷 QUIC 监听已启动: UDP ${config.host ?? '<bound>'}:${quicPort}`);
+        app.use(createAltSvcMiddleware(quicPort, h3Opts.altSvcMaxAge));
+      }
+    } catch (err) {
+      logger.warn(`⚠️ QUIC 监听器启动失败: ${(err as Error).message}`);
+    }
+  }
+  if (!quicSocket) {
+    logger.warn('HTTP/3 未启用真实 QUIC 传输；将以 HTTP/2 TLS 启动且不广播 Alt-Svc。');
+  }
 
   // ─── Step 2: 注入 Early Hints 中间件 ──────────────
   app.use(createEarlyHintsMiddleware());
@@ -194,39 +247,16 @@ export async function startHttp3Server(
       minVersion: 'TLSv1.3',
       // ALPN 协议协商：优先 h2，兼容 http/1.1
       ALPNProtocols: ['h2', 'http/1.1'],
+      settings: {
+        maxConcurrentStreams: config.http2?.maxConcurrentStreams ?? 100,
+        maxHeaderListSize: config.http2?.maxHeaderListSize ?? 16 * 1024,
+      },
+      maxSessionMemory: config.http2?.maxSessionMemory ?? 10,
     },
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     app as any
   );
-
-  // 开启 HTTP/2 Server Push 支持
-  h2Server.on('stream', (stream, headers) => {
-    // 仅处理 HTTP/2 原生推送场景（如静态资源预推送）
-    // Express 的请求已经通过 allowHTTP1 回退处理
-    const path = headers[':path'];
-    if (typeof path === 'string' && path.endsWith('.html')) {
-      // 对 HTML 请求，可以推送关键 CSS/JS（通过 Link header 实现更通用）
-      stream.respond({
-        [h2constants.HTTP2_HEADER_STATUS]: 200,
-        'alt-svc': `h3=":${quicPort}"; ma=${h3Opts.altSvcMaxAge}`,
-      });
-    }
-  });
-
-  // ─── Step 4: 尝试启动 QUIC 监听器 ─────────────────
-  let quicSocket: UdpSocket | null = null;
-
-  try {
-    quicSocket = await startQuicListener(config, h3Opts, quicPort);
-    if (quicSocket) {
-      logger.info(`🔷 QUIC 监听已启动: UDP ${config.host ?? '<bound>'}:${quicPort}`);
-    }
-  } catch (err) {
-    logger.warn(
-      `⚠️ QUIC 监听器启动失败: ${(err as Error).message}。` +
-        `HTTP/3 将通过 Alt-Svc 广播，等待客户端升级。`
-    );
-  }
+  applyHttpTimeouts(h2Server as unknown as Server, config);
 
   // ─── Step 5: 启动 HTTP/2 监听 ────────────────────
   return new Promise((resolve, reject) => {
@@ -237,7 +267,11 @@ export async function startHttp3Server(
       logger.info(
         `   ├─ HTTP/2 (TLS 1.3): TCP ${formatHostForUrl(address)}:${port || config.port}`
       );
-      logger.info(`   ├─ Alt-Svc: h3=":${quicPort}"; ma=${h3Opts.altSvcMaxAge}`);
+      logger.info(
+        quicSocket
+          ? `   ├─ Alt-Svc: h3=":${quicPort}"; ma=${h3Opts.altSvcMaxAge}`
+          : '   ├─ Alt-Svc: disabled (no real QUIC transport)'
+      );
       logger.info(`   ├─ 0-RTT: ${h3Opts.enable0RTT ? '已启用' : '已禁用'}`);
       logger.info(`   └─ QUIC UDP: ${quicSocket ? '已启动' : '未启动 (依赖缺失)'}`);
 
@@ -373,10 +407,11 @@ async function startQuicListener(
     // 第三方库不可用
   }
 
-  // 尝试 3: 基础 UDP 版本协商
-  // 创建 UDP socket 响应 QUIC Version Negotiation
-  // 这让客户端知道服务端可以接收 QUIC 报文（即使不处理完整协议）
-  return startBasicQuicNegotiation(config, quicPort);
+  // 不启动“仅版本协商”的假 QUIC socket。生产中广播 Alt-Svc 必须意味着
+  // 客户端可以建立真实 HTTP/3 连接，否则浏览器会被误导并产生隐性退化。
+  void config;
+  void quicPort;
+  return null;
 }
 
 /**
@@ -506,124 +541,6 @@ async function startThirdPartyQuic(
 }
 
 /**
- * 基础 QUIC 版本协商 UDP Socket
- *
- * 当没有完整 QUIC 实现时，创建 UDP socket 处理 QUIC 版本协商:
- * - 接收 QUIC Initial 包
- * - 回复 Version Negotiation 包
- * - 这让支持 HTTP/3 的客户端知道服务端"存在"
- *
- * 注意：这不是完整的 HTTP/3，仅用于协议发现。
- * 完整 HTTP/3 请使用专业的 QUIC 库或反向代理。
- */
-function startBasicQuicNegotiation(
-  config: ServerConfig,
-  quicPort: number
-): Promise<UdpSocket | null> {
-  return new Promise(resolve => {
-    try {
-      const socket = createUdpSocket('udp4');
-
-      // QUIC Version Negotiation
-      socket.on('message', (msg, rinfo) => {
-        // QUIC 包最小 1200 字节 (Initial)
-        if (msg.length < 1200) return;
-
-        // 检查是否为 QUIC Long Header (第一位为1)
-        const firstByte = msg[0];
-        if ((firstByte & 0x80) === 0) return; // Short Header, 忽略
-
-        // 提取 Version 字段 (bytes 1-4)
-        const version = msg.readUInt32BE(1);
-
-        // 如果版本未知，发送 Version Negotiation
-        // QUIC v1 = 0x00000001, QUIC v2 = 0x6b3343cf
-        const supportedVersions = [0x00000001, 0x6b3343cf];
-
-        if (!supportedVersions.includes(version)) {
-          const vnPacket = createVersionNegotiationPacket(msg, supportedVersions);
-          socket.send(vnPacket, rinfo.port, rinfo.address);
-        }
-      });
-
-      socket.on('error', err => {
-        logger.debug(`QUIC UDP socket 错误: ${err.message}`);
-        resolve(null);
-      });
-
-      if (config.host) {
-        socket.bind(quicPort, config.host, () => {
-          logger.info(`QUIC 版本协商 UDP 已绑定: ${config.host}:${quicPort}`);
-          resolve(socket);
-        });
-      } else {
-        socket.bind(quicPort, () => {
-          const addr = socket.address();
-          const host = typeof addr === 'object' && addr ? addr.address : '<bound>';
-          logger.info(`QUIC 版本协商 UDP 已绑定: ${host}:${quicPort}`);
-          resolve(socket);
-        });
-      }
-    } catch {
-      resolve(null);
-    }
-  });
-}
-
-/**
- * 构造 QUIC Version Negotiation 包
- * RFC 9000 Section 17.2.1
- */
-function createVersionNegotiationPacket(
-  initialPacket: Buffer,
-  supportedVersions: number[]
-): Buffer {
-  // Version Negotiation 格式:
-  // 1 byte: 首字节 (随机, 但最高位为1)
-  // 4 bytes: Version = 0x00000000 (标识 VN 包)
-  // DCID Len + DCID (从原包 SCID 提取)
-  // SCID Len + SCID (从原包 DCID 提取)
-  // N * 4 bytes: 支持的版本列表
-
-  // 从 Initial 包提取连接 ID
-  const dcidLen = initialPacket[5];
-  const dcid = initialPacket.subarray(6, 6 + dcidLen);
-  const scidLenOffset = 6 + dcidLen;
-  const scidLen = initialPacket[scidLenOffset];
-  const scid = initialPacket.subarray(scidLenOffset + 1, scidLenOffset + 1 + scidLen);
-
-  // VN 包: 交换 DCID 和 SCID
-  const packetLen = 1 + 4 + 1 + scidLen + 1 + dcidLen + supportedVersions.length * 4;
-  const vnPacket = Buffer.alloc(packetLen);
-  let offset = 0;
-
-  // 首字节：Long Header 标志（使用 crypto 安全随机数）
-  vnPacket[offset++] = 0x80 | randomInt(0x7f);
-
-  // Version = 0 (Version Negotiation 标识)
-  vnPacket.writeUInt32BE(0x00000000, offset);
-  offset += 4;
-
-  // DCID = 原包的 SCID
-  vnPacket[offset++] = scidLen;
-  scid.copy(vnPacket, offset);
-  offset += scidLen;
-
-  // SCID = 原包的 DCID
-  vnPacket[offset++] = dcidLen;
-  dcid.copy(vnPacket, offset);
-  offset += dcidLen;
-
-  // 支持的版本列表
-  for (const version of supportedVersions) {
-    vnPacket.writeUInt32BE(version, offset);
-    offset += 4;
-  }
-
-  return vnPacket;
-}
-
-/**
  * 根据协议启动服务器
  */
 export function startServer(app: Express, config: ServerConfig): Promise<ServerStartResult> {
@@ -652,6 +569,9 @@ export function startServer(app: Express, config: ServerConfig): Promise<ServerS
  */
 export function closeServer(server: ServerInstance): Promise<void> {
   return new Promise(resolve => {
+    const shutdownTimeoutMs =
+      (server as unknown as { __shutdownTimeoutMs?: number }).__shutdownTimeoutMs ??
+      DEFAULT_TIMEOUTS.shutdownTimeoutMs;
     const quicSocket = (server as unknown as { __quicSocket?: UdpSocket }).__quicSocket;
     if (quicSocket) {
       try {
@@ -696,7 +616,7 @@ export function closeServer(server: ServerInstance): Promise<void> {
       }
     };
 
-    const timeout = setTimeout(safeResolve, 2000);
+    const timeout = setTimeout(safeResolve, shutdownTimeoutMs);
     if (typeof typedServer.close === 'function') {
       typedServer.close(() => {
         clearTimeout(timeout);

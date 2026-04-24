@@ -81,6 +81,19 @@ export interface IsrCacheMiddlewareOptions {
    * engine 不强依赖 ioredis，符合 optionalDependencies 设计
    */
   store?: IsrCacheStore;
+  /**
+   * Optional cross-process invalidation bus. Local revalidateTag/Path first
+   * clears this process, then publishes the same target for sibling pods.
+   */
+  invalidationBus?: IsrInvalidationBus;
+}
+
+export type IsrInvalidationTarget = { kind: 'path'; value: string } | { kind: 'tag'; value: string };
+
+export interface IsrInvalidationBus {
+  publish(target: IsrInvalidationTarget): Promise<void> | void;
+  subscribe(listener: (target: IsrInvalidationTarget) => Promise<void> | void): () => void;
+  destroy?(): Promise<void> | void;
 }
 
 /** RSC 流响应的子路径后缀（与站点 framework/request.tsx 约定一致） */
@@ -193,8 +206,7 @@ export function createIsrCacheHandler(
   /** 后台重验证正在进行的 key 集合 —— 防止并发 STALE 请求重复触发多次 bg 拉取 */
   const revalidating = new Set<string>();
 
-  // 注册 invalidator —— Server Action 调用 revalidatePath/Tag 时触发
-  registerInvalidator(async target => {
+  const invalidateLocal = async (target: IsrInvalidationTarget): Promise<void> => {
     if (target.kind === 'path') {
       const normalized = normalizePath(target.value);
       const keys = [
@@ -221,6 +233,16 @@ export function createIsrCacheHandler(
         `🔁 ISR cache invalidate tag=${target.value} → 精准清除 ${cleared} 条（按 tag 匹配）`
       );
     }
+  };
+
+  // 注册 invalidator —— Server Action 调用 revalidatePath/Tag 时触发
+  const unregisterInvalidator = registerInvalidator(async target => {
+    await invalidateLocal(target);
+    await options.invalidationBus?.publish(target);
+  });
+
+  const unsubscribeBus = options.invalidationBus?.subscribe(async target => {
+    await invalidateLocal(target);
   });
 
   const handler = ((req: IncomingMessage, res: ServerResponse, next: Connect.NextFunction) => {
@@ -240,7 +262,12 @@ export function createIsrCacheHandler(
     backend: cache.backend,
   });
   handler.clear = () => cache.clear();
-  handler.destroy = () => cache.destroy();
+  handler.destroy = async () => {
+    unregisterInvalidator();
+    unsubscribeBus?.();
+    await options.invalidationBus?.destroy?.();
+    await cache.destroy();
+  };
 
   return handler;
 }
