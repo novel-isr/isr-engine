@@ -80,3 +80,4 @@ temp/
 
 # ISR/SSG Cache directory
 .isr-hyou/
+.isr-cache/

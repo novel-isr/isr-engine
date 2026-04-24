@@ -1,468 +1,192 @@
 # @novel-isr/engine
 
-> 企业级增量静态再生引擎 - 自动降级链 ISR → SSR → CSR
+> Vite + React 19 RSC 的 ISR / SSG / Fallback 编排层。基于 [@vitejs/plugin-rsc](https://github.com/vitejs/vite-plugin-react/tree/main/packages/plugin-rsc) 官方插件——**不手写 Flight 协议**。用户只写一个 `src/app.tsx`，其余全部由 engine 默认提供。
 
-[![npm version](https://badge.fury.io/js/@novel-isr%2Fengine.svg)](https://badge.fury.io/js/@novel-isr%2Fengine)
-[![TypeScript](https://img.shields.io/badge/%3C%2F%3E-TypeScript-%230074c1.svg)](http://www.typescriptlang.org/)
-[![Vite](https://img.shields.io/badge/⚡-Vite-646CFF.svg)](https://vitejs.dev/)
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+[![Vite 8](https://img.shields.io/badge/Vite-8-646CFF.svg)](https://vitejs.dev/) [![React 19](https://img.shields.io/badge/React-19-61DAFB.svg)](https://react.dev/) [![Node 22.21.1](https://img.shields.io/badge/Node-22.21.1-339933.svg)](https://nodejs.org/)
 
-## ✨ 特性
-
-- 🚀 **自动降级链** - ISR → SSR → CSR，对用户透明
-- ⚡ **Vite 驱动** - 极速开发体验，热模块替换支持
-- 📦 **零配置启动** - 开箱即用，支持自定义配置
-- 🎯 **TypeScript 优先** - 完整类型安全，企业级代码质量
-- 🔧 **智能路由** - 基于配置的渲染模式选择
-- 📊 **内置监控** - 实时统计和性能指标
-- 🌐 **SEO 优化** - 自动生成 robots.txt 和 sitemap.xml
-- 🔥 **现代化架构** - ES 模块，Tree-shaking，代码分割
-
-## 🚀 快速开始
-
-### ⚡ 10 秒启动（零配置）
+## 30 秒看明白
 
 ```bash
-# 1. 安装
-npm install @novel-isr/engine
-
-# 2. 启动（无需任何配置）
-npx novel-isr dev
+pnpm add @novel-isr/engine react react-dom
+pnpm add -D vite typescript @types/react @types/react-dom
 ```
 
-🎉 **完成！** 访问 http://localhost:3000
+3 个文件：
 
-### 📝 自定义配置（可选）
-
-生成配置文件模板：
-
-```bash
-npx novel-isr init  # 自动生成 ssr.config.js 或 ssr.config.ts
-```
-
-或手动创建 `ssr.config.js`：
-
-```javascript
-// ssr.config.js
-export default {
-  mode: 'isr', // 默认渲染模式
-  server: { port: 3000 }, // 服务器配置
-  routes: {
-    '/': 'ssg', // 首页静态生成
-    '/posts/*': 'isr', // 动态页面 ISR
-  },
-  seo: {
-    enabled: true,
-    baseUrl: 'https://your-domain.com',
-  },
-};
-```
-
-### 🔧 TypeScript 支持
-
-```typescript
-// ssr.config.ts
-import type { NovelSSRConfig } from '@novel-ssr/engine';
-
-export default {
-  mode: 'isr',
-  routes: {
-    '/': 'ssg',
-    '/posts/*': 'isr',
-  },
-} satisfies NovelSSRConfig;
-```
-
-### 📋 所有命令
-
-```bash
-npx novel-ssr dev      # 开发模式（零配置启动）
-npx novel-ssr init     # 生成配置文件模板
-npx novel-ssr build    # 构建生产版本
-npx novel-ssr start    # 启动生产服务器
-npx novel-ssr deploy   # 构建并生成部署资源
-npx novel-ssr stats    # 查看统计信息
-```
-
-### 🔌 内置功能
-
-- ✅ **Vite + React**: 已内置，无需额外安装
-- ✅ **TypeScript**: 完整类型支持
-- ✅ **热重载 (HMR)**: 开发模式自动启用
-- ✅ **自动构建**: 生产优化构建
-- ✅ **SEO 优化**: 自动 sitemap 和 robots.txt
-
-## 📖 API 文档
-
-### createNovelEngine(config)
-
-创建 Novel SSR 引擎实例。
-
-```typescript
-import { createNovelEngine, type NovelSSRConfig } from '@novel-ssr/engine';
-
-const config: NovelSSRConfig = {
-  // 渲染模式 - 'isr' | 'ssg'
-  mode: 'isr',
-
-  // 服务器配置
-  server: {
-    port: 3000,
-    host: 'localhost',
-  },
-
-  // ISR 配置
-  isr: {
-    revalidate: 3600, // 重新生成间隔(秒)
-    backgroundRevalidation: true,
-  },
-
-  // 缓存配置
-  cache: {
-    strategy: 'memory', // 'memory' | 'redis' | 'filesystem'
-    ttl: 3600,
-  },
-
-  // SEO 配置
-  seo: {
-    enabled: true,
-    generateSitemap: true,
-    generateRobots: true,
-    baseUrl: 'https://example.com',
-  },
-
-  // 路由配置
-  routes: {
-    '/': 'isr',
-    '/about': 'ssg',
-    '/blog/*': 'isr',
-  },
-
-  // 开发配置
-  dev: {
-    verbose: true,
-    hmr: true, // Vite HMR 支持
-  },
-};
-
-const engine = createNovelEngine(config);
-```
-
-### 引擎方法
-
-#### engine.dev()
-
-启动开发服务器，启用所有功能和调试模式。
-
-```javascript
-await engine.dev();
-```
-
-#### engine.build()
-
-构建生产版本，进行优化和预渲染。
-
-```javascript
-await engine.build();
-```
-
-#### engine.start()
-
-启动生产服务器。
-
-```javascript
-await engine.start();
-```
-
-#### engine.deploy()
-
-构建并生成部署资源。
-
-```javascript
-await engine.deploy();
-```
-
-#### engine.getStats()
-
-获取引擎运行统计信息。
-
-```javascript
-const stats = engine.getStats();
-console.log(stats);
-```
-
-## 🔧 配置
-
-### 配置文件
-
-使用 CLI 生成配置文件模板：
-
-```bash
-npx novel-ssr init  # 自动生成配置文件
-```
-
-或在项目根目录手动创建 `ssr.config.js`:
-
-```javascript
-export default {
-  mode: 'isr',
-  server: {
-    port: 3000,
-    host: '0.0.0.0',
-  },
-  isr: {
-    revalidate: 3600,
-    backgroundRevalidation: true,
-  },
-  cache: {
-    strategy: 'memory',
-    ttl: 3600,
-  },
-  seo: {
-    enabled: true,
-    baseUrl: 'https://example.com',
-  },
-  routes: {
-    '/': 'isr',
-    '/about': 'ssg',
-    '/api/*': 'ssr',
-    '/blog/*': 'isr',
-  },
-};
-```
-
-### 环境变量
-
-```bash
-NODE_ENV=production    # 生产模式
-SSR_PORT=3000         # 服务器端口
-SSR_HOST=0.0.0.0      # 服务器主机
-SSR_CACHE=redis       # 缓存策略
-```
-
-## 🏗️ 架构设计
-
-### 自动降级链
-
-Novel SSR 引擎实现了智能的降级策略：
-
-1. **ISR (增量静态再生)** - 优先模式，最佳性能
-2. **SSR (服务端渲染)** - ISR 失败时的降级
-3. **CSR (客户端渲染)** - 最终降级，确保可用性
-
-### TypeScript 模块架构
-
-```
-@novel-ssr/engine (TypeScript + Vite)
-├── config/              # 配置系统
-│   ├── EnterpriseConfig.ts
-│   └── SSRConfig.ts
-├── engines/             # 渲染引擎
-│   ├── SSREngine.ts     # 核心引擎 (Vite 集成)
-│   ├── SSRFactory.ts    # 工厂模式
-│   └── RenderMode.ts    # 渲染模式
-├── modules/             # 功能模块
-│   ├── ISRModule.ts     # ISR 实现
-│   ├── SSGModule.ts     # SSG 实现
-│   ├── SEOModule.ts     # SEO 优化
-│   └── CSRFallback.ts   # CSR 降级
-├── utils/               # 工具类
-│   ├── CacheManager.ts  # 缓存管理
-│   ├── Logger.ts        # 日志系统
-│   ├── RouteManager.ts  # 路由管理
-│   └── ViteSSRPlugin.ts # Vite 插件
-├── cli/                 # 命令行工具
-│   └── cli.ts           # TypeScript CLI
-├── types.ts             # 类型定义
-├── index.ts             # 主入口
-├── vite.config.ts       # Vite 配置
-└── tsconfig.json        # TypeScript 配置
-```
-
-### Vite 集成架构
-
-```mermaid
-graph TD
-    A[Vite Dev Server] --> B[SSR Middleware]
-    B --> C[SSR Engine]
-    C --> D{渲染策略}
-    D --> E[ISR Module]
-    D --> F[SSG Module]
-    D --> G[SSR Render]
-    D --> H[CSR Fallback]
-
-    E --> I[Cache Manager]
-    G --> J[Vite SSR Load]
-    J --> K[HMR Support]
-```
-
-## 🚀 部署
-
-### Docker 部署
-
-```dockerfile
-FROM node:18-alpine
-WORKDIR /app
-COPY package*.json ./
-RUN npm install
-COPY . .
-RUN npx novel-ssr build
-EXPOSE 3000
-CMD ["npx", "novel-ssr", "start"]
-```
-
-### Vercel 部署
-
-```json
-{
-  "version": 2,
-  "builds": [
-    {
-      "src": "package.json",
-      "use": "@vercel/node"
-    }
-  ],
-  "routes": [
-    {
-      "src": "/(.*)",
-      "dest": "/api/ssr"
-    }
-  ]
-}
-```
-
-## 🔍 监控与调试
-
-### 内置监控端点
-
-```bash
-# 健康检查
-curl http://localhost:3000/health
-
-# 运行统计
-curl http://localhost:3000/ssr-stats
-```
-
-### 调试模式
-
-```javascript
-const engine = createNovelEngine({
-  dev: {
-    verbose: true, // 启用详细日志
-    hmr: true, // 启用热模块替换
-  },
-});
-```
-
-## 📝 示例
-
-### React + TypeScript + Vite 项目集成
-
-```typescript
-// ssr.config.ts
-import type { NovelSSRConfig } from '@novel-ssr/engine';
-
-export default {
-  mode: 'isr',
-  server: { port: 3000 },
-  routes: {
-    '/': 'isr',
-    '/about': 'ssg',
-    '/posts/*': 'isr',
-  },
-  dev: {
-    hmr: true,
-    verbose: true,
-  },
-} satisfies NovelSSRConfig;
-
+```ts
 // vite.config.ts
 import { defineConfig } from 'vite';
-import react from '@vitejs/plugin-react-swc';
-import { createViteSSRPlugin } from '@novel-isr/engine';
-import config from './ssr.config';
-
-export default defineConfig({
-  plugins: [react(), createViteSSRPlugin({ config })],
-});
-
-// server.ts
-import { createNovelEngine } from '@novel-ssr/engine';
-import config from './ssr.config';
-
-const engine = createNovelEngine(config);
-await engine.start();
+import { createIsrPlugin } from '@novel-isr/engine';
+export default defineConfig({ plugins: [...createIsrPlugin()] });
 ```
 
-### Express 中间件集成
-
-```typescript
-// server.ts
-import express from 'express';
-import { createViteDevMiddleware, createNovelEngine } from '@novel-ssr/engine';
-
-const app = express();
-const engine = createNovelEngine({
-  mode: 'isr',
-  dev: { hmr: true },
-});
-
-await engine.initialize();
-
-// 添加 SSR 中间件
-app.use('*', createViteDevMiddleware(engine));
-
-app.listen(3000, () => {
-  console.log('服务器启动在 http://localhost:3000');
-});
-```
-
-### 入口文件示例
-
-```typescript
-// src/entry-server.tsx
-import React from 'react';
-import { renderToString } from 'react-dom/server';
-import { StaticRouter } from 'react-router-dom/server';
-import App from './App';
-
-export function render(url: string, context?: any) {
-  const html = renderToString(
-    <React.StrictMode>
-      <StaticRouter location={url}>
-        <App />
-      </StaticRouter>
-    </React.StrictMode>
-  );
-
-  return {
-    html: `<!DOCTYPE html>
-<html>
-  <head>
-    <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Novel SSR App</title>
-  </head>
-  <body>
-    <div id="root">${html}</div>
-    <script type="module" src="/src/entry.tsx"></script>
-  </body>
-</html>`,
-    statusCode: 200
-  };
+```jsonc
+// package.json
+{
+  "scripts": {
+    "dev": "novel-isr dev",
+    "build": "vite build",
+    "start": "novel-isr start"
+  }
 }
 ```
 
-## 🤝 贡献
+```tsx
+// src/app.tsx —— 你需要写的唯一应用代码
+export function App({ url }: { url: URL }) {
+  return (
+    <html><body><h1>Hello, {url.pathname}</h1></body></html>
+  );
+}
+```
 
-欢迎提交 Issue 和 Pull Request！
+`pnpm dev` → http://localhost:3000。完事。
 
-## 📄 许可证
+完整的「getting started」（含 i18n / SEO / Server Actions）请看 **[docs/getting-started.md](./docs/getting-started.md)**。
 
-MIT License
+## 核心卖点
 
-## 🔗 相关链接
+```
+┌──────────────────────────────────────────────────────┐
+│  用户写的代码（业务）                                 │
+│    src/app.tsx                ← UI + 路由              │
+│    src/pages/, components/    ← 业务组件               │
+│    src/actions/               ← Server Actions         │
+│    src/entry.server.tsx       ← (可选) SiteHooks 配置   │
+│    ssr.config.ts              ← (可选) 路由级渲染模式  │
+└──────────────────────┬───────────────────────────────┘
+                       │
+┌──────────────────────▼───────────────────────────────┐
+│  Engine（默认提供，零配置）                           │
+│    • RSC fetch handler（@vitejs/plugin-rsc）          │
+│    • SSR HTML 转换（react-dom/server.edge）           │
+│    • 浏览器水合 / 客户端导航 / Server Action 调用     │
+│    • ISR 缓存（LRU + SWR + 标签失效）                 │
+│    • SSG spider（构建期预生成）                       │
+│    • SEO sitemap / robots / OG image                  │
+│    • i18n URL 路由 + 翻译消息加载                     │
+│    • A/B 实验、限流、PII 审计                          │
+│    • csr-shell fallback（server 崩溃自救）            │
+│    • Sentry / Datadog / OTel adapter（一行接入）       │
+│    • Image / Font 优化插件（next-style）              │
+└──────────────────────────────────────────────────────┘
+```
 
-- [GitHub 仓库](https://github.com/novel-team/isr-engine)
-- [文档网站](https://isr-engine.novel.dev)
-- [问题反馈](https://github.com/novel-team/isr-engine/issues)
+**真正甩开 Next.js 的优势**：
+- Vite 8 dev HMR（不是 Webpack/Turbopack）
+- 单 Express 进程，可 hack 中间件链
+- 全部 SEO 在一个声明式对象里，不散在 metadata exports
+- L1+L2 hybrid cache（进程内 LRU + 可选 Redis 写穿）
+- A/B 变体、PII redaction、audit log 内建
+- 显式 `RenderModeType = 'ssg' | 'isr' | 'ssr'`，不靠隐式 segment config
+
+## 性能 benchmark
+
+测试环境：MacBook M-series · Node 22 · 单进程 · 1000 req @ 10 并发
+
+| 路径 | 模式 | QPS | p50 | p95 | p99 |
+|---|---|---|---|---|---|
+| `/` | ISR HIT | **9 804** | 1ms | 2ms | 6ms |
+| `/books/1` | ISR HIT（含 RSC 树反序列化） | **5 405** | 1ms | 13ms | 18ms |
+| `/?mode=ssr` | SSR（完整 RSC + SSR 管线） | **461** | 20ms | 36ms | 48ms |
+
+复现：`pnpm bench`。详细解释与多核估算见 [docs/performance.md](./docs/performance.md)。
+
+## 文档
+
+按主题查：
+
+| 主题 | 文档 |
+|---|---|
+| 从零搭一个站 | [getting-started.md](./docs/getting-started.md) |
+| 渲染模式（ISR / SSR / SSG / csr-shell） | [render-modes.md](./docs/render-modes.md) |
+| 缓存与失效（cacheTag / revalidate / Redis 双层） | [caching.md](./docs/caching.md) |
+| SiteHooks 配置（i18n / SEO / Sentry / 限流） | [site-hooks.md](./docs/site-hooks.md) |
+| i18n URL 路由 + 语言协商 | [i18n.md](./docs/i18n.md) |
+| 可观测性（Sentry / Datadog / OTel / Prometheus） | [observability.md](./docs/observability.md) |
+| 生产部署（环境变量 / Docker / Edge runtime / Middleware） | [deployment.md](./docs/deployment.md) |
+| 验证 RSC 是否真的隐藏 server 代码 | [rsc-testing.md](./docs/rsc-testing.md) |
+| 排错与常见坑 | [troubleshooting.md](./docs/troubleshooting.md) |
+| SOC2 readiness | [security/SOC2-readiness.md](./docs/security/SOC2-readiness.md) |
+| SSR/SPA 失效降级链路 | [deployment/ssr-spa-failover.md](./docs/deployment/ssr-spa-failover.md) |
+
+## 渲染模式（一句话）
+
+| 模式 | 行为 | 用户级可选 |
+|---|---|---|
+| **isr** | 显式 TTL，过期 SWR 回放 + 后台重渲。命中即入缓存。 | ✅ |
+| **ssr** | 永不入缓存，每次跑完整 RSC + SSR 管线。 | ✅ |
+| **ssg** | 构建期 spider 预生成磁盘 HTML，运行期 TTL × 24。 | ✅ |
+| `csr-shell` | server 崩溃时返回壳 HTML，浏览器自救拉 `_.rsc`。 | ❌（自动兜底） |
+
+```
+FallbackChain（自动降级）：
+  isr  → cached → regenerate → server → csr-shell
+  ssg  → static → regenerate → server → csr-shell
+  ssr  →                       server → csr-shell
+```
+
+详情：[docs/render-modes.md](./docs/render-modes.md)。
+
+## 与业界方案对比
+
+| 能力 | Next.js App Router | Waku | RedwoodJS | **isr-engine** |
+|---|---|---|---|---|
+| RSC 双 entry 模型 | ✅ 自实现 | ✅ plugin-rsc | ✅ 自实现 | ✅ plugin-rsc |
+| ISR 缓存层 | ✅ | ❌ | ⚠️ | ✅ |
+| `revalidatePath` / `revalidateTag` | ✅ | ⚠️ 实验 | ❌ | ✅ |
+| `cacheTag` 精准失效 | ✅ | ❌ | ❌ | ✅ |
+| 路由级 mode 配置 | ⚠️ segment config | ❌ | ❌ | ✅ ssr.config.ts |
+| zero-config 入口 | ⚠️ 必须用 app/ 文件夹 | ✅ | ⚠️ | ✅ src/app.tsx |
+| csr-shell server 崩溃兜底 | ❌ | ❌ | ❌ | ✅ |
+| 构建栈灵活度 | ❌ 绑死自家栈 | ✅ Vite | ❌ 绑死自家栈 | ✅ Vite |
+| 内置图片 / 字体优化 | ✅ | ❌ | ⚠️ | ✅ |
+| Edge runtime 支持 | ✅ | ⚠️ | ❌ | ✅（CF / Vercel / Deno / Bun） |
+| 单元测试覆盖 | 数千用例 | ⚠️ | ✅ | 17 文件（~12% 比率） |
+
+定位：**中等规模业务的 ISR / SSG / Fallback 编排层**，构建于 React 19 + `@vitejs/plugin-rsc` 官方流水线之上。
+
+## 生产可用性诚实评估
+
+**Beta-ready**，不是 production-recommended。
+
+✅ **稳的部分**：
+- Flight 协议委托给官方 `@vitejs/plugin-rsc@^0.5.24`，不自维护
+- 依赖全是工业级（Express / Helmet / Prometheus / sitemap / lru-cache / ioredis）
+- 性能数量级合理（HIT 9.8K QPS / SSR 461 QPS 单核）
+- 观测齐全（trace-id / render-ms / X-Cache-Status 自动注入）
+
+⚠️ **生产前你必须知道的事**：
+- 测试覆盖 ~12%（17 测试文件 / 141 源文件），race condition 路径未覆盖
+- `revalidateTag` / `revalidatePath` 是 **fire-and-forget**，回调抛错会丢失
+- SSG spider 没有 retry / timeout / circuit breaker
+- Cross-pod cache invalidation 用 `Symbol.for(globalThis)`，**只在单 pod 工作**——多 pod 部署需要走 Redis Pub/Sub（路线图）
+- Bench 不阻塞 CI，性能可能悄悄退化
+
+详细 gap 列表与改造建议：[docs/production-readiness.md](./docs/production-readiness.md)。
+
+## 开发
+
+```bash
+pnpm install
+pnpm test                # vitest run（17 文件）
+pnpm test:coverage       # 覆盖率报告
+pnpm lint                # eslint
+pnpm type-check          # tsc --noEmit
+pnpm bench               # autocannon load test（不阻塞）
+pnpm bench:compare       # 与 baseline diff
+pnpm check               # type-check + lint + format:check + test
+pnpm build               # vite build → dist/
+```
+
+## 设计原则
+
+1. **约定优于配置** —— 用户唯一必需文件是 `src/app.tsx`
+2. **第一性原理** —— 不造假概念（csr 不是用户级 mode，是 fallback 兜底）
+3. **横切能力 engine 默认提供** —— trace-id / render-ms / SEO / 安全头自动
+4. **业务扩展用 FaaS hooks** —— 不强制学协议代码
+5. **不手写 Flight** —— 完全依赖 [@vitejs/plugin-rsc](https://github.com/vitejs/vite-plugin-react/tree/main/packages/plugin-rsc)，与 React 19 / Vite 8 升级路径对齐
+
+## License
+
+MIT

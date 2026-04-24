@@ -1,0 +1,697 @@
+/**
+ * ISR 缓存中间件插件 —— engine 的差异化核心能力
+ *
+ * 架构位置：
+ *   Express → [security/compression/body] → admin routes → **ISR Cache** → Vite → @vitejs/plugin-rsc handler
+ *
+ * 工作流（含 SWR / stale-while-revalidate）：
+ *   1. 拦截可缓存的 GET 请求（HTML / RSC Flight 流），构造 cache key
+ *   2. HIT：`now < expiresAt` → 直接回放（`X-Cache-Status: HIT`）
+ *   3. STALE：`expiresAt ≤ now < hardExpiresAt` → 回放旧内容（`X-Cache-Status: STALE`）
+ *      并在后台发起一次内部 HTTP 请求（带 `X-ISR-Background-Revalidate: 1` 头）
+ *      触发重新渲染 + 入缓存，不阻塞当前响应
+ *   4. MISS：无条目 / 超过 hardExpiresAt → 放行到 Vite + plugin-rsc 渲染，
+ *      monkey-patch res.write/res.end 捕获字节后入缓存
+ *
+ * 失效链路：
+ *   Server Action 调用 revalidatePath('/x') → rsc/revalidate 分发 →
+ *   本插件在 registerInvalidator 注册的 callback 清理 `GET:/x` 与 `GET:/x_.rsc` 条目
+ *
+ * 缓存策略：
+ *   - 只缓存 GET 请求 + 200 状态 + Content-Type 为 text/html 或 text/x-component 的响应
+ *   - 路由级配置：
+ *       '/'        : 'isr'                                    -- shorthand，用默认 TTL
+ *       '/books'   : { mode: 'isr', ttl: 60, staleWhileRevalidate: 300 }
+ *       '/about'   : 'ssg'
+ *       '/login'   : 'ssr'                                    -- 不缓存
+ *   - 默认 TTL：ssr.config.ts 的 `isr.revalidate`（默认 3600 秒）
+ *   - Vite 内部路径 (/@*, /__vite*, /node_modules/.vite/*) 和静态资源一律旁路
+ *
+ * 可观测性：
+ *   响应头 `X-Cache-Status: HIT | STALE | MISS | BYPASS | REVALIDATING`
+ *   响应头 `X-Cache-Key` 便于排错
+ *   响应头 `X-Cache-Age`（HIT/STALE 时命中的年龄，秒）
+ */
+
+import http from 'node:http';
+import { createMemoryCacheStore, type IsrCacheStore, type IsrCachedEntry } from './isrCacheStore';
+import {
+  recordHttpRequest,
+  cacheEntriesGauge,
+  cacheRevalidatingGauge,
+} from '../metrics/PromMetrics';
+import type { Plugin, Connect } from 'vite';
+import type { IncomingMessage, ServerResponse } from 'node:http';
+
+import type { ISRConfig, RenderModeType, RouteRule } from '../types';
+import { Logger } from '../logger/Logger';
+import { registerInvalidator } from '@/rsc/revalidate';
+import { collectTags, runWithTagStore, isUncacheable } from '@/rsc/cacheTag';
+import { loadConfig } from '../config/loadConfig';
+import { resolveAdminConfig, createAdminAuthMiddleware } from '@/server/adminConfig';
+
+const logger = Logger.getInstance();
+
+/** 单条缓存条目 —— 与 IsrCacheStore 对齐 */
+type CachedEntry = IsrCachedEntry;
+
+/** 路由匹配解析结果（对应一个请求的缓存策略） */
+interface ResolvedRouteRule {
+  mode: RenderModeType;
+  ttlSeconds: number;
+  swrSeconds: number;
+}
+
+/** 路由规则的统一视图（兼容原始 ssr.config 与归一化后的 engine 配置） */
+interface RoutingRules {
+  globalMode: RenderModeType;
+  routes: Record<string, RouteRule>;
+  defaultTtlSeconds: number;
+}
+
+/** 插件选项 */
+export interface IsrCacheMiddlewareOptions {
+  /** 缓存最大条目数，默认 1000 */
+  max?: number;
+  /** 默认 TTL（秒），若未显式配置 isr.revalidate 时兜底 */
+  defaultTtlSeconds?: number;
+  /**
+   * 自定义 cache store —— 默认 createMemoryCacheStore({ max })
+   * 想用 Redis/Hybrid：用户自己 createHybridCacheStore({ redis: yourAdapter, max }) 传入
+   * engine 不强依赖 ioredis，符合 optionalDependencies 设计
+   */
+  store?: IsrCacheStore;
+}
+
+/** RSC 流响应的子路径后缀（与站点 framework/request.tsx 约定一致） */
+const RSC_URL_POSTFIX = '_.rsc';
+
+/** 后台重验证请求的 sentinel 头，避免循环 */
+const BG_REVALIDATE_HEADER = 'x-isr-background-revalidate';
+
+/**
+ * 从任意形式的 ISRConfig（或部分）提取路由规则
+ * 同时识别 `mode`/`routes`（原始）和 `renderMode`/`routeOverrides`（归一化）
+ */
+function extractRoutingRules(
+  config: Partial<ISRConfig> | undefined,
+  fallbackTtl: number
+): RoutingRules {
+  const cfg = (config ?? {}) as Record<string, unknown>;
+  const globalMode =
+    (cfg.renderMode as RenderModeType | undefined) ||
+    (cfg.mode as RenderModeType | undefined) ||
+    'isr';
+
+  const routes =
+    (cfg.routeOverrides as Record<string, RouteRule> | undefined) ||
+    (cfg.routes as Record<string, RouteRule> | undefined) ||
+    {};
+
+  const isr = (cfg.isr ?? {}) as { revalidate?: number };
+  const defaultTtlSeconds =
+    typeof isr.revalidate === 'number' && isr.revalidate > 0 ? isr.revalidate : fallbackTtl;
+
+  return { globalMode, routes, defaultTtlSeconds };
+}
+
+/**
+ * 解析单条路由规则为 mode + TTL + SWR 窗口
+ * shorthand 使用默认 TTL，SWR 窗口默认等于 TTL（即有效使用时间 = 2x TTL）
+ */
+function parseRouteRule(value: RouteRule, defaultTtl: number): ResolvedRouteRule {
+  if (typeof value === 'string') {
+    const ttl = defaultTtl;
+    return { mode: value, ttlSeconds: ttl, swrSeconds: ttl };
+  }
+  const ttl = typeof value.ttl === 'number' && value.ttl > 0 ? value.ttl : defaultTtl;
+  const swr =
+    typeof value.staleWhileRevalidate === 'number' && value.staleWhileRevalidate >= 0
+      ? value.staleWhileRevalidate
+      : ttl;
+  return { mode: value.mode, ttlSeconds: ttl, swrSeconds: swr };
+}
+
+/**
+ * 按路径匹配路由规则 —— 精确 > 最长 glob > 全局默认
+ */
+function matchRouteRule(path: string, rules: RoutingRules): ResolvedRouteRule {
+  const { routes, defaultTtlSeconds, globalMode } = rules;
+
+  if (routes[path] !== undefined) {
+    return parseRouteRule(routes[path], defaultTtlSeconds);
+  }
+
+  const globPatterns = Object.keys(routes)
+    .filter(p => p.includes('*'))
+    .sort((a, b) => b.length - a.length);
+
+  for (const pattern of globPatterns) {
+    if (matchGlob(pattern, path)) {
+      return parseRouteRule(routes[pattern], defaultTtlSeconds);
+    }
+  }
+
+  // 回退到全局模式，使用默认 TTL/SWR
+  return parseRouteRule(globalMode, defaultTtlSeconds);
+}
+
+function matchGlob(pattern: string, path: string): boolean {
+  const escaped = pattern.replace(/[.+?^${}()|[\]\\]/g, '\\$&').replace(/\*/g, '.*');
+  return new RegExp(`^${escaped}$`).test(path);
+}
+
+/** SSG 路由 TTL 拉长（默认 ×24），避免 SSG 被频繁重生 */
+function applyModeTtlMultiplier(mode: RenderModeType, ttlSeconds: number): number {
+  if (mode === 'ssg') return ttlSeconds * 24;
+  return ttlSeconds;
+}
+
+/**
+ * 框架无关的 ISR 缓存 handler —— connect-style 中间件
+ */
+export interface IsrCacheHandler {
+  (req: IncomingMessage, res: ServerResponse, next: Connect.NextFunction): void;
+  stats(): { size: number; max: number; revalidating: number; backend: 'memory' | 'hybrid' };
+  clear(): void;
+  destroy(): Promise<void>;
+}
+
+/**
+ * 创建 ISR 缓存处理器（不绑定具体框架）
+ */
+export function createIsrCacheHandler(
+  config: Partial<ISRConfig> | undefined,
+  options: IsrCacheMiddlewareOptions = {}
+): IsrCacheHandler {
+  const cache: IsrCacheStore =
+    options.store ?? createMemoryCacheStore({ max: options.max ?? 1000 });
+
+  const fallbackTtl = options.defaultTtlSeconds ?? 3600;
+  const rules: RoutingRules = extractRoutingRules(config, fallbackTtl);
+
+  /** 后台重验证正在进行的 key 集合 —— 防止并发 STALE 请求重复触发多次 bg 拉取 */
+  const revalidating = new Set<string>();
+
+  // 注册 invalidator —— Server Action 调用 revalidatePath/Tag 时触发
+  registerInvalidator(async target => {
+    if (target.kind === 'path') {
+      const normalized = normalizePath(target.value);
+      const keys = [
+        `GET:${normalized}`,
+        `GET:${normalized}${RSC_URL_POSTFIX}`,
+        `GET:${normalized}/${RSC_URL_POSTFIX}`,
+      ];
+      let cleared = 0;
+      for (const key of Array.from(cache.keys())) {
+        if (keys.some(k => key === k) || keys.some(k => key.startsWith(`${k}?`))) {
+          if (cache.delete(key)) cleared++;
+        }
+      }
+      logger.info(`🔁 ISR cache invalidate path=${normalized} → 清除 ${cleared} 条`);
+    } else {
+      let cleared = 0;
+      for (const [key, entry] of Array.from(cache.entries())) {
+        if (entry.tags.includes(target.value)) {
+          cache.delete(key);
+          cleared++;
+        }
+      }
+      logger.info(
+        `🔁 ISR cache invalidate tag=${target.value} → 精准清除 ${cleared} 条（按 tag 匹配）`
+      );
+    }
+  });
+
+  const handler = ((req: IncomingMessage, res: ServerResponse, next: Connect.NextFunction) => {
+    void handleRequest(req, res, next, { cache, rules, revalidating }).catch(err => {
+      logger.warn('ISR cache handler 异常，回退到下游处理:', err);
+      if (!res.headersSent) {
+        setHeaderOnce(res, 'X-Cache-Status', 'BYPASS');
+      }
+      next();
+    });
+  }) as IsrCacheHandler;
+
+  handler.stats = () => ({
+    size: cache.size,
+    max: cache.max,
+    revalidating: revalidating.size,
+    backend: cache.backend,
+  });
+  handler.clear = () => cache.clear();
+  handler.destroy = () => cache.destroy();
+
+  return handler;
+}
+
+/**
+ * 创建 ISR 缓存 Vite 插件（dev 模式）
+ */
+export function createIsrCacheMiddleware(
+  explicitConfig: Partial<ISRConfig> | undefined,
+  options: IsrCacheMiddlewareOptions = {}
+): Plugin {
+  const hasExplicit = Boolean(explicitConfig && Object.keys(explicitConfig).length > 0);
+
+  let mounted = false;
+  let handler: IsrCacheHandler | null = null;
+
+  return {
+    name: 'isr-cache-middleware',
+    async configureServer(server) {
+      if (mounted) return;
+      mounted = true;
+
+      let resolvedConfig: Partial<ISRConfig> | undefined = explicitConfig;
+      if (!hasExplicit) {
+        try {
+          resolvedConfig = await loadConfig({ cwd: server.config.root });
+          const rules = extractRoutingRules(resolvedConfig, options.defaultTtlSeconds ?? 3600);
+          logger.info(
+            `📋 ISR cache: 自动加载 ssr.config.ts 成功（mode=${rules.globalMode}, overrides=${Object.keys(rules.routes).length}）`
+          );
+        } catch (err) {
+          logger.warn('ISR cache: ssr.config.ts 加载失败，将按默认 ISR 模式缓存所有路由', err);
+        }
+      }
+
+      handler = createIsrCacheHandler(resolvedConfig, options);
+      const adminConfig = resolveAdminConfig(resolvedConfig, 'development');
+
+      // dev 也暴露 admin 端点 —— 与生产 cli/start.ts 行为对齐，
+      // 便于 /dev/observability 等观测页面在开发期就能拉到统计数据
+      server.middlewares.use((req, res, next) => {
+        const activeHandler = handler;
+        if (!activeHandler) {
+          next();
+          return;
+        }
+        if (adminConfig.stats.enabled && req.url === '/__isr/stats' && req.method === 'GET') {
+          createAdminAuthMiddleware('stats', adminConfig)(req as never, res as never, () => {
+            res.setHeader('content-type', 'application/json; charset=utf-8');
+            res.end(JSON.stringify(activeHandler.stats()));
+          });
+          return;
+        }
+        if (adminConfig.clear.enabled && req.url === '/__isr/clear' && req.method === 'POST') {
+          createAdminAuthMiddleware('clear', adminConfig)(req as never, res as never, () => {
+            activeHandler.clear();
+            res.setHeader('content-type', 'application/json; charset=utf-8');
+            res.end(JSON.stringify({ ok: true, cleared: true }));
+          });
+          return;
+        }
+        // Prometheus exposition：scrape 端点
+        if (adminConfig.metrics.enabled && req.url === '/metrics' && req.method === 'GET') {
+          createAdminAuthMiddleware('metrics', adminConfig)(req as never, res as never, () => {
+            import('@/metrics/PromMetrics')
+              .then(async ({ promRegistry }) => {
+                const body = await promRegistry.metrics();
+                res.setHeader('content-type', promRegistry.contentType);
+                res.end(body);
+              })
+              .catch(err => {
+                res.statusCode = 500;
+                res.end(`metrics error: ${String(err)}`);
+              });
+          });
+          return;
+        }
+        next();
+      });
+
+      server.middlewares.use(handler);
+    },
+  };
+}
+
+interface HandleContext {
+  cache: IsrCacheStore;
+  rules: RoutingRules;
+  revalidating: Set<string>;
+}
+
+/**
+ * 单次请求的缓存处理
+ */
+async function handleRequest(
+  req: IncomingMessage,
+  res: ServerResponse,
+  next: Connect.NextFunction,
+  ctx: HandleContext
+): Promise<void> {
+  const url = req.url || '/';
+  const method = req.method || 'GET';
+
+  // ─── prom-client：单一观测点 —— 响应结束时记录所有标签 ──────
+  const startNs = process.hrtime.bigint();
+  res.once('finish', () => {
+    try {
+      const durationMs = Number(process.hrtime.bigint() - startNs) / 1_000_000;
+      const route = stripRscSuffix(stripQuery(url)) || '/';
+      const cache = String(res.getHeader('X-Cache-Status') || 'BYPASS');
+      const mode = String(res.getHeader('X-Resolved-Mode') || 'unknown');
+      recordHttpRequest({
+        method,
+        route,
+        status: res.statusCode,
+        mode,
+        cache,
+        durationMs,
+      });
+      cacheEntriesGauge.set({ backend: ctx.cache.backend }, ctx.cache.size);
+      cacheRevalidatingGauge.set(ctx.revalidating.size);
+    } catch {
+      /* metrics 失败不能影响响应 */
+    }
+  });
+
+  if ((method !== 'GET' && method !== 'HEAD') || isBypassPath(url)) {
+    setHeaderOnce(res, 'X-Cache-Status', 'BYPASS');
+    next();
+    return Promise.resolve();
+  }
+
+  const logicalPath = stripRscSuffix(stripQuery(url));
+  let resolved = matchRouteRule(logicalPath, ctx.rules);
+
+  // 运行时模式覆盖：?mode=isr|ssr|ssg
+  // 用于开发 / 调试时临时观察不同模式的效果，不需要改 ssr.config
+  const overrideMode = parseModeOverride(url);
+  if (overrideMode) {
+    resolved = { ...resolved, mode: overrideMode };
+    setHeaderOnce(res, 'X-Mode-Source', 'query-override');
+  } else {
+    setHeaderOnce(res, 'X-Mode-Source', 'config');
+  }
+  setHeaderOnce(res, 'X-Resolved-Mode', resolved.mode);
+
+  if (!isCacheableMode(resolved.mode)) {
+    setHeaderOnce(res, 'X-Cache-Status', 'BYPASS');
+    next();
+    return Promise.resolve();
+  }
+
+  const cacheKey = `GET:${url}`;
+  setHeaderOnce(res, 'X-Cache-Key', cacheKey);
+
+  // 后台重验证请求：忽略所有缓存状态，强制 MISS 并重新入库
+  const isBgRevalidate = String(req.headers[BG_REVALIDATE_HEADER] || '') === '1';
+  if (isBgRevalidate) {
+    setHeaderOnce(res, 'X-Cache-Status', 'REVALIDATING');
+    runMissPath(req, res, next, ctx, resolved, cacheKey, /* swrBgKey */ cacheKey);
+    return;
+  }
+
+  let entry = ctx.cache.get(cacheKey);
+  if (!entry && ctx.cache.getAsync) {
+    try {
+      entry = await ctx.cache.getAsync(cacheKey);
+    } catch (err) {
+      logger.warn(`ISR cache L2 read 失败 ${cacheKey}: ${(err as Error).message}`);
+    }
+  }
+  const now = Date.now();
+
+  // HIT
+  if (entry && now < entry.expiresAt) {
+    replayEntry(res, entry, cacheKey, 'HIT');
+    return;
+  }
+
+  // STALE（TTL 已过但仍在 SWR 窗口内）：回放旧内容 + 后台异步重验证
+  if (entry && now < entry.hardExpiresAt) {
+    replayEntry(res, entry, cacheKey, 'STALE');
+    triggerBackgroundRevalidation(req, cacheKey, ctx);
+    return;
+  }
+
+  // 硬过期：剔除并走 MISS
+  if (entry) {
+    ctx.cache.delete(cacheKey);
+  }
+
+  runMissPath(req, res, next, ctx, resolved, cacheKey, null);
+}
+
+/**
+ * MISS 路径：放行到下游渲染 + 捕获字节入缓存
+ */
+function runMissPath(
+  _req: IncomingMessage,
+  res: ServerResponse,
+  next: Connect.NextFunction,
+  ctx: HandleContext,
+  resolved: ResolvedRouteRule,
+  cacheKey: string,
+  bgRevalidateKey: string | null
+): void {
+  if (!res.getHeader('X-Cache-Status')) {
+    res.setHeader('X-Cache-Status', 'MISS');
+  }
+  const ttl = applyModeTtlMultiplier(resolved.mode, resolved.ttlSeconds);
+  const swr = resolved.swrSeconds;
+
+  runWithTagStore(() => {
+    captureAndStore(res, captured => {
+      if (captured.statusCode !== 200) return;
+      const ct = String(captured.headers['content-type'] || '');
+      if (!ct.includes('text/html') && !ct.includes('text/x-component')) return;
+
+      // 渲染期 Server Component 调用了 markUncacheable() —— 比如上游接口失败、
+      // 渲染了降级 UI —— 跳过入缓存，避免错误内容被反复 HIT 回放
+      if (isUncacheable()) {
+        logger.info(`⏭️  ISR cache skip ${cacheKey} —— 标记为 uncacheable（上游异常或降级渲染）`);
+        return;
+      }
+
+      const tags = collectTags();
+      const now = Date.now();
+      ctx.cache.set(cacheKey, {
+        body: captured.body,
+        statusCode: captured.statusCode,
+        headers: captured.headers,
+        contentType: ct,
+        storedAt: now,
+        expiresAt: now + ttl * 1000,
+        hardExpiresAt: now + (ttl + swr) * 1000,
+        tags,
+      });
+      logger.debug(
+        `💾 ISR cache store ${cacheKey} (mode=${resolved.mode}, ttl=${ttl}s, swr=${swr}s, size=${captured.body.length}B, tags=[${tags.join(',')}])`
+      );
+
+      // 本次是后台重验证：标记 in-flight 结束
+      if (bgRevalidateKey) {
+        ctx.revalidating.delete(bgRevalidateKey);
+      }
+    });
+
+    next();
+  });
+}
+
+/**
+ * 后台发起一次内部 HTTP 请求，带 sentinel 头；中间件见到该头直接走 MISS 路径
+ */
+function triggerBackgroundRevalidation(
+  req: IncomingMessage,
+  cacheKey: string,
+  ctx: HandleContext
+): void {
+  if (ctx.revalidating.has(cacheKey)) {
+    return;
+  }
+  ctx.revalidating.add(cacheKey);
+
+  const host = req.headers.host || 'localhost';
+  const path = req.url || '/';
+  const [hostname, portStr] = host.split(':');
+  const port = portStr
+    ? Number(portStr)
+    : // 读取当前 socket 监听端口（兜底）
+      (req.socket && (req.socket as unknown as { localPort?: number }).localPort) || 80;
+
+  setImmediate(() => {
+    try {
+      const bgReq = http.request(
+        {
+          hostname: hostname || 'localhost',
+          port,
+          path,
+          method: 'GET',
+          headers: {
+            [BG_REVALIDATE_HEADER]: '1',
+            accept: 'text/html',
+          },
+        },
+        bgRes => {
+          bgRes.on('data', chunk => void chunk);
+          bgRes.on('end', () => {
+            logger.debug(`♻️ ISR bg revalidate done ${cacheKey} (status=${bgRes.statusCode})`);
+          });
+          bgRes.on('error', () => {
+            ctx.revalidating.delete(cacheKey);
+          });
+        }
+      );
+      bgReq.on('error', err => {
+        logger.warn(`ISR bg revalidate ${cacheKey} 发起失败: ${(err as Error).message}`);
+        ctx.revalidating.delete(cacheKey);
+      });
+      bgReq.end();
+    } catch (err) {
+      logger.warn(`ISR bg revalidate ${cacheKey} 调度异常`, err);
+      ctx.revalidating.delete(cacheKey);
+    }
+  });
+}
+
+/**
+ * 重放已缓存条目到响应
+ */
+function replayEntry(
+  res: ServerResponse,
+  entry: CachedEntry,
+  cacheKey: string,
+  status: 'HIT' | 'STALE'
+): void {
+  res.statusCode = entry.statusCode;
+  for (const [name, value] of Object.entries(entry.headers)) {
+    const lower = name.toLowerCase();
+    if (
+      lower === 'x-cache-status' ||
+      lower === 'x-cache-key' ||
+      lower === 'x-cache-age' ||
+      lower === 'content-length'
+    ) {
+      continue;
+    }
+    try {
+      res.setHeader(name, value);
+    } catch {
+      // 某些头只能在写之前设置；失败忽略
+    }
+  }
+  res.setHeader('X-Cache-Status', status);
+  res.setHeader('X-Cache-Key', cacheKey);
+  res.setHeader('X-Cache-Age', String(Math.floor((Date.now() - entry.storedAt) / 1000)));
+  res.end(entry.body);
+}
+
+interface Captured {
+  body: Buffer;
+  statusCode: number;
+  headers: Record<string, string | number | string[]>;
+}
+
+function captureAndStore(res: ServerResponse, onFinish: (captured: Captured) => void): void {
+  const chunks: Buffer[] = [];
+  const originalWrite = res.write.bind(res);
+  const originalEnd = res.end.bind(res);
+
+  res.write = function patchedWrite(chunk: unknown, ...args: unknown[]): boolean {
+    if (chunk) {
+      chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk as string | Uint8Array));
+    }
+    return (originalWrite as (...a: unknown[]) => boolean)(chunk, ...args);
+  } as typeof res.write;
+
+  res.end = function patchedEnd(chunk?: unknown, ...args: unknown[]): ServerResponse {
+    if (chunk) {
+      chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk as string | Uint8Array));
+    }
+    try {
+      // 由于 cache 中间件在 compression 之后挂载，res.write 拦截到的 chunk 是 *压缩前*
+      // 的原始字节，但 res.getHeaders() 此时已经包含了 compression 添加的 content-encoding /
+      // content-length。直接保存这两个头会导致 replay 时 "原始字节 + 压缩头" 的不匹配
+      // （浏览器报 ERR_CONTENT_DECODING_FAILED）。
+      // 这里在 store 时就剥离这两项，让 replay 时下游 compression 中间件根据当前请求的
+      // Accept-Encoding 重新协商压缩。
+      const headers = { ...(res.getHeaders() as Record<string, string | number | string[]>) };
+      delete headers['content-encoding'];
+      delete headers['Content-Encoding'];
+      delete headers['content-length'];
+      delete headers['Content-Length'];
+
+      onFinish({
+        body: chunks.length === 1 ? chunks[0] : Buffer.concat(chunks),
+        statusCode: res.statusCode,
+        headers,
+      });
+    } catch (err) {
+      logger.warn('ISR cache 存储回调异常:', err);
+    }
+    return (originalEnd as (...a: unknown[]) => ServerResponse)(chunk, ...args);
+  } as typeof res.end;
+}
+
+// ── 工具函数 ──
+
+function isCacheableMode(mode: RenderModeType): boolean {
+  return mode === 'isr' || mode === 'ssg';
+}
+
+function isBypassPath(url: string): boolean {
+  const p = stripQuery(url);
+  if (p.startsWith('/@')) return true;
+  if (p.startsWith('/__vite')) return true;
+  if (p.startsWith('/__isr')) return true;
+  if (p.startsWith('/_/')) return true; // engine 内部端点（图片优化 / 字体等）
+  if (p === '/metrics') return true; // prom-client scrape
+  if (p === '/health') return true;
+  if (p === '/sitemap.xml' || p === '/robots.txt') return true;
+  if (p.startsWith('/node_modules/.vite')) return true;
+  if (p.includes('/.vite/')) return true;
+  if (
+    /\.(js|mjs|cjs|ts|tsx|jsx|json|map|css|scss|sass|less|stylus|png|jpe?g|gif|webp|avif|svg|ico|woff2?|ttf|eot|mp3|mp4|webm|ogg|wasm|zip|pdf)(\?|$)/i.test(
+      p
+    )
+  ) {
+    return true;
+  }
+  return false;
+}
+
+function stripQuery(url: string): string {
+  const i = url.indexOf('?');
+  return i === -1 ? url : url.slice(0, i);
+}
+
+/**
+ * 从 URL 查询字符串解析 `mode=isr|ssr|ssg` 开发调试覆盖
+ * csr 不在用户级 mode 列表（是 server 崩溃时的内部 fallback）
+ */
+function parseModeOverride(url: string): RenderModeType | undefined {
+  const qIdx = url.indexOf('?');
+  if (qIdx === -1) return undefined;
+  const params = new URLSearchParams(url.slice(qIdx + 1));
+  const mode = params.get('mode');
+  if (mode === 'isr' || mode === 'ssr' || mode === 'ssg') {
+    return mode;
+  }
+  return undefined;
+}
+
+function stripRscSuffix(path: string): string {
+  if (path.endsWith(`/${RSC_URL_POSTFIX}`)) {
+    return path.slice(0, -(RSC_URL_POSTFIX.length + 1)) || '/';
+  }
+  if (path.endsWith(RSC_URL_POSTFIX)) {
+    return path.slice(0, -RSC_URL_POSTFIX.length) || '/';
+  }
+  return path;
+}
+
+function normalizePath(path: string): string {
+  if (!path.startsWith('/')) return `/${path}`;
+  return path;
+}
+
+function setHeaderOnce(res: ServerResponse, name: string, value: string): void {
+  if (res.headersSent) return;
+  if (!res.getHeader(name)) {
+    res.setHeader(name, value);
+  }
+}

@@ -5,6 +5,7 @@ import react from 'eslint-plugin-react';
 import reactHooks from 'eslint-plugin-react-hooks';
 import prettier from 'eslint-plugin-prettier';
 import prettierConfig from 'eslint-config-prettier';
+import globals from 'globals';
 
 export default [
   // 基础 JavaScript 规则
@@ -38,9 +39,49 @@ export default [
     ],
   },
 
-  // TypeScript 文件配置 - Node.js 环境
+  // src/defaults/** 单独走自己的 tsconfig
+  // —— 这些文件依赖 @vitejs/plugin-rsc 的运行时注入 API（import.meta.viteRsc）
+  // 不能用 engine 主 tsconfig 编译（会缺类型），由 src/defaults/tsconfig.json 单独管
+  {
+    files: ['src/defaults/**/*.ts', 'src/defaults/**/*.tsx'],
+    languageOptions: {
+      parser: tsparser,
+      ecmaVersion: 'latest',
+      sourceType: 'module',
+      globals: { ...globals.browser, ...globals.node, React: 'readonly' },
+      parserOptions: {
+        ecmaFeatures: { jsx: true },
+        project: './src/defaults/tsconfig.json',
+      },
+    },
+    plugins: {
+      '@typescript-eslint': tseslint,
+      react,
+      'react-hooks': reactHooks,
+      prettier,
+    },
+    rules: {
+      ...tseslint.configs.recommended.rules,
+      '@typescript-eslint/no-unused-vars': ['warn', { argsIgnorePattern: '^_' }],
+      '@typescript-eslint/no-explicit-any': 'off',
+      '@typescript-eslint/ban-ts-comment': 'off',
+      ...react.configs.recommended.rules,
+      ...reactHooks.configs.recommended.rules,
+      'react/react-in-jsx-scope': 'off',
+      'react/prop-types': 'off',
+      'no-console': 'off',
+      ...prettierConfig.rules,
+      'prettier/prettier': ['error', {}, { usePrettierrc: true }],
+    },
+    settings: {
+      react: { version: 'detect' },
+    },
+  },
+
+  // TypeScript 文件配置 - Node.js 环境（engine 主代码）
   {
     files: ['**/*.ts', '**/*.tsx'],
+    ignores: ['src/defaults/**'],
     languageOptions: {
       parser: tsparser,
       ecmaVersion: 'latest',
@@ -62,7 +103,10 @@ export default [
       // TypeScript 规则
       ...tseslint.configs.recommended.rules,
       '@typescript-eslint/no-unused-vars': ['warn', { argsIgnorePattern: '^_' }],
-      '@typescript-eslint/no-explicit-any': 'warn',
+      // 框架代码不允许 any escape hatch —— 类型不准就让它编译失败，别让它静悄悄通过
+      // src/defaults/** 例外（仍 'off'，因为依赖 plugin-rsc 注入的运行时类型）
+      // 配置文件例外（见底部 *.config.* override）
+      '@typescript-eslint/no-explicit-any': 'error',
       '@typescript-eslint/explicit-function-return-type': 'off',
       '@typescript-eslint/explicit-module-boundary-types': 'off',
       '@typescript-eslint/no-empty-function': 'warn',
@@ -83,6 +127,7 @@ export default [
       'no-debugger': 'warn',
       'no-unused-vars': 'off', // 使用 TypeScript 版本
       'no-undef': 'off', // TypeScript 处理未定义变量
+      'no-redeclare': 'off', // TypeScript 处理函数重载
       'prefer-const': 'error',
       'no-var': 'error',
       'object-shorthand': 'error',

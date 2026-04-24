@@ -1,0 +1,30 @@
+// 全局错误边界 fallback 页面 —— 整个 <body> 接管，不依赖业务样式
+.eb-body {
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+  place-content: center;
+  place-items: center;
+  font-family: system-ui, -apple-system, 'PingFang SC', sans-serif;
+  padding: 2rem;
+  gap: 1rem;
+}
+
+.eb-title {
+  margin: 0;
+}
+
+.eb-message {
+  max-width: 600px;
+  white-space: pre-wrap;
+  color: #b00020;
+  margin: 0;
+}
+
+.eb-retry {
+  padding: 0.5rem 1.25rem;
+  cursor: pointer;
+  border: 1px solid #999;
+  border-radius: 4px;
+  background: transparent;
+}

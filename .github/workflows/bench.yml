@@ -1,0 +1,134 @@
+name: Bench (perf regression gate)
+
+# 设计：
+#   - 不在每个 PR 跑（runner 时间昂贵），改为 dispatch + nightly + perf-sensitive 路径触发
+#   - 用 scripts/bench-compare.mjs 对比 scripts/bench-baseline.json，退化 > 20% 阻断
+#   - 没有 baseline 时（首次跑 / 新分支）自动 skip，避免空检验阻塞
+
+on:
+  workflow_dispatch:
+    inputs:
+      tiers:
+        description: 'concurrency tiers (comma-separated)'
+        required: false
+        default: '10,100'
+      duration:
+        description: 'seconds per tier'
+        required: false
+        default: '15'
+  schedule:
+    # 每天 UTC 02:00（北京时间 10:00）跑一次，捕获日常性能漂移
+    - cron: '0 2 * * *'
+  pull_request:
+    paths:
+      # 只在改了 perf-sensitive 文件时跑——其他 PR 不浪费 runner 时间
+      - 'src/plugin/isrCacheStore.ts'
+      - 'src/plugin/isrCacheMiddleware.ts'
+      - 'src/rsc/**'
+      - 'src/engine/**'
+      - 'src/server/**'
+      - 'scripts/bench*.mjs'
+      - '.github/workflows/bench.yml'
+
+jobs:
+  bench:
+    name: Run bench + regression check
+    runs-on: ubuntu-latest
+    # bench 不能 fork PR 跑（需要 secrets / artifact 权限），且 fork PR 性能数没意义
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v2
+        with:
+          version: 8
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: '.nvmrc'
+          cache: 'pnpm'
+
+      - name: Install
+        run: pnpm install --frozen-lockfile
+
+      - name: Build
+        run: pnpm run build
+
+      # ───────────────────────────────────────────────────────────────────
+      # NOTE: 当前缺少独立的 bench fixture（最小可启动的 demo app）。
+      # 临时方案：用 novel-rating-website 作为 fixture 启动 + bench。
+      # 长期方案：见 docs/production-readiness.md "P2 路线图"——做一个
+      # scripts/bench-fixture/ 最小 server，专供 CI bench 用，避免依赖 sibling 项目。
+      #
+      # 如果你 fork 出去用，且 sibling 项目不存在——把下面 'Start fixture'
+      # 改成你自己的启动命令（任何能在 :3000 上 serve 的 isr-engine 应用都行）。
+      # ───────────────────────────────────────────────────────────────────
+
+      - name: Check fixture exists
+        id: fixture
+        run: |
+          if [ -f "../novel-rating-website/package.json" ]; then
+            echo "available=true" >> $GITHUB_OUTPUT
+          else
+            echo "available=false" >> $GITHUB_OUTPUT
+            echo "::warning::No bench fixture available; skipping bench job"
+          fi
+
+      - name: Build fixture
+        if: steps.fixture.outputs.available == 'true'
+        working-directory: ../novel-rating-website
+        run: |
+          pnpm install --frozen-lockfile
+          pnpm run build
+
+      - name: Start fixture server in background
+        if: steps.fixture.outputs.available == 'true'
+        working-directory: ../novel-rating-website
+        run: |
+          pnpm run start > /tmp/server.log 2>&1 &
+          echo $! > /tmp/server.pid
+          # 等服务起来：最多 30 秒
+          for i in {1..30}; do
+            if curl -sf http://localhost:3000/health > /dev/null; then
+              echo "server up after ${i}s"
+              exit 0
+            fi
+            sleep 1
+          done
+          echo "server failed to start in 30s; logs:"
+          cat /tmp/server.log
+          exit 1
+
+      - name: Run bench
+        if: steps.fixture.outputs.available == 'true'
+        env:
+          BENCH_TIERS: ${{ github.event.inputs.tiers || '10,100' }}
+          BENCH_DURATION: ${{ github.event.inputs.duration || '15' }}
+          BENCH_OUTPUT: bench-current.json
+        run: pnpm run bench
+
+      - name: Compare against baseline (fail on regression)
+        if: steps.fixture.outputs.available == 'true'
+        env:
+          BENCH_P95_REGRESSION_PCT: '20'
+          BENCH_QPS_REGRESSION_PCT: '15'
+        run: |
+          node scripts/bench-compare.mjs scripts/bench-baseline.json bench-current.json
+
+      - name: Stop fixture server
+        if: always() && steps.fixture.outputs.available == 'true'
+        run: |
+          if [ -f /tmp/server.pid ]; then
+            kill $(cat /tmp/server.pid) || true
+          fi
+
+      - name: Upload bench result
+        if: always() && steps.fixture.outputs.available == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: bench-current-${{ github.sha }}
+          path: |
+            bench-current.json
+            /tmp/server.log
+          retention-days: 30

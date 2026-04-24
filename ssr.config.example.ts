@@ -2,34 +2,32 @@
  * Novel ISR 引擎配置示例
  * 将此文件重命名为 ssr.config.ts 或 ssr.config.js 来使用
  */
-// import type { NovelSSRConfig } from '@novel-isr/engine';
+// import type { ISRConfig } from '@novel-isr/engine';
 
-import { NovelSSRConfig } from './types';
+import { ISRConfig } from './src/types/ISRConfig';
 
 export default {
-  // 默认渲染模式: 'isr' | 'ssg'
-  mode: 'isr',
+  /**
+   * 全局默认渲染模式（用户可选的 3 种缓存策略）
+   * - 'isr': 增量静态再生（推荐，自动缓存+按需更新）
+   * - 'ssg': 静态站点生成（构建时生成，适合内容不常变的页面）
+   * - 'ssr': 服务端渲染（每次请求都渲染，适合实时数据）
+   *
+   * 注：csr 不是用户级 mode，而是 server 崩溃时的内部 fallback 策略
+   *     （FallbackChain 的最后一环 'csr-shell'：返回壳 HTML，浏览器自救）
+   */
+  renderMode: 'isr',
 
-  // 服务器配置
-  server: {
-    port: 3000,
-    host: 'localhost',
-  },
-
-  // 路由级别的渲染模式配置
-  routes: {
-    '/': 'ssg', // 首页使用静态生成
-    '/about': 'ssg', // 关于页面使用静态生成
-    '/posts/*': 'isr', // 文章列表使用 ISR
-    '/post/*': 'isr', // 单篇文章使用 ISR
-    '/search': 'isr', // 搜索页面使用 ISR
-    '/user/*': 'isr', // 用户页面使用 ISR
-  },
-
-  // ISR 配置
-  isr: {
-    revalidate: 3600, // 重新验证间隔(秒) - 1小时
-    backgroundRevalidation: true, // 启用后台重新验证
+  /**
+   * 路由级别覆盖配置（可选）
+   * 仅当特定路由需要不同于全局 renderMode 时才配置
+   * 支持通配符匹配：'/posts/*' 匹配所有 /posts/ 开头的路由
+   * 支持动态路由：'/post/:id' 匹配 /post/123 等
+   */
+  routeOverrides: {
+    '/': 'ssg', // 首页使用 SSG（构建时生成，访问最快）
+    '/about': 'ssg', // 关于页面使用 SSG
+    '/admin/*': 'ssr', // 管理后台使用 SSR（需要实时数据）
   },
 
   // 缓存策略
@@ -43,31 +41,23 @@ export default {
     enabled: true,
     generateSitemap: true,
     generateRobots: true,
-    baseUrl: 'https://your-domain.com',
   },
 
-  // 开发模式配置
-  dev: {
-    verbose: true, // 详细日志
-    hmr: true, // 热模块替换
+  // Server 相关能力：管理端点和压缩策略
+  server: {
+    port: 3000,
+    protocol: 'http1.1',
+    admin: {
+      // 生产默认只公开 /health；metrics/stats/clear 默认关闭
+      authToken: process.env.ISR_ADMIN_TOKEN,
+      metrics: { enabled: true, public: false },
+      stats: { enabled: true, public: false },
+      clear: { enabled: false, public: false },
+    },
+    compression: {
+      enabled: true,
+      threshold: 1024,
+      level: 6,
+    },
   },
-
-  // 路径配置 (可选)
-  paths: {
-    dist: './dist', // 构建输出目录
-    server: './dist/server', // 服务端构建目录
-    client: './dist/client', // 客户端构建目录
-    static: './dist/static', // 静态文件目录
-  },
-
-  // 错误处理配置 (可选)
-  errorHandling: {
-    enableFallback: true, // 启用降级机制
-    logErrors: true, // 记录错误日志
-    customErrorPage: '/error', // 自定义错误页面
-  },
-
-  // 兼容性配置
-  compression: true, // 启用 gzip 压缩
-  verbose: true, // 详细日志 (已废弃，请使用 dev.verbose)
-} satisfies NovelSSRConfig;
+} satisfies ISRConfig;

@@ -1,0 +1,358 @@
+/**
+ * defineClientEntry —— FaaS 风格的浏览器入口工厂
+ *
+ * 用户态写法（覆盖 engine 默认行为）：
+ *
+ *   // src/entry.tsx
+ *   import { defineClientEntry } from '@novel-isr/engine/client-entry';
+ *   defineClientEntry({
+ *     beforeHydrate: () => { initSentry(); startWebVitals(); },
+ *     onNavigate:    (url) => analytics.pageview(url.pathname),
+ *     onActionError: (err, id) => console.error('action failed', id, err),
+ *   });
+ *
+ * 不传任何 hook 时（engine 默认入口的写法）：
+ *
+ *   defineClientEntry();    // 一行搞定
+ *
+ * Hook 之外的全部协议细节（initial Flight 反序列化 / hydrateRoot vs createRoot 决策 /
+ * popstate / pushState 拦截 / Server Action setServerCallback / HMR）由本工厂内部
+ * 固化实现，用户**不需要**了解或重写。
+ */
+import {
+  createFromFetch,
+  createFromReadableStream,
+  createTemporaryReferenceSet,
+  encodeReply,
+  setServerCallback,
+} from '@vitejs/plugin-rsc/browser';
+import React from 'react';
+import { createRoot, hydrateRoot } from 'react-dom/client';
+import { rscStream } from 'rsc-html-stream/client';
+
+import { GlobalErrorBoundary } from './error-boundary';
+import { createRscRenderRequest } from './request';
+
+interface DefaultRscPayload {
+  root: React.ReactNode;
+  formState?: import('react-dom/client').ReactFormState;
+  returnValue?: { ok: boolean; data: unknown };
+}
+
+/**
+ * csr-shell 友好降级页 —— 服务端崩溃时给用户的最终页面
+ *
+ * 设计原则：
+ *   - 不尝试自动恢复（自动 _.rsc fetch 大概率也失败 —— server 还没起来）
+ *   - 不让任何 server 错误进 React 树（避免 console 噪声 + 错误传播）
+ *   - 给用户明确状态（不是白屏，不是错误堆栈）+ 显式 retry 按钮
+ *
+ * 类比：GitHub "unicorn page" / Twitter "fail whale"
+ */
+function CsrShellFallback(): React.ReactElement {
+  return React.createElement(
+    'html',
+    { lang: 'zh-CN' },
+    React.createElement(
+      'head',
+      null,
+      React.createElement('meta', { charSet: 'utf-8' }),
+      React.createElement('title', null, '服务暂时不可用'),
+      React.createElement('style', {
+        dangerouslySetInnerHTML: {
+          __html: `
+            body { margin:0; background:#1a1a1a; color:#ccc; font:14px system-ui,sans-serif; }
+            .csr-shell-page { min-height:100vh; display:flex; flex-direction:column; align-items:center; justify-content:center; padding:48px 24px; gap:16px; }
+            .csr-shell-page h1 { margin:0; font-size:24px; color:#f0f0f0; font-weight:600; }
+            .csr-shell-page p { margin:0; max-width:480px; text-align:center; opacity:0.7; line-height:1.6; }
+            .csr-shell-page button { padding:8px 20px; background:#7b5cff; color:#fff; border:none; border-radius:6px; font-size:14px; cursor:pointer; margin-top:8px; }
+            .csr-shell-page button:hover { background:#6e4eee; }
+          `,
+        },
+      })
+    ),
+    React.createElement(
+      'body',
+      null,
+      React.createElement(
+        'div',
+        { className: 'csr-shell-page' },
+        React.createElement('h1', null, '服务暂时不可用'),
+        React.createElement('p', null, '服务端遇到问题，正在恢复中。请稍后重新加载页面。'),
+        React.createElement(
+          'button',
+          { type: 'button', onClick: () => location.reload() },
+          '重新加载'
+        )
+      )
+    )
+  );
+}
+
+export interface ClientEntryHooks {
+  /** 首次水合前调用 —— 适合 SDK 初始化 / 监控启动 */
+  beforeHydrate?: () => void | Promise<void>;
+  /** 客户端导航发生时调用（同源 <a> 点击 / pushState / popstate）—— 适合 PV 上报 */
+  onNavigate?: (url: URL) => void;
+  /** Server Action 调用失败时调用 —— 适合错误上报 */
+  onActionError?: (error: unknown, actionId: string) => void;
+  /**
+   * SPA fallback App —— 部署层（Nginx error_page / CDN edge）切到 dist/spa/index.html 时
+   * 浏览器加载同一个 client bundle 检测到 __SPA_MODE__=1 → 调用本组件挂到 root
+   * 不写 → 显示默认 "服务暂时不可用" 静态页
+   */
+  spaApp?: React.ComponentType<{ url: URL }>;
+}
+
+export function defineClientEntry(hooks: ClientEntryHooks = {}): void {
+  void main(hooks);
+}
+
+async function main(hooks: ClientEntryHooks): Promise<void> {
+  if (hooks.beforeHydrate) await hooks.beforeHydrate();
+
+  // SPA fallback：浏览器加载 dist/spa/index.html 触发，由部署层（Nginx/CDN）在 SSR 5xx 时切入
+  if ((globalThis as { __SPA_MODE__?: boolean }).__SPA_MODE__) {
+    const App = hooks.spaApp;
+    if (App) {
+      const SpaMount = (): React.ReactElement => {
+        const [url, setUrl] = React.useState(() => new URL(window.location.href));
+        React.useEffect(() => {
+          const fire = () => setUrl(new URL(window.location.href));
+          window.addEventListener('popstate', fire);
+          const oldPush = window.history.pushState;
+          window.history.pushState = function (...args) {
+            const r = oldPush.apply(this, args);
+            fire();
+            return r;
+          };
+          const onClick = (e: MouseEvent) => {
+            const target = e.target;
+            if (!(target instanceof Element)) return;
+            const link = target.closest('a');
+            if (
+              link instanceof HTMLAnchorElement &&
+              link.origin === location.origin &&
+              !e.metaKey &&
+              !e.ctrlKey &&
+              e.button === 0
+            ) {
+              e.preventDefault();
+              history.pushState(null, '', link.href);
+            }
+          };
+          document.addEventListener('click', onClick);
+          return () => {
+            window.removeEventListener('popstate', fire);
+            window.history.pushState = oldPush;
+            document.removeEventListener('click', onClick);
+          };
+        }, []);
+        return React.createElement(App, { url });
+      };
+      // 挂到 body（dist/spa/index.html 的 <body> 是空壳）
+      const mount = document.createElement('div');
+      document.body.appendChild(mount);
+      createRoot(mount).render(React.createElement(SpaMount));
+      return;
+    }
+    // 没配 spaApp → 走默认静态页
+    createRoot(document.body).render(React.createElement(CsrShellFallback));
+    return;
+  }
+
+  // SSR 渲染抛异常的 csr-shell 兜底分支（与 __SPA_MODE__ 不同：这是 SSR 半死状态）
+  if ('__NO_HYDRATE' in globalThis) {
+    createRoot(document).render(React.createElement(CsrShellFallback));
+    return;
+  }
+
+  let setPayload: (v: DefaultRscPayload) => void = () => {};
+  const initialPayload = await createFromReadableStream<DefaultRscPayload>(rscStream);
+
+  function BrowserRoot(): React.ReactNode {
+    const [payload, setPayload_] = React.useState(initialPayload);
+    React.useEffect(() => {
+      setPayload = v => React.startTransition(() => setPayload_(v));
+    }, [setPayload_]);
+    React.useEffect(() => listenNavigation(fetchRscPayload, hooks.onNavigate), []);
+    return payload.root;
+  }
+
+  async function fetchRscPayload(): Promise<void> {
+    const renderRequest = createRscRenderRequest(window.location.href);
+    const payload = await createFromFetch<DefaultRscPayload>(fetch(renderRequest));
+    setPayload(payload);
+  }
+
+  setServerCallback(async (id: string, args: unknown[]) => {
+    const temporaryReferences = createTemporaryReferenceSet();
+    const renderRequest = createRscRenderRequest(window.location.href, {
+      id,
+      body: await encodeReply(args, { temporaryReferences }),
+    });
+    const payload = await createFromFetch<DefaultRscPayload>(fetch(renderRequest), {
+      temporaryReferences,
+    });
+    setPayload(payload);
+    const { ok, data } = payload.returnValue!;
+    if (!ok) {
+      if (hooks.onActionError) {
+        try {
+          hooks.onActionError(data, id);
+        } catch {
+          /* hook 抛错不影响主流程 */
+        }
+      }
+      throw data;
+    }
+    return data;
+  });
+
+  const browserRoot = (
+    <React.StrictMode>
+      <GlobalErrorBoundary>
+        <BrowserRoot />
+      </GlobalErrorBoundary>
+    </React.StrictMode>
+  );
+
+  // 注：csr-shell 路径已在 main 入口处早返回，这里只剩正常水合
+  hydrateRoot(document, browserRoot, { formState: initialPayload.formState });
+
+  if (import.meta.hot) {
+    import.meta.hot.on('rsc:update', () => {
+      void fetchRscPayload();
+    });
+  }
+}
+
+function listenNavigation(
+  onNavigation: () => void,
+  onNavigateHook?: (url: URL) => void
+): () => void {
+  const fire = () => {
+    onNavigation();
+    if (onNavigateHook) {
+      try {
+        onNavigateHook(new URL(window.location.href));
+      } catch {
+        /* hook 抛错不影响主流程 */
+      }
+    }
+  };
+
+  window.addEventListener('popstate', fire);
+
+  const oldPushState = window.history.pushState;
+  window.history.pushState = function (...args) {
+    const res = oldPushState.apply(this, args);
+    fire();
+    return res;
+  };
+
+  const oldReplaceState = window.history.replaceState;
+  window.history.replaceState = function (...args) {
+    const res = oldReplaceState.apply(this, args);
+    fire();
+    return res;
+  };
+
+  function isInternalLink(link: HTMLAnchorElement): boolean {
+    return !!(
+      link.href &&
+      (!link.target || link.target === '_self') &&
+      link.origin === location.origin &&
+      !link.hasAttribute('download')
+    );
+  }
+
+  function onClick(e: MouseEvent) {
+    const target = e.target;
+    if (!(target instanceof Element)) return;
+    const link = target.closest('a');
+    if (
+      link &&
+      link instanceof HTMLAnchorElement &&
+      isInternalLink(link) &&
+      e.button === 0 &&
+      !e.metaKey &&
+      !e.ctrlKey &&
+      !e.altKey &&
+      !e.shiftKey &&
+      !e.defaultPrevented
+    ) {
+      e.preventDefault();
+      history.pushState(null, '', link.href);
+    }
+  }
+  document.addEventListener('click', onClick);
+
+  // ─── 链接预取（hover / viewport intersect 触发预取 _.rsc）─────────
+  // 复用浏览器的 RSC fetch 缓存，导航时立即命中而不是再发请求
+  // 减少 50–150ms 客户端导航延迟，对应 next/link 的 prefetch 默认行为
+  const prefetched = new Set<string>();
+
+  function prefetch(href: string): void {
+    if (prefetched.has(href)) return;
+    prefetched.add(href);
+    try {
+      const url = new URL(href);
+      url.pathname = url.pathname + '_.rsc';
+      // 用 prefetch 优先级，不阻塞主流程；浏览器自动 dedupe + LRU
+      void fetch(url.toString(), { priority: 'low' } as RequestInit);
+    } catch {
+      /* invalid URL ignored */
+    }
+  }
+
+  function onPointerEnter(e: PointerEvent) {
+    const target = e.target;
+    if (!(target instanceof Element)) return;
+    const link = target.closest('a');
+    if (link && link instanceof HTMLAnchorElement && isInternalLink(link)) {
+      prefetch(link.href);
+    }
+  }
+  document.addEventListener('pointerenter', onPointerEnter, { capture: true });
+
+  // viewport 内可见时预取 —— 用 IntersectionObserver 监视所有内部链接
+  let observer: IntersectionObserver | null = null;
+  if (typeof IntersectionObserver !== 'undefined') {
+    observer = new IntersectionObserver(
+      entries => {
+        for (const entry of entries) {
+          if (entry.isIntersecting && entry.target instanceof HTMLAnchorElement) {
+            if (isInternalLink(entry.target)) prefetch(entry.target.href);
+            observer!.unobserve(entry.target);
+          }
+        }
+      },
+      { rootMargin: '200px' }
+    );
+    // 初始扫描 + MutationObserver 跟踪后续 DOM 变化
+    const scan = (root: ParentNode) => {
+      root.querySelectorAll('a').forEach(a => {
+        if (a instanceof HTMLAnchorElement && isInternalLink(a)) observer!.observe(a);
+      });
+    };
+    scan(document);
+    const mo = new MutationObserver(records => {
+      for (const r of records) {
+        r.addedNodes.forEach(n => {
+          if (n instanceof Element) scan(n);
+        });
+      }
+    });
+    mo.observe(document.body, { childList: true, subtree: true });
+  }
+
+  return () => {
+    document.removeEventListener('click', onClick);
+    document.removeEventListener('pointerenter', onPointerEnter, { capture: true });
+    observer?.disconnect();
+    window.removeEventListener('popstate', fire);
+    window.history.pushState = oldPushState;
+    window.history.replaceState = oldReplaceState;
+  };
+}

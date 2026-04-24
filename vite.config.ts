@@ -1,124 +1,59 @@
 import { defineConfig } from 'vite';
-import { resolve } from 'path';
+import { resolve, dirname } from 'path';
+import { fileURLToPath } from 'url';
 import dts from 'vite-plugin-dts';
+import { builtinModules } from 'module';
+import pkg from './package.json';
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = dirname(__filename);
 
 export default defineConfig({
-  plugins: [
-    dts({
-      insertTypesEntry: true,
-      rollupTypes: false, // 禁用rollupTypes来避免API Extractor警告
-      exclude: ['**/*.test.ts', '**/*.spec.ts'],
-      tsconfigPath: './tsconfig.json',
-    }),
-  ],
+  plugins: [dts()],
+  resolve: {
+    alias: {
+      '@': resolve(__dirname, './src'),
+    },
+  },
   build: {
     lib: {
       entry: {
-        index: resolve(__dirname, 'index.ts'),
-        'cli/cli': resolve(__dirname, 'cli/cli.ts'),
+        'novel-isr': resolve(__dirname, 'src/index.ts'),
+        'cli/cli': resolve(__dirname, 'src/cli/cli.ts'),
+        // 独立 rsc 子入口 —— 仅包含 RSC 环境安全的导出（revalidatePath/revalidateTag
+        // / server action registry），不含 react-dom/server 等 Node-only 模块
+        'rsc/index': resolve(__dirname, 'src/rsc/index.ts'),
+        // 可观测性 SDK 预制 adapter 子路径 —— 树摇友好（用户只引 Sentry 时不会拉 Datadog）
+        'adapters/observability/index': resolve(
+          __dirname,
+          'src/adapters/observability/index.ts'
+        ),
+        // Edge runtime adapter（CF Workers / Vercel Edge / Deno / Bun）
+        'adapters/runtime/index': resolve(__dirname, 'src/adapters/runtime/index.ts'),
+        // <Image> 组件 —— 用户在 React 树里引用
+        'image/index': resolve(__dirname, 'src/runtime/Image.tsx'),
       },
-      formats: ['es'],
-      fileName: (format, entryName) => `${entryName}.js`,
+      // 注：内置默认 SSR 入口（src/defaults/entry.ssr.tsx）不在此处打包，
+      // 因为它依赖 `import.meta.viteRsc`（plugin-rsc 运行时注入的 API），
+      // 只能在用户项目的 plugin-rsc 构建上下文里被消费。我们直接以源码形式
+      // 暴露给用户的 plugin-rsc 进行二次打包，详见 createIsrPlugin.ts
+      formats: ['es', 'cjs'],
+      fileName: (format, entryName) => `${entryName}.${format === 'es' ? 'js' : 'cjs'}`,
     },
     rollupOptions: {
       external: [
-        // Node.js 内置模块
-        'path',
-        'fs',
-        'fs/promises',
-        'url',
-        'http',
-        'https',
-        'events',
-        'child_process',
-        'os',
-        'crypto',
-        'stream',
-        'util',
-        'buffer',
-        'querystring',
-        'vm',
-        'worker_threads',
-        'zlib',
-        'readline',
-        'tty',
-        'process',
-        'async_hooks',
-        'string_decoder',
-        // Node内置模块的node:前缀版本
-        'node:path',
-        'node:fs',
-        'node:url',
-        'node:http',
-        'node:https',
-        'node:events',
-        'node:child_process',
-        'node:os',
-        'node:crypto',
-        'node:stream',
-        'node:util',
-        'node:buffer',
-        'node:querystring',
-        'node:vm',
-        'node:worker_threads',
-        'node:zlib',
-        'node:readline',
-        'node:tty',
-        'node:process',
-        'node:async_hooks',
-        'node:string_decoder',
-        
-        // 第三方依赖
-        'compression',
-        'cors',
-        'express',
-        'node-fetch',
-        'sitemap',
-        'rimraf',
-        'redis',
-        'ioredis', 
-        'lru-cache',
-        'p-limit',
-        'rate-limiter-flexible',
-        'helmet',
-        
-        // CLI 工具依赖
-        'commander',
-        'inquirer',
-        'ora',
-        'chalk',
-        
-        // Vite 相关
-        'vite',
-        '@vitejs/plugin-react',
-        '@vitejs/plugin-react-swc',
-        
-        // React 生态 - 关键修复：排除所有 React 相关模块
-        'react',
-        'react-dom',
-        'react-dom/server',
-        'react-dom/client',
-        'react-router-dom',
-        'react-router-dom/server',
-        'react-helmet-async',
-        'react-i18next',
+        ...builtinModules,
+        ...builtinModules.map(m => `node:${m}`),
+        ...Object.keys(pkg.dependencies || {}),
+        ...Object.keys(pkg.optionalDependencies || {}),
+        ...Object.keys(pkg.peerDependencies || {}),
+        // 子路径外部化（如 react-dom/server, react-dom/client）
+        /^react(-dom)?(\/.*)?$/,
       ],
-      output: {
-        preserveModules: true,
-        preserveModulesRoot: '.',
-        entryFileNames: chunkInfo => {
-          return `${chunkInfo.name}.js`;
-        },
-      },
     },
-    target: 'node18',
+    target: 'node20',
     outDir: 'dist',
     sourcemap: true,
     minify: false,
-  },
-  esbuild: {
-    target: 'node18',
-    format: 'esm',
-    platform: 'node',
   },
 });

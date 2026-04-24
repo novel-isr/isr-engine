@@ -1,0 +1,197 @@
+/**
+ * defineSiteHooks 单元测试
+ *
+ * 覆盖：
+ *   - locale 检测：cookie / Accept-Language / fallback
+ *   - SEO 静态条目 + 远程条目 + custom resolver
+ *   - 路由 :param 占位符匹配
+ *   - intl loader 默认 fallback / RTL 标记
+ *   - canonical 自动用 site + pattern
+ */
+import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { defineSiteHooks } from '../defaults/runtime/defineSiteHooks';
+
+const baseline = { traceId: 't', startedAt: 0 };
+
+beforeEach(() => {
+  vi.restoreAllMocks();
+});
+
+describe('defineSiteHooks: locale detection', () => {
+  it('cookie locale 优先', async () => {
+    const hooks = defineSiteHooks({});
+    const req = new Request('http://x.com', { headers: { cookie: 'a=b; locale=fr; c=d' } });
+    const ext = await hooks.beforeRequest(req, baseline);
+    expect(ext.locale).toBe('fr');
+  });
+
+  it('无 cookie 时按 accept-language 前缀', async () => {
+    const hooks = defineSiteHooks({});
+    expect(
+      (
+        await hooks.beforeRequest(
+          new Request('http://x.com', { headers: { 'accept-language': 'en-US,en' } }),
+          baseline
+        )
+      ).locale
+    ).toBe('en');
+    expect(
+      (
+        await hooks.beforeRequest(
+          new Request('http://x.com', { headers: { 'accept-language': 'zh-CN,zh' } }),
+          baseline
+        )
+      ).locale
+    ).toBe('zh-CN');
+  });
+
+  it('都无时用 defaultLocale', async () => {
+    const hooks = defineSiteHooks({ intl: { defaultLocale: 'ja' } });
+    const ext = await hooks.beforeRequest(new Request('http://x.com'), baseline);
+    expect(ext.locale).toBe('ja');
+  });
+
+  it('自定义 detect 完全覆盖', async () => {
+    const hooks = defineSiteHooks({ intl: { detect: () => 'custom' } });
+    const ext = await hooks.beforeRequest(
+      new Request('http://x.com', { headers: { cookie: 'locale=zh' } }),
+      baseline
+    );
+    expect(ext.locale).toBe('custom');
+  });
+
+  it('beforeRequest 用户扩展字段合并', async () => {
+    const hooks = defineSiteHooks({ beforeRequest: () => ({ user: 'u1' }) });
+    const ext = await hooks.beforeRequest(new Request('http://x.com'), baseline);
+    expect(ext).toMatchObject({ locale: 'zh-CN', user: 'u1' });
+  });
+});
+
+describe('defineSiteHooks: SEO 路由表', () => {
+  it('静态条目按 pattern 命中 + canonical 自动补齐', async () => {
+    const hooks = defineSiteHooks({
+      site: 'https://x.com',
+      seo: {
+        '/about': { title: 'About', description: 'd' },
+      },
+    });
+    const meta = await hooks.loadSeoMeta(new Request('http://x.com/about'));
+    expect(meta?.title).toBe('About');
+    expect(meta?.canonical).toBe('https://x.com/about');
+  });
+
+  it(':param 占位符 + 远程 endpoint + transform', async () => {
+    const fetchSpy = vi
+      .spyOn(globalThis, 'fetch')
+      .mockResolvedValue(
+        new Response(JSON.stringify({ data: { name: '诡秘之主' } }), { status: 200 })
+      );
+    const hooks = defineSiteHooks({
+      api: 'http://api.x',
+      seo: {
+        '/books/:id': {
+          endpoint: '/api/books/{id}',
+          transform: (data, params) => ({
+            title: `${(data as { data: { name: string } }).data.name} · ${params.id}`,
+            ogType: 'article',
+          }),
+        },
+      },
+    });
+    const meta = await hooks.loadSeoMeta(new Request('http://x.com/books/42'));
+    expect(meta?.title).toBe('诡秘之主 · 42');
+    expect(fetchSpy).toHaveBeenCalledWith('http://api.x/api/books/42');
+  });
+
+  it('未匹配返回 null', async () => {
+    const hooks = defineSiteHooks({ seo: { '/': { title: 'home' } } });
+    const meta = await hooks.loadSeoMeta(new Request('http://x.com/no-match'));
+    expect(meta).toBeNull();
+  });
+
+  it('远程拉取失败 → fallback null', async () => {
+    vi.spyOn(globalThis, 'fetch').mockRejectedValue(new Error('boom'));
+    const hooks = defineSiteHooks({
+      api: 'http://api.x',
+      seo: {
+        '/books/:id': {
+          endpoint: '/api/books/{id}',
+          transform: () => ({ title: 'x' }),
+        },
+      },
+    });
+    const meta = await hooks.loadSeoMeta(new Request('http://x.com/books/1'));
+    expect(meta).toBeNull();
+  });
+
+  it('自定义 resolver function 直接返回 PageSeoMeta', async () => {
+    const hooks = defineSiteHooks({
+      seo: {
+        '/custom': () => ({ title: 'CUSTOM' }),
+      },
+    });
+    const meta = await hooks.loadSeoMeta(new Request('http://x.com/custom'));
+    expect(meta?.title).toBe('CUSTOM');
+  });
+});
+
+describe('defineSiteHooks: i18n loader', () => {
+  it('endpoint 模板替换 + 返回 messages', async () => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+      new Response(JSON.stringify({ data: { hello: '你好' } }), { status: 200 })
+    );
+    const hooks = defineSiteHooks({
+      api: 'http://api.x',
+      intl: { endpoint: '/api/i18n?locale={locale}' },
+    });
+    const intl = await hooks.loadIntl(
+      new Request('http://x.com', { headers: { cookie: 'locale=zh-CN' } })
+    );
+    expect(intl?.locale).toBe('zh-CN');
+    expect(intl?.messages).toEqual({ hello: '你好' });
+    expect(intl?.direction).toBe('ltr');
+  });
+
+  it('RTL 语言自动标记', async () => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response('null', { status: 200 }));
+    const hooks = defineSiteHooks({ api: 'http://api.x', intl: { endpoint: '/x?l={locale}' } });
+    const intl = await hooks.loadIntl(
+      new Request('http://x.com', { headers: { cookie: 'locale=ar' } })
+    );
+    expect(intl?.direction).toBe('rtl');
+  });
+
+  it('endpoint + load 都不传 → 空 messages', async () => {
+    const hooks = defineSiteHooks({});
+    const intl = await hooks.loadIntl(new Request('http://x.com'));
+    expect(intl?.messages).toEqual({});
+  });
+
+  it('自定义 load 函数完全覆盖', async () => {
+    const hooks = defineSiteHooks({
+      intl: { load: async loc => ({ locale: loc, messages: { custom: 1 } }) },
+    });
+    const intl = await hooks.loadIntl(new Request('http://x.com'));
+    expect(intl?.messages).toEqual({ custom: 1 });
+  });
+});
+
+describe('defineSiteHooks: onError', () => {
+  it('默认 console.error', () => {
+    const spy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const hooks = defineSiteHooks({});
+    hooks.onError(new Error('x'), new Request('http://x.com'), { traceId: 't1' });
+    expect(spy).toHaveBeenCalledWith(
+      '[onError]',
+      expect.objectContaining({ traceId: 't1', msg: 'x' })
+    );
+  });
+
+  it('自定义 onError 完全覆盖', () => {
+    const cb = vi.fn();
+    const hooks = defineSiteHooks({ onError: cb });
+    const err = new Error('boom');
+    hooks.onError(err, new Request('http://x.com'), { traceId: 't' });
+    expect(cb).toHaveBeenCalledWith(err, expect.any(Request), { traceId: 't' });
+  });
+});

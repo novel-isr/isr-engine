@@ -18,7 +18,7 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: '18'
+          node-version-file: '.nvmrc'
           cache: 'pnpm'
 
       - name: Install pnpm
@@ -52,7 +52,7 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: '18'
+          node-version-file: '.nvmrc'
           cache: 'pnpm'
 
       - name: Install pnpm
@@ -63,6 +63,5 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
-    # TODO: Add test command when tests are implemented
-    # - name: Run tests
-    #   run: pnpm run test
+      - name: Run tests
+        run: pnpm run test

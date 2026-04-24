@@ -8,7 +8,6 @@ yarn.lock
 dist/
 build/
 out/
-.next/
 
 # Cache directories
 .cache/
