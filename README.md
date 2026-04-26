@@ -205,6 +205,39 @@ WARN The field "pnpm.overrides" was found in .../isr-engine/package.json.
 
 如果觉得碍眼，要么不在父目录跑 `-r` 命令，要么 `pnpm ls -r 2>/dev/null` 屏蔽 stderr。
 
+## 与消费者解耦
+
+`@novel-isr/engine` 不发 public npm，只发**私有 registry**（如公司内 Verdaccio /
+npm Enterprise / GitHub Packages）。消费方（如 `novel-rating-website`）通过语义
+化版本号引用，**不**用 `file:../isr-engine` 这种 sibling 相对路径——sibling 假设
+让两个 repo 互相强耦合，CI checkout 也跑不通。
+
+**消费侧 install 步骤**：
+
+```bash
+# 1. 配 .npmrc（一次性）
+@novel-isr:registry=https://npm.your-company.com/
+//npm.your-company.com/:_authToken=${NPM_TOKEN}
+
+# 2. package.json 里写语义版本号
+{ "dependencies": { "@novel-isr/engine": "^2.1.0" } }
+
+# 3. install
+pnpm install
+```
+
+**联动开发**（消费者一边改 engine 一边迭代，不用每次发版）：
+
+```bash
+# engine 端
+cd isr-engine && pnpm build && pnpm link --global
+
+# 消费方端
+cd ../novel-rating-website && pnpm link --global @novel-isr/engine
+# 改完取消 link
+pnpm unlink --global @novel-isr/engine && pnpm install
+```
+
 ## CI / 发布
 
 仓库里 3 个 workflow 各司其职：

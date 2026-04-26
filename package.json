@@ -1,7 +1,11 @@
 {
   "name": "@novel-isr/engine",
-  "version": "2.0.0",
+  "version": "2.1.0",
   "description": "ISR/SSG/Fallback 编排层 —— 构建于 @vitejs/plugin-rsc 之上的通用渲染框架",
+  "publishConfig": {
+    "access": "restricted",
+    "registry": "${NPM_REGISTRY_URL}"
+  },
   "type": "module",
   "main": "./dist/novel-isr.cjs",
   "module": "./dist/novel-isr.js",
