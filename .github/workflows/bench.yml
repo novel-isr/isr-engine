@@ -2,7 +2,7 @@ name: Bench (perf regression gate)
 
 # 设计：
 #   - 不在每个 PR 跑（runner 时间昂贵），改为 dispatch + nightly + perf-sensitive 路径触发
-#   - 用 scripts/bench-compare.mjs 对比 scripts/bench-baseline.json，退化 > 20% 阻断
+#   - 用 scripts/bench-compare.mjs 对比 bench/baseline.json，退化 > 20% 阻断
 #   - 没有 baseline 时（首次跑 / 新分支）自动 skip，避免空检验阻塞
 
 on:
@@ -85,6 +85,10 @@ jobs:
       - name: Start fixture server in background
         if: steps.fixture.outputs.available == 'true'
         working-directory: ../novel-rating-website
+        env:
+          # bench-only：关掉限流，避免 autocannon 单 IP 模拟的高并发被 429 拦
+          # （生产部署绝不带此 env）
+          BENCH_DISABLE_RATE_LIMIT: '1'
         run: |
           pnpm run start > /tmp/server.log 2>&1 &
           echo $! > /tmp/server.pid
@@ -114,7 +118,7 @@ jobs:
           BENCH_P95_REGRESSION_PCT: '20'
           BENCH_QPS_REGRESSION_PCT: '15'
         run: |
-          node scripts/bench-compare.mjs scripts/bench-baseline.json bench-current.json
+          node scripts/bench-compare.mjs bench/baseline.json bench-current.json
 
       - name: Stop fixture server
         if: always() && steps.fixture.outputs.available == 'true'
