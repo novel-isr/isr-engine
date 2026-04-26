@@ -16,7 +16,14 @@ export default defineConfig({
       'src/**/*.test.{ts,tsx}',
       'scripts/**/__tests__/**/*.test.{js,mjs,ts}',
     ],
-    exclude: ['node_modules', 'dist', 'src/defaults/**'],
+    exclude: [
+      'node_modules',
+      'dist',
+      'src/defaults/**',
+      // bench-fixture 是独立 sub-package，它的 node_modules 含自己 deps 的测试，
+      // 不应该被引擎主测套覆盖
+      'scripts/bench-fixture/**',
+    ],
     environment: 'node',
     globals: false,
     coverage: {

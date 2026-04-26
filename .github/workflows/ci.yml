@@ -1,30 +1,37 @@
 name: CI
 
+# 触发：任何 push 到任何分支 + PR 到 main/develop
+# 目的：feature 分支也跑 lint+typecheck+test，提早暴露问题（之前只跑 main/develop
+# 导致 feature 分支裸奔，merge 时才发现 broken）
+
 on:
   push:
-    branches: [main, develop]
+    branches: ['**']
+    tags-ignore: ['**']  # tag push 走 release.yml，不重复跑
   pull_request:
     branches: [main, develop]
 
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   lint-and-format:
-    name: Lint and Format Check
+    name: Lint + Type + Format + Build
     runs-on: ubuntu-latest
+    timeout-minutes: 10
 
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9
+
+      - uses: actions/setup-node@v4
         with:
           node-version-file: '.nvmrc'
           cache: 'pnpm'
-
-      - name: Install pnpm
-        uses: pnpm/action-setup@v2
-        with:
-          version: 8
 
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
@@ -32,7 +39,7 @@ jobs:
       - name: Type check
         run: pnpm run type-check
 
-      - name: Lint check
+      - name: Lint
         run: pnpm run lint
 
       - name: Format check
@@ -41,27 +48,42 @@ jobs:
       - name: Build
         run: pnpm run build
 
+      - name: Verify dist artifacts
+        run: |
+          test -f dist/novel-isr.js
+          test -f dist/novel-isr.d.ts
+          test -f dist/cli/cli.js
+          echo "✓ dist artifacts present"
+
   test:
-    name: Test
+    name: Unit + Integration Tests
     runs-on: ubuntu-latest
+    timeout-minutes: 10
 
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9
+
+      - uses: actions/setup-node@v4
         with:
           node-version-file: '.nvmrc'
           cache: 'pnpm'
-
-      - name: Install pnpm
-        uses: pnpm/action-setup@v2
-        with:
-          version: 8
 
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
       - name: Run tests
         run: pnpm run test
+
+      - name: Upload coverage on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-failure-${{ github.sha }}
+          path: |
+            coverage/
+            *.log
+          retention-days: 7

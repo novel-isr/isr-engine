@@ -1,0 +1,174 @@
+name: Release (private npm publish)
+
+# 触发：push 到形如 v1.2.3 的 tag
+# 完整流程（任一步失败 → 整个 release 中止，npm 不会被污染）：
+#   1. lint + typecheck + format:check
+#   2. tests
+#   3. build (产物 + types)
+#   4. bench-fixture build + start + bench + 对比 bench/baseline.json
+#      退化 > 20% P95 / -15% QPS → fail（保证整体不会劣化）
+#   5. 校验 package.json version 等于 tag
+#   6. publish 到私有 npm registry（NPM_REGISTRY_URL + NPM_TOKEN secrets）
+#
+# 私有 npm 配置（Repo settings → Secrets and variables → Actions）：
+#   - NPM_REGISTRY_URL    示例 https://npm.your-company.com/
+#   - NPM_TOKEN           对应 registry 的 publish token（read-write）
+#
+# 不发 public：package.json 必须保持 `"private": false` 时，registry 是私有的；
+#               或者保持 `"private": true` 也行（pnpm publish 会拒绝，工作流 fail-loud）
+
+on:
+  push:
+    tags:
+      - 'v*.*.*'
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false  # release 不允许并发取消
+
+jobs:
+  release:
+    name: Validate + bench-gated publish
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Validate tag matches package.json version
+        id: version
+        run: |
+          TAG="${GITHUB_REF#refs/tags/}"
+          TAG_VER="${TAG#v}"
+          PKG_VER=$(node -p "require('./package.json').version")
+          echo "tag=${TAG}" >> $GITHUB_OUTPUT
+          echo "tag_version=${TAG_VER}" >> $GITHUB_OUTPUT
+          echo "pkg_version=${PKG_VER}" >> $GITHUB_OUTPUT
+          if [ "${TAG_VER}" != "${PKG_VER}" ]; then
+            echo "::error::tag version (${TAG_VER}) ≠ package.json version (${PKG_VER})"
+            exit 1
+          fi
+          echo "✓ tag ${TAG} matches package.json ${PKG_VER}"
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: '.nvmrc'
+          cache: 'pnpm'
+          # 配置私有 registry —— pnpm publish 会读 .npmrc + NODE_AUTH_TOKEN
+          registry-url: ${{ secrets.NPM_REGISTRY_URL }}
+
+      - name: Install engine deps
+        run: pnpm install --frozen-lockfile
+
+      # ─── Gate 1: 静态检查 ──────────────────────────────────────────
+      - name: Type check
+        run: pnpm run type-check
+
+      - name: Lint
+        run: pnpm run lint
+
+      - name: Format check
+        run: pnpm run format:check
+
+      # ─── Gate 2: 测试 ─────────────────────────────────────────────
+      - name: Run tests
+        run: pnpm run test
+
+      # ─── Gate 3: 构建 ─────────────────────────────────────────────
+      - name: Build engine
+        run: pnpm run build
+
+      - name: Verify dist contents
+        run: |
+          test -f dist/novel-isr.js
+          test -f dist/novel-isr.cjs
+          test -f dist/novel-isr.d.ts
+          test -f dist/cli/cli.js
+          echo "✓ dist artifacts present"
+
+      # ─── Gate 4: Bench 退化检测（保证整体不会劣化）─────────────────
+      - name: Install bench-fixture deps
+        working-directory: scripts/bench-fixture
+        run: pnpm install --no-frozen-lockfile
+
+      - name: Build bench-fixture
+        working-directory: scripts/bench-fixture
+        run: pnpm run build
+
+      - name: Start bench-fixture
+        working-directory: scripts/bench-fixture
+        env:
+          BENCH_DISABLE_RATE_LIMIT: '1'
+          PORT: '3000'
+          NODE_ENV: 'production'
+          SEO_BASE_URL: 'http://localhost:3000'
+        run: |
+          pnpm run start > /tmp/fixture.log 2>&1 &
+          echo $! > /tmp/fixture.pid
+          for i in $(seq 1 30); do
+            if curl -sf http://localhost:3000/ > /dev/null 2>&1; then
+              echo "fixture up after ${i}s"
+              exit 0
+            fi
+            sleep 1
+          done
+          echo "::error::fixture failed to start in 30s"
+          cat /tmp/fixture.log
+          exit 1
+
+      - name: Run bench
+        env:
+          # 发布门槛：用 baseline 一样的档位 + 时长，确保对比有意义
+          BENCH_TIERS: '10,100,1000'
+          BENCH_DURATION: '15'
+          BENCH_PATHS: '/,/about,/books/1'
+          BENCH_WARMUP_SECONDS: '3'
+          BENCH_COOLDOWN_MS: '2000'
+          BENCH_OUTPUT: bench-release.json
+        run: pnpm run bench
+
+      - name: Bench regression gate (must pass to publish)
+        env:
+          BENCH_P95_REGRESSION_PCT: '20'
+          BENCH_QPS_REGRESSION_PCT: '15'
+        run: |
+          if [ ! -f bench/baseline.json ]; then
+            echo "::error::no bench/baseline.json — release MUST have a baseline"
+            echo "seed by running bench locally and committing the result"
+            exit 1
+          fi
+          node scripts/bench-compare.mjs bench/baseline.json bench-release.json
+
+      - name: Stop bench-fixture
+        if: always()
+        run: |
+          if [ -f /tmp/fixture.pid ]; then
+            kill $(cat /tmp/fixture.pid) || true
+          fi
+
+      # ─── Publish 到私有 npm registry ────────────────────────────────
+      - name: Publish (private registry)
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          # pnpm publish 会读 .npmrc 的 registry + NODE_AUTH_TOKEN
+          # --no-git-checks 因为我们已经在 tag 上，不需要再校验 working tree
+          # --access restricted 强制私有（即使 registry 是公网也不会误发）
+          pnpm publish --no-git-checks --access restricted --tag latest
+
+      - name: Upload release artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-${{ steps.version.outputs.tag }}
+          path: |
+            dist/
+            bench-release.json
+            /tmp/fixture.log
+          retention-days: 90
