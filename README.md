@@ -2,7 +2,9 @@
 
 > Vite + React 19 RSC 的 ISR / SSG / Fallback 编排层。基于 [@vitejs/plugin-rsc](https://github.com/vitejs/vite-plugin-react/tree/main/packages/plugin-rsc) 官方插件——**不手写 Flight 协议**。用户只写一个 `src/app.tsx`，其余全部由 engine 默认提供。
 
-[![Vite 8](https://img.shields.io/badge/Vite-8-646CFF.svg)](https://vitejs.dev/) [![React 19](https://img.shields.io/badge/React-19-61DAFB.svg)](https://react.dev/) [![Node 22.21.1](https://img.shields.io/badge/Node-22.21.1-339933.svg)](https://nodejs.org/)
+[![Vite 8](https://img.shields.io/badge/Vite-8-646CFF.svg)](https://vitejs.dev/) [![React 19](https://img.shields.io/badge/React-19-61DAFB.svg)](https://react.dev/) [![Node 22.21.1](https://img.shields.io/badge/Node-22.21.1-339933.svg)](https://nodejs.org/) [![Tests 580](https://img.shields.io/badge/Tests-580%20passing-brightgreen.svg)](./CHANGELOG.md)
+
+> **v2.1.0 unreleased** —— Security & Reliability 硬化批次（10 项高/中危修复 + 测试 +358）+ self-contained bench fixture + private npm release 流水线。详见 [CHANGELOG.md](./CHANGELOG.md)。
 
 ## 30 秒看明白
 
@@ -82,15 +84,19 @@ export function App({ url }: { url: URL }) {
 
 ## 性能 benchmark
 
-测试环境：MacBook M-series · Node 22 · 单进程 · 1000 req @ 10 并发
+baseline：[`bench/baseline.json`](./bench/baseline.json) —— 由 [`scripts/bench-fixture/`](./scripts/bench-fixture/)
+（self-contained 最小 ISR 应用）跑出。MacBook M-series · Node 22 · 单进程 ·
+3s warmup · 8s/tier · 2s cooldown · `BENCH_DISABLE_RATE_LIMIT=1`：
 
-| 路径 | 模式 | QPS | p50 | p95 | p99 |
+| 路径 | 模式 | QPS @ 10c | QPS @ 10000c | P95 @ 10c | P95 @ 10000c |
 |---|---|---|---|---|---|
-| `/` | ISR HIT | **9 804** | 1ms | 2ms | 6ms |
-| `/books/1` | ISR HIT（含 RSC 树反序列化） | **5 405** | 1ms | 13ms | 18ms |
-| `/?mode=ssr` | SSR（完整 RSC + SSR 管线） | **461** | 20ms | 36ms | 48ms |
+| `/` | ISR + cacheTag | **24 826** | 1 486 | 3.3ms | 1712ms |
+| `/about` | SSG (express.static) | **63 362** | 7 040 | 0ms | 524ms |
+| `/books/1` | ISR + tag-based | **46 065** | 2 984 | 1.3ms | 1030ms |
 
-复现：`pnpm bench`。详细解释与多核估算见 [docs/performance.md](./docs/performance.md)。
+复现：`pnpm bench`（生产 baseline）/ `cd scripts/bench-fixture && pnpm start` 后跑
+`pnpm bench`（开发 baseline）。CI bench gate 见 [`.github/workflows/bench.yml`](./.github/workflows/bench.yml)：
+退化 P95 +20% 或 QPS -15% 自动 fail。详细解释见 [docs/performance.md](./docs/performance.md)。
 
 ## 文档
 
@@ -142,29 +148,30 @@ FallbackChain（自动降级）：
 | 构建栈灵活度 | ❌ 绑死自家栈 | ✅ Vite | ❌ 绑死自家栈 | ✅ Vite |
 | 内置图片 / 字体优化 | ✅ | ❌ | ⚠️ | ✅ |
 | Edge runtime 支持 | ✅ | ⚠️ | ❌ | ✅（CF / Vercel / Deno / Bun） |
-| 单元测试覆盖 | 数千用例 | ⚠️ | ✅ | 22 文件（仍需提升覆盖） |
+| 单元测试覆盖 | 数千用例 | ⚠️ | ✅ | 41 文件 / 580 tests / ~50% |
 
 定位：**中等规模业务的 ISR / SSG / Fallback 编排层**，构建于 React 19 + `@vitejs/plugin-rsc` 官方流水线之上。
 
 ## 生产可用性诚实评估
 
-**Beta-ready**，不是 production-recommended。
+**v2.1.0 后从 Beta-ready 进入 production-eligible**（中等规模业务）。
 
 ✅ **稳的部分**：
 - Flight 协议委托给官方 `@vitejs/plugin-rsc@^0.5.24`，不自维护
 - 依赖全是工业级（Express / Helmet / Prometheus / sitemap / lru-cache / ioredis）
-- 性能数量级合理（HIT 9.8K QPS / SSR 461 QPS 单核）
-- 观测齐全（trace-id / render-ms / X-Cache-Status 自动注入）
+- 580 tests / ~50% 覆盖；CI 任何分支 push 都跑 lint+typecheck+test
+- bench 退化检测纳入 CI（`P95 +20%` 或 `QPS -15%` 自动 block PR / publish）
+- 私有 npm 发布有 4 段 gate（lint+test+build+bench），任一失败 → 不发布
+- 安全硬化覆盖了 Set-Cookie 跨用户回放、SSG 路径穿越、Redis Buffer 破损、
+  Pub/Sub 消息丢失等 10 项审计发现项
 
-⚠️ **生产前你必须知道的事**：
-- 测试覆盖仍偏低（22 测试文件），race condition / HTTP e2e 路径还需继续补
-- `revalidateTag` / `revalidatePath` 已聚合错误并抛 `RevalidationError`，调用方仍需要显式处理失败反馈
-- SSG spider 已有 timeout / retry / fail threshold，但还缺大型真实站点的长期构建数据
-- Cross-pod cache invalidation 已支持 Redis Pub/Sub，但不是持久化队列；Redis 维护窗口内仍可能丢事件
+⚠️ **生产前你仍需知道的事**：
 - HTTP/2 / HTTP/3 origin 直出仍需你的代理链路矩阵压测；生产推荐 CDN/Nginx/Caddy 终止协议
-- Bench 不阻塞 CI，性能可能悄悄退化
+- 私有 npm 发布需配 `NPM_REGISTRY_URL` + `NPM_TOKEN` GitHub Secrets；不发 public registry
+- bench baseline 在自家 CI 硬件上首次跑后提交，跨机器对比无意义（绝对值仅参考）
 
 详细 gap 列表与改造建议：[docs/production-readiness.md](./docs/production-readiness.md)。
+完整 v2.1 改动列表：[CHANGELOG.md](./CHANGELOG.md)。
 
 ## 开发
 
@@ -197,6 +204,31 @@ WARN The field "pnpm.overrides" was found in .../isr-engine/package.json.
 这是 pnpm 的 false positive —— **本仓库不是 workspace**，父目录只是文件夹聚合。该警告对实际安装行为无影响（已通过 `pnpm ls express` 验证 express 拿到的是 0.1.13）。
 
 如果觉得碍眼，要么不在父目录跑 `-r` 命令，要么 `pnpm ls -r 2>/dev/null` 屏蔽 stderr。
+
+## CI / 发布
+
+仓库里 3 个 workflow 各司其职：
+
+| Workflow | 触发 | 跑什么 | 失败后果 |
+|---|---|---|---|
+| **`ci.yml`** | 任何分支 push + PR 到 main/develop | type-check / lint / format / test (580) / build | branch 标红，PR 不可 merge |
+| **`bench.yml`** | nightly 02:00 UTC + 手动 + perf-sensitive 路径 PR | 起 bench-fixture + 跑 bench + 对比 `bench/baseline.json` | P95 +20% 或 QPS -15% → fail |
+| **`release.yml`** | `git push v*.*.*` tag | 全部 4 段 gate（type+lint / test / build / bench）→ `pnpm publish --access restricted` 到私有 npm | 任一段失败 → 不发布 |
+
+**发布到私有 npm**：
+
+1. Repo `Settings → Secrets and variables → Actions` 配置：
+   - `NPM_REGISTRY_URL` —— 例如 `https://npm.your-company.com/`
+   - `NPM_TOKEN` —— 对应 registry 的 read-write token
+2. 本地：
+   ```bash
+   # 改 package.json version 到 X.Y.Z
+   git tag vX.Y.Z
+   git push --tags
+   ```
+3. GitHub Actions 自动跑 release.yml；任一 gate 失败 → 不发布。
+
+**公网 npm**：本仓库 **不发 public**（`pnpm publish --access restricted`）。
 
 ## 设计原则
 
