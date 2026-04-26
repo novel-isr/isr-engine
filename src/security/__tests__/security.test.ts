@@ -6,7 +6,7 @@
  *   - PII 脱敏：email / phone / id-card / JWT / token / 字段名
  *   - redactObject 深度 + 数组 + 循环引用
  */
-import { describe, it, expect, vi } from 'vitest';
+import { describe, it, expect } from 'vitest';
 import { createAuditLogger, redactString, redactObject, addSensitiveKeys } from '../index';
 
 describe('createAuditLogger', () => {

@@ -3,13 +3,53 @@ import { Middleware } from './types';
 import { requestContext } from '../context/RequestContext';
 import { Logger } from '../logger/Logger';
 
+/**
+ * W3C trace-context (traceparent) 解析
+ *
+ * 格式：`00-<trace-id:32 hex>-<parent-id:16 hex>-<flags:2 hex>`
+ * 标准：https://www.w3.org/TR/trace-context/
+ *
+ * 支持版本：只接受 `00`（当前规范唯一定义的版本）。其他版本按未识别丢弃。
+ * 解析失败返回 null —— 调用方走生成新 ID 的路径。
+ */
+export function parseTraceparent(
+  raw: string | undefined
+): { traceId: string; parentId: string; flags: string } | null {
+  if (!raw) return null;
+  const parts = raw.trim().split('-');
+  if (parts.length !== 4) return null;
+  const [version, traceId, parentId, flags] = parts;
+  if (version !== '00') return null;
+  if (!/^[0-9a-f]{32}$/.test(traceId)) return null;
+  if (!/^[0-9a-f]{16}$/.test(parentId)) return null;
+  if (!/^[0-9a-f]{2}$/.test(flags)) return null;
+  // trace-id = 全 0 或 parent-id = 全 0 均为非法（规范要求）
+  if (/^0+$/.test(traceId) || /^0+$/.test(parentId)) return null;
+  return { traceId, parentId, flags };
+}
+
+/**
+ * 优先级读取 traceId：
+ *   1) W3C traceparent 头（业界标准，OTel/Datadog/Honeycomb 全支持）
+ *   2) context.data.traceId（上游框架已解析好的）
+ *   3) X-Request-Id（Heroku/Nginx/Kubernetes ingress 常用）
+ *   4) 自生成 `trace-<uuid>`（结尾兜底）
+ */
 export const traceMiddleware: Middleware = async (context, next) => {
-  // 2. 生成或获取 ID
-  // 优先使用传入的 ID (例如来自上游 Nginx 或 Gateway)，否则生成新的
-  const traceId = (context.data?.traceId as string) || `trace-${randomUUID()}`;
+  const headers = (context.req?.headers ?? {}) as Record<string, string | string[] | undefined>;
+
+  const tp = parseTraceparent(
+    typeof headers.traceparent === 'string' ? headers.traceparent : undefined
+  );
+
+  const upstreamTraceId =
+    tp?.traceId ||
+    (context.data?.traceId as string | undefined) ||
+    (typeof headers['x-request-id'] === 'string' ? (headers['x-request-id'] as string) : undefined);
+
+  const traceId = upstreamTraceId || `trace-${randomUUID()}`;
   const requestId = (context.data?.requestId as string) || `req-${randomUUID()}`;
 
-  // 1. 确保 data 对象存在并初始化
   if (!context.data) {
     context.data = {
       traceId,
@@ -20,12 +60,11 @@ export const traceMiddleware: Middleware = async (context, next) => {
     context.data.requestId = requestId;
   }
 
-  // 4. 启动 ALS 上下文，并执行后续逻辑
-  // 直接使用 context.data 作为 ALS 的 Store，实现数据共享
-  // 这样后续中间件修改 context.data (如添加 flags)，ALS 中也能获取到
   await requestContext.run(context.data, async () => {
     const logger = Logger.getInstance();
-    logger.debug(`[Middleware] Trace initialized: ${traceId}`);
+    logger.debug(
+      `[Middleware] Trace initialized: ${traceId}${tp ? ' (from W3C traceparent)' : ''}`
+    );
     await next();
   });
 };

@@ -9,7 +9,14 @@ export {
   toCloudflareWorker,
   type CloudflareAdapterOptions,
   type CloudflareWorker,
+  type CloudflareEdgeContext,
 } from './cloudflare';
-export { toVercelEdge, type VercelEdgeHandler } from './vercel-edge';
+export {
+  toVercelEdge,
+  toVercelMiddleware,
+  type VercelEdgeHandler,
+  type VercelMiddlewareHandler,
+  type VercelMiddlewareOptions,
+} from './vercel-edge';
 export { toDenoHandler, toBunServer, type DenoHandler, type BunServerConfig } from './deno';
 export type { FetchHandler, CloudflareExecutionContext } from './types';

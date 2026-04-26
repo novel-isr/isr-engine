@@ -189,4 +189,22 @@ export default [
       'no-console': 'off',
     },
   },
+
+  // 测试文件特殊规则
+  // —— 测试代码大量用 noop 回调（`() => {}` 触发 next）和 `result!` 断言，
+  //    在测试场景这些都是惯用语义而非代码缺陷。在生产代码里仍保留这两条 warn。
+  {
+    files: ['**/__tests__/**/*.{ts,tsx}', '**/*.test.{ts,tsx}'],
+    plugins: {
+      '@typescript-eslint': tseslint,
+    },
+    rules: {
+      '@typescript-eslint/no-empty-function': 'off',
+      '@typescript-eslint/no-non-null-assertion': 'off',
+      '@typescript-eslint/no-unused-vars': [
+        'warn',
+        { argsIgnorePattern: '^_', varsIgnorePattern: '^_' },
+      ],
+    },
+  },
 ];

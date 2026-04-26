@@ -84,7 +84,6 @@ export function createSsgPostBuildPlugin(explicitConfig: ISRConfig | undefined):
    */
   async function generateSpaShell(): Promise<void> {
     const ssrManifest = path.resolve(root, 'dist/ssr/__vite_rsc_assets_manifest.js');
-    const clientDir = path.resolve(root, 'dist/client');
     const spaDir = path.resolve(root, 'dist/spa');
     if (!existsSync(ssrManifest)) {
       logger.warn('[SPA] 未找到 dist/ssr/__vite_rsc_assets_manifest.js，跳过 SPA shell 生成');

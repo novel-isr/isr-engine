@@ -86,9 +86,31 @@ export interface IsrCacheMiddlewareOptions {
    * clears this process, then publishes the same target for sibling pods.
    */
   invalidationBus?: IsrInvalidationBus;
+  /**
+   * L2（如 Redis）异步读超时，毫秒。默认 100ms。
+   * 超时按 miss 处理，防止 Redis 抖动拖慢 HIT/STALE 路径。
+   */
+  l2ReadTimeoutMs?: number;
+  /**
+   * 后台重验证请求的生命周期上限，毫秒。默认 30_000。
+   * 防止 bg 请求卡住时 `revalidating` Set 永不清理导致后续 STALE 不再触发重渲。
+   */
+  backgroundRevalidateTimeoutMs?: number;
+  /**
+   * A/B variant 隔离 —— 默认 false（ABVariantMiddleware 的约定：variant 不进 key，避免缓存膨胀 N 倍）。
+   * 启用后：cacheKey 追加 `|v=<fnv1a(cookie)>` 摘要，同一路径的不同 variant 用户各自独立缓存。
+   * 适用：variant 影响 HTML 结构且数量 ≤ 4；不适用：按 user 细粒度分桶。
+   */
+  variantIsolation?: boolean;
+  /**
+   * variant 隔离时读取的 cookie 名称，默认 'ab'（与 ABVariantMiddleware 的默认值对齐）。
+   */
+  variantCookieName?: string;
 }
 
-export type IsrInvalidationTarget = { kind: 'path'; value: string } | { kind: 'tag'; value: string };
+export type IsrInvalidationTarget =
+  | { kind: 'path'; value: string }
+  | { kind: 'tag'; value: string };
 
 export interface IsrInvalidationBus {
   publish(target: IsrInvalidationTarget): Promise<void> | void;
@@ -202,6 +224,10 @@ export function createIsrCacheHandler(
 
   const fallbackTtl = options.defaultTtlSeconds ?? 3600;
   const rules: RoutingRules = extractRoutingRules(config, fallbackTtl);
+  const l2ReadTimeoutMs = options.l2ReadTimeoutMs ?? 100;
+  const bgTimeoutMs = options.backgroundRevalidateTimeoutMs ?? 30_000;
+  const variantIsolation = options.variantIsolation === true;
+  const variantCookieName = options.variantCookieName ?? 'ab';
 
   /** 后台重验证正在进行的 key 集合 —— 防止并发 STALE 请求重复触发多次 bg 拉取 */
   const revalidating = new Set<string>();
@@ -246,7 +272,15 @@ export function createIsrCacheHandler(
   });
 
   const handler = ((req: IncomingMessage, res: ServerResponse, next: Connect.NextFunction) => {
-    void handleRequest(req, res, next, { cache, rules, revalidating }).catch(err => {
+    void handleRequest(req, res, next, {
+      cache,
+      rules,
+      revalidating,
+      l2ReadTimeoutMs,
+      bgTimeoutMs,
+      variantIsolation,
+      variantCookieName,
+    }).catch(err => {
       logger.warn('ISR cache handler 异常，回退到下游处理:', err);
       if (!res.headersSent) {
         setHeaderOnce(res, 'X-Cache-Status', 'BYPASS');
@@ -357,6 +391,10 @@ interface HandleContext {
   cache: IsrCacheStore;
   rules: RoutingRules;
   revalidating: Set<string>;
+  l2ReadTimeoutMs: number;
+  bgTimeoutMs: number;
+  variantIsolation: boolean;
+  variantCookieName: string;
 }
 
 /**
@@ -420,7 +458,7 @@ async function handleRequest(
     return Promise.resolve();
   }
 
-  const cacheKey = `GET:${url}`;
+  const cacheKey = buildCacheKey(method, url, req, ctx);
   setHeaderOnce(res, 'X-Cache-Key', cacheKey);
 
   // 后台重验证请求：忽略所有缓存状态，强制 MISS 并重新入库
@@ -434,7 +472,8 @@ async function handleRequest(
   let entry = ctx.cache.get(cacheKey);
   if (!entry && ctx.cache.getAsync) {
     try {
-      entry = await ctx.cache.getAsync(cacheKey);
+      // L2 读有硬上限：超时按 miss 处理，防止 Redis 抖动拖慢 HIT/STALE 路径
+      entry = await raceWithTimeout(ctx.cache.getAsync(cacheKey), ctx.l2ReadTimeoutMs);
     } catch (err) {
       logger.warn(`ISR cache L2 read 失败 ${cacheKey}: ${(err as Error).message}`);
     }
@@ -486,6 +525,16 @@ function runMissPath(
       const ct = String(captured.headers['content-type'] || '');
       if (!ct.includes('text/html') && !ct.includes('text/x-component')) return;
 
+      // 用户态响应禁止缓存：含 Set-Cookie 的响应意味着服务端在给本次请求者下发
+      // session/CSRF token/身份识别。若入缓存，后续 HIT 回放会把 cookie 发给其他用户，
+      // 等同于跨账号会话泄露（高危）。这里严格拒绝入缓存，记一行 info。
+      if (hasSetCookie(captured.headers)) {
+        logger.info(
+          `⏭️  ISR cache skip ${cacheKey} —— 响应含 Set-Cookie（用户态响应不可共享缓存）`
+        );
+        return;
+      }
+
       // 渲染期 Server Component 调用了 markUncacheable() —— 比如上游接口失败、
       // 渲染了降级 UI —— 跳过入缓存，避免错误内容被反复 HIT 回放
       if (isUncacheable()) {
@@ -521,6 +570,12 @@ function runMissPath(
 
 /**
  * 后台发起一次内部 HTTP 请求，带 sentinel 头；中间件见到该头直接走 MISS 路径
+ *
+ * 生命周期保障：
+ *   - bg 请求与响应自身有 error/end 监听，正常路径清 `revalidating`
+ *   - 额外挂 `safetyTimer`（默认 30s），防止底层 socket hang / 上游永不响应导致
+ *     `revalidating` 永不清，后续 STALE 请求不再触发重渲
+ *   - 同时给 bgReq 挂 `setTimeout` + `destroy`，让 socket 层也能主动释放
  */
 function triggerBackgroundRevalidation(
   req: IncomingMessage,
@@ -540,6 +595,18 @@ function triggerBackgroundRevalidation(
     : // 读取当前 socket 监听端口（兜底）
       (req.socket && (req.socket as unknown as { localPort?: number }).localPort) || 80;
 
+  let released = false;
+  const release = (): void => {
+    if (released) return;
+    released = true;
+    ctx.revalidating.delete(cacheKey);
+  };
+  const safetyTimer = setTimeout(() => {
+    logger.warn(`ISR bg revalidate ${cacheKey} 超时 ${ctx.bgTimeoutMs}ms，强制释放 in-flight`);
+    release();
+  }, ctx.bgTimeoutMs);
+  if (typeof safetyTimer.unref === 'function') safetyTimer.unref();
+
   setImmediate(() => {
     try {
       const bgReq = http.request(
@@ -552,25 +619,35 @@ function triggerBackgroundRevalidation(
             [BG_REVALIDATE_HEADER]: '1',
             accept: 'text/html',
           },
+          timeout: ctx.bgTimeoutMs,
         },
         bgRes => {
           bgRes.on('data', chunk => void chunk);
           bgRes.on('end', () => {
+            clearTimeout(safetyTimer);
+            release();
             logger.debug(`♻️ ISR bg revalidate done ${cacheKey} (status=${bgRes.statusCode})`);
           });
           bgRes.on('error', () => {
-            ctx.revalidating.delete(cacheKey);
+            clearTimeout(safetyTimer);
+            release();
           });
         }
       );
       bgReq.on('error', err => {
+        clearTimeout(safetyTimer);
         logger.warn(`ISR bg revalidate ${cacheKey} 发起失败: ${(err as Error).message}`);
-        ctx.revalidating.delete(cacheKey);
+        release();
+      });
+      bgReq.on('timeout', () => {
+        logger.warn(`ISR bg revalidate ${cacheKey} socket timeout`);
+        bgReq.destroy();
       });
       bgReq.end();
     } catch (err) {
+      clearTimeout(safetyTimer);
       logger.warn(`ISR bg revalidate ${cacheKey} 调度异常`, err);
-      ctx.revalidating.delete(cacheKey);
+      release();
     }
   });
 }
@@ -721,4 +798,95 @@ function setHeaderOnce(res: ServerResponse, name: string, value: string): void {
   if (!res.getHeader(name)) {
     res.setHeader(name, value);
   }
+}
+
+/**
+ * 构造 cache key —— 以下三项决定同一响应能否被 HIT：
+ *   1) method + pathname（基础）
+ *   2) query 参数按字母序归一（`?b=2&a=1` 与 `?a=1&b=2` 命中同一条目，消除碎片化）
+ *   3) 可选 variant hash（A/B 隔离，opt-in）
+ *
+ * 不进 key 的字段（故意）：
+ *   - Accept-Language：由站点层 `/zh/x` vs `/x` URL 路由处理
+ *   - Accept-Encoding：captureAndStore 已剥离 content-encoding，replay 时下游 compression 重协商
+ *   - Cookie（除 variant cookie）：含 Set-Cookie 的响应已在 captureAndStore 路径拒绝入缓存
+ */
+function buildCacheKey(
+  method: string,
+  url: string,
+  req: IncomingMessage,
+  ctx: HandleContext
+): string {
+  const [pathname, rawQuery] = splitUrl(url);
+  const normalized = normalizeQuery(rawQuery);
+  let key = `${method}:${pathname}`;
+  if (normalized) key += `?${normalized}`;
+  if (ctx.variantIsolation) {
+    const digest = extractVariantDigest(req, ctx.variantCookieName);
+    if (digest) key += `|v=${digest}`;
+  }
+  return key;
+}
+
+function splitUrl(url: string): [string, string] {
+  const i = url.indexOf('?');
+  return i === -1 ? [url, ''] : [url.slice(0, i), url.slice(i + 1)];
+}
+
+function normalizeQuery(query: string): string {
+  if (!query) return '';
+  const params = new URLSearchParams(query);
+  const pairs: Array<[string, string]> = [];
+  for (const [k, v] of params) pairs.push([k, v]);
+  if (pairs.length === 0) return '';
+  pairs.sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0));
+  return pairs.map(([k, v]) => `${encodeURIComponent(k)}=${encodeURIComponent(v)}`).join('&');
+}
+
+function extractVariantDigest(req: IncomingMessage, cookieName: string): string | null {
+  const cookieHeader = req.headers.cookie;
+  if (!cookieHeader) return null;
+  const escaped = cookieName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const match = cookieHeader.match(new RegExp(`(?:^|;\\s*)${escaped}=([^;]+)`));
+  if (!match) return null;
+  return fnv1a(decodeURIComponent(match[1]));
+}
+
+/** 32-bit FNV-1a hash；返回 base36 字符串。无 crypto 依赖，稳定、快速 */
+function fnv1a(s: string): string {
+  let h = 0x811c9dc5;
+  for (let i = 0; i < s.length; i++) {
+    h ^= s.charCodeAt(i);
+    h = Math.imul(h, 0x01000193);
+  }
+  return (h >>> 0).toString(36);
+}
+
+function hasSetCookie(headers: Record<string, string | number | string[]>): boolean {
+  const sc = headers['set-cookie'] ?? headers['Set-Cookie'];
+  if (!sc) return false;
+  if (Array.isArray(sc)) return sc.length > 0;
+  return String(sc).length > 0;
+}
+
+/**
+ * 带超时的异步读：超时返回 undefined（按 cache miss 处理），不抛错。
+ * 原始 promise 的后续 resolve/reject 不会再影响流程。
+ */
+function raceWithTimeout<T>(p: Promise<T>, ms: number): Promise<T | undefined> {
+  if (!(ms > 0)) return p as Promise<T | undefined>;
+  return new Promise<T | undefined>(resolve => {
+    const timer = setTimeout(() => resolve(undefined), ms);
+    if (typeof timer.unref === 'function') timer.unref();
+    p.then(
+      value => {
+        clearTimeout(timer);
+        resolve(value);
+      },
+      () => {
+        clearTimeout(timer);
+        resolve(undefined);
+      }
+    );
+  });
 }

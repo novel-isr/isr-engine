@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach } from 'vitest';
+import { describe, it, expect } from 'vitest';
 import { createABVariantMiddleware, getVariant } from '../ABVariantMiddleware';
 import { requestContext } from '@/context/RequestContext';
 import type { Request, Response } from 'express';

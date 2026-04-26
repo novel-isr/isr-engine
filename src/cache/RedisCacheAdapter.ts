@@ -67,6 +67,74 @@ interface SerializedEntry {
   s?: number; // size
 }
 
+/** Buffer/TypedArray 序列化标记 —— JSON 无法原生保留二进制语义 */
+const BUFFER_TAG = '__isr_buf_b64__';
+interface SerializedBuffer {
+  [BUFFER_TAG]: string; // base64
+}
+
+/**
+ * 递归扫描 value，把 Buffer/Uint8Array 转成 { [BUFFER_TAG]: base64 } 形式。
+ * 反序列化时反向还原。规避默认 JSON.stringify 把 Buffer 转成
+ * `{"type":"Buffer","data":[...]}` 导致反序列化拿不回 Buffer、消费侧类型错乱的坑。
+ */
+function encodeBuffers(value: unknown, seen = new WeakSet<object>()): unknown {
+  if (value == null) return value;
+  if (Buffer.isBuffer(value)) {
+    return { [BUFFER_TAG]: value.toString('base64') } satisfies SerializedBuffer;
+  }
+  if (value instanceof Uint8Array) {
+    return { [BUFFER_TAG]: Buffer.from(value).toString('base64') } satisfies SerializedBuffer;
+  }
+  if (typeof value !== 'object') return value;
+  if (seen.has(value as object)) return value;
+  seen.add(value as object);
+  if (Array.isArray(value)) {
+    return value.map(item => encodeBuffers(item, seen));
+  }
+  const out: Record<string, unknown> = {};
+  for (const [k, v] of Object.entries(value as Record<string, unknown>)) {
+    out[k] = encodeBuffers(v, seen);
+  }
+  return out;
+}
+
+function decodeBuffers(value: unknown): unknown {
+  if (value == null || typeof value !== 'object') return value;
+  if (Array.isArray(value)) return value.map(decodeBuffers);
+  const record = value as Record<string, unknown>;
+  const b64 = record[BUFFER_TAG];
+  if (typeof b64 === 'string' && Object.keys(record).length === 1) {
+    return Buffer.from(b64, 'base64');
+  }
+  const out: Record<string, unknown> = {};
+  for (const [k, v] of Object.entries(record)) {
+    out[k] = decodeBuffers(v);
+  }
+  return out;
+}
+
+/**
+ * 检查 ioredis pipeline.exec() 结果，若任一条命令失败抛聚合错误。
+ * 默认 exec 会 resolve 成 [[err, reply], ...]，单条 err 被吞会导致 tag 索引、
+ * 批量 set 出现"部分成功"但调用方看不见，后续 invalidateByTag 查不到被静默失败的 key。
+ */
+function assertPipelineOk(results: Array<[Error | null, unknown]> | null, op: string): void {
+  if (!results) return;
+  const errors: Error[] = [];
+  for (let i = 0; i < results.length; i++) {
+    const err = results[i]?.[0];
+    if (err) errors.push(new Error(`[${op}#${i}] ${err.message}`));
+  }
+  if (errors.length > 0) {
+    const combined = new Error(
+      `Redis pipeline ${op} 部分失败（${errors.length}/${results.length}）：` +
+        errors.map(e => e.message).join('; ')
+    );
+    throw combined;
+  }
+}
+
 export class RedisCacheAdapter implements ICacheAdapter {
   readonly name = 'redis';
 
@@ -291,7 +359,7 @@ export class RedisCacheAdapter implements ICacheAdapter {
 
       const entry: SerializedEntry = JSON.parse(raw);
       this.hits++;
-      return entry.v as T;
+      return decodeBuffers(entry.v) as T;
     } catch (error) {
       this.logger.warn(`⚠️ Redis GET 失败 [${key}]: ${(error as Error).message}`);
       this.misses++;
@@ -313,7 +381,7 @@ export class RedisCacheAdapter implements ICacheAdapter {
       const ttl = options?.ttl ?? this.config.defaultTTL;
 
       const entry: SerializedEntry = {
-        v: value,
+        v: encodeBuffers(value),
         t: Date.now(),
       };
 
@@ -331,13 +399,18 @@ export class RedisCacheAdapter implements ICacheAdapter {
         for (const tag of options.tags) {
           pipeline.sadd(`__tag:${tag}`, this.config.keyPrefix + key);
         }
-        await pipeline.exec();
+        const results = (await pipeline.exec()) as Array<[Error | null, unknown]> | null;
+        assertPipelineOk(results, 'SADD tags');
       }
     } catch (error) {
       this.logger.warn(`⚠️ Redis SET 失败 [${key}]: ${(error as Error).message}`);
-      // 降级写入内存
+      // 降级写入内存；若 fallback 不存在 → 明确报错，避免数据静默丢失
       if (this.fallback) {
         await this.fallback.set(key, value, options);
+      } else {
+        this.logger.error(
+          `❌ Redis SET 失败且未启用 fallback，key=${key} 未写入任何后端（数据丢失）`
+        );
       }
     }
   }
@@ -433,7 +506,7 @@ export class RedisCacheAdapter implements ICacheAdapter {
           } else {
             try {
               const entry: SerializedEntry = JSON.parse(raw);
-              result.set(keys[i], entry.v as T);
+              result.set(keys[i], decodeBuffers(entry.v) as T);
               this.hits++;
             } catch {
               result.set(keys[i], undefined);
@@ -466,7 +539,7 @@ export class RedisCacheAdapter implements ICacheAdapter {
 
       for (const { key, value, options } of entries) {
         const ttl = options?.ttl ?? this.config.defaultTTL;
-        const entry: SerializedEntry = { v: value, t: Date.now() };
+        const entry: SerializedEntry = { v: encodeBuffers(value), t: Date.now() };
         const serialized = JSON.stringify(entry);
 
         if (ttl > 0) {
@@ -483,11 +556,16 @@ export class RedisCacheAdapter implements ICacheAdapter {
         }
       }
 
-      await pipeline.exec();
+      const results = (await pipeline.exec()) as Array<[Error | null, unknown]> | null;
+      assertPipelineOk(results, 'MSET');
     } catch (error) {
       this.logger.warn(`⚠️ Redis MSET 失败: ${(error as Error).message}`);
       if (this.fallback) {
         await this.fallback.setMany(entries);
+      } else {
+        this.logger.error(
+          `❌ Redis MSET 失败且未启用 fallback，${entries.length} 条数据未写入任何后端（数据丢失）`
+        );
       }
     }
   }
@@ -511,7 +589,8 @@ export class RedisCacheAdapter implements ICacheAdapter {
         pipeline.del(key);
       }
       pipeline.del(tagKey); // 删除标签集合本身
-      await pipeline.exec();
+      const results = (await pipeline.exec()) as Array<[Error | null, unknown]> | null;
+      assertPipelineOk(results, `DEL tag=${tag}`);
 
       return members.length;
     } catch (error) {

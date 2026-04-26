@@ -38,8 +38,10 @@ import type { Express } from 'express';
  *   - `mode` → `renderMode`
  *   - `routes` → `routeOverrides`
  * 兜底默认值，避免脏配置导致启动失败
+ *
+ * 导出以便单测覆盖（纯函数，无副作用）
  */
-function normalizeEngineConfig(config: ISRConfig): ISRConfig {
+export function normalizeEngineConfig(config: ISRConfig): ISRConfig {
   const normalized: ISRConfig = { ...config };
 
   if (!normalized.renderMode && (config as { mode?: RenderModeType }).mode) {
@@ -161,16 +163,31 @@ export default class ISREngine {
 
   /**
    * 关闭引擎
+   *
+   * 所有清理步骤用 allSettled 跑，保证其中一步失败不会阻止后续释放。
+   * 否则 shutdownServer 抛错时 seoEngine 永不清理 → sitemap 写盘 handle 泄漏、
+   * 下次进程启动 `.isr-hyou/ssg` 里残留旧 robots.txt。
    */
   async shutdown(): Promise<void> {
     this.logger.spin('关闭 ISR 引擎...');
 
     this.unregisterInvalidator?.();
 
-    await shutdownServer();
-    await this.seoEngine.shutdown();
+    const results = await Promise.allSettled([shutdownServer(), this.seoEngine.shutdown()]);
+    const failures = results.filter((r): r is PromiseRejectedResult => r.status === 'rejected');
 
     this.logger.stopSpinner('ISR 引擎已关闭');
+
+    if (failures.length > 0) {
+      for (const f of failures) {
+        this.logger.warn(
+          `shutdown 子步骤失败: ${(f.reason as Error)?.message ?? String(f.reason)}`
+        );
+      }
+      // 抛聚合错误让进程 supervisor 感知到异常关闭
+      throw new Error(`ISREngine shutdown 部分失败（${failures.length}/${results.length}）`);
+    }
+
     this.logger.success('ISR 引擎关闭完成');
   }
 }

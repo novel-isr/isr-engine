@@ -28,7 +28,7 @@ const QPS_REGRESSION_PCT = parseFloat(process.env.BENCH_QPS_REGRESSION_PCT ?? '1
 // Baseline 缺失：首次跑或新分支没有基线 —— 退出 0，让 CI 把 current 作为新基线提交即可
 if (!existsSync(baselinePath)) {
   console.log(`no baseline at ${baselinePath} — skipping regression check (first run?)`);
-  console.log(`commit ${currentPath} as scripts/bench-baseline.json to seed future comparisons`);
+  console.log(`commit ${currentPath} as ${baselinePath} to seed future comparisons`);
   process.exit(0);
 }
 

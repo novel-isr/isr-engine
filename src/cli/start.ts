@@ -62,8 +62,11 @@ async function readUserEngineConfig(rscDistEntry: string): Promise<
   return undefined;
 }
 
-/** 从 ssr.config 路由表里提取要写入 sitemap 的路由（剔除通配符 / 内部 / API） */
-function extractRoutesForSitemap(config: {
+/**
+ * 从 ssr.config 路由表里提取要写入 sitemap 的路由（剔除通配符 / 内部 / API）
+ * 导出以便单测覆盖（纯函数）
+ */
+export function extractRoutesForSitemap(config: {
   routes?: Record<string, unknown>;
   routeOverrides?: Record<string, unknown>;
 }): string[] {
@@ -237,8 +240,9 @@ export async function startProductionServer(options: StartOptions): Promise<void
   const { createAutoCacheStore } = await import('@/cache/createAutoCacheStore');
   const { RedisInvalidationBus } = await import('@/cache/RedisInvalidationBus');
   const redisCfg = userEngineCfg?.redis;
-  const hasRedisConfig =
-    Boolean(redisCfg?.url || redisCfg?.host || process.env.REDIS_URL || process.env.REDIS_HOST);
+  const hasRedisConfig = Boolean(
+    redisCfg?.url || redisCfg?.host || process.env.REDIS_URL || process.env.REDIS_HOST
+  );
   const cache = createIsrCacheHandler(config, {
     store: createAutoCacheStore({
       redisUrl: redisCfg?.url,
@@ -401,8 +405,9 @@ export async function startProductionServer(options: StartOptions): Promise<void
 }
 
 // ─── Node req ↔ Web Request/Response 适配 ───
+// 导出以便单测覆盖（纯函数 + 协议适配）
 
-function nodeToWebRequest(req: express.Request): Request {
+export function nodeToWebRequest(req: express.Request): Request {
   const host = String(req.headers.host || 'localhost');
   const proto = (req.headers['x-forwarded-proto'] as string) || 'http';
   const url = `${proto}://${host}${req.url}`;
@@ -426,7 +431,7 @@ function nodeToWebRequest(req: express.Request): Request {
   return new Request(url, init);
 }
 
-async function pipeWebResponse(response: Response, res: express.Response): Promise<void> {
+export async function pipeWebResponse(response: Response, res: express.Response): Promise<void> {
   res.status(response.status);
   response.headers.forEach((v, k) => {
     if (k.toLowerCase() === 'content-length') return;

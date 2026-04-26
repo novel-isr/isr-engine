@@ -16,7 +16,7 @@
  */
 
 import path from 'path';
-import type { RouteMetadata, RouteDiscoveryConfig, FileInfo, RouteType } from './types';
+import type { RouteDiscoveryConfig, FileInfo, RouteType } from './types';
 import { SUPPORTED_EXTENSIONS } from './types';
 
 // Re-export RouteType for convenience

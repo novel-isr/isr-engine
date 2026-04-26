@@ -304,7 +304,7 @@ export class SEOEngine {
       .flatMap(s => s.split('-'));
   }
 
-  private detectLanguage(url: string, context: unknown): string {
+  private detectLanguage(url: string, _context: unknown): string {
     const pathLang = url.split('/')[1];
     if (this.config.supportedLanguages.includes(pathLang)) return pathLang;
     return this.config.defaultLanguage;

@@ -333,6 +333,7 @@ function createEarlyHintsMiddleware() {
         if (!resolvedLinks) {
           resolvedLinks = [];
           try {
+            // eslint-disable-next-line @typescript-eslint/no-require-imports
             const { ManifestLoader } = require('../manifest/ManifestLoader');
             const manifest = ManifestLoader.getManifest();
             if (manifest) {
@@ -468,11 +469,16 @@ async function startNativeQuic(
       endpoint.address = config.host;
     }
 
+    if (!config.ssl) {
+      logger.warn('Native QUIC 需要 ssl 配置 (key + cert)，跳过');
+      return null;
+    }
+    const ssl = config.ssl;
     const socket = createQuicSocket({
       endpoint,
       server: {
-        key: config.ssl!.key,
-        cert: config.ssl!.cert,
+        key: ssl.key,
+        cert: ssl.cert,
         alpn: 'h3',
         maxIdleTimeout: h3Config.maxIdleTimeout,
         initialMaxStreamData: h3Config.initialMaxStreamData,
@@ -483,7 +489,7 @@ async function startNativeQuic(
     socket.on('session', (session: unknown) => {
       logger.debug('QUIC session established');
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      (session as any).on('stream', (stream: unknown) => {
+      (session as any).on('stream', (_stream: unknown) => {
         // HTTP/3 帧处理 — 实际的 HTTP/3 帧解析需要完整实现
         // 这里留给上层协议处理
         logger.debug('QUIC stream received');
@@ -517,14 +523,19 @@ async function startThirdPartyQuic(
         logger.warn(`WebTransport HTTP/3 Server 需要 host 配置 (via ${name})`);
         return null;
       }
+      if (!config.ssl) {
+        logger.warn(`WebTransport HTTP/3 Server 需要 ssl 配置 (key + cert) (via ${name})`);
+        return null;
+      }
+      const ssl = config.ssl;
       // WebTransport (基于 HTTP/3)
       const { Http3Server } = mod;
       const h3s = new Http3Server({
         host: config.host,
         port: quicPort,
         secret: 'isr-engine-h3',
-        cert: config.ssl!.cert,
-        privKey: config.ssl!.key,
+        cert: ssl.cert,
+        privKey: ssl.key,
       });
 
       h3s.startServer();

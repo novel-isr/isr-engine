@@ -50,7 +50,11 @@ export class ManifestLoader {
   private static manifest: ParsedManifest | null = null;
   private static publicPath = '/';
 
-  private constructor() {}
+  // 仅 static 用法，不允许 new ManifestLoader() ——
+  // 私有空构造函数确保 TypeScript / 调用方都拒绝实例化
+  private constructor() {
+    /* static-only class */
+  }
 
   /**
    * 加载 Manifest

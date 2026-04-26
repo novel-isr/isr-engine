@@ -72,6 +72,62 @@ export const invalidatorFailuresTotal = new Counter({
   registers: [promRegistry],
 });
 
+/**
+ * 路由归一化 —— 防 Prometheus label 基数爆炸。
+ *
+ * 动态段（id / uuid / hex / 长 hash）直接作为 label 值会让时间序列数爆炸
+ * （每个 /books/123 都是新序列），Prometheus 存储成本线性暴涨、查询变慢。
+ *
+ * 规则：
+ *   - 纯数字段（1 ~ 20 位）   → `:id`
+ *   - UUID v1-v5               → `:uuid`
+ *   - 长 hex（≥16 字符全 hex）→ `:hash`
+ *   - base64url/大小写混合长串（≥24 字符，含数字和字母）→ `:hash`
+ *
+ * 命中任意规则即替换；其他保留原样（`/books` `/about` 保留）。
+ *
+ * 可用 `addRouteNormalizeRule(pattern, replacement)` 扩展业务特有规则。
+ */
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+const LONG_HEX_RE = /^[0-9a-f]{16,}$/i;
+const OPAQUE_ID_RE = /^[A-Za-z0-9_-]{24,}$/;
+const PURE_DIGIT_RE = /^\d{1,20}$/;
+
+export type RouteNormalizeRule = (segment: string) => string | null;
+const customRules: RouteNormalizeRule[] = [];
+
+export function addRouteNormalizeRule(rule: RouteNormalizeRule): void {
+  customRules.push(rule);
+}
+
+export function normalizeRoute(route: string): string {
+  if (!route || route === '/') return '/';
+  const segments = route.split('/');
+  for (let i = 0; i < segments.length; i++) {
+    const seg = segments[i];
+    if (!seg) continue;
+    let replaced: string | null = null;
+    for (const rule of customRules) {
+      replaced = rule(seg);
+      if (replaced) break;
+    }
+    if (replaced) {
+      segments[i] = replaced;
+      continue;
+    }
+    if (PURE_DIGIT_RE.test(seg)) {
+      segments[i] = ':id';
+    } else if (UUID_RE.test(seg)) {
+      segments[i] = ':uuid';
+    } else if (LONG_HEX_RE.test(seg)) {
+      segments[i] = ':hash';
+    } else if (OPAQUE_ID_RE.test(seg)) {
+      segments[i] = ':hash';
+    }
+  }
+  return segments.join('/');
+}
+
 /** 一行调用更新所有计数 —— 给 isrCacheMiddleware / 中间件用 */
 export function recordHttpRequest(opts: {
   method: string;
@@ -81,24 +137,51 @@ export function recordHttpRequest(opts: {
   cache: string;
   durationMs: number;
 }): void {
+  const route = normalizeRoute(opts.route);
   httpRequestsTotal.inc({
     method: opts.method,
-    route: opts.route,
+    route,
     status: String(opts.status),
     mode: opts.mode,
     cache: opts.cache,
   });
   httpRequestDurationSeconds.observe(
-    { method: opts.method, route: opts.route, mode: opts.mode, cache: opts.cache },
+    { method: opts.method, route, mode: opts.mode, cache: opts.cache },
     opts.durationMs / 1000
   );
   if (opts.cache) cacheHitsTotal.inc({ status: opts.cache });
 }
 
-/** Express / connect 中间件：暴露 /metrics 端点（Prometheus text exposition format）*/
-export function createPrometheusMetricsMiddleware(path = '/metrics') {
+export interface PrometheusMetricsMiddlewareOptions {
+  /** 挂载路径；默认 `/metrics` */
+  path?: string;
+  /**
+   * 要求客户端提供的 Bearer token。
+   * 明确设 false/undefined/'' → 不做认证（仅建议用于纯内网 /k8s Pod 内暴露）。
+   * 生产外网挂载**强烈建议**设 token，避免指标泄露业务信息（QPS、错误分布、路由列表）。
+   */
+  token?: string | false;
+  /** 不通过时返回的状态码；默认 401 */
+  unauthorizedStatus?: number;
+}
+
+/**
+ * Express / connect 中间件：暴露 /metrics 端点（Prometheus text exposition format）
+ *
+ * 认证：可选 Bearer token —— 未设 token 时保持旧行为（匿名可访问）。
+ * 生产建议：`createPrometheusMetricsMiddleware({ token: process.env.METRICS_TOKEN })`。
+ */
+export function createPrometheusMetricsMiddleware(
+  pathOrOptions: string | PrometheusMetricsMiddlewareOptions = {}
+) {
+  const options: PrometheusMetricsMiddlewareOptions =
+    typeof pathOrOptions === 'string' ? { path: pathOrOptions } : pathOrOptions;
+  const path = options.path ?? '/metrics';
+  const token = options.token && options.token !== '' ? options.token : null;
+  const unauthorizedStatus = options.unauthorizedStatus ?? 401;
+
   return async function (
-    req: { url?: string; method?: string },
+    req: { url?: string; method?: string; headers?: Record<string, string | string[] | undefined> },
     res: {
       setHeader(k: string, v: string): void;
       end(body?: string): void;
@@ -107,6 +190,19 @@ export function createPrometheusMetricsMiddleware(path = '/metrics') {
     next: () => void
   ): Promise<void> {
     if (req.url !== path || req.method !== 'GET') return next();
+
+    if (token) {
+      const authHeader = req.headers?.['authorization'];
+      const raw = Array.isArray(authHeader) ? authHeader[0] : authHeader;
+      const ok = typeof raw === 'string' && raw === `Bearer ${token}`;
+      if (!ok) {
+        res.statusCode = unauthorizedStatus;
+        res.setHeader('WWW-Authenticate', 'Bearer realm="metrics"');
+        res.end('Unauthorized');
+        return;
+      }
+    }
+
     try {
       const body = await promRegistry.metrics();
       res.setHeader('content-type', promRegistry.contentType);

@@ -119,7 +119,11 @@ export function parseExports(content: string): ModuleExports {
     exports,
     hasDefault: exports.some(e => e.name === 'default'),
     namedExports: exports.filter(e => e.kind === 'named' && !e.isType).map(e => e.name),
-    reexportSources: [...new Set(exports.filter(e => e.from).map(e => e.from!))],
+    reexportSources: [
+      ...new Set(
+        exports.map(e => e.from).filter((from): from is string => typeof from === 'string')
+      ),
+    ],
   };
 }
 

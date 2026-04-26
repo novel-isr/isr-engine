@@ -180,6 +180,24 @@ pnpm check               # type-check + lint + format:check + test
 pnpm build               # vite build → dist/
 ```
 
+### 关于 `pnpm.overrides` 警告
+
+`isr-engine/package.json` 里的 `pnpm.overrides` 把 `path-to-regexp` 锁到 `0.1.13`（与 express 4.21 兼容；不锁会被解析到 8.x 导致 `pathRegexp is not a function`）。
+
+**始终在 `isr-engine/` 目录内执行 pnpm 命令**，override 会正常生效，无任何警告。
+
+仅当从 `isr-engine/` 外的父目录跑 `pnpm ls -r` 等递归命令时，pnpm 会打：
+
+```
+WARN The field "pnpm.overrides" was found in .../isr-engine/package.json.
+     This will not take effect. You should configure "pnpm.overrides" at
+     the root of the workspace instead.
+```
+
+这是 pnpm 的 false positive —— **本仓库不是 workspace**，父目录只是文件夹聚合。该警告对实际安装行为无影响（已通过 `pnpm ls express` 验证 express 拿到的是 0.1.13）。
+
+如果觉得碍眼，要么不在父目录跑 `-r` 命令，要么 `pnpm ls -r 2>/dev/null` 屏蔽 stderr。
+
 ## 设计原则
 
 1. **约定优于配置** —— 用户唯一必需文件是 `src/app.tsx`

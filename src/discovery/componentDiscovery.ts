@@ -10,7 +10,7 @@
 
 import { parseComponentType, hasClientDirective, hasServerDirective } from './directiveParser';
 import { getExportNames, parseExports } from './exportParser';
-import type { ComponentMetadata, ComponentType, FileInfo } from './types';
+import type { ComponentMetadata, FileInfo } from './types';
 
 /**
  * 增强的组件元数据

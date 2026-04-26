@@ -1,9 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { Logger } from '../logger/Logger';
-import type {
-  IsrInvalidationBus,
-  IsrInvalidationTarget,
-} from '../plugin/isrCacheMiddleware';
+import type { IsrInvalidationBus, IsrInvalidationTarget } from '../plugin/isrCacheMiddleware';
 
 export interface RedisInvalidationBusConfig {
   url?: string;
@@ -14,6 +11,17 @@ export interface RedisInvalidationBusConfig {
   keyPrefix?: string;
   connectTimeout?: number;
   commandTimeout?: number;
+  /**
+   * 消息重放窗口（毫秒），默认 5 分钟。
+   * Pub/Sub 是 fire-and-forget —— 若 subscriber 在 publish 的瞬间断连，消息会永久丢失。
+   * 引入 Sorted Set replay log：
+   *   - publish 时同时 ZADD（score = timestamp）到 `<channel>:log`
+   *   - subscriber 在 (re)subscribe 后 ZRANGEBYSCORE `(lastSeen, now]` 拉回错过的消息
+   * 设 0 关闭该补偿（回到纯 Pub/Sub 行为）。
+   */
+  replayWindowMs?: number;
+  /** 重放日志条目总数上限，防止无限增长。默认 5000。 */
+  replayLogMaxEntries?: number;
 }
 
 interface InvalidationMessage {
@@ -29,6 +37,9 @@ export class RedisInvalidationBus implements IsrInvalidationBus {
   private readonly logger = Logger.getInstance();
   private readonly origin = randomUUID();
   private readonly channel: string;
+  private readonly logKey: string;
+  private readonly replayWindowMs: number;
+  private readonly replayLogMaxEntries: number;
   private readonly config: RedisInvalidationBusConfig;
   private readonly listeners = new Set<(target: IsrInvalidationTarget) => Promise<void> | void>();
   private publisher: RedisClient | null = null;
@@ -36,6 +47,8 @@ export class RedisInvalidationBus implements IsrInvalidationBus {
   private ready = false;
   private destroyed = false;
   private initPromise: Promise<void>;
+  /** 本实例已处理到的消息 sentAt 时间戳，用于 (re)subscribe 后 ZRANGEBYSCORE 补消息 */
+  private lastSeenSentAt = 0;
 
   constructor(config: RedisInvalidationBusConfig = {}) {
     this.config = {
@@ -48,8 +61,15 @@ export class RedisInvalidationBus implements IsrInvalidationBus {
       channel: config.channel,
       connectTimeout: config.connectTimeout ?? 5_000,
       commandTimeout: config.commandTimeout ?? 3_000,
+      replayWindowMs: config.replayWindowMs ?? 5 * 60_000,
+      replayLogMaxEntries: config.replayLogMaxEntries ?? 5000,
     };
     this.channel = this.config.channel ?? `${this.config.keyPrefix}invalidate`;
+    this.logKey = `${this.channel}:log`;
+    this.replayWindowMs = this.config.replayWindowMs ?? 5 * 60_000;
+    this.replayLogMaxEntries = this.config.replayLogMaxEntries ?? 5000;
+    // 初始化时先假设只看新消息 —— 避免首次启动把历史 5 分钟全回放
+    this.lastSeenSentAt = Date.now();
     this.initPromise = this.init();
   }
 
@@ -65,7 +85,22 @@ export class RedisInvalidationBus implements IsrInvalidationBus {
       target,
       sentAt: Date.now(),
     };
-    await this.publisher.publish(this.channel, JSON.stringify(message));
+    const payload = JSON.stringify(message);
+    if (this.replayWindowMs > 0) {
+      // 先写日志（pub/sub 订阅者错过时可回放），再 publish 主通道。
+      // 顺序不可反：若先 publish、后写 log，在线订阅者处理完消息后如果又因断连触发重放扫描，
+      // 会把刚处理过的消息再处理一次（幂等原则上支持，但浪费）。
+      const pipeline = this.publisher.pipeline();
+      pipeline.zadd(this.logKey, message.sentAt, payload);
+      // 维护日志大小上限：按 rank 裁掉最老条目，留最新 replayLogMaxEntries 条
+      pipeline.zremrangebyrank(this.logKey, 0, -this.replayLogMaxEntries - 1);
+      // 给日志 key 加一个 TTL，超过窗口 2 倍就完全清掉（兜底，避免无流量实例留下孤儿 key）
+      pipeline.pexpire(this.logKey, this.replayWindowMs * 2);
+      pipeline.publish(this.channel, payload);
+      await pipeline.exec();
+    } else {
+      await this.publisher.publish(this.channel, payload);
+    }
   }
 
   subscribe(listener: (target: IsrInvalidationTarget) => Promise<void> | void): () => void {
@@ -110,14 +145,44 @@ export class RedisInvalidationBus implements IsrInvalidationBus {
         this.ready = false;
         this.logger.warn(`Redis invalidation publisher error: ${err.message}`);
       });
+      // 重连后 ioredis 自动重放 SUBSCRIBE，但期间 pub 出去的消息已丢失 →
+      // 进入 ready 态时主动 ZRANGEBYSCORE 拉补 replayWindowMs 内错过的消息
+      this.subscriber.on('ready', () => {
+        void this.replayMissed();
+      });
 
       await Promise.all([this.publisher.connect(), this.subscriber.connect()]);
       await this.subscriber.subscribe(this.channel);
       this.ready = true;
       this.logger.info(`Redis invalidation bus subscribed: ${this.channel}`);
+      // 首次连接也触发一次 replay（捕获进程启动前极短窗口内其他 pod 发来的失效）
+      await this.replayMissed();
     } catch (err) {
       this.ready = false;
       this.logger.warn(`Redis invalidation bus disabled: ${(err as Error).message}`);
+    }
+  }
+
+  /**
+   * 从 Sorted Set 日志拉取本实例错过的消息并按顺序分发。
+   * 以 `lastSeenSentAt` 做水位线，回放后推进水位，避免无限重放同一批。
+   */
+  private async replayMissed(): Promise<void> {
+    if (this.replayWindowMs <= 0 || !this.publisher || this.destroyed) return;
+    try {
+      // 用 publisher client 做 ZRANGEBYSCORE（subscriber 处于 subscribe 模式只能收 Pub/Sub 命令）
+      const minScore = `(${this.lastSeenSentAt}`; // exclusive
+      const maxScore = String(Date.now());
+      const raws = await this.publisher.zrangebyscore(this.logKey, minScore, maxScore);
+      if (raws.length === 0) return;
+      this.logger.info(
+        `Redis invalidation replay: ${raws.length} message(s) missed since ${new Date(this.lastSeenSentAt).toISOString()}`
+      );
+      for (const raw of raws) {
+        await this.handleMessage(raw);
+      }
+    } catch (err) {
+      this.logger.warn(`Redis invalidation replay failed: ${(err as Error).message}`);
     }
   }
 
@@ -148,6 +213,10 @@ export class RedisInvalidationBus implements IsrInvalidationBus {
     const message = this.parseMessage(raw);
     if (!message || message.origin === this.origin) {
       return;
+    }
+    // 水位只前进、不后退 —— 乱序消息（极少见）按到达顺序处理，不重置水位
+    if (message.sentAt > this.lastSeenSentAt) {
+      this.lastSeenSentAt = message.sentAt;
     }
 
     for (const listener of Array.from(this.listeners)) {

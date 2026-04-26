@@ -76,8 +76,11 @@ export interface SEOPageData {
   author?: string;
 }
 
-/** 深度部分类型 */
-export type DeepPartial<T> = T extends (infer U)[]
+/**
+ * 深度部分类型
+ * 数组保持原样不递归（避免破坏 readonly tuple / 数组泛型推断）
+ */
+export type DeepPartial<T> = T extends unknown[]
   ? T
   : T extends object
     ? { [P in keyof T]?: DeepPartial<T[P]> }

@@ -74,7 +74,10 @@ export class MetricsCollector {
   /** 滑动窗口：用于计算百分位 */
   private recentResponseTimes: number[] = [];
 
-  private constructor() {}
+  // 仅通过 getInstance 拿到实例 —— 单例语义，私有构造禁止外部 new
+  private constructor() {
+    /* singleton */
+  }
 
   static getInstance(): MetricsCollector {
     if (!MetricsCollector.instance) {

@@ -130,15 +130,18 @@ function sendError(res: http.ServerResponse, code: number, msg: string): void {
   res.end(`${code} ${msg}\n`);
 }
 
-export function startFallbackProxy(options: FallbackProxyOptions): void {
+/**
+ * 创建 fallback 路由 handler（与 listen 解耦），便于单测直接挂到 ephemeral port 上
+ * 验证三种分支（static / api proxy / ssr proxy + spa fallback）。
+ */
+export function createFallbackRequestHandler(options: FallbackProxyOptions): http.RequestListener {
   const distRoot = resolve(process.cwd(), options.dist);
   const clientRoot = join(distRoot, 'client');
   const spaShell = join(distRoot, 'spa', 'index.html');
   const ssr: UpstreamTarget = { host: '127.0.0.1', port: parseInt(options.ssrPort, 10) };
   const api: UpstreamTarget = { host: '127.0.0.1', port: parseInt(options.apiPort, 10) };
-  const listenPort = parseInt(options.port, 10);
 
-  const server = http.createServer((req, res) => {
+  return (req, res) => {
     const path = (req.url || '/').split('?')[0];
 
     if (
@@ -160,16 +163,28 @@ export function startFallbackProxy(options: FallbackProxyOptions): void {
       logger.warn('[fallback]', `SSR 失败 (${err.message}) → 切换 SPA shell: ${path}`);
       void serveSpaShell(res, spaShell);
     });
-  });
+  };
+}
+
+export function startFallbackProxy(options: FallbackProxyOptions): http.Server {
+  const distRoot = resolve(process.cwd(), options.dist);
+  const spaShell = join(distRoot, 'spa', 'index.html');
+  const ssrPort = parseInt(options.ssrPort, 10);
+  const apiPort = parseInt(options.apiPort, 10);
+  const listenPort = parseInt(options.port, 10);
+
+  const server = http.createServer(createFallbackRequestHandler(options));
 
   server.listen(listenPort, () => {
     logger.success('[CLI]', `本地 fallback proxy 已启动: http://localhost:${listenPort}`);
-    logger.info('[CLI]', `  → SSR upstream  : http://${ssr.host}:${ssr.port}`);
-    logger.info('[CLI]', `  → API upstream  : http://${api.host}:${api.port}`);
+    logger.info('[CLI]', `  → SSR upstream  : http://127.0.0.1:${ssrPort}`);
+    logger.info('[CLI]', `  → API upstream  : http://127.0.0.1:${apiPort}`);
     logger.info('[CLI]', `  → 5xx fallback  : ${spaShell}`);
     logger.info(
       '[CLI]',
       `提示：杀掉 SSR 进程 + 浏览器 reload，可看到自动切到 SPA shell（响应头 x-fallback: spa）`
     );
   });
+
+  return server;
 }

@@ -222,3 +222,186 @@ describe('Memory store baseline （对比组）', () => {
     expect(store.backend).toBe('memory');
   });
 });
+
+/**
+ * v2.1 Buffer 序列化修复：`JSON.stringify(Buffer)` 默认输出 `{type:'Buffer',data:[...]}`，
+ * 反序列回来是普通对象不是 Buffer，消费侧 `.toString()` / `.length` 全坏。
+ * 修复方案：用 `__isr_buf_b64__` tag 编码 + 解码。
+ */
+describe('RedisCacheAdapter —— Buffer/二进制序列化保真（v2.1 修复）', () => {
+  it('顶层 Buffer 值存入 → 读出仍然是 Buffer，内容一致', async () => {
+    const adapter = new RedisCacheAdapter({
+      host: 'localhost',
+      keyPrefix: 'buf:',
+      enableFallback: false,
+    });
+    await new Promise(r => setTimeout(r, 50));
+
+    const payload = Buffer.from('hello二进制 🚀', 'utf8');
+    await adapter.set('raw', payload);
+
+    const got = await adapter.get<Buffer>('raw');
+    expect(Buffer.isBuffer(got)).toBe(true);
+    expect(got?.toString('utf8')).toBe('hello二进制 🚀');
+    expect(got?.length).toBe(payload.length);
+
+    await adapter.destroy();
+  });
+
+  it('嵌套对象中的 Buffer 字段也能被保真还原', async () => {
+    const adapter = new RedisCacheAdapter({
+      host: 'localhost',
+      keyPrefix: 'buf2:',
+      enableFallback: false,
+    });
+    await new Promise(r => setTimeout(r, 50));
+
+    interface Payload {
+      name: string;
+      thumbnail: Buffer;
+      nested: { secret: Buffer };
+    }
+    const value: Payload = {
+      name: 'cover.png',
+      thumbnail: Buffer.from([0x89, 0x50, 0x4e, 0x47]), // PNG 魔数头
+      nested: { secret: Buffer.from('nested-blob') },
+    };
+    await adapter.set('page', value);
+
+    const got = await adapter.get<Payload>('page');
+    expect(got?.name).toBe('cover.png');
+    expect(Buffer.isBuffer(got?.thumbnail)).toBe(true);
+    expect(Array.from(got!.thumbnail)).toEqual([0x89, 0x50, 0x4e, 0x47]);
+    expect(Buffer.isBuffer(got?.nested.secret)).toBe(true);
+    expect(got?.nested.secret.toString()).toBe('nested-blob');
+
+    await adapter.destroy();
+  });
+
+  it('Uint8Array 也被当作二进制 round-trip 为 Buffer', async () => {
+    const adapter = new RedisCacheAdapter({
+      host: 'localhost',
+      keyPrefix: 'u8:',
+      enableFallback: false,
+    });
+    await new Promise(r => setTimeout(r, 50));
+
+    const u8 = new Uint8Array([1, 2, 3, 255]);
+    await adapter.set('u8', u8);
+
+    const got = await adapter.get<Buffer>('u8');
+    expect(Buffer.isBuffer(got)).toBe(true);
+    expect(Array.from(got!)).toEqual([1, 2, 3, 255]);
+
+    await adapter.destroy();
+  });
+
+  it('普通 JSON 数据不受 Buffer 编码影响', async () => {
+    const adapter = new RedisCacheAdapter({
+      host: 'localhost',
+      keyPrefix: 'json:',
+      enableFallback: false,
+    });
+    await new Promise(r => setTimeout(r, 50));
+
+    const payload = { a: 1, b: 'str', c: [1, 2, 3], d: { e: true } };
+    await adapter.set('k', payload);
+    const got = await adapter.get('k');
+    expect(got).toEqual(payload);
+
+    await adapter.destroy();
+  });
+});
+
+/**
+ * v2.1 修复：ioredis pipeline.exec() 结果若有单条失败会被静默吞掉。
+ * 之前 `set(..., { tags })` 的 SADD 失败 → 后续 invalidateByTag 查不到 key，
+ * 缓存失效悄悄不生效。现在 assertPipelineOk 检查每条 reply 的 err 字段并抛聚合错误。
+ */
+describe('RedisCacheAdapter —— pipeline 错误聚合（v2.1 修复）', () => {
+  it('SADD 标签 pipeline 某条失败 → set() 走降级路径（不静默吞错）', async () => {
+    const adapter = new RedisCacheAdapter({
+      host: 'localhost',
+      keyPrefix: 'pf:',
+      enableFallback: true, // 启用内存降级，set() catch 后应写 fallback
+    });
+    await new Promise(r => setTimeout(r, 50));
+
+    // 劫持 pipeline，让 exec() 返回 [ [err, reply], ... ]
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const redis = (adapter as any).redis as {
+      pipeline: () => unknown;
+      sadd: (...a: unknown[]) => unknown;
+      setex: (...a: unknown[]) => unknown;
+    };
+    const origPipeline = redis.pipeline.bind(redis);
+    redis.pipeline = () => {
+      const real = origPipeline() as {
+        exec: () => Promise<Array<[Error | null, unknown]>>;
+        sadd: (...a: unknown[]) => unknown;
+        setex: (...a: unknown[]) => unknown;
+        set: (...a: unknown[]) => unknown;
+      };
+      const realExec = real.exec.bind(real);
+      real.exec = async () => {
+        const res = await realExec();
+        // 注入第一条失败
+        if (res && res.length > 0) {
+          res[0] = [new Error('SADD simulated failure'), null];
+        }
+        return res;
+      };
+      return real;
+    };
+
+    // set 会执行 setex 成功 + tag pipeline 失败 → catch → fallback.set
+    await adapter.set('k', { payload: 'fine' }, { tags: ['books'] });
+
+    // fallback 里应该有值（set 走到了 catch → this.fallback.set）
+    // 通过 getStats 间接观察：fallback size 从 0 升到 ≥1
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const fb = (adapter as any).fallback as { getStats: () => { size: number } };
+    expect(fb.getStats().size).toBeGreaterThanOrEqual(1);
+
+    await adapter.destroy();
+  });
+
+  it('enableFallback=false + pipeline 失败 → 明确 error log（数据丢失不静默）', async () => {
+    const adapter = new RedisCacheAdapter({
+      host: 'localhost',
+      keyPrefix: 'pfn:',
+      enableFallback: false,
+    });
+    await new Promise(r => setTimeout(r, 50));
+
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const internalLogger = (adapter as any).logger as { error: (msg: string) => void };
+    const errSpy = vi.spyOn(internalLogger, 'error');
+
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const redis = (adapter as any).redis as { pipeline: () => unknown };
+    const origPipeline = redis.pipeline.bind(redis);
+    redis.pipeline = () => {
+      const real = origPipeline() as {
+        exec: () => Promise<Array<[Error | null, unknown]>>;
+      };
+      const realExec = real.exec.bind(real);
+      real.exec = async () => {
+        const res = await realExec();
+        if (res?.length) res[0] = [new Error('simulated tag SADD failure'), null];
+        return res;
+      };
+      return real;
+    };
+
+    await adapter.set('k', 'v', { tags: ['x'] });
+
+    // 验证确实打印了 "未启用 fallback，数据丢失" 级 error
+    const called = errSpy.mock.calls.some(args =>
+      String(args[0] ?? '').includes('未启用 fallback')
+    );
+    expect(called).toBe(true);
+
+    await adapter.destroy();
+  });
+});

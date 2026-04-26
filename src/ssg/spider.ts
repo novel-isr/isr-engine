@@ -69,9 +69,13 @@ export interface SpiderOptions {
   retryBaseDelayMs?: number;
   /**
    * 整体失败率阈值（0.0-1.0），默认 0.05（5%）。spider 跑完后，若
-   * `failed/total > threshold` 则抛 `SsgBuildFailedError`，即使 continueOnError = true。
+   * `failed/total > threshold`（严格大于）则抛 `SsgBuildFailedError`，即使 continueOnError = true。
+   *
+   * 严格大于的边界语义：20 路由失败 1 个时 failureRate = 0.05，**不**触发 fail-build；
+   * 若你希望"恰好 5% 也触发"，把 threshold 设为稍低值（如 0.049）。
+   *
    * 设 1.0 → 永不因失败率 fail build（保留历史行为，不推荐）。
-   * 设 0 → 任何失败都 fail build（等价于 continueOnError = false 的最终态）。
+   * 设 0   → 任何失败都 fail build（等价于 continueOnError = false 的最终态）。
    */
   failBuildThreshold?: number;
 }
@@ -114,10 +118,30 @@ export class SsgBuildFailedError extends Error {
 
 /**
  * 将路由路径转换为磁盘写入路径
+ *
+ * 安全：拒绝所有会逃逸 outDir 的恶意输入。只允许 URL 合法字符（字母/数字/`-`/`_`/`.`/`~`/
+ * 百分号编码/`/`）。不合法字符、`..` 段、绝对路径、空段（`//`）一律抛错。
+ *
+ * 调用方（spiderSsgRoutes）在 catch 里把抛错当作"非可重试错误"记入 failed，
+ * 避免单条恶意路由拖垮整批 build。
  */
 export function routeToFilePath(route: string): string {
   const trimmed = route.replace(/^\/+|\/+$/g, '');
   if (!trimmed) return 'index.html';
+
+  // 1. 字符白名单 —— URL unreserved + pct-encoded + `/`
+  if (!/^[A-Za-z0-9\-._~%/]+$/.test(trimmed)) {
+    throw new Error(`SSG route 含非法字符，拒绝写盘：${route}`);
+  }
+
+  // 2. 段级检查：禁 `..`、`.`（容易构造跨父目录）、空段（`//` 产生）
+  const segments = trimmed.split('/');
+  for (const seg of segments) {
+    if (seg === '' || seg === '.' || seg === '..') {
+      throw new Error(`SSG route 含非法路径段（${seg || '空'}），拒绝写盘：${route}`);
+    }
+  }
+
   return `${trimmed}/index.html`;
 }
 
@@ -139,6 +163,19 @@ function isRetryableStatus(status: number): boolean {
 }
 
 const sleep = (ms: number): Promise<void> => new Promise(r => setTimeout(r, ms));
+
+/**
+ * 指数退避 + 抖动（full jitter）
+ *   baseDelay * 2^(attempts-1) 作为上界，再 [0, 上界) 均匀随机
+ *
+ * 为什么加抖动：大规模 SSG（1000+ 路由）里若上游同时 flake 一拨，
+ * 所有失败任务会在相同时刻（200/400/800ms）同步重试，对上游造成 thundering herd。
+ * 加 full jitter 把重试时刻摊平到一个区间，保持均值不变、峰值砍半。
+ */
+function computeBackoffDelay(baseDelay: number, attempts: number): number {
+  const exp = baseDelay * Math.pow(2, Math.max(0, attempts - 1));
+  return Math.floor(Math.random() * exp);
+}
 
 /**
  * 单次 fetch + 超时包裹。超时抛 AbortError（被 isRetryableError 捕获走 retry）。
@@ -237,7 +274,7 @@ export async function spiderSsgRoutes(params: {
             return;
           }
           // 5xx + 还能重试 → 继续 while 循环
-          await sleep(retryBaseDelayMs * Math.pow(2, attempts - 1));
+          await sleep(computeBackoffDelay(retryBaseDelayMs, attempts));
           continue;
         }
 
@@ -260,9 +297,15 @@ export async function spiderSsgRoutes(params: {
           return;
         }
 
-        // 成功路径
+        // 成功路径（路由若含非法字符/段，routeToFilePath 会抛错 —— 走 catch 记 failed）
         const rel = routeToFilePath(route);
         const outFile = path.join(outDir, rel);
+        // 二道防线：解析后若逃出 outDir 直接拒绝（理论上 routeToFilePath 已挡，但 defense-in-depth）
+        const absOut = path.resolve(outFile);
+        const absDir = path.resolve(outDir);
+        if (!absOut.startsWith(absDir + path.sep) && absOut !== absDir) {
+          throw new Error(`SSG 输出路径越界，拒绝写盘：${absOut}`);
+        }
         await fs.mkdir(path.dirname(outFile), { recursive: true });
         await fs.writeFile(outFile, text, 'utf-8');
 
@@ -282,7 +325,7 @@ export async function spiderSsgRoutes(params: {
         return;
       } catch (err) {
         if (isRetryableError(err) && attempts <= maxRetries) {
-          await sleep(retryBaseDelayMs * Math.pow(2, attempts - 1));
+          await sleep(computeBackoffDelay(retryBaseDelayMs, attempts));
           continue;
         }
         // 非可重试 / 重试已耗尽

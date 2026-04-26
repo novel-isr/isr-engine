@@ -29,7 +29,7 @@ export interface RateLimitOptions {
   windowMs?: number;
   /** 每窗口最大请求数；默认 100 */
   max?: number;
-  /** 限流 key 生成（默认按 IP：`req.ip`） */
+  /** 限流 key 生成（默认按 IP：`extractClientIp(req, trustProxy)`） */
   keyGenerator?: (req: Request) => string;
   /** 返回 true 则跳过限流（如 /health） */
   skip?: (req: Request) => boolean;
@@ -46,6 +46,39 @@ export interface RateLimitOptions {
   sendHeaders?: boolean;
   /** 缓存最大条目数（memory backend）；默认 10_000 */
   lruMax?: number;
+  /**
+   * 是否信任上游代理头（默认 false）。
+   * true → 按 CF-Connecting-IP > X-Real-IP > X-Forwarded-For(首个) > req.ip 的顺序取真实 IP。
+   * 仅当部署拓扑保证所有请求过可信代理（Nginx/CDN/LB）时启用，否则客户端可伪造头绕过限流。
+   * Express 同时应设 `app.set('trust proxy', <hops>)`。
+   */
+  trustProxy?: boolean;
+}
+
+/**
+ * 从请求中提取"真实客户端 IP"。
+ *
+ * 优先级（仅在 trustProxy=true 时应用）：
+ *   1) CF-Connecting-IP —— Cloudflare 的权威头，不可伪造
+ *   2) X-Real-IP        —— Nginx realip 模块 / 内网 LB 常用
+ *   3) X-Forwarded-For  —— RFC 7239 标准，取最左一跳（原始客户端）
+ *   4) req.ip           —— Express 解析后的 socket IP（需 trust proxy 配置）
+ *
+ * trustProxy=false 时只用 req.ip，保证 Internet 直连场景不会被伪造头欺骗。
+ */
+export function extractClientIp(req: Request, trustProxy: boolean): string {
+  if (trustProxy) {
+    const cf = req.headers['cf-connecting-ip'];
+    if (cf) return Array.isArray(cf) ? cf[0] : String(cf).trim();
+    const real = req.headers['x-real-ip'];
+    if (real) return Array.isArray(real) ? real[0] : String(real).trim();
+    const xff = req.headers['x-forwarded-for'];
+    if (xff) {
+      const raw = Array.isArray(xff) ? xff[0] : String(xff);
+      return raw.split(',')[0].trim();
+    }
+  }
+  return req.ip ?? 'unknown';
 }
 
 export interface RateLimitStore {
@@ -72,16 +105,58 @@ export function createMemoryRateLimitStore(lruMax = 10_000): RateLimitStore {
 }
 
 /**
- * Redis 后端（多 pod 一致）—— 需要 ioredis / node-redis 实例传入
- * 使用 INCR + EXPIRE NX（原子）
+ * Redis 后端（多 pod 一致）—— 需要 ioredis 实例传入。
+ *
+ * v2.1 起改用 EVAL（Lua 脚本）原子地完成 INCR + PEXPIRE NX + PTTL：
+ *   - 1 次 RTT 而非 3 次（性能），延迟降 60%+
+ *   - 跨副本下 INCR 与 PEXPIRE 之间不会插入别的命令（边界正确性）
+ *   - 并发 N 个进程同时 incr 同一 key 不会产生"都设置了 TTL 但谁都没生效"的假象
+ *
+ * ioredis `defineCommand` 把脚本注册成伪命令，首次 EVAL、后续走 EVALSHA（自动管理）。
  */
-export function createRedisRateLimitStore(redis: {
+export interface RedisLikeClient {
   incr(key: string): Promise<number>;
   pexpire(key: string, ms: number, nx?: string): Promise<number>;
   pttl(key: string): Promise<number>;
-}): RateLimitStore {
+  defineCommand?: (name: string, opts: { numberOfKeys: number; lua: string }) => void;
+  // 由 defineCommand 动态挂载；签名 (key, windowMs) => Promise<[count, pttl]>
+  isrRateLimitIncr?: (key: string, windowMs: number) => Promise<[number, number]>;
+}
+
+const LUA_INCR_AND_TTL = `
+local c = redis.call('INCR', KEYS[1])
+if c == 1 then
+  redis.call('PEXPIRE', KEYS[1], ARGV[1])
+end
+local ttl = redis.call('PTTL', KEYS[1])
+return {c, ttl}
+`;
+
+export function createRedisRateLimitStore(redis: RedisLikeClient): RateLimitStore {
+  // 若客户端支持 defineCommand（ioredis 都支持），优先注册原子脚本
+  let useLua = false;
+  if (typeof redis.defineCommand === 'function' && !redis.isrRateLimitIncr) {
+    try {
+      redis.defineCommand('isrRateLimitIncr', {
+        numberOfKeys: 1,
+        lua: LUA_INCR_AND_TTL,
+      });
+      useLua = true;
+    } catch {
+      // defineCommand 失败则回退到三命令序列
+      useLua = false;
+    }
+  } else if (typeof redis.isrRateLimitIncr === 'function') {
+    useLua = true;
+  }
+
   return {
     async incr(key, windowMs) {
+      if (useLua && redis.isrRateLimitIncr) {
+        const [count, ttl] = await redis.isrRateLimitIncr(key, windowMs);
+        return { count, resetMs: ttl > 0 ? ttl : windowMs };
+      }
+      // Fallback：三次 RTT，原子性依赖 Redis 单线程（仍可用但慢）
       const count = await redis.incr(key);
       if (count === 1) await redis.pexpire(key, windowMs);
       const ttl = await redis.pttl(key);
@@ -90,11 +165,35 @@ export function createRedisRateLimitStore(redis: {
   };
 }
 
+/**
+ * 全局逃生开关：`BENCH_DISABLE_RATE_LIMIT=1` 让本进程的所有 rate limiter 无脑放行。
+ *
+ * **仅供 bench / 压测使用**。生产绝不应该设置。原因：
+ *   - bench 跑 60k QPS 时 max=200/min 的限流会让 99.7% 请求返 429，
+ *     测出来的是 429 路径而非 ISR 真实路径
+ *   - autocannon 用单个 IP 模拟 N 个连接，正常场景下用户来自不同 IP，
+ *     用单 IP 算限流是不公平的
+ *
+ * 启动时若检测到该 env，打一行 warn 提醒；运行时检查是同步的（process.env 读取），
+ * 影响可忽略。
+ */
+/** 每请求 O(1) env 读取 —— 让测试 / 运维可 runtime 翻开关而不需重启 */
+function isBenchBypassActive(): boolean {
+  return process.env.BENCH_DISABLE_RATE_LIMIT === '1';
+}
+if (isBenchBypassActive()) {
+  logger.warn(
+    '[rate-limit]',
+    'BENCH_DISABLE_RATE_LIMIT=1 detected —— 所有限流器都将放行（bench 模式，生产绝禁）'
+  );
+}
+
 export function createRateLimiter(options: RateLimitOptions = {}) {
+  const trustProxy = options.trustProxy === true;
   const {
     windowMs = 60_000,
     max = 100,
-    keyGenerator = (req: Request) => req.ip ?? 'unknown',
+    keyGenerator = (req: Request) => extractClientIp(req, trustProxy),
     skip,
     statusCode = 429,
     message = { error: 'Too Many Requests' },
@@ -107,6 +206,8 @@ export function createRateLimiter(options: RateLimitOptions = {}) {
     res: Response,
     next: NextFunction
   ): Promise<void> {
+    // bench 模式逃生（仅当 BENCH_DISABLE_RATE_LIMIT=1）—— 优先级高于 skip
+    if (isBenchBypassActive()) return next();
     if (skip?.(req)) return next();
 
     const key = keyGenerator(req);
