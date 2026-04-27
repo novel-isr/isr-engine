@@ -80,4 +80,8 @@ temp/
 
 # ISR/SSG Cache directory
 .isr-hyou/
-.isr-cache/
+.isr-cache/.npmrc
+
+# npm registry credentials (internal, never commit)
+.npmrc
+!.npmrc.example

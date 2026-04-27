@@ -1,7 +1,7 @@
 {
   "name": "@novel-isr/engine",
   "version": "2.2.0",
-  "description": "构建于 @vitejs/plugin-rsc 之上的通用 ISR/SSG/Fallback 渲染编排框架。设计为跨项目复用：任何 Vite + React 19 + RSC 站点都可以接，不绑定特定业务。仅在私有 git/registry 发布，不发 public.",
+  "description": "ISR/SSG/Fallback rendering orchestration on Vite + React 19 RSC.",
   "private": false,
   "license": "UNLICENSED",
   "author": "internal",
@@ -24,10 +24,9 @@
     "url": "https://github.com/TaitaiWx/isr-engine/issues"
   },
   "publishConfig": {
-    "access": "restricted",
-    "registry": "${NPM_REGISTRY_URL}"
+    "access": "restricted"
   },
-  "//-internal-only": "本包仅在内部私有 npm registry 发布。release.yml 在发布前会检查 NPM_REGISTRY_URL 是否指向内部 host；若为空或指向 registry.npmjs.org 则 fail-fast，杜绝误发 public。",
+  "//-internal-only": "Internal package: not for public npmjs. Set registry in your local .npmrc (gitignored) or via 'pnpm publish --registry=<INTERNAL_HOST>'. The prepublishOnly hook below validates that the resolved registry is non-empty and not registry.npmjs.org before each publish.",
   "type": "module",
   "main": "./dist/novel-isr.cjs",
   "module": "./dist/novel-isr.js",
@@ -120,9 +119,9 @@
     "check": "pnpm run type-check && pnpm run lint && pnpm run format:check && pnpm run test",
     "release:dry": "pnpm run build && pnpm publish --dry-run --access restricted --no-git-checks",
     "release:pack": "pnpm run build && pnpm pack",
+    "release:beta": "pnpm run check && pnpm run build && pnpm publish --access restricted --tag beta --no-git-checks",
     "release": "pnpm run check && pnpm run build && pnpm publish --access restricted --no-git-checks",
-    "release:from-ci": "pnpm publish --access restricted --no-git-checks",
-    "prepublishOnly": "node -e \"const u=process.env.NPM_REGISTRY_URL||'';if(!u){console.error('NPM_REGISTRY_URL not set; this package is internal-only.');process.exit(1)}if(/registry\\.npmjs\\.org/.test(u)){console.error('NPM_REGISTRY_URL points to public npmjs; refusing to publish internal package.');process.exit(1)}\""
+    "prepublishOnly": "node scripts/check-registry.mjs"
   },
   "engines": {
     "node": "22.21.1"

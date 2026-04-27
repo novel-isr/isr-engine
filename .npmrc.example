@@ -1,0 +1,11 @@
+# 拷贝成 .npmrc 后填入实际值. 真实 .npmrc 已经被 .gitignore 排除, 不会进 git.
+#
+# 内部 npm registry 配置: 发包/装包时 pnpm 会用这里的 URL.
+# @novel-isr scope 路由到内部 registry, 其他 scope 仍走 public npmjs.
+
+@novel-isr:registry=https://your-internal-registry.example.invalid/
+//your-internal-registry.example.invalid/:_authToken=${NPM_TOKEN}
+always-auth=true
+
+# pnpm
+link-workspace-packages=true
