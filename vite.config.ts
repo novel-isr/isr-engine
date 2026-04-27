@@ -54,6 +54,13 @@ export default defineConfig({
         ...Object.keys(pkg.peerDependencies || {}),
         // 子路径外部化（如 react-dom/server, react-dom/client）
         /^react(-dom)?(\/.*)?$/,
+        // 可选 SDK —— 用户没装时静默跳过（adapters/observability 里 dynamic import）
+        // 不写进 deps（避免强制安装），但必须 external 防止 bundler inline + 解析失败
+        'web-vitals',
+        '@sentry/browser',
+        '@sentry/node',
+        'dd-trace',
+        /^@opentelemetry\/.*/,
       ],
     },
     target: 'node20',

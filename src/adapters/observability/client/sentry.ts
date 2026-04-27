@@ -42,10 +42,14 @@ export function createSentryClientHooks(opts: SentryClientHooksOptions) {
       }
       if (opts.webVitals) {
         try {
-          // 动态 import：用户没装 web-vitals 也不会导致页面崩；
-          // engine 不强依赖该包（仅 client adapter 可选用）
+          // 用 Function 构造器隐藏 import specifier，绕过 bundler 静态分析
+          // 否则 rolldown / vite / esbuild 都会把 'web-vitals' 当真依赖去解析
+          // 用户没装 → 这里 catch 静默掉；engine 不强依赖该包
           type WvCb = (m: { value: number; rating?: string }) => void;
-          const wv = (await import(/* @vite-ignore */ 'web-vitals' as string)) as {
+          const dynamicImport = new Function('m', 'return import(m)') as (
+            m: string
+          ) => Promise<unknown>;
+          const wv = (await dynamicImport('web-vitals')) as {
             onCLS: (cb: WvCb) => void;
             onLCP: (cb: WvCb) => void;
             onINP: (cb: WvCb) => void;

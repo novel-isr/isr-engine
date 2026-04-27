@@ -51,6 +51,18 @@ export async function createAutoServerHooks(): Promise<AutoServerHooks> {
   return {};
 }
 
+/**
+ * 走 npm subpath import 而不是相对路径：
+ * - 本文件是 raw-shipped src/，被 consumer bundler 当源码处理
+ * - 三个 hook factory 在 dist/ 里通过 `./adapters/observability` 子路径已公开 export
+ * - 用 subpath 既避免相对路径依赖（src/adapters/* 不在 npm tarball 里），也复用编译产物
+ */
+type ObservabilityAdapters = typeof import('@novel-isr/engine/adapters/observability');
+
+async function loadObservability(): Promise<ObservabilityAdapters> {
+  return (await import('@novel-isr/engine/adapters/observability')) as ObservabilityAdapters;
+}
+
 async function loadSentry(dsn: string): Promise<AutoServerHooks> {
   try {
     const Sentry = (await tryImport('@sentry/node')) as {
@@ -63,7 +75,7 @@ async function loadSentry(dsn: string): Promise<AutoServerHooks> {
       tracesSampleRate: parseFloat(process.env.SENTRY_TRACES_SAMPLE_RATE ?? '0.1'),
       environment: process.env.NODE_ENV ?? 'production',
     });
-    const { createSentryServerHooks } = await import('./server/sentry');
+    const { createSentryServerHooks } = await loadObservability();
     logger.info(
       `🛰️  observability: Sentry auto-wired (DSN ${dsn.replace(/\/\/[^@]+@/, '//<key>@')})`
     );
@@ -81,12 +93,12 @@ async function loadDatadog(service: string): Promise<AutoServerHooks> {
     const tracerMod = (await tryImport('dd-trace')) as {
       default: { init: (opts: Record<string, unknown>) => unknown };
     };
+    const { createDatadogServerHooks } = await loadObservability();
     const tracer = tracerMod.default.init({
       service,
       env: process.env.DD_ENV ?? process.env.NODE_ENV,
       version: process.env.DD_VERSION,
-    }) as Parameters<typeof import('./server/datadog').createDatadogServerHooks>[0]['tracer'];
-    const { createDatadogServerHooks } = await import('./server/datadog');
+    }) as Parameters<typeof createDatadogServerHooks>[0]['tracer'];
     logger.info(`🛰️  observability: Datadog auto-wired (service=${service})`);
     return createDatadogServerHooks({ tracer }) as AutoServerHooks;
   } catch (err) {
@@ -97,15 +109,13 @@ async function loadDatadog(service: string): Promise<AutoServerHooks> {
 
 async function loadOtel(endpoint: string): Promise<AutoServerHooks> {
   try {
+    const { createOtelServerHooks } = await loadObservability();
     const otelApi = (await tryImport('@opentelemetry/api')) as {
       trace: {
-        getTracer: (
-          name: string
-        ) => Parameters<typeof import('./server/otel').createOtelServerHooks>[0]['tracer'];
+        getTracer: (name: string) => Parameters<typeof createOtelServerHooks>[0]['tracer'];
       };
     };
     const tracer = otelApi.trace.getTracer(process.env.OTEL_SERVICE_NAME ?? 'novel-isr-app');
-    const { createOtelServerHooks } = await import('./server/otel');
     logger.info(`🛰️  observability: OTel auto-wired (endpoint=${endpoint})`);
     return createOtelServerHooks({ tracer }) as AutoServerHooks;
   } catch (err) {
