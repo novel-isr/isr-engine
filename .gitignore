@@ -78,9 +78,9 @@ junit.xml
 tmp/
 temp/
 
-# ISR/SSG Cache directory
+# ISR/SSG runtime cache (engine writes resolved ssr.config + temp data here)
 .isr-hyou/
-.isr-cache/.npmrc
+**/.isr-cache/
 
 # npm registry credentials (internal, never commit)
 .npmrc
