@@ -14,11 +14,5 @@ export const DEFAULT_HOST = '0.0.0.0';
 /** 默认日志文件路径 */
 export const DEFAULT_LOG_FILE = './logs/isr-engine.log';
 
-/** 默认客户端入口兜底路径 */
-export const DEFAULT_ENTRY_FALLBACK = '/assets/entry.js';
-
-/** 默认应用名称（CSR 降级页面使用） */
-export const DEFAULT_APP_NAME = 'ISR App';
-
 /** 默认协议 */
 export const DEFAULT_PROTOCOL = 'http1.1' as const;

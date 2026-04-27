@@ -634,8 +634,8 @@ async function handleRequest(
       }
       // 等不到 / 还是没有：fail-open，自己走 MISS
     }
-    // 注册自己为 leader
-    let resolveFn: () => void = () => {};
+    // 注册自己为 leader —— deferred resolver 模式：先声明再被 Promise 构造器覆盖
+    let resolveFn!: () => void;
     const promise = new Promise<void>(resolve => {
       resolveFn = resolve;
     });
@@ -670,10 +670,9 @@ function runMissPath(
   // 关键：仅当本次是 normal MISS leader（bgRevalidateKey === null）时才释放——
   // bg 重验证路径不持有 inflight，若误释放会清掉一个并发 MISS leader 注册的 slot，
   // 导致 follower 提前唤醒读到过时缓存。
-  const ownsInflight = bgRevalidateKey === null && ctx.inflightRegens.has(cacheKey);
-  if (ownsInflight) {
+  const slot = bgRevalidateKey === null ? ctx.inflightRegens.get(cacheKey) : undefined;
+  if (slot) {
     // 用闭包绑定首次注册的 slot 引用，避免后续错释放
-    const slot = ctx.inflightRegens.get(cacheKey)!;
     let released = false;
     const releaseSingleflight = (): void => {
       if (released) return;
@@ -837,7 +836,8 @@ function triggerPrefetch(
   sourceCacheKey: string,
   ctx: HandleContext
 ): void {
-  if (!ctx.prefetchOnHit) return;
+  const prefetchOnHit = ctx.prefetchOnHit;
+  if (!prefetchOnHit) return;
   const host = req.headers.host || 'localhost';
   const [hostname, portStr] = host.split(':');
   const port = portStr
@@ -847,7 +847,7 @@ function triggerPrefetch(
   setImmediate(async () => {
     let targets: string[] = [];
     try {
-      const result = await ctx.prefetchOnHit!({ path: sourcePath, cacheKey: sourceCacheKey });
+      const result = await prefetchOnHit({ path: sourcePath, cacheKey: sourceCacheKey });
       if (Array.isArray(result)) targets = result;
     } catch (err) {
       logger.warn(`ISR prefetch hook 执行失败 from=${sourcePath}`, err);
@@ -973,7 +973,8 @@ function captureAndStore(
       );
       return;
     }
-    chunks!.push(buf);
+    // overflow=false 路径：chunks 必非 null（chunks=null 仅发生在 overflow=true 分支）
+    if (chunks) chunks.push(buf);
   };
 
   res.write = function patchedWrite(chunk: unknown, ...args: unknown[]): boolean {
@@ -996,12 +997,14 @@ function captureAndStore(
       delete headers['content-length'];
       delete headers['Content-Length'];
 
+      // overflow=false 路径上 chunks 必非 null —— 用 ?? [] 让类型系统能证明
+      const safeChunks = chunks ?? [];
       onFinish({
         body: overflow
           ? Buffer.alloc(0)
-          : chunks!.length === 1
-            ? chunks![0]
-            : Buffer.concat(chunks!),
+          : safeChunks.length === 1
+            ? safeChunks[0]
+            : Buffer.concat(safeChunks),
         statusCode: res.statusCode,
         headers,
         overflow,

@@ -4,14 +4,13 @@
 
 import type { Express } from 'express';
 import type { Server } from 'node:http';
-import type { Http2SecureServer } from 'node:http2';
 import type { ViteDevServer } from 'vite';
 
 /** 路由注册函数 */
 export type RouteSetupFn = (requestHandler: Express) => void;
 
 /** 服务器协议 */
-export type ServerProtocol = 'http1.1' | 'https' | 'http2' | 'http3';
+export type ServerProtocol = 'http1.1' | 'https';
 
 /** 服务器配置 */
 export interface ServerConfig {
@@ -31,24 +30,10 @@ export interface ServerConfig {
     shutdownTimeoutMs?: number;
     maxRequestsPerSocket?: number;
   };
-  http2?: {
-    maxConcurrentStreams?: number;
-    maxSessionMemory?: number;
-    maxHeaderListSize?: number;
-  };
-  http3?: {
-    enabled?: boolean;
-    quicPort?: number;
-    altSvcMaxAge?: number;
-    enable0RTT?: boolean;
-    maxIdleTimeout?: number;
-    initialMaxStreamData?: number;
-    initialMaxData?: number;
-  };
 }
 
-/** HTTP/HTTPS/HTTP2 服务器实例 */
-export type ServerInstance = Server | Http2SecureServer;
+/** HTTP / HTTPS 服务器实例 */
+export type ServerInstance = Server;
 
 /** startServer 返回值 */
 export interface ServerStartResult {

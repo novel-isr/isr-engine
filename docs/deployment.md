@@ -103,21 +103,11 @@ export default toVercelEdge(handler);
 | 字体下载（构建时）需 Node | `createFontPlugin` 的 google 选项 | 构建在 Node CI 里跑，运行时只读静态资源，无影响 |
 | 文件系统 read | 图片端点的 publicDir 读取 | Edge 用 `fetch()` 同站资源代替 |
 
-## Middleware (i18n / A/B / rate-limit)
+## Middleware（i18n / A/B / rate-limit）
 
-```ts
-// middleware.ts —— 仓库根目录，engine 自动加载
-export const config = { matcher: ['/((?!_/|__isr/).*)'] };
-
-export default function middleware(req: Request) {
-  const { pathname } = new URL(req.url);
-  if (/^\/(en|zh|fr)\//.test(pathname)) return;   // 已带 locale，放行
-  const locale = pickLocale(req.headers.get('accept-language'));
-  return Response.redirect(new URL(`/${locale}${pathname}`, req.url), 302);
-}
-```
-
-支持 `matcher` / `next()` 链式协议（Next.js 风格）。
+i18n / A/B / rate-limit 这类横切逻辑通过 SiteHooks 的 `beforeRequest` 实现，详见
+[site-hooks.md](./site-hooks.md)。Vercel Edge 部署可用 `toVercelMiddleware` 包出
+平台原生 `middleware.ts`，详见 `src/adapters/runtime/vercel-edge.ts`。
 
 ## 上生产前 checklist
 
@@ -130,19 +120,18 @@ export default function middleware(req: Request) {
 - [ ] 验证 `revalidateTag` 在 staging 多 pod 下会通过 Redis Pub/Sub 广播（见 [caching.md#cross-pod-invalidation](./caching.md#cross-pod-invalidation)）
 - [ ] 确认 graceful shutdown 在 SIGTERM 下 < 3s 退出（k8s preStop hook 至少给 10s）
 
-## HTTP/2 / HTTP/3 production stance
+## Origin 协议
 
-推荐拓扑：
+Engine origin 只支持 `http1.1` / `https`。HTTP/2 / HTTP/3 应该在 CDN / Nginx /
+Caddy / ALB 终结后回源 HTTP/1.1：
 
 ```txt
 Browser -- HTTP/2/HTTP/3 --> CDN / Nginx / Caddy / ALB -- HTTP/1.1 --> novel-isr Node origin
 ```
 
-原因：
-
-- Node + Express 对 HTTP/2 不是一等运行时；engine 的 `protocol: 'http2'` 适合受控环境验证，不建议未经压测直接暴露公网。
-- `protocol: 'http3'` 只有在真实 QUIC 实现可用时才发送 `Alt-Svc`。没有 QUIC 时会降级为 HTTP/2 TLS，且不广播 HTTP/3，避免客户端被误导。
-- origin 侧新增 `server.timeouts` / `server.http2` 配置，用于限制慢请求、header 资源消耗、keep-alive 连接和 HTTP/2 stream 并发。公网入口仍应由上游代理承担第一层防护。
+Node + Express 不是 HTTP/2 一等运行时，origin 直出协议升级是负担、不是卖点。
+公网入口的 slowloris / header DoS / keep-alive 耗尽防护，靠上游代理 + `server.timeouts`
+配合做。
 
 ## 进一步
 

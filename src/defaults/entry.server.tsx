@@ -20,7 +20,7 @@
  *   否则当 hooks 配置        → 用 defineServerEntry 包一层
  */
 import { defineServerEntry, type ServerEntryHooks } from './runtime/defineServerEntry';
-import { createAutoServerHooks } from '../adapters/observability/auto';
+import { createAutoServerHooks } from './auto-observability';
 // @ts-expect-error - @app/_server-config 由 createIsrPlugin 注入：
 //   - 用户提供 src/entry.server.tsx 时 → 解析到该文件
 //   - 用户没提供时              → 解析到 engine 内置 empty-config（默认 {}）

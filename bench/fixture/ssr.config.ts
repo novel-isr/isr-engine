@@ -29,7 +29,6 @@ const config: ISRConfig = {
   },
   isr: {
     revalidate: 60,
-    backgroundRevalidation: true,
   },
   seo: {
     enabled: false, // bench 不需要 sitemap

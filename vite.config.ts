@@ -33,12 +33,12 @@ export default defineConfig({
         'rsc/index': resolve(__dirname, 'src/rsc/index.ts'),
         // 可观测性 SDK 预制 adapter 子路径 —— 树摇友好（用户只引 Sentry 时不会拉 Datadog）
         'adapters/observability/index': resolve(__dirname, 'src/adapters/observability/index.ts'),
-        // Edge runtime adapter（CF Workers / Vercel Edge / Deno / Bun）
+        // Edge runtime adapter（CF Workers / Vercel Edge；Deno / Bun 走原生 `{fetch}`）
         'adapters/runtime/index': resolve(__dirname, 'src/adapters/runtime/index.ts'),
         // <Image> 组件 —— 用户在 React 树里引用
         'image/index': resolve(__dirname, 'src/runtime/Image.tsx'),
       },
-      // 注：内置默认 SSR 入口（src/defaults/entry.ssr.tsx）不在此处打包，
+      // 注：内置默认 SSR 入口（src/defaults/entry.server.ssr.tsx）不在此处打包，
       // 因为它依赖 `import.meta.viteRsc`（plugin-rsc 运行时注入的 API），
       // 只能在用户项目的 plugin-rsc 构建上下文里被消费。我们直接以源码形式
       // 暴露给用户的 plugin-rsc 进行二次打包，详见 createIsrPlugin.ts

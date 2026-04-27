@@ -19,7 +19,13 @@ export default defineConfig({
     exclude: [
       'node_modules',
       'dist',
-      'src/defaults/**',
+      // 这些 wrapper 引用 @vitejs/plugin-rsc 的 import.meta.viteRsc / virtual:vite-rsc/*
+      // 只能在用户项目的 plugin-rsc 构建上下文里被消费，不能直接在 vitest 跑
+      'src/defaults/runtime/defineServerEntry.tsx',
+      'src/defaults/runtime/defineClientEntry.tsx',
+      'src/defaults/entry.tsx',
+      'src/defaults/entry.server.tsx',
+      'src/defaults/entry.server.ssr.tsx',
       // bench-fixture 是独立 sub-package，它的 node_modules 含自己 deps 的测试，
       // 不应该被引擎主测套覆盖
       'bench/fixture/**',

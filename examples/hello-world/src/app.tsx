@@ -15,7 +15,7 @@ export interface AppProps {
   url: URL;
 }
 
-export default function App({ url }: AppProps) {
+export function App({ url }: AppProps) {
   cacheTag('hello-home');
   const path = url.pathname;
 

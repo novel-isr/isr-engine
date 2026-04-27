@@ -124,10 +124,12 @@ export class MemoryCacheAdapter implements ICacheAdapter {
 
     // 更新标签索引
     for (const tag of tags) {
-      if (!this.tagIndex.has(tag)) {
-        this.tagIndex.set(tag, new Set());
+      let set = this.tagIndex.get(tag);
+      if (!set) {
+        set = new Set();
+        this.tagIndex.set(tag, set);
       }
-      this.tagIndex.get(tag)!.add(key);
+      set.add(key);
     }
   }
 

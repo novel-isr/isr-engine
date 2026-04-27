@@ -9,7 +9,14 @@
  * - 标签索引用 Redis Set 维护
  * - Lua 脚本原子操作
  * - 序列化/反序列化自动处理
+ *
+ * 关于 `this.redis!` 非空断言：
+ * 每个公开方法先 `getActiveAdapter()` 决定走 fallback 还是直连 redis；走 redis 分支
+ * 时本类已通过 `connected/destroyed` 状态机保证 `this.redis` 非空（构造里赋值 + destroy
+ * 才置 null）。TS 类型系统无法跨 if-return 推断这个不变量，故在这些路径上用 `!` 断言。
+ * lint rule 在本文件关掉，不再作为 noise 干扰其他文件的真实问题。
  */
+/* eslint-disable @typescript-eslint/no-non-null-assertion */
 
 import type { ICacheAdapter, CacheSetOptions, CacheStats } from './ICacheAdapter';
 import { MemoryCacheAdapter, type MemoryCacheConfig } from './MemoryCacheAdapter';

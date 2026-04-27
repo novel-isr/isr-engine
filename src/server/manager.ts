@@ -157,8 +157,6 @@ export async function startAppServer(
     protocol: config.server?.protocol ?? 'http1.1',
     ssl: config.server?.ssl ?? null,
     timeouts: config.server?.timeouts,
-    http2: config.server?.http2,
-    http3: config.server?.http3,
   };
   const result = await startServer(serverContext.requestHandler, serverConfig);
 

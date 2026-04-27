@@ -74,6 +74,6 @@ curl -I 'http://localhost:3000/?__crash=1'
 
 ## 仍卡住？
 
-- 跑 `pnpm check`（type-check + lint + format + tests）排除环境问题
+- 跑 `pnpm check`（type-check + lint + tests）排除环境问题
 - 看 `logs/` 目录的 trace（engine 自动写的）
 - 提 issue 时附：完整命令输出 + `pnpm --version` + `node --version` + `cat package.json | grep '@novel-isr'`

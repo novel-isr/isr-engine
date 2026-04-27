@@ -1,16 +1,14 @@
 /**
  * ssr.config.ts —— isr-engine 配置参考
  *
- * 本文件**只列 engine 真正消费**的字段。每个都验证过 src/ 里有对应的读取处，
- * 不写 type 声明里有但 engine 不读的"许愿单字段"（appName / apiUrl / tenants /
- * sandbox / dev / entry / isr.backgroundRevalidation 等）。
+ * 本文件覆盖 engine 真正消费的全部字段，可作 ssr.config 起手模板复制。
  *
  * 字段分组:
  *   1. 必填:        renderMode, cache
  *   2. 路由级覆盖:  routeOverrides
  *   3. ISR / SSG:   isr, ssg
  *   4. SEO:         seo
- *   5. Server:      server (端口 / 协议 / 超时 / HTTP2/3 / 管理端点 / 压缩)
+ *   5. Server:      server (端口 / 协议 / 超时 / 管理端点 / 压缩)
  */
 import type { ISRConfig } from '@novel-isr/engine';
 
@@ -92,10 +90,15 @@ export default {
   },
 
   // ─── 5. Server ───────────────────────────────────────────────────
+  /**
+   * Origin 协议只暴露 'http1.1' / 'https'。HTTP/2 / HTTP/3 应该在 CDN / Nginx /
+   * Caddy / ALB 终结后回源 HTTP/1.1 —— Node + Express 不是 HTTP/2 一等运行时，
+   * origin 直出协议升级是负担、不是卖点。
+   */
   server: {
     port: 3000,
     // host: '0.0.0.0',                                // 默认 '0.0.0.0'，容器场景适配
-    protocol: 'http1.1', // 'http1.1' | 'http2' | 'http3' | 'https'
+    protocol: 'http1.1', // 'http1.1' | 'https'
 
     /**
      * Node origin 超时（防 slowloris / 卡死 SSR / keep-alive 耗尽）
@@ -108,17 +111,6 @@ export default {
       idleTimeoutMs: 30_000,
       shutdownTimeoutMs: 5_000,
       maxRequestsPerSocket: 1000,
-    },
-
-    /** HTTP/2。生产推荐：HTTP/2 在 CDN 终结，内部用 HTTP/1.1 */
-    http2: {
-      maxConcurrentStreams: 100,
-      maxHeaderListSize: 16 * 1024,
-    },
-
-    /** HTTP/3 仅在真实 QUIC 实现可用时才发 Alt-Svc */
-    http3: {
-      enabled: false, // 生产建议在 CDN 终结 H3，origin 关掉
     },
 
     /**

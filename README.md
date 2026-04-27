@@ -2,16 +2,18 @@
 
 > Vite + React 19 RSC 的 ISR / SSG / Fallback 编排层。基于 [@vitejs/plugin-rsc](https://github.com/vitejs/vite-plugin-react/tree/main/packages/plugin-rsc) 官方插件——**不手写 Flight 协议**。用户只写一个 `src/app.tsx`，其余全部由 engine 默认提供。
 
-[![Vite 8](https://img.shields.io/badge/Vite-8-646CFF.svg)](https://vitejs.dev/) [![React 19](https://img.shields.io/badge/React-19-61DAFB.svg)](https://react.dev/) [![Node 22.21.1](https://img.shields.io/badge/Node-22.21.1-339933.svg)](https://nodejs.org/) [![Tests 580](https://img.shields.io/badge/Tests-580%20passing-brightgreen.svg)](./CHANGELOG.md)
+[![Vite 8](https://img.shields.io/badge/Vite-8-646CFF.svg)](https://vitejs.dev/) [![React 19](https://img.shields.io/badge/React-19-61DAFB.svg)](https://react.dev/) [![Node 22.21.1](https://img.shields.io/badge/Node-22.21.1-339933.svg)](https://nodejs.org/) [![Tests 543](https://img.shields.io/badge/Tests-543%20passing-brightgreen.svg)](./CHANGELOG.md)
 
 > **v2.2.0 unreleased** —— ISR 缓存层 5 项性能 / 内存 / 运维优化：cache key 版本化命名空间、MISS 回源 single-flight、capture buffer OOM 防御、HIT 边缘预热、CPU-aware prerender 并发。完全向后兼容，零破坏性。详见 [CHANGELOG.md](./CHANGELOG.md)。
 
-> **通用框架，跨项目复用**。任何 Vite + React 19 + RSC 站点都可以接，不绑定特定业务。仅在私有 git/registry 发布，不发 public（`prepublishOnly` 校验 `NPM_REGISTRY_URL` 指向内部 host，避免误发）。
+> **通用框架，跨项目复用**。任何 Vite + React 19 + RSC 站点都可以接，不绑定特定业务。仅在私有 git/registry 发布，不发 public（`release.yml` 用 `NPM_REGISTRY_URL` + `--access restricted` 校验，避免误发）。
 
 ## 30 秒看明白
 
 ```bash
-pnpm add @novel-isr/engine react react-dom
+# engine + 必需的 peer 依赖（react-server-dom-webpack / rsc-html-stream 给 RSC 流水线用，
+# 严格 pnpm 模式下必须显式装）
+pnpm add @novel-isr/engine react react-dom react-server-dom-webpack rsc-html-stream
 pnpm add -D vite typescript @types/react @types/react-dom
 ```
 
@@ -69,7 +71,7 @@ export function App({ url }: { url: URL }) {
 │    • SSG spider（构建期预生成）                       │
 │    • SEO sitemap / robots / OG image                  │
 │    • i18n URL 路由 + 翻译消息加载                     │
-│    • A/B 实验、限流、PII 审计                          │
+│    • A/B 实验、限流                                    │
 │    • csr-shell fallback（server 崩溃自救）            │
 │    • Sentry / Datadog / OTel adapter（一行接入）       │
 │    • Image / Font 优化插件（next-style）              │
@@ -81,7 +83,7 @@ export function App({ url }: { url: URL }) {
 - 单 Express 进程，可 hack 中间件链
 - 全部 SEO 在一个声明式对象里，不散在 metadata exports
 - L1+L2 hybrid cache（进程内 LRU + 可选 Redis 写穿）
-- A/B 变体、PII redaction、audit log 内建
+- A/B 变体、限流内建
 - 显式 `RenderModeType = 'ssg' | 'isr' | 'ssr'`，不靠隐式 segment config
 
 ## 性能 benchmark
@@ -148,8 +150,8 @@ FallbackChain（自动降级）：
 | csr-shell server 崩溃兜底 | ❌ | ❌ | ❌ | ✅ |
 | 构建栈灵活度 | ❌ 绑死自家栈 | ✅ Vite | ❌ 绑死自家栈 | ✅ Vite |
 | 内置图片 / 字体优化 | ✅ | ❌ | ⚠️ | ✅ |
-| Edge runtime 支持 | ✅ | ⚠️ | ❌ | ✅（CF / Vercel / Deno / Bun） |
-| 单元测试覆盖 | 数千用例 | ⚠️ | ✅ | 41 文件 / 580 tests / ~50% |
+| Edge runtime 支持 | ✅ | ⚠️ | ❌ | ✅（CF / Vercel adapter；Deno / Bun 走原生 `{fetch}`） |
+| 单元测试覆盖 | 数千用例 | ⚠️ | ✅ | 38 文件 / 543 tests / ~50% |
 
 定位：**中等规模业务的 ISR / SSG / Fallback 编排层**，构建于 React 19 + `@vitejs/plugin-rsc` 官方流水线之上。
 
@@ -160,14 +162,14 @@ FallbackChain（自动降级）：
 ✅ **稳的部分**：
 - Flight 协议委托给官方 `@vitejs/plugin-rsc@^0.5.24`，不自维护
 - 依赖全是工业级（Express / Helmet / Prometheus / sitemap / lru-cache / ioredis）
-- 580 tests / ~50% 覆盖；CI 任何分支 push 都跑 lint+typecheck+test
+- 543 tests / ~50% 覆盖；CI 任何分支 push 都跑 lint+typecheck+test
 - bench 退化检测纳入 CI（`P95 +20%` 或 `QPS -15%` 自动 block PR / publish）
 - 私有 npm 发布有 4 段 gate（lint+test+build+bench），任一失败 → 不发布
 - 安全硬化覆盖了 Set-Cookie 跨用户回放、SSG 路径穿越、Redis Buffer 破损、
   Pub/Sub 消息丢失等 10 项审计发现项
 
 ⚠️ **生产前你仍需知道的事**：
-- HTTP/2 / HTTP/3 origin 直出仍需你的代理链路矩阵压测；生产推荐 CDN/Nginx/Caddy 终止协议
+- Origin 协议只支持 `http1.1` / `https`；HTTP/2 / HTTP/3 应在 CDN / Nginx / Caddy / ALB 终结
 - 私有 npm 发布需配 `NPM_REGISTRY_URL` + `NPM_TOKEN` GitHub Secrets；不发 public registry
 - bench baseline 在自家 CI 硬件上首次跑后提交，跨机器对比无意义（绝对值仅参考）
 
@@ -178,12 +180,10 @@ FallbackChain（自动降级）：
 ```bash
 pnpm install
 pnpm test                # vitest run
-pnpm test:coverage       # 覆盖率报告
-pnpm lint                # eslint
+pnpm lint                # eslint（含 prettier check via eslint-plugin-prettier）
 pnpm type-check          # tsc --noEmit
 pnpm bench               # autocannon load test（不阻塞）
-pnpm bench:compare       # 与 baseline diff
-pnpm check               # type-check + lint + format:check + test
+pnpm check               # type-check + lint + test
 pnpm build               # vite build → dist/
 ```
 

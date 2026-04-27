@@ -90,8 +90,8 @@ export { injectSeoMeta } from './engine/seo/injectSeoMeta';
 export type { IntlPayload } from './engine/i18n/types';
 
 // ========== 数据加载（i18n / SEO 数据 hook 推荐用此包装） ==========
-export { createCachedFetcher } from './engine/data/createCachedFetcher';
-export type { CachedFetcher, CachedFetcherOptions } from './engine/data/createCachedFetcher';
+export { createCachedFetcher } from './defaults/runtime/createCachedFetcher';
+export type { CachedFetcher, CachedFetcherOptions } from './defaults/runtime/createCachedFetcher';
 
 // ========== 高阶 FaaS hooks 工厂（声明式配置 → 完整 hooks）==========
 export { defineSiteHooks } from './defaults/runtime/defineSiteHooks';

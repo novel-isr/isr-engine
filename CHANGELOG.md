@@ -78,8 +78,69 @@ SpiderOptions.concurrency                           // default min(8, max(2, cpu
 - `IsrCachedEntry` cache key 全部携带 `<ENGINE_VERSION>:<namespace>:` 前缀。
   **影响**：手工预 seed cache 的测试要更新 key 格式（升级前 `'GET:/x'` → 升级后 `'e1:default:GET:/x'`）。
   生产部署不受影响：bump 到 v2.2 后第一次 MISS 自然按新格式落 key；旧 key 按 Redis TTL 过期。
-- `package.json` 加 `prepublishOnly` 校验 `NPM_REGISTRY_URL` 指向内部 registry，杜绝误发 public。
 - `package.json` 显式标记内部包（`license: UNLICENSED`、`repository` 指向内部 git）。
+
+### Removed —— 公开 API 瘦身（"不造假概念"原则）
+
+清理一批存在于类型 / 文档 / 示例 / CLI 但实际 engine 不消费、或实现是戏剧的功能。
+
+**HTTP/2 / HTTP/3 origin 支持**：QUIC 加载逻辑动态尝试三个非依赖包（`@aspect-build/quic` /
+`quic` / `@fails-components/webtransport`），实际 100% 走 catch 兜底。HTTP/2 真实工作但
+production 推荐 CDN 终结。Origin 协议收窄到 `'http1.1' | 'https'`，删除 `server.http2` /
+`server.http3` 配置块、`startHttp2Server` / `startHttp3Server` / 全部 QUIC 加载与
+Alt-Svc / Early Hints 中间件（≈400 行）。
+
+**`ISRConfig` 死字段**：`appName` / `apiUrl` / `entry` / `dev` / `tenants` / `sandbox` /
+`isr.backgroundRevalidation` —— src/ 里 0 处读取，纯许愿单。
+
+**`auditLog` / `redactPii`**：原内置 PII redaction 与审计日志中间件删除（业务用 SiteHooks
+`onError` + 自家 logger 更直接，engine 没必要替每个项目预设合规策略）。
+
+**`cli/migrate`**：Next.js 检测 / Vite 配置生成的迁移命令（257 行）。通用框架不需要 Next.js 专属迁移器。
+
+**`virtual-modules` / `./cli` 子路径 export**：前者实现已破，后者与主 entry 重复。
+
+**package.json scripts**：`prepublishOnly` / `release:dry` / `release:pack` / `release:beta` /
+`release:from-ci` / `test:watch` / `test:coverage` / `format:check` / `bench:compare` —— 9 个无人调用或冗余
+脚本。`pnpm check` 现在是 `type-check + lint + test`，发布走 `release.yml` 4 段 gate。
+
+### Changed —— 包结构精简（npm tarball 130 entry / 548KB）
+
+**Dep 分类调整**：
+- `vite` / `react-server-dom-webpack` / `rsc-html-stream` 从 `dependencies` 移到 `peerDependencies`
+- 新增 `react` / `react-dom` 为 `peerDependencies`（`./server-entry` / `./client-entry` /
+  `./runtime` 等 raw subpath export 直接 import 这些包，consumer 必须自带）
+- README + getting-started.md 安装命令同步加上 `react-server-dom-webpack` / `rsc-html-stream`，
+  `examples/hello-world/package.json` 也补齐这两条 dep（严格 pnpm 模式下不能依赖 hoist）
+
+**npm tarball 内容收敛**：
+- 删 `package.json` `files` allowlist，改为 `.npmignore` deny-list（更精确：能挡掉 `__tests__`、IDE 配置、内部源码目录等）
+- tarball 现仅含：`dist/` + `src/defaults/` + `src/runtime/` + `README.md` + `CHANGELOG.md`
+  - 不再 ship：`src/{adapters,cache,cli,config,context,discovery,engine,isr,logger,manifest,metrics,middlewares,plugin,renderer,route,rsc,server,ssg,types,utils}` —— 这些目录的代码已编译进 dist/ bundle
+  - 不再 ship：`__tests__/` / `.vscode/` / `tsconfig.json` / `vite.config.ts` / `.npmrc.example` 等开发期文件
+
+**内部模块归位**：
+- `src/engine/data/createCachedFetcher.ts` → `src/defaults/runtime/createCachedFetcher.ts`（被 raw-shipped 的 `defineSiteHooks` 直接消费，应放 raw 树）
+- `src/adapters/observability/auto.ts` → `src/defaults/auto-observability.ts`（仅被 engine 内部 entry.server.tsx 消费，不在 `./adapters/observability` 公开 export 之内）
+- 这两次重定位让 raw-shipped 树（`src/defaults` / `src/runtime`）零跨树 import，是 tarball 收敛的前提
+
+### Removed —— Dead exports
+
+`src/config/defaults.ts` 删除 `DEFAULT_APP_NAME` / `DEFAULT_ENTRY_FALLBACK`（无人引用，原配套已删的 `appName` / `entry` 配置字段）。
+`src/types/index.ts` 删除 `NovelISRConfig` / `NovelSSRConfig` 兼容别名（无人消费）+ 指向已删的 `virtual-modules.d.ts` 的死注释。
+
+### Fixed
+
+**examples/hello-world/src/app.tsx** —— `export default function App` ⇒ `export function App`
+（engine 走 named import `import { App } from '@app/_entry'`，原先用户照抄示例会撞 "App is undefined"）。
+
+**examples/hello-world/vite.config.ts** —— 注释错列 `@vitejs/plugin-react` 为 createIsrPlugin 内置依赖，与 `getting-started.md` 自家警告冲突。改写。
+
+**examples/hello-world/README.md** —— 演示"4 条渲染路径"含 `pnpm fallback` 输出 `dist/spa/`，但本示例 vite.config 不构建独立 SPA bundle、`fallback` 是 runtime 代理不是 build 步骤。改写为"3 种用户级渲染模式"。
+
+**bench/fixture/README.md** —— 多处过期路径（`scripts/bench-fixture` → `bench/fixture`）+ 不存在的"挂上 rateLimit / experiments"声明 + 引用已删 root `ssr.config.example.ts`。重写。
+
+**bench/fixture/package.json** —— 删未使用的 `@vitejs/plugin-react` 死依赖。
 
 ### Performance
 
@@ -91,8 +152,14 @@ SpiderOptions.concurrency                           // default min(8, max(2, cpu
 
 ### Tests
 
-- 580 测试全过（与 v2.1 一致）。新增 5 个测试覆盖优化路径。
+- 543 测试全过（38 文件）。从 v2.1 的 580 → v2.2 的 543：删除 `cli/migrate` / `auditLog` /
+  `redactPii` / `virtual-modules` 等模块时连带移除其测试（约 -40），新增 5 个覆盖
+  ISR 缓存层优化路径，`createCachedFetcher` 测试随源码迁到 `src/defaults/runtime/__tests__/`。
 - 1 个测试调整：`bg revalidate 安全超时` 测试的预 seed key 从 `'GET:/stale-test'` → `'e1:default:GET:/stale-test'`。
+- vitest exclude 从 blanket `src/defaults/**` 收窄到具体的 plugin-rsc 依赖文件（5 个 entry wrapper），其余 `src/defaults/runtime/` 的纯单测正常跑。
+- Lint warnings：20 → 0。`RedisCacheAdapter.ts` 的 12 个 `this.redis!` 是 `connect/destroy` 生命周期不变量，
+  TS 无法跨 if-return 推断；本文件加 `eslint-disable @typescript-eslint/no-non-null-assertion`
+  + 顶部注释解释原因，不再作为 lint noise 干扰其他文件的真实警告。其他 7 个 NNA 通过类型缩窄改写消除。
 
 ---
 
@@ -307,4 +374,4 @@ export { extractRoutesForSitemap, nodeToWebRequest, pipeWebResponse }  // start.
   Sorted Set 消息重放
 - ~~Bench 不阻塞 CI~~ → 2.1.0：`bench/baseline.json` + `release.yml` 退化即 fail
 
-详细 gap + roadmap 见 [`docs/production-readiness.md`](./docs/production-readiness.md)。
+详细 gap + roadmap 文档（`docs/production-readiness.md`）已在 v2.2.0 一并删除（信息陈旧 / 与 README "生产可用性诚实评估" 段重复）。

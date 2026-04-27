@@ -18,14 +18,15 @@
 1. **零远端依赖**：所有"动态数据"内联，避免上游 API 抖动污染 bench 数据
 2. **依赖 engine 自家入口**：`createIsrPlugin` + `defineSiteHooks` —— bench 路径
    与生产用户路径一致，不走简化版 mock 服务器
-3. **挂上 rateLimit + experiments**：验证 `BENCH_DISABLE_RATE_LIMIT=1` 真能绕过
-   限流 + variant cookie 不污染 ISR cache key
+3. **故意不挂 rateLimit / experiments / 远端 SEO**：这些 hook 会写 Set-Cookie
+   或触发远端 fetch，让 ISR 中间件按设计 skip 缓存或引入网络抖动，污染 bench 数据。
+   它们的正确性由 `src/middlewares/__tests__/` 单元测试覆盖。
 
 ## 用法（CI 自动跑；手动也能跑）
 
 ```bash
-cd scripts/bench-fixture
-pnpm install --frozen-lockfile
+cd bench/fixture
+pnpm install --no-frozen-lockfile
 pnpm run build
 BENCH_DISABLE_RATE_LIMIT=1 PORT=3000 pnpm start
 # 另一终端
@@ -35,12 +36,5 @@ BENCH_TIERS=10,100,1000 pnpm run bench
 
 ## CI 集成
 
-`.github/workflows/bench.yml` 的 fixture 步骤直接 `cd scripts/bench-fixture` →
-build → start。**不再依赖 sibling 业务项目**（`novel-rating-website`），所以 bench
-job 在任何 fork / 任何 GitHub Actions checkout 都能跑。
-
-## 为什么 ssr.config.ts 在这里而不是 root
-
-isr-engine 仓库 root 有自己的 `ssr.config.example.ts`（给消费者参考用，不会被
-engine 自己加载）。bench-fixture 是真正"消费 engine 的 app"，它的 ssr.config.ts
-就放在自己目录下，与 engine 完全解耦。
+`.github/workflows/bench.yml` 的 fixture 步骤直接 `cd bench/fixture` → build → start。
+**不依赖 sibling 业务项目**，bench job 在任何 fork / 任何 GitHub Actions checkout 都能跑。

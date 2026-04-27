@@ -21,7 +21,7 @@
  *     },
  *   });
  */
-import { createCachedFetcher } from '../../engine/data/createCachedFetcher';
+import { createCachedFetcher } from './createCachedFetcher';
 import type { IntlPayload, PageSeoMeta } from './seo-runtime';
 
 export interface IntlConfig {

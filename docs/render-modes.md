@@ -60,7 +60,12 @@ ssr  →                       server → csr-shell
 构建期：`vite build` 的 `closeBundle` 钩子自动 spider 一遍 `ssg.routes` 列表。
 运行时：默认 TTL × 24（极长），相当于"几乎永不过期"。需要更新就重新部署。
 
-> **注意**：SSG spider 当前没有 retry / timeout / circuit breaker。单页 fetch 失败可能拖累整个 build phase（`continueOnError` 默认 true 但日志没强制 fail-loud）。生产前建议 staging 跑一遍 1000+ route 的全量 spider 验证稳定性。
+SSG spider 内置 retry / timeout / 失败率门槛 —— 单页 fetch 失败不会静默吞掉整个 build：
+
+- `ssg.requestTimeoutMs`（默认 30_000）—— 单页超时
+- `ssg.maxRetries`（默认 3）—— timeout / network / 5xx 自动重试，4xx 不重试
+- `ssg.retryBaseDelayMs`（默认 200）—— 指数退避起点
+- `ssg.failBuildThreshold`（默认 0.05）—— 整体失败率超 5% → build fail
 
 ## csr-shell（自动兜底）
 
@@ -88,7 +93,8 @@ curl -I 'http://localhost:3000/?__crash=1'
 
 ## 模式切换 query param（dev only）
 
-任何路由加 `?mode=isr|ssr|ssg|csr` 可以临时覆盖配置（仅 dev）：
+任何路由加 `?mode=isr|ssr|ssg` 可以临时覆盖配置（仅 dev）。`csr-shell` 不接受
+query 触发——它只在 server 渲染抛异常时由 FallbackChain 自动兜底。
 
 ```bash
 curl -sSI 'http://localhost:3000/?mode=ssr'

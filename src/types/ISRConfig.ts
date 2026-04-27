@@ -146,7 +146,11 @@ export interface ISRConfig {
     };
     port: number;
     host?: string;
-    protocol?: 'http1.1' | 'http2' | 'http3' | 'https';
+    /**
+     * Origin 协议。HTTP/2/HTTP/3 应该在 CDN / Nginx / Caddy / ALB 终结，
+     * Node origin 只对接 HTTP/1.1（或 HTTPS 直连场景）。
+     */
+    protocol?: 'http1.1' | 'https';
     /**
      * Node server timeout limits. These protect the origin from slowloris,
      * stuck SSR/RSC requests, and long-lived keep-alive exhaustion. Put CDN /
@@ -159,29 +163,6 @@ export interface ISRConfig {
       idleTimeoutMs?: number;
       shutdownTimeoutMs?: number;
       maxRequestsPerSocket?: number;
-    };
-    /**
-     * HTTP/2 origin settings. Production deployments should normally terminate
-     * HTTP/2 at CDN / Nginx / ALB and proxy HTTP/1.1 to Node unless this path
-     * has been tested with the exact proxy and client matrix.
-     */
-    http2?: {
-      maxConcurrentStreams?: number;
-      maxSessionMemory?: number;
-      maxHeaderListSize?: number;
-    };
-    /**
-     * HTTP/3 is only advertised when a real QUIC implementation is available.
-     * If unavailable, engine falls back to HTTP/2 TLS and does not emit Alt-Svc.
-     */
-    http3?: {
-      enabled?: boolean;
-      quicPort?: number;
-      altSvcMaxAge?: number;
-      enable0RTT?: boolean;
-      maxIdleTimeout?: number;
-      initialMaxStreamData?: number;
-      initialMaxData?: number;
     };
     /**
      * 管理端点（/health /metrics /__isr/*）暴露策略
