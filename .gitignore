@@ -85,3 +85,7 @@ temp/
 # npm registry credentials (internal, never commit)
 .npmrc
 !.npmrc.example
+
+# runtime logs (engine writes engine.log etc here)
+logs/
+*.log

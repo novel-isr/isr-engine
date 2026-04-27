@@ -1,0 +1,23 @@
+{
+  "name": "isr-engine-hello-world",
+  "private": true,
+  "version": "0.0.0",
+  "description": "最小化的 isr-engine 消费者示例 —— 5 文件跑起 ISR + SSG + Server Component.",
+  "type": "module",
+  "scripts": {
+    "dev": "novel-isr dev",
+    "build": "vite build",
+    "start": "novel-isr start"
+  },
+  "dependencies": {
+    "@novel-isr/engine": "file:../..",
+    "react": "^19.2.0",
+    "react-dom": "^19.2.0"
+  },
+  "devDependencies": {
+    "@types/react": "^19.0.0",
+    "@types/react-dom": "^19.0.0",
+    "typescript": "^5.6.2",
+    "vite": "^8.0.0"
+  }
+}

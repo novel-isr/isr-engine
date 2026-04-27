@@ -1,10 +1,8 @@
 /**
- * Novel ISR 引擎配置示例
- * 将此文件重命名为 ssr.config.ts 或 ssr.config.js 来使用
+ * isr-engine 配置示例
+ * 拷到你项目根目录, 重命名成 ssr.config.ts.
  */
-// import type { ISRConfig } from '@novel-isr/engine';
-
-import { ISRConfig } from './src/types/ISRConfig';
+import type { ISRConfig } from '@novel-isr/engine';
 
 export default {
   /**
