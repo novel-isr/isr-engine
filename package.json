@@ -5,10 +5,10 @@
   "license": "UNLICENSED",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/TaitaiWx/isr-engine.git"
+    "url": "git+https://github.com/novel-isr/isr-engine.git"
   },
-  "homepage": "https://github.com/TaitaiWx/isr-engine",
-  "bugs": "https://github.com/TaitaiWx/isr-engine/issues",
+  "homepage": "https://github.com/novel-isr/isr-engine",
+  "bugs": "https://github.com/novel-isr/isr-engine/issues",
   "publishConfig": {
     "access": "restricted",
     "registry": "https://npm.pkg.github.com"
