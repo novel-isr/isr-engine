@@ -9,7 +9,15 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 
 export default defineConfig({
-  plugins: [dts()],
+  plugins: [
+    dts({
+      // 关键：把每个 entry 的全部 types rollup 成单文件, 文件名 = entry 名
+      // 例: src/index.ts → dist/novel-isr.d.ts (与 dist/novel-isr.js 配对, package.json types 字段直指)
+      // 默认行为是按源码目录结构逐文件 emit, 会产出 dist/src/index.d.ts 这种带 src 前缀的路径, 与 exports 字段对不上
+      rollupTypes: true,
+      tsconfigPath: './tsconfig.json',
+    }),
+  ],
   resolve: {
     alias: {
       '@': resolve(__dirname, './src'),
