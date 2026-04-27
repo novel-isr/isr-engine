@@ -357,9 +357,9 @@ describe('isrCacheMiddleware —— bg revalidate 安全超时', () => {
           /* 不调 res.end，连接挂起 */
         };
 
-        // 用与中间件相同的 key 算法手写 cacheKey
-        // 路径是 /stale-test，无 query，method=GET
-        store.set('GET:/stale-test', stale);
+        // 用与中间件相同的 key 算法手写 cacheKey：`<ENGINE_VERSION>:<namespace>:<原始 key>`
+        // 路径是 /stale-test，无 query，method=GET，namespace 走默认 'default'
+        store.set('e1:default:GET:/stale-test', stale);
 
         const r = await httpGet(`${fx2.baseUrl}/stale-test`);
         expect(r.cacheStatus).toBe('STALE');

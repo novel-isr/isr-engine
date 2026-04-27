@@ -106,7 +106,70 @@ export interface IsrCacheMiddlewareOptions {
    * variant 隔离时读取的 cookie 名称，默认 'ab'（与 ABVariantMiddleware 的默认值对齐）。
    */
   variantCookieName?: string;
+  /**
+   * Cache key 应用层 namespace —— bump 它即整体失效（无需 SCAN/FLUSH），TTL 自然回收旧 entry。
+   * 默认 `process.env.ISR_CACHE_NAMESPACE ?? 'default'`。
+   *
+   * 使用场景：
+   *   - 业务上线了不兼容 schema 的渲染产物（比如某 component 改了输出结构）
+   *   - 想强制全站冷启动而不影响其他共享 Redis 的服务
+   * 实现：所有 cache key 形如 `<ENGINE_VERSION>:<namespace>:<原始 key>`
+   *      旧前缀的 keys 仍在 Redis 但不再被读到，按 TTL 自然过期
+   */
+  cacheNamespace?: string;
+  /**
+   * HIT 时的相关路径预热。命中响应正常发回 client 后，**异步、非阻塞**地对相关路径
+   * 发起内部 HTTP 预热请求，让下一跳直接 HIT。
+   *
+   * 配置示例：
+   *   prefetchOnHit: ({ path }) => {
+   *     if (/^\/book\/[^/]+$/.test(path)) {
+   *       const id = path.split('/')[2];
+   *       return [`/book/${id}/reviews`, `/book/${id}/related`];
+   *     }
+   *     return [];
+   *   }
+   *
+   * 防自激：同一个目标路径在 `prefetchCooldownMs` 窗口内只触发一次（默认 30s）。
+   * 防递归：预热请求带 sentinel header `X-ISR-Prefetch: 1`，命中 HIT 时不再触发二级预热。
+   */
+  prefetchOnHit?: (ctx: { path: string; cacheKey: string }) => string[] | Promise<string[]>;
+  /**
+   * 同目标 path 的预热冷却窗口（毫秒）。默认 30_000。
+   */
+  prefetchCooldownMs?: number;
+  /**
+   * 单条响应入缓存的字节上限。默认 5 * 1024 * 1024（5 MB）。
+   *
+   * 渲染阶段每个 chunk 写入 res 的同时会被累积进 `chunks: Buffer[]`，
+   * 超过此阈值时**立刻丢弃捕获缓冲并跳过本次入缓存**（已发出的字节不影响 client）。
+   *
+   * 防御场景：
+   *   - 列表页未分页导致渲染产物巨大
+   *   - 上游 API 一次性返回大对象，模板逐字塞入 HTML
+   *   - 并发 MISS 时 N × 大响应同时驻留堆中导致 OOM
+   *
+   * 设 0 关闭（不推荐）。
+   */
+  maxCachedBodyBytes?: number;
+  /**
+   * MISS 回源 single-flight 等待上限（毫秒）。默认 5_000。
+   *
+   * 现象：当 N 个并发请求同时 MISS 同一 key 时，第一个会触发渲染 + 入缓存，其余的会
+   * 等这个渲染完成（最多等 singleflightWaitMs），等到则读一次 cache，HIT 直接回放；
+   * 等不到（渲染慢或挂了）则 follower 自己走原始 MISS 路径继续渲染（fail-open，
+   * 防止首请求异常导致全部 follower 永久卡死）。
+   *
+   * 设 0 关闭（不推荐——失去 thundering herd 保护，缓存击穿瞬间会把上游打挂）。
+   */
+  singleflightWaitMs?: number;
 }
+
+/**
+ * Engine 内部 cache key 格式版本。仅 engine 自身在 isrCachedEntry 序列化结构变化时 bump。
+ * 用户层 namespace 用 cacheNamespace / ISR_CACHE_NAMESPACE 控制（独立维度）。
+ */
+const ENGINE_CACHE_KEY_VERSION = 'e1';
 
 export type IsrInvalidationTarget =
   | { kind: 'path'; value: string }
@@ -123,6 +186,9 @@ const RSC_URL_POSTFIX = '_.rsc';
 
 /** 后台重验证请求的 sentinel 头，避免循环 */
 const BG_REVALIDATE_HEADER = 'x-isr-background-revalidate';
+
+/** 预热请求的 sentinel 头，避免 HIT → prefetch → HIT → prefetch 二次自激 */
+const PREFETCH_HEADER = 'x-isr-prefetch';
 
 /**
  * 从任意形式的 ISRConfig（或部分）提取路由规则
@@ -228,17 +294,31 @@ export function createIsrCacheHandler(
   const bgTimeoutMs = options.backgroundRevalidateTimeoutMs ?? 30_000;
   const variantIsolation = options.variantIsolation === true;
   const variantCookieName = options.variantCookieName ?? 'ab';
+  const cacheNamespace =
+    options.cacheNamespace ?? process.env.ISR_CACHE_NAMESPACE ?? 'default';
+  const cacheKeyPrefix = `${ENGINE_CACHE_KEY_VERSION}:${cacheNamespace}:`;
 
   /** 后台重验证正在进行的 key 集合 —— 防止并发 STALE 请求重复触发多次 bg 拉取 */
   const revalidating = new Set<string>();
+  const singleflightWaitMs = options.singleflightWaitMs ?? 5_000;
+  const maxCachedBodyBytes = options.maxCachedBodyBytes ?? 5 * 1024 * 1024;
+  const prefetchOnHit = options.prefetchOnHit;
+  const prefetchCooldownMs = options.prefetchCooldownMs ?? 30_000;
+  /** 最近一次预热触发时间记录，用于冷却窗口去重 */
+  const prefetchCooldown = new Map<string, number>();
+  /**
+   * MISS 回源 single-flight 锁 —— key 到 deferred promise；首请求开始渲染时注册，
+   * captureAndStore.onFinish 触发 resolve，并发 follower 通过 await 该 promise + 重读 cache 实现 HIT 回放。
+   */
+  const inflightRegens = new Map<string, { promise: Promise<void>; resolve: () => void }>();
 
   const invalidateLocal = async (target: IsrInvalidationTarget): Promise<void> => {
     if (target.kind === 'path') {
       const normalized = normalizePath(target.value);
       const keys = [
-        `GET:${normalized}`,
-        `GET:${normalized}${RSC_URL_POSTFIX}`,
-        `GET:${normalized}/${RSC_URL_POSTFIX}`,
+        `${cacheKeyPrefix}GET:${normalized}`,
+        `${cacheKeyPrefix}GET:${normalized}${RSC_URL_POSTFIX}`,
+        `${cacheKeyPrefix}GET:${normalized}/${RSC_URL_POSTFIX}`,
       ];
       let cleared = 0;
       for (const key of Array.from(cache.keys())) {
@@ -280,6 +360,13 @@ export function createIsrCacheHandler(
       bgTimeoutMs,
       variantIsolation,
       variantCookieName,
+      cacheKeyPrefix,
+      inflightRegens,
+      singleflightWaitMs,
+      maxCachedBodyBytes,
+      prefetchOnHit,
+      prefetchCooldownMs,
+      prefetchCooldown,
     }).catch(err => {
       logger.warn('ISR cache handler 异常，回退到下游处理:', err);
       if (!res.headersSent) {
@@ -295,11 +382,18 @@ export function createIsrCacheHandler(
     revalidating: revalidating.size,
     backend: cache.backend,
   });
-  handler.clear = () => cache.clear();
+  handler.clear = () => {
+    // 释放所有等待 follower（让它们退出等待，自己重走 MISS）
+    for (const slot of inflightRegens.values()) slot.resolve();
+    inflightRegens.clear();
+    cache.clear();
+  };
   handler.destroy = async () => {
     unregisterInvalidator();
     unsubscribeBus?.();
     await options.invalidationBus?.destroy?.();
+    for (const slot of inflightRegens.values()) slot.resolve();
+    inflightRegens.clear();
     await cache.destroy();
   };
 
@@ -395,6 +489,13 @@ interface HandleContext {
   bgTimeoutMs: number;
   variantIsolation: boolean;
   variantCookieName: string;
+  cacheKeyPrefix: string;
+  inflightRegens: Map<string, { promise: Promise<void>; resolve: () => void }>;
+  singleflightWaitMs: number;
+  maxCachedBodyBytes: number;
+  prefetchOnHit?: (ctx: { path: string; cacheKey: string }) => string[] | Promise<string[]>;
+  prefetchCooldownMs: number;
+  prefetchCooldown: Map<string, number>;
 }
 
 /**
@@ -483,6 +584,11 @@ async function handleRequest(
   // HIT
   if (entry && now < entry.expiresAt) {
     replayEntry(res, entry, cacheKey, 'HIT');
+    // 异步预热相关路径（不阻塞 client 响应）。仅普通 HIT 触发，预热请求自身命中 HIT 不再二次预热。
+    const isPrefetchRequest = String(req.headers[PREFETCH_HEADER] || '') === '1';
+    if (!isPrefetchRequest && ctx.prefetchOnHit) {
+      triggerPrefetch(req, logicalPath, cacheKey, ctx);
+    }
     return;
   }
 
@@ -496,6 +602,45 @@ async function handleRequest(
   // 硬过期：剔除并走 MISS
   if (entry) {
     ctx.cache.delete(cacheKey);
+  }
+
+  // ─── MISS single-flight：并发 MISS 合并成 1 次回源 ───
+  // 首请求注册 inflight，后续 follower 等其完成后重读 cache HIT 回放。
+  // 等待超时（singleflightWaitMs）则 follower 退化为各自走 MISS（fail-open，
+  // 避免首请求异常时所有 follower 永久卡死）。
+  if (ctx.singleflightWaitMs > 0) {
+    const existing = ctx.inflightRegens.get(cacheKey);
+    if (existing) {
+      try {
+        await raceWithTimeout(existing.promise, ctx.singleflightWaitMs);
+      } catch {
+        /* leader 异常退出由 finally release 处理；follower 直接重读 cache */
+      }
+      let recheck = ctx.cache.get(cacheKey);
+      if (!recheck && ctx.cache.getAsync) {
+        try {
+          recheck = await raceWithTimeout(ctx.cache.getAsync(cacheKey), ctx.l2ReadTimeoutMs);
+        } catch {
+          /* L2 读失败按 miss 处理 */
+        }
+      }
+      const nowAfter = Date.now();
+      if (recheck && nowAfter < recheck.expiresAt) {
+        replayEntry(res, recheck, cacheKey, 'HIT');
+        return;
+      }
+      if (recheck && nowAfter < recheck.hardExpiresAt) {
+        replayEntry(res, recheck, cacheKey, 'STALE');
+        return;
+      }
+      // 等不到 / 还是没有：fail-open，自己走 MISS
+    }
+    // 注册自己为 leader
+    let resolveFn: () => void = () => {};
+    const promise = new Promise<void>(resolve => {
+      resolveFn = resolve;
+    });
+    ctx.inflightRegens.set(cacheKey, { promise, resolve: resolveFn });
   }
 
   runMissPath(req, res, next, ctx, resolved, cacheKey, null);
@@ -519,8 +664,34 @@ function runMissPath(
   const ttl = applyModeTtlMultiplier(resolved.mode, resolved.ttlSeconds);
   const swr = resolved.swrSeconds;
 
+  // Single-flight 释放：无论入缓存成功/失败/响应中断，本次 leader 渲染结束后
+  // 必须释放 inflight 锁，否则 follower 永远等不到 promise resolve。
+  // 用 res.once('close') 兜底（client 中断 / OOM 等异常退出场景）。
+  //
+  // 关键：仅当本次是 normal MISS leader（bgRevalidateKey === null）时才释放——
+  // bg 重验证路径不持有 inflight，若误释放会清掉一个并发 MISS leader 注册的 slot，
+  // 导致 follower 提前唤醒读到过时缓存。
+  const ownsInflight = bgRevalidateKey === null && ctx.inflightRegens.has(cacheKey);
+  if (ownsInflight) {
+    // 用闭包绑定首次注册的 slot 引用，避免后续错释放
+    const slot = ctx.inflightRegens.get(cacheKey)!;
+    let released = false;
+    const releaseSingleflight = (): void => {
+      if (released) return;
+      released = true;
+      // 仅在 map 里仍是同一 slot 时才删除（防御并发清理 / handler.clear）
+      if (ctx.inflightRegens.get(cacheKey) === slot) {
+        ctx.inflightRegens.delete(cacheKey);
+      }
+      slot.resolve();
+    };
+    res.once('close', releaseSingleflight);
+    res.once('finish', releaseSingleflight);
+  }
+
   runWithTagStore(() => {
-    captureAndStore(res, captured => {
+    captureAndStore(res, ctx.maxCachedBodyBytes, cacheKey, captured => {
+      if (captured.overflow) return;
       if (captured.statusCode !== 200) return;
       const ct = String(captured.headers['content-type'] || '');
       if (!ct.includes('text/html') && !ct.includes('text/x-component')) return;
@@ -653,6 +824,83 @@ function triggerBackgroundRevalidation(
 }
 
 /**
+ * 异步预热相关路径 —— HIT 命中时调用。
+ * 通过用户提供的 prefetchOnHit 回调拿到目标路径数组，对每个目标发起内部 HTTP 请求
+ * （带 PREFETCH_HEADER sentinel），让 ISR 中间件按 MISS 路径自然填缓存。
+ *
+ * 防自激：sentinel header 在 HIT 时检测，不再触发二级预热
+ * 防风暴：同目标在 prefetchCooldownMs 窗口内只触发一次
+ * 防回压：每个目标用独立 setImmediate 调度，不阻塞调用者
+ */
+function triggerPrefetch(
+  req: IncomingMessage,
+  sourcePath: string,
+  sourceCacheKey: string,
+  ctx: HandleContext
+): void {
+  if (!ctx.prefetchOnHit) return;
+  const host = req.headers.host || 'localhost';
+  const [hostname, portStr] = host.split(':');
+  const port = portStr
+    ? Number(portStr)
+    : (req.socket && (req.socket as unknown as { localPort?: number }).localPort) || 80;
+
+  setImmediate(async () => {
+    let targets: string[] = [];
+    try {
+      const result = await ctx.prefetchOnHit!({ path: sourcePath, cacheKey: sourceCacheKey });
+      if (Array.isArray(result)) targets = result;
+    } catch (err) {
+      logger.warn(`ISR prefetch hook 执行失败 from=${sourcePath}`, err);
+      return;
+    }
+
+    const now = Date.now();
+    for (const target of targets) {
+      if (typeof target !== 'string' || !target.startsWith('/')) continue;
+      const lastFire = ctx.prefetchCooldown.get(target);
+      if (lastFire && now - lastFire < ctx.prefetchCooldownMs) continue;
+      ctx.prefetchCooldown.set(target, now);
+
+      try {
+        const prefetchReq = http.request(
+          {
+            hostname: hostname || 'localhost',
+            port,
+            path: target,
+            method: 'GET',
+            headers: {
+              [PREFETCH_HEADER]: '1',
+              accept: 'text/html',
+            },
+            timeout: 15_000,
+          },
+          prefetchRes => {
+            // 必须 drain 以让 socket 进入 keep-alive 池
+            prefetchRes.on('data', chunk => void chunk);
+            prefetchRes.on('end', () => {
+              logger.debug(
+                `🔥 ISR prefetch ${target} (status=${prefetchRes.statusCode}, from=${sourcePath})`
+              );
+            });
+            prefetchRes.on('error', () => {
+              /* 不要阻断主响应，吞掉 */
+            });
+          }
+        );
+        prefetchReq.on('error', err => {
+          logger.warn(`ISR prefetch ${target} 发起失败: ${(err as Error).message}`);
+        });
+        prefetchReq.on('timeout', () => prefetchReq.destroy());
+        prefetchReq.end();
+      } catch (err) {
+        logger.warn(`ISR prefetch ${target} 调度异常`, err);
+      }
+    }
+  });
+}
+
+/**
  * 重放已缓存条目到响应
  */
 function replayEntry(
@@ -688,24 +936,54 @@ interface Captured {
   body: Buffer;
   statusCode: number;
   headers: Record<string, string | number | string[]>;
+  /** 累计字节超过 maxBytes 时为 true —— 调用方应跳过入缓存。已写到 client 的字节不受影响。*/
+  overflow: boolean;
 }
 
-function captureAndStore(res: ServerResponse, onFinish: (captured: Captured) => void): void {
-  const chunks: Buffer[] = [];
+/**
+ * 监听 res.write/end 累积响应字节，结束时通过 onFinish 回调出 body + 头给入缓存逻辑。
+ *
+ * 内存保护：累计 size 超过 `maxBytes` 立刻**丢弃 chunks 数组并标记 overflow**，
+ * 此后写入的字节仍正常推送到 client（不影响响应），但不再驻留。这样：
+ *   - 慢 client + 巨型响应不会让 Node 堆持续膨胀
+ *   - 并发 MISS 多份巨响应不会叠加 OOM
+ *
+ * `maxBytes <= 0` 时禁用上限（保留旧行为）。
+ */
+function captureAndStore(
+  res: ServerResponse,
+  maxBytes: number,
+  cacheKey: string,
+  onFinish: (captured: Captured) => void
+): void {
+  let chunks: Buffer[] | null = [];
+  let totalBytes = 0;
+  let overflow = false;
   const originalWrite = res.write.bind(res);
   const originalEnd = res.end.bind(res);
 
-  res.write = function patchedWrite(chunk: unknown, ...args: unknown[]): boolean {
-    if (chunk) {
-      chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk as string | Uint8Array));
+  const ingest = (chunk: unknown): void => {
+    if (!chunk || overflow) return;
+    const buf = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk as string | Uint8Array);
+    totalBytes += buf.length;
+    if (maxBytes > 0 && totalBytes > maxBytes) {
+      overflow = true;
+      chunks = null; // 释放已累积的字节给 GC
+      logger.info(
+        `⏭️  ISR cache skip ${cacheKey} —— 响应大小 ${totalBytes}B 超过 maxCachedBodyBytes=${maxBytes}B（不入缓存，但响应正常发往 client）`
+      );
+      return;
     }
+    chunks!.push(buf);
+  };
+
+  res.write = function patchedWrite(chunk: unknown, ...args: unknown[]): boolean {
+    ingest(chunk);
     return (originalWrite as (...a: unknown[]) => boolean)(chunk, ...args);
   } as typeof res.write;
 
   res.end = function patchedEnd(chunk?: unknown, ...args: unknown[]): ServerResponse {
-    if (chunk) {
-      chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk as string | Uint8Array));
-    }
+    ingest(chunk);
     try {
       // 由于 cache 中间件在 compression 之后挂载，res.write 拦截到的 chunk 是 *压缩前*
       // 的原始字节，但 res.getHeaders() 此时已经包含了 compression 添加的 content-encoding /
@@ -720,9 +998,14 @@ function captureAndStore(res: ServerResponse, onFinish: (captured: Captured) => 
       delete headers['Content-Length'];
 
       onFinish({
-        body: chunks.length === 1 ? chunks[0] : Buffer.concat(chunks),
+        body: overflow
+          ? Buffer.alloc(0)
+          : chunks!.length === 1
+            ? chunks![0]
+            : Buffer.concat(chunks!),
         statusCode: res.statusCode,
         headers,
+        overflow,
       });
     } catch (err) {
       logger.warn('ISR cache 存储回调异常:', err);
@@ -819,7 +1102,7 @@ function buildCacheKey(
 ): string {
   const [pathname, rawQuery] = splitUrl(url);
   const normalized = normalizeQuery(rawQuery);
-  let key = `${method}:${pathname}`;
+  let key = `${ctx.cacheKeyPrefix}${method}:${pathname}`;
   if (normalized) key += `?${normalized}`;
   if (ctx.variantIsolation) {
     const digest = extractVariantDigest(req, ctx.variantCookieName);

@@ -1,11 +1,23 @@
 {
   "name": "@novel-isr/engine",
-  "version": "2.1.0",
-  "description": "ISR/SSG/Fallback 编排层 —— 构建于 @vitejs/plugin-rsc 之上的通用渲染框架",
+  "version": "2.2.0",
+  "description": "ISR/SSG/Fallback 编排层（构建于 @vitejs/plugin-rsc 之上的通用渲染框架）—— 内部包，仅供 novel-platform 内部 git/registry 使用，不发 public.",
+  "private": false,
+  "license": "UNLICENSED",
+  "author": "novel-platform internal",
+  "repository": {
+    "type": "git",
+    "url": "git+ssh://git@<INTERNAL_GIT_HOST>/novel-platform/isr-engine.git"
+  },
+  "homepage": "https://<INTERNAL_GIT_HOST>/novel-platform/isr-engine",
+  "bugs": {
+    "url": "https://<INTERNAL_GIT_HOST>/novel-platform/isr-engine/-/issues"
+  },
   "publishConfig": {
     "access": "restricted",
     "registry": "${NPM_REGISTRY_URL}"
   },
+  "//-internal-only": "本包仅在内部私有 npm registry 发布。release.yml 在发布前会检查 NPM_REGISTRY_URL 是否指向内部 host；若为空或指向 registry.npmjs.org 则 fail-fast，杜绝误发 public。",
   "type": "module",
   "main": "./dist/novel-isr.cjs",
   "module": "./dist/novel-isr.js",
@@ -96,7 +108,8 @@
     "test:coverage": "vitest run --coverage",
     "bench": "node scripts/bench.mjs",
     "bench:compare": "node scripts/bench-compare.mjs",
-    "check": "pnpm run type-check && pnpm run lint && pnpm run format:check && pnpm run test"
+    "check": "pnpm run type-check && pnpm run lint && pnpm run format:check && pnpm run test",
+    "prepublishOnly": "node -e \"const u=process.env.NPM_REGISTRY_URL||'';if(!u){console.error('NPM_REGISTRY_URL not set; this package is internal-only.');process.exit(1)}if(/registry\\.npmjs\\.org/.test(u)){console.error('NPM_REGISTRY_URL points to public npmjs; refusing to publish internal package.');process.exit(1)}\""
   },
   "engines": {
     "node": "22.21.1"

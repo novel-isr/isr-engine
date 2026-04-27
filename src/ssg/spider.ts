@@ -29,10 +29,26 @@
  */
 
 import fs from 'node:fs/promises';
+import os from 'node:os';
 import path from 'node:path';
 import { Logger } from '@/logger/Logger';
 
 const logger = Logger.getInstance();
+
+/**
+ * CPU-aware 并发默认值。
+ * RSC 渲染是 CPU-bound（runs SSR + Flight encode），开太满会让 GC 抖。
+ * 经验：cpus/2 vCPU 数是甜点，下限 2、上限 8（16 核以上再加并发不再线性提升）。
+ * 可被 SpiderOptions.concurrency / 环境变量 ISR_SSG_CONCURRENCY 显式覆盖。
+ */
+function defaultSpiderConcurrency(): number {
+  const fromEnv = Number(process.env.ISR_SSG_CONCURRENCY);
+  if (Number.isFinite(fromEnv) && fromEnv >= 1) {
+    return Math.floor(fromEnv);
+  }
+  const cpus = os.cpus()?.length ?? 4;
+  return Math.min(8, Math.max(2, Math.floor(cpus / 2)));
+}
 
 /** fetch handler 约定（与 @vitejs/plugin-rsc src/entry.server.tsx 默认导出一致） */
 export interface FetchHandler {
@@ -42,7 +58,11 @@ export interface FetchHandler {
 export interface SpiderOptions {
   /** 爬取基础 URL（构造 Request 用，与实际 serve 域名无关） */
   baseUrl?: string;
-  /** 并发度，默认 3 */
+  /**
+   * 并发度。默认 CPU-aware：`min(8, max(2, cpus/2))`。
+   * 也可用环境变量 `ISR_SSG_CONCURRENCY` 覆盖（在 CI 里很方便）。
+   * 显式传入则忽略 env。
+   */
   concurrency?: number;
   /**
    * 是否允许单页错误时继续（默认 true）。false → 遇到第一个失败就抛错。
@@ -223,7 +243,7 @@ export async function spiderSsgRoutes(params: {
     outDir,
     options: {
       baseUrl = 'http://localhost',
-      concurrency = 3,
+      concurrency = defaultSpiderConcurrency(),
       continueOnError = true,
       requestTimeoutMs = 30_000,
       maxRetries = 3,

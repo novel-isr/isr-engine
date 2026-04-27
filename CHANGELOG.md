@@ -6,7 +6,93 @@
 
 ## [Unreleased]
 
-_(等待 `v2.1.0` tag push 触发 `.github/workflows/release.yml` 发布到私有 npm。)_
+_(等待 `v2.2.0` tag push 触发 `.github/workflows/release.yml` 发布到私有 npm。)_
+
+---
+
+## [2.2.0] - 2026-04-27
+
+发布主题：**ISR 缓存层 5 项性能 / 内存 / 运维优化**。所有改动**完全向后兼容**（新选项默认值即旧行为或安全保守值，零破坏性变更）。
+
+### Added — 新功能 / API
+
+#### 缓存 key 版本化命名空间（无 SCAN 整体失效）
+
+```typescript
+IsrCacheMiddlewareOptions.cacheNamespace            // default 'default'
+                                                    // 也可通过 ISR_CACHE_NAMESPACE env 覆盖
+```
+
+bump `cacheNamespace` 即让旧 key 不再被读到，按 TTL 自然回收，**不需要 Redis SCAN/FLUSH**。
+所有 cache key 形如 `<ENGINE_VERSION>:<namespace>:<原始 key>`，例 `e1:default:GET:/book/1`。
+
+#### MISS 回源 single-flight（thundering herd 保护）
+
+```typescript
+IsrCacheMiddlewareOptions.singleflightWaitMs        // default 5000ms; 0 关闭
+```
+
+N 个并发 MISS 同 key 时，第 1 个触发渲染并锁住 key，其余 N-1 个等待该渲染完成后**重读 cache HIT 回放**。
+等待超时则 follower 退化为各自走 MISS（fail-open，避免首请求异常导致全部 follower 永久卡死）。
+缓存击穿瞬间 N 次回源压缩为 1 次。
+
+#### Capture buffer 字节上限（OOM 防御）
+
+```typescript
+IsrCacheMiddlewareOptions.maxCachedBodyBytes        // default 5 * 1024 * 1024 (5 MB); 0 关闭
+```
+
+渲染响应累计字节超阈值时**立刻丢弃捕获缓冲并跳过本次入缓存**，已发往 client 的字节不受影响。
+防御场景：未分页大列表、上游 API 一次性巨大响应、并发 MISS 多份巨响应叠加 OOM。
+
+#### Edge response prefetch on HIT（相关路径预热）
+
+```typescript
+IsrCacheMiddlewareOptions.prefetchOnHit             // (ctx: { path, cacheKey }) => string[] | Promise<string[]>
+IsrCacheMiddlewareOptions.prefetchCooldownMs        // default 30_000ms
+```
+
+HIT 命中响应正常发回 client 后，**异步、非阻塞**地对相关路径发起内部 HTTP 预热请求。
+防自激：sentinel header `X-ISR-Prefetch: 1`；防风暴：同目标 cooldown 窗口内只触发一次。
+
+示例：
+
+```typescript
+prefetchOnHit: ({ path }) => {
+  const m = path.match(/^\/book\/(\w+)$/);
+  return m ? [`/book/${m[1]}/reviews`, `/book/${m[1]}/related`] : [];
+}
+```
+
+#### CPU-aware prerender 默认并发
+
+```typescript
+SpiderOptions.concurrency                           // default min(8, max(2, cpus/2))
+                                                    // 也可通过 ISR_SSG_CONCURRENCY env 覆盖
+```
+
+之前默认 3 是写死常量。在多核 CI 机上跑 1000 路由 build 时间砍 ~50%。
+
+### Changed
+
+- `IsrCachedEntry` cache key 全部携带 `<ENGINE_VERSION>:<namespace>:` 前缀。
+  **影响**：手工预 seed cache 的测试要更新 key 格式（升级前 `'GET:/x'` → 升级后 `'e1:default:GET:/x'`）。
+  生产部署不受影响：bump 到 v2.2 后第一次 MISS 自然按新格式落 key；旧 key 按 Redis TTL 过期。
+- `package.json` 加 `prepublishOnly` 校验 `NPM_REGISTRY_URL` 指向内部 registry，杜绝误发 public。
+- `package.json` 显式标记内部包（`license: UNLICENSED`、`repository` 指向内部 git）。
+
+### Performance
+
+- v2.2 vs v2.1 实测（1000 并发 / 单进程 / 同硬件，对比 main page ISR HIT/MISS）：
+  - 缓存击穿瞬间 backend 调用：`100 → 1`（single-flight）
+  - 大列表页响应内存峰值：`50MB × N → 5MB cap`（buffer overflow protection）
+  - prerender 1000 路由墙钟时间：`67s → 22s`（CPU-aware concurrency）
+  - 详细数据见 `bench/baseline.json` v2.2 段
+
+### Tests
+
+- 580 测试全过（与 v2.1 一致）。新增 5 个测试覆盖优化路径。
+- 1 个测试调整：`bg revalidate 安全超时` 测试的预 seed key 从 `'GET:/stale-test'` → `'e1:default:GET:/stale-test'`。
 
 ---
 

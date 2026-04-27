@@ -4,7 +4,9 @@
 
 [![Vite 8](https://img.shields.io/badge/Vite-8-646CFF.svg)](https://vitejs.dev/) [![React 19](https://img.shields.io/badge/React-19-61DAFB.svg)](https://react.dev/) [![Node 22.21.1](https://img.shields.io/badge/Node-22.21.1-339933.svg)](https://nodejs.org/) [![Tests 580](https://img.shields.io/badge/Tests-580%20passing-brightgreen.svg)](./CHANGELOG.md)
 
-> **v2.1.0 unreleased** —— Security & Reliability 硬化批次（10 项高/中危修复 + 测试 +358）+ self-contained bench fixture + private npm release 流水线。详见 [CHANGELOG.md](./CHANGELOG.md)。
+> **v2.2.0 unreleased** —— ISR 缓存层 5 项性能 / 内存 / 运维优化：cache key 版本化命名空间、MISS 回源 single-flight、capture buffer OOM 防御、HIT 边缘预热、CPU-aware prerender 并发。完全向后兼容，零破坏性。详见 [CHANGELOG.md](./CHANGELOG.md)。
+
+> **本包是内部包**。仅在 novel-platform 内部私有 npm registry 发布，不发 public。`prepublishOnly` 在发布前会校验 `NPM_REGISTRY_URL` 指向内部 host，避免误发。
 
 ## 30 秒看明白
 
@@ -154,7 +156,7 @@ FallbackChain（自动降级）：
 
 ## 生产可用性诚实评估
 
-**v2.1.0 后从 Beta-ready 进入 production-eligible**（中等规模业务）。
+**v2.2.0 后 production-eligible**（中等规模业务）。v2.1 完成 Security & Reliability 硬化，v2.2 在 ISR 缓存层加上 single-flight / OOM 防御 / 命名空间失效 / 边缘预热 / CPU-aware 并发 5 项工业级优化。
 
 ✅ **稳的部分**：
 - Flight 协议委托给官方 `@vitejs/plugin-rsc@^0.5.24`，不自维护
@@ -171,7 +173,7 @@ FallbackChain（自动降级）：
 - bench baseline 在自家 CI 硬件上首次跑后提交，跨机器对比无意义（绝对值仅参考）
 
 详细 gap 列表与改造建议：[docs/production-readiness.md](./docs/production-readiness.md)。
-完整 v2.1 改动列表：[CHANGELOG.md](./CHANGELOG.md)。
+完整改动列表：[CHANGELOG.md](./CHANGELOG.md)。
 
 ## 开发
 
