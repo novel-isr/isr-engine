@@ -24,10 +24,7 @@ export default defineConfig({
         // / server action registry），不含 react-dom/server 等 Node-only 模块
         'rsc/index': resolve(__dirname, 'src/rsc/index.ts'),
         // 可观测性 SDK 预制 adapter 子路径 —— 树摇友好（用户只引 Sentry 时不会拉 Datadog）
-        'adapters/observability/index': resolve(
-          __dirname,
-          'src/adapters/observability/index.ts'
-        ),
+        'adapters/observability/index': resolve(__dirname, 'src/adapters/observability/index.ts'),
         // Edge runtime adapter（CF Workers / Vercel Edge / Deno / Bun）
         'adapters/runtime/index': resolve(__dirname, 'src/adapters/runtime/index.ts'),
         // <Image> 组件 —— 用户在 React 树里引用

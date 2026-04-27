@@ -23,9 +23,5 @@
     }
   },
   "include": ["src/**/*.ts", "src/**/*.tsx", "ssr.config.example.ts"],
-  "exclude": [
-    "node_modules",
-    "dist",
-    "src/defaults/**"
-  ]
+  "exclude": ["node_modules", "dist", "src/defaults/**"]
 }

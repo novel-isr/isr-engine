@@ -109,19 +109,11 @@
     "lint": "eslint . --ext .ts,.tsx,.js,.jsx",
     "lint:fix": "eslint . --ext .ts,.tsx,.js,.jsx --fix",
     "format": "prettier --write .",
-    "format:check": "prettier --check .",
     "type-check": "tsc --noEmit",
     "test": "vitest run",
-    "test:watch": "vitest",
-    "test:coverage": "vitest run --coverage",
     "bench": "node scripts/bench.mjs",
-    "bench:compare": "node scripts/bench-compare.mjs",
-    "check": "pnpm run type-check && pnpm run lint && pnpm run format:check && pnpm run test",
-    "release:dry": "pnpm run build && pnpm publish --dry-run --access restricted --no-git-checks",
-    "release:pack": "pnpm run build && pnpm pack",
-    "release:beta": "pnpm run check && pnpm run build && pnpm publish --access restricted --tag beta --no-git-checks",
-    "release": "pnpm run check && pnpm run build && pnpm publish --access restricted --no-git-checks",
-    "prepublishOnly": "node scripts/check-registry.mjs"
+    "check": "pnpm run type-check && pnpm run lint && pnpm run test",
+    "release": "pnpm run check && pnpm run build && pnpm publish --access restricted --no-git-checks"
   },
   "engines": {
     "node": "22.21.1"

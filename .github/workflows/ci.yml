@@ -7,7 +7,7 @@ name: CI
 on:
   push:
     branches: ['**']
-    tags-ignore: ['**']  # tag push 走 release.yml，不重复跑
+    tags-ignore: ['**'] # tag push 走 release.yml，不重复跑
   pull_request:
     branches: [main, develop]
 
@@ -39,11 +39,8 @@ jobs:
       - name: Type check
         run: pnpm run type-check
 
-      - name: Lint
+      - name: Lint (includes Prettier check via eslint-plugin-prettier)
         run: pnpm run lint
-
-      - name: Format check
-        run: pnpm run format:check
 
       - name: Build
         run: pnpm run build

@@ -294,8 +294,7 @@ export function createIsrCacheHandler(
   const bgTimeoutMs = options.backgroundRevalidateTimeoutMs ?? 30_000;
   const variantIsolation = options.variantIsolation === true;
   const variantCookieName = options.variantCookieName ?? 'ab';
-  const cacheNamespace =
-    options.cacheNamespace ?? process.env.ISR_CACHE_NAMESPACE ?? 'default';
+  const cacheNamespace = options.cacheNamespace ?? process.env.ISR_CACHE_NAMESPACE ?? 'default';
   const cacheKeyPrefix = `${ENGINE_CACHE_KEY_VERSION}:${cacheNamespace}:`;
 
   /** 后台重验证正在进行的 key 集合 —— 防止并发 STALE 请求重复触发多次 bg 拉取 */

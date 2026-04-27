@@ -2,7 +2,7 @@ name: Release (private npm publish)
 
 # 触发：push 到形如 v1.2.3 的 tag
 # 完整流程（任一步失败 → 整个 release 中止，npm 不会被污染）：
-#   1. lint + typecheck + format:check
+#   1. lint + typecheck (lint 已通过 eslint-plugin-prettier 校验格式)
 #   2. tests
 #   3. build (产物 + types)
 #   4. bench-fixture build + start + bench + 对比 bench/baseline.json
@@ -24,7 +24,7 @@ on:
 
 concurrency:
   group: release-${{ github.ref }}
-  cancel-in-progress: false  # release 不允许并发取消
+  cancel-in-progress: false # release 不允许并发取消
 
 jobs:
   release:
@@ -70,11 +70,8 @@ jobs:
       - name: Type check
         run: pnpm run type-check
 
-      - name: Lint
+      - name: Lint (includes Prettier check via eslint-plugin-prettier)
         run: pnpm run lint
-
-      - name: Format check
-        run: pnpm run format:check
 
       # ─── Gate 2: 测试 ─────────────────────────────────────────────
       - name: Run tests

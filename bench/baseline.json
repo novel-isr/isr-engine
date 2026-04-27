@@ -1,18 +1,9 @@
 {
   "meta": {
     "url": "http://localhost:3000",
-    "tiers": [
-      10,
-      100,
-      1000,
-      10000
-    ],
+    "tiers": [10, 100, 1000, 10000],
     "duration_s": 8,
-    "paths": [
-      "/",
-      "/about",
-      "/books/1"
-    ],
+    "paths": ["/", "/about", "/books/1"],
     "pipelining": 1,
     "warmup_s": 3,
     "cooldown_ms": 2000,
