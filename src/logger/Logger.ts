@@ -1,8 +1,42 @@
-import chalk from 'chalk';
 import ora, { Ora } from 'ora';
 import fs from 'fs';
 import path from 'path';
 import { getTraceId, getRequestId } from '../context/RequestContext';
+
+/**
+ * 极简 ANSI 颜色封装 —— 替代 chalk, 零依赖.
+ * 仅在 stdout 是 TTY 且不是 NO_COLOR / dumb terminal 时启用.
+ *
+ * 设计取舍:
+ *   - 不引 chalk (~20KB + 类型) 给一个 logger 上色, 太重
+ *   - 不做 256/truecolor / nesting / link 等 chalk 高级特性, 不需要
+ *   - TTY 检测对齐 chalk 默认行为, CI 环境与 file output 自动降级到 plain
+ */
+const supportsColor = (() => {
+  if (process.env.NO_COLOR) return false;
+  if (process.env.FORCE_COLOR) return true;
+  if (process.env.TERM === 'dumb') return false;
+  return Boolean(process.stdout?.isTTY);
+})();
+
+type Colorize = (s: string) => string;
+const wrap = (open: string, close = '\x1b[0m'): Colorize =>
+  supportsColor ? (s: string) => `${open}${s}${close}` : (s: string) => s;
+
+const c = {
+  gray: wrap('\x1b[90m'),
+  red: wrap('\x1b[31m'),
+  redBold: wrap('\x1b[1;31m'),
+  yellow: wrap('\x1b[33m'),
+  yellowBold: wrap('\x1b[1;33m'),
+  green: wrap('\x1b[32m'),
+  greenBold: wrap('\x1b[1;32m'),
+  blue: wrap('\x1b[34m'),
+  blueBold: wrap('\x1b[1;34m'),
+  magenta: wrap('\x1b[35m'),
+  cyan: wrap('\x1b[36m'),
+  white: wrap('\x1b[37m'),
+};
 
 export enum LogLevel {
   VERBOSE = 'verbose',
@@ -70,30 +104,30 @@ export class Logger {
     if (colorize) {
       const levelColor = this.getLevelColor(level);
       levelTag = levelColor(levelTag);
-      traceTag = chalk.cyan(traceTag);
-      requestTag = requestTag ? chalk.blue(requestTag) : '';
-      return `${chalk.gray(timestamp)} ${traceTag} ${requestTag} ${levelTag} ${message}`;
+      traceTag = c.cyan(traceTag);
+      requestTag = requestTag ? c.blue(requestTag) : '';
+      return `${c.gray(timestamp)} ${traceTag} ${requestTag} ${levelTag} ${message}`;
     }
 
     return `${timestamp} ${traceTag} ${requestTag} ${levelTag} ${message}`;
   }
 
-  private getLevelColor(level: LogLevel) {
+  private getLevelColor(level: LogLevel): Colorize {
     switch (level) {
       case LogLevel.ERROR:
-        return chalk.red.bold;
+        return c.redBold;
       case LogLevel.WARN:
-        return chalk.yellow.bold;
+        return c.yellowBold;
       case LogLevel.SUCCESS:
-        return chalk.green.bold;
+        return c.greenBold;
       case LogLevel.INFO:
-        return chalk.blue.bold;
+        return c.blueBold;
       case LogLevel.DEBUG:
-        return chalk.magenta;
+        return c.magenta;
       case LogLevel.VERBOSE:
-        return chalk.gray;
+        return c.gray;
       default:
-        return chalk.white;
+        return c.white;
     }
   }
 

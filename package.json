@@ -2,42 +2,20 @@
   "name": "@novel-isr/engine",
   "version": "2.2.0",
   "description": "ISR/SSG/Fallback rendering orchestration on Vite + React 19 RSC.",
-  "private": false,
   "license": "UNLICENSED",
-  "author": "internal",
-  "keywords": [
-    "isr",
-    "ssg",
-    "ssr",
-    "rsc",
-    "react-server-components",
-    "vite",
-    "framework",
-    "rendering"
-  ],
   "repository": {
     "type": "git",
     "url": "git+https://github.com/TaitaiWx/isr-engine.git"
   },
   "homepage": "https://github.com/TaitaiWx/isr-engine",
-  "bugs": {
-    "url": "https://github.com/TaitaiWx/isr-engine/issues"
-  },
+  "bugs": "https://github.com/TaitaiWx/isr-engine/issues",
   "publishConfig": {
     "access": "restricted"
   },
-  "//-internal-only": "Internal package: not for public npmjs. Set registry in your local .npmrc (gitignored) or via 'pnpm publish --registry=<INTERNAL_HOST>'. The prepublishOnly hook below validates that the resolved registry is non-empty and not registry.npmjs.org before each publish.",
   "type": "module",
   "main": "./dist/novel-isr.cjs",
   "module": "./dist/novel-isr.js",
   "types": "./dist/novel-isr.d.ts",
-  "typesVersions": {
-    "*": {
-      "virtual-modules": [
-        "./src/types/virtual-modules.d.ts"
-      ]
-    }
-  },
   "bin": {
     "novel-isr": "./dist/cli/cli.js"
   },
