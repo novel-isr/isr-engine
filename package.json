@@ -1,17 +1,27 @@
 {
   "name": "@novel-isr/engine",
   "version": "2.2.0",
-  "description": "ISR/SSG/Fallback 编排层（构建于 @vitejs/plugin-rsc 之上的通用渲染框架）—— 内部包，仅供 novel-platform 内部 git/registry 使用，不发 public.",
+  "description": "构建于 @vitejs/plugin-rsc 之上的通用 ISR/SSG/Fallback 渲染编排框架。设计为跨项目复用：任何 Vite + React 19 + RSC 站点都可以接，不绑定特定业务。仅在私有 git/registry 发布，不发 public.",
   "private": false,
   "license": "UNLICENSED",
-  "author": "novel-platform internal",
+  "author": "internal",
+  "keywords": [
+    "isr",
+    "ssg",
+    "ssr",
+    "rsc",
+    "react-server-components",
+    "vite",
+    "framework",
+    "rendering"
+  ],
   "repository": {
     "type": "git",
-    "url": "git+ssh://git@<INTERNAL_GIT_HOST>/novel-platform/isr-engine.git"
+    "url": "git+ssh://git@<INTERNAL_GIT_HOST>/<ORG>/isr-engine.git"
   },
-  "homepage": "https://<INTERNAL_GIT_HOST>/novel-platform/isr-engine",
+  "homepage": "https://<INTERNAL_GIT_HOST>/<ORG>/isr-engine",
   "bugs": {
-    "url": "https://<INTERNAL_GIT_HOST>/novel-platform/isr-engine/-/issues"
+    "url": "https://<INTERNAL_GIT_HOST>/<ORG>/isr-engine/-/issues"
   },
   "publishConfig": {
     "access": "restricted",
