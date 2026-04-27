@@ -89,9 +89,6 @@ export const FallbackChain: Record<RenderModeType, InternalStrategyType[]> = {
 // 配置接口定义
 // 主配置接口
 export interface ISRConfig {
-  /** 应用名称（用于 CSR 降级页面标题等，默认 'ISR App'） */
-  appName?: string;
-
   /** 全局默认渲染模式 */
   renderMode: RenderModeType;
 
@@ -232,71 +229,10 @@ export interface ISRConfig {
     };
   };
 
-  /** 服务端入口配置 */
-  entry?: {
-    /** 服务端入口文件路径 */
-    server?: string;
-    /** 客户端入口文件路径（相对于项目根目录） */
-    client?: string;
-  };
-
-  /** API 基址（Server Component / Action 从此处派生数据源 URL） */
-  apiUrl?: string;
-
-  /** 开发选项 */
-  dev?: {
-    verbose?: boolean;
-    hmr?: boolean;
-  };
-
-  /**
-   * 多租户配置 —— 预留接口（当前 engine 不消费，未来扩展时使用）
-   *
-   * 未来语义示例：
-   *   - `enabled: true` 时，缓存 key 自动叠加 tenantId 前缀
-   *   - `resolveTenant(req)` 由用户实现，决定本次请求归属哪个租户
-   *   - `revalidateTag` 默认按当前租户隔离，可通过 `{ scope: 'global' }` 跨租户
-   */
-  tenants?: {
-    /** 默认 false；true 时启用多租户缓存隔离 */
-    enabled?: boolean;
-    /** 解析当前请求的租户 ID（返回 null 表示走默认/匿名租户） */
-    resolveTenant?: (req: {
-      headers: Record<string, string | string[] | undefined>;
-      url: string;
-    }) => string | null | Promise<string | null>;
-    /** 已知租户白名单（用于 SSG spider 预生成时枚举） */
-    knownTenants?: string[];
-  };
-
-  /**
-   * 沙箱 / VM 配置 —— 预留接口（当前 engine 不消费，未来扩展时使用）
-   *
-   * 未来语义示例：
-   *   - `strategy: 'node-vm'` 用 `node:vm` Context 跑用户提交代码
-   *   - `strategy: 'isolate'` 用 isolated-vm 做 V8 isolate 级隔离
-   *   - `strategy: 'worker'` 用 Worker 线程隔离
-   *
-   * 适用场景：CMS 模板、用户插件市场、表达式引擎 —— 任何"不可信代码必须隔离执行"的需求。
-   * RSC 自身**不**需要 sandbox（项目代码全可信）。
-   */
-  sandbox?: {
-    enabled?: boolean;
-    strategy?: 'none' | 'node-vm' | 'isolate' | 'worker';
-    /** 单次执行内存上限（MB） */
-    memoryLimitMb?: number;
-    /** 单次执行 CPU 时间上限（ms） */
-    timeoutMs?: number;
-    /** 允许的全局变量白名单 */
-    allowedGlobals?: string[];
-  };
-
   /** ISR 相关配置 */
   isr?: {
     /** 默认 TTL（秒）—— 未在 routes 显式声明时使用 */
     revalidate?: number;
-    /** 是否启用后台重验证（SWR），默认 true */
-    backgroundRevalidation?: boolean;
   };
 
   /** SSG 预生成配置 */

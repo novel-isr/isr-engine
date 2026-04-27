@@ -1,26 +1,21 @@
 /**
- * ssr.config.ts —— isr-engine 完整配置参考
+ * ssr.config.ts —— isr-engine 配置参考
  *
- * 本文件覆盖 engine 当前所有公开字段, 用户拷过去后按需删/改即可.
- * 大多数字段都是可选, 没显式配置时 engine 用合理默认值.
+ * 本文件**只列 engine 真正消费**的字段。每个都验证过 src/ 里有对应的读取处，
+ * 不写 type 声明里有但 engine 不读的"许愿单字段"（appName / apiUrl / tenants /
+ * sandbox / dev / entry / isr.backgroundRevalidation 等）。
  *
  * 字段分组:
  *   1. 必填:        renderMode, cache
  *   2. 路由级覆盖:  routeOverrides
  *   3. ISR / SSG:   isr, ssg
  *   4. SEO:         seo
- *   5. Server:      server (端口 / 超时 / HTTP2/3 / 管理端点 / 压缩)
- *   6. 入口 / API:  entry, apiUrl
- *   7. Dev:         dev
- *   8. 预留扩展:    tenants, sandbox (engine 当前不消费)
+ *   5. Server:      server (端口 / 协议 / 超时 / HTTP2/3 / 管理端点 / 压缩)
  */
 import type { ISRConfig } from '@novel-isr/engine';
 
 export default {
   // ─── 1. 必填 ─────────────────────────────────────────────────────
-  /** 应用名（用于 csr-shell 降级页 <title> 等）*/
-  appName: 'Hello, isr-engine',
-
   /**
    * 全局默认渲染模式
    *   'isr' ── 运行时缓存 + TTL + SWR（高读路径首选）
@@ -56,8 +51,6 @@ export default {
   isr: {
     /** 默认 TTL（秒）。routeOverrides 里如果路由对象没设 ttl，用这个 */
     revalidate: 60,
-    /** 后台 SWR 重渲。默认 true。关掉 = TTL 一过就阻塞回源 */
-    backgroundRevalidation: true,
   },
 
   ssg: {
@@ -158,42 +151,4 @@ export default {
 
     // ssl: { key: '...', cert: '...' },              // protocol 是 'https' 时填
   },
-
-  // ─── 6. 入口 / API ───────────────────────────────────────────────
-  /** 入口文件路径覆盖（可选）。默认 engine 找 src/entry.server.tsx + src/entry.tsx */
-  // entry: {
-  //   server: 'src/entry.server.tsx',
-  //   client: 'src/entry.tsx',
-  // },
-
-  /** Server Component / Action 从此 URL 派生数据源（可选） */
-  // apiUrl: process.env.API_BASE_URL ?? '',
-
-  // ─── 7. Dev ─────────────────────────────────────────────────────
-  dev: {
-    verbose: false,
-    hmr: true, // 默认 true。关掉只在调 RSC bundling 时才需要
-  },
-
-  // ─── 8. 预留扩展（engine 当前不消费）─────────────────────────────
-  /**
-   * 多租户。启用后 engine 给缓存 key 自动叠加 tenantId 前缀
-   */
-  // tenants: {
-  //   enabled: false,
-  //   resolveTenant: req => req.headers['x-tenant-id'] as string | null,
-  //   knownTenants: ['t1', 't2'],
-  // },
-
-  /**
-   * 沙箱。给"必须隔离执行不可信代码"的场景：CMS 模板 / 用户插件 / 表达式引擎
-   * RSC 自身不需要（项目代码全可信），这是给上层业务用的
-   */
-  // sandbox: {
-  //   enabled: false,
-  //   strategy: 'node-vm',          // 'none' | 'node-vm' | 'isolate' | 'worker'
-  //   memoryLimitMb: 64,
-  //   timeoutMs: 1000,
-  //   allowedGlobals: ['Date', 'Math', 'JSON'],
-  // },
 } satisfies ISRConfig;

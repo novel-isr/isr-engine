@@ -85,14 +85,14 @@ describe('normalizeEngineConfig —— 不破坏其他字段', () => {
       cache: { strategy: 'redis', ttl: 7200 },
       server: { port: 8080, host: '0.0.0.0' },
       seo: { enabled: true, baseUrl: 'https://example.com' },
-      isr: { revalidate: 600, backgroundRevalidation: true },
+      isr: { revalidate: 600 },
       ssg: { routes: ['/'], concurrent: 5 },
     };
     const r = normalizeEngineConfig(config);
     expect(r.cache).toEqual({ strategy: 'redis', ttl: 7200 });
     expect(r.server).toEqual({ port: 8080, host: '0.0.0.0' });
     expect(r.seo).toEqual({ enabled: true, baseUrl: 'https://example.com' });
-    expect(r.isr).toEqual({ revalidate: 600, backgroundRevalidation: true });
+    expect(r.isr).toEqual({ revalidate: 600 });
     expect(r.ssg).toEqual({ routes: ['/'], concurrent: 5 });
   });
 
