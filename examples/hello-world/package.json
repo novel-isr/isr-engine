@@ -2,12 +2,13 @@
   "name": "isr-engine-hello-world",
   "private": true,
   "version": "0.0.0",
-  "description": "最小化的 isr-engine 消费者示例 —— 5 文件跑起 ISR + SSG + Server Component.",
+  "description": "最小化的 isr-engine 消费者示例 —— 演示 ISR/SSG/SSR 三种用户级渲染模式 + csr-shell fallback.",
   "type": "module",
   "scripts": {
     "dev": "novel-isr dev",
     "build": "vite build",
-    "start": "novel-isr start"
+    "start": "novel-isr start",
+    "fallback": "novel-isr fallback"
   },
   "dependencies": {
     "@novel-isr/engine": "file:../..",

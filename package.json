@@ -70,8 +70,7 @@
     "src/types",
     "src/middlewares",
     "src/context",
-    "README.md",
-    "ssr.config.example.ts"
+    "README.md"
   ],
   "scripts": {
     "build": "vite build && chmod +x dist/cli/cli.js dist/cli/cli.cjs",
