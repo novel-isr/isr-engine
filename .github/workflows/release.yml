@@ -1,4 +1,4 @@
-name: Release (private npm publish)
+name: Release (GitHub Packages)
 
 # 触发：push 到形如 v1.2.3 的 tag
 # 完整流程（任一步失败 → 整个 release 中止，npm 不会被污染）：
@@ -8,14 +8,11 @@ name: Release (private npm publish)
 #   4. bench-fixture build + start + bench + 对比 bench/baseline.json
 #      退化 > 20% P95 / -15% QPS → fail（保证整体不会劣化）
 #   5. 校验 package.json version 等于 tag
-#   6. publish 到私有 npm registry（NPM_REGISTRY_URL + NPM_TOKEN secrets）
+#   6. publish 到 GitHub Packages（npm.pkg.github.com）
 #
-# 私有 npm 配置（Repo settings → Secrets and variables → Actions）：
-#   - NPM_REGISTRY_URL    示例 https://npm.your-company.com/
-#   - NPM_TOKEN           对应 registry 的 publish token（read-write）
-#
-# 不发 public：package.json 必须保持 `"private": false` 时，registry 是私有的；
-#               或者保持 `"private": true` 也行（pnpm publish 会拒绝，工作流 fail-loud）
+# Auth：用 GitHub Actions 自动注入的 GITHUB_TOKEN（无需手动配 secret）。
+#       repo settings → Actions → Workflow permissions 需开 "Read and write permissions"，
+#       否则 GITHUB_TOKEN 没有 write:packages 权限。
 
 on:
   push:
@@ -25,6 +22,10 @@ on:
 concurrency:
   group: release-${{ github.ref }}
   cancel-in-progress: false # release 不允许并发取消
+
+permissions:
+  contents: read
+  packages: write # 发到 GitHub Packages 必需
 
 jobs:
   release:
@@ -60,8 +61,10 @@ jobs:
         with:
           node-version-file: '.nvmrc'
           cache: 'pnpm'
-          # 配置私有 registry —— pnpm publish 会读 .npmrc + NODE_AUTH_TOKEN
-          registry-url: ${{ secrets.NPM_REGISTRY_URL }}
+          # 配置 GitHub Packages 作为 @novel-isr scope 的 registry
+          # actions/setup-node 会写一份 ~/.npmrc 把 NODE_AUTH_TOKEN 接到这个 registry
+          registry-url: 'https://npm.pkg.github.com'
+          scope: '@novel-isr'
 
       - name: Install engine deps
         run: pnpm install --frozen-lockfile
@@ -149,14 +152,14 @@ jobs:
             kill $(cat /tmp/fixture.pid) || true
           fi
 
-      # ─── Publish 到私有 npm registry ────────────────────────────────
-      - name: Publish (private registry)
+      # ─── Publish 到 GitHub Packages ────────────────────────────────
+      - name: Publish to GitHub Packages
         env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+          NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          # pnpm publish 会读 .npmrc 的 registry + NODE_AUTH_TOKEN
+          # pnpm publish 读 ~/.npmrc 的 registry（actions/setup-node 已写入）
           # --no-git-checks 因为我们已经在 tag 上，不需要再校验 working tree
-          # --access restricted 强制私有（即使 registry 是公网也不会误发）
+          # --access restricted 强制私有（GitHub Packages 默认私有，双保险）
           pnpm publish --no-git-checks --access restricted --tag latest
 
       - name: Upload release artifacts

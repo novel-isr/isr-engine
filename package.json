@@ -10,7 +10,8 @@
   "homepage": "https://github.com/TaitaiWx/isr-engine",
   "bugs": "https://github.com/TaitaiWx/isr-engine/issues",
   "publishConfig": {
-    "access": "restricted"
+    "access": "restricted",
+    "registry": "https://npm.pkg.github.com"
   },
   "type": "module",
   "main": "./dist/novel-isr.cjs",
