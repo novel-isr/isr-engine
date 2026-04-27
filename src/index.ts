@@ -93,18 +93,6 @@ export type { IntlPayload } from './engine/i18n/types';
 export { createCachedFetcher } from './engine/data/createCachedFetcher';
 export type { CachedFetcher, CachedFetcherOptions } from './engine/data/createCachedFetcher';
 
-// ========== SOC 2 合规辅助 ==========
-export {
-  createAuditLogger,
-  redactString,
-  redactObject,
-  addSensitiveKeys,
-  type AuditEvent,
-  type AuditLogger,
-  type AuditLoggerOptions,
-  type AuditActionOutcome,
-} from './security';
-
 // ========== 高阶 FaaS hooks 工厂（声明式配置 → 完整 hooks）==========
 export { defineSiteHooks } from './defaults/runtime/defineSiteHooks';
 export type {
@@ -180,16 +168,6 @@ export {
   type IsrInvalidationTarget,
 } from './plugin';
 
-// ========== 用户中间件 ==========
-export {
-  MiddlewareResponse,
-  UserMiddlewareManager,
-  getUserMiddlewareManager,
-  createUserMiddleware,
-  matchPath,
-  shouldProcessPath,
-} from './middlewares/UserMiddleware';
-
 // ========== 限流（per-IP / per-key token bucket）==========
 export {
   createRateLimiter,
@@ -206,9 +184,3 @@ export {
   type ABVariantOptions,
   type ExperimentConfig,
 } from './middlewares/ABVariantMiddleware';
-export type {
-  MiddlewareRequest,
-  MiddlewareConfig,
-  MiddlewareFunction,
-  CookieOptions,
-} from './middlewares/UserMiddleware';

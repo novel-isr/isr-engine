@@ -123,14 +123,3 @@ dev 模式默认开启；prod 默认关闭。开启时建议配 `server.admin.au
 ```
 
 鉴权支持 `Authorization: Bearer <token>` 或自定义 header（默认 `x-isr-admin-token`）。
-
-## 审计日志（PII redacted NDJSON）
-
-```ts
-import { createAuditLogger } from '@novel-isr/engine';
-
-const audit = createAuditLogger({ file: '/var/log/audit.ndjson' });
-audit.log({ action: 'login', userId, email });   // email 自动 redact
-```
-
-PII 模式覆盖 email / phone / JWT / AWS key / GitHub token 等。详细规则看 `src/security/redactPii.ts`。

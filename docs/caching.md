@@ -184,11 +184,6 @@ export async function publishBook() {
 
 参考实现：[`novel-rating-website/src/actions/books.ts`](../../novel-rating-website/src/actions/books.ts)。
 
-### 路线图
-
-更强保障（retry + dead letter queue + Redis Pub/Sub 断线补偿）见
-[`production-readiness.md` P1 路线图](./production-readiness.md)。
-
 ## 缓存可观测性
 
 | 端点 | 内容 |

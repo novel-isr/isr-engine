@@ -115,7 +115,6 @@ baseline：[`bench/baseline.json`](./bench/baseline.json) —— 由 [`scripts/b
 | 生产部署（环境变量 / Docker / Edge runtime / Middleware） | [deployment.md](./docs/deployment.md) |
 | 验证 RSC 是否真的隐藏 server 代码 | [rsc-testing.md](./docs/rsc-testing.md) |
 | 排错与常见坑 | [troubleshooting.md](./docs/troubleshooting.md) |
-| SOC2 readiness | [security/SOC2-readiness.md](./docs/security/SOC2-readiness.md) |
 | SSR/SPA 失效降级链路 | [deployment/ssr-spa-failover.md](./docs/deployment/ssr-spa-failover.md) |
 
 ## 渲染模式（一句话）
@@ -172,7 +171,6 @@ FallbackChain（自动降级）：
 - 私有 npm 发布需配 `NPM_REGISTRY_URL` + `NPM_TOKEN` GitHub Secrets；不发 public registry
 - bench baseline 在自家 CI 硬件上首次跑后提交，跨机器对比无意义（绝对值仅参考）
 
-详细 gap 列表与改造建议：[docs/production-readiness.md](./docs/production-readiness.md)。
 完整改动列表：[CHANGELOG.md](./CHANGELOG.md)。
 
 ## 开发

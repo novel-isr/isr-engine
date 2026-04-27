@@ -91,21 +91,6 @@ export const config = { runtime: 'edge' };
 export default toVercelEdge(handler);
 ```
 
-### Deno Deploy
-
-```ts
-import handler from './src/entry.server.ts';
-import { toDenoHandler } from '@novel-isr/engine/adapters/runtime';
-Deno.serve({ port: 8000 }, toDenoHandler(handler));
-```
-
-### Bun
-
-```ts
-import { toBunServer } from '@novel-isr/engine/adapters/runtime';
-Bun.serve(toBunServer(handler, { port: 3000 }));
-```
-
 ### Edge 限制
 
 务必读完再决定是否上：
@@ -162,4 +147,3 @@ Browser -- HTTP/2/HTTP/3 --> CDN / Nginx / Caddy / ALB -- HTTP/1.1 --> novel-isr
 ## 进一步
 
 - 详细 fallback 行为：[deployment/ssr-spa-failover.md](./deployment/ssr-spa-failover.md)
-- SOC2 readiness：[security/SOC2-readiness.md](./security/SOC2-readiness.md)

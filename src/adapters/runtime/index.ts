@@ -3,7 +3,6 @@
  *
  *   import { toCloudflareWorker } from '@novel-isr/engine/adapters/runtime';
  *   import { toVercelEdge } from '@novel-isr/engine/adapters/runtime';
- *   import { toDenoHandler, toBunServer } from '@novel-isr/engine/adapters/runtime';
  */
 export {
   toCloudflareWorker,
@@ -18,5 +17,4 @@ export {
   type VercelMiddlewareHandler,
   type VercelMiddlewareOptions,
 } from './vercel-edge';
-export { toDenoHandler, toBunServer, type DenoHandler, type BunServerConfig } from './deno';
 export type { FetchHandler, CloudflareExecutionContext } from './types';

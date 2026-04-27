@@ -40,7 +40,7 @@ pnpm bench:compare       # 与 baseline diff
     fi
 ```
 
-bench gate 是 [P0 改造项](./production-readiness.md#p0-上生产前必修)。
+bench gate 已在 `release.yml` 第 4 闸门生效：P95 +20% 或 QPS -15% 任意一档触发即 fail-fast。
 
 ## 常见性能问题
 

@@ -17,11 +17,11 @@
   ],
   "repository": {
     "type": "git",
-    "url": "git+ssh://git@<INTERNAL_GIT_HOST>/<ORG>/isr-engine.git"
+    "url": "git+https://github.com/TaitaiWx/isr-engine.git"
   },
-  "homepage": "https://<INTERNAL_GIT_HOST>/<ORG>/isr-engine",
+  "homepage": "https://github.com/TaitaiWx/isr-engine",
   "bugs": {
-    "url": "https://<INTERNAL_GIT_HOST>/<ORG>/isr-engine/-/issues"
+    "url": "https://github.com/TaitaiWx/isr-engine/issues"
   },
   "publishConfig": {
     "access": "restricted",
@@ -97,7 +97,6 @@
     "src/plugin",
     "src/rsc",
     "src/runtime",
-    "src/security",
     "src/types",
     "src/middlewares",
     "src/context",
@@ -119,6 +118,10 @@
     "bench": "node scripts/bench.mjs",
     "bench:compare": "node scripts/bench-compare.mjs",
     "check": "pnpm run type-check && pnpm run lint && pnpm run format:check && pnpm run test",
+    "release:dry": "pnpm run build && pnpm publish --dry-run --access restricted --no-git-checks",
+    "release:pack": "pnpm run build && pnpm pack",
+    "release": "pnpm run check && pnpm run build && pnpm publish --access restricted --no-git-checks",
+    "release:from-ci": "pnpm publish --access restricted --no-git-checks",
     "prepublishOnly": "node -e \"const u=process.env.NPM_REGISTRY_URL||'';if(!u){console.error('NPM_REGISTRY_URL not set; this package is internal-only.');process.exit(1)}if(/registry\\.npmjs\\.org/.test(u)){console.error('NPM_REGISTRY_URL points to public npmjs; refusing to publish internal package.');process.exit(1)}\""
   },
   "engines": {
