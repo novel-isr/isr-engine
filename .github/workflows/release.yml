@@ -91,15 +91,15 @@ jobs:
 
       # ─── Gate 4: Bench 退化检测（保证整体不会劣化）─────────────────
       - name: Install bench-fixture deps
-        working-directory: scripts/bench-fixture
+        working-directory: examples/bench-fixture
         run: pnpm install --no-frozen-lockfile
 
       - name: Build bench-fixture
-        working-directory: scripts/bench-fixture
+        working-directory: examples/bench-fixture
         run: pnpm run build
 
       - name: Start bench-fixture
-        working-directory: scripts/bench-fixture
+        working-directory: examples/bench-fixture
         env:
           BENCH_DISABLE_RATE_LIMIT: '1'
           PORT: '3000'

@@ -36,13 +36,6 @@
     "./client-entry": {
       "default": "./src/defaults/runtime/defineClientEntry.tsx"
     },
-    "./virtual-modules": {
-      "types": "./dist/types/virtual-modules.d.ts"
-    },
-    "./cli": {
-      "import": "./dist/cli/cli.js",
-      "require": "./dist/cli/cli.cjs"
-    },
     "./adapters/observability": {
       "import": "./dist/adapters/observability/index.js",
       "require": "./dist/adapters/observability/index.cjs",
@@ -94,7 +87,7 @@
     "release": "pnpm run check && pnpm run build && pnpm publish --access restricted --no-git-checks"
   },
   "engines": {
-    "node": "22.21.1"
+    "node": ">=22.21.1"
   },
   "dependencies": {
     "@vitejs/plugin-rsc": "^0.5.24",

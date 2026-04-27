@@ -37,7 +37,7 @@ export default [
       'temp/**',
       '*.log',
       // bench-fixture 是 engine 的消费者样本（独立 package），不进 engine 的 lint
-      'scripts/bench-fixture/**',
+      'examples/bench-fixture/**',
     ],
   },
 
