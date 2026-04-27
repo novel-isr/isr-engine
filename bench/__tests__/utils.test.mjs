@@ -1,5 +1,5 @@
 /**
- * bench-utils.extractP95 —— v2.1 P95 校正逻辑的回归网
+ * bench/utils.extractP95 —— v2.1 P95 校正逻辑的回归网
  *
  * 锁住的关键行为：
  *   1) 有 hdr-histogram → 精确取 P95（不再用 P97.5 冒充）
@@ -11,7 +11,7 @@
  * baseline 比较都依赖此函数，必须确定性。
  */
 import { describe, it, expect } from 'vitest';
-import { extractP95 } from '../bench-utils.mjs';
+import { extractP95 } from '../utils.mjs';
 
 describe('extractP95 —— 优先用 hdr-histogram', () => {
   it('histogram.getValueAtPercentile(95) 返回有效值时，直接采用', () => {

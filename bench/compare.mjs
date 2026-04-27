@@ -3,7 +3,7 @@
  * 对比两次 bench 结果（baseline vs current）—— CI 用于检测性能劣化
  *
  * 用法：
- *   node scripts/bench-compare.mjs <baseline.json> <current.json>
+ *   node bench/compare.mjs <baseline.json> <current.json>
  *
  * 退出码：
  *   0 所有指标在容忍范围内 / baseline 缺失（首次运行，自动 skip）

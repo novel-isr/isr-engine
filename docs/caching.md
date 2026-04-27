@@ -182,8 +182,6 @@ export async function publishBook() {
 }
 ```
 
-参考实现：[`novel-rating-website/src/actions/books.ts`](../../novel-rating-website/src/actions/books.ts)。
-
 ## 缓存可观测性
 
 | 端点 | 内容 |

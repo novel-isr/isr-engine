@@ -1,5 +1,5 @@
 /**
- * bench-utils —— bench.mjs 的可测试工具函数
+ * bench/utils.mjs —— bench/runner.mjs 的可测试工具函数
  *
  * autocannon 默认 percentile 集包含 p50/p75/p90/p97_5/p99/p99_9 —— 没有原生 p95。
  * 之前 bench.mjs 直接把 `r.latency.p97_5` 当 P95 上报（偏高 ~15-20%），会误伤 CI gate。

@@ -91,15 +91,15 @@ jobs:
 
       # ─── Gate 4: Bench 退化检测（保证整体不会劣化）─────────────────
       - name: Install bench-fixture deps
-        working-directory: examples/bench-fixture
+        working-directory: bench/fixture
         run: pnpm install --no-frozen-lockfile
 
       - name: Build bench-fixture
-        working-directory: examples/bench-fixture
+        working-directory: bench/fixture
         run: pnpm run build
 
       - name: Start bench-fixture
-        working-directory: examples/bench-fixture
+        working-directory: bench/fixture
         env:
           BENCH_DISABLE_RATE_LIMIT: '1'
           PORT: '3000'
@@ -140,7 +140,7 @@ jobs:
             echo "seed by running bench locally and committing the result"
             exit 1
           fi
-          node scripts/bench-compare.mjs bench/baseline.json bench-release.json
+          node bench/compare.mjs bench/baseline.json bench-release.json
 
       - name: Stop bench-fixture
         if: always()

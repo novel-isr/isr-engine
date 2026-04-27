@@ -172,10 +172,6 @@ beforeRequest: async (req) => {
 
 返回的扩展字段会与 engine 的 baseline ctx (含 `traceId` / `startedAt` / `locale`) 合并。
 
-## 完整示例
-
-参考演示站：[novel-rating-website/src/entry.server.tsx](../../novel-rating-website/src/entry.server.tsx)。
-
 ## 暴露给 app.tsx
 
 `defineSiteHooks` 返回的对象在 server 上下文里也是普通 object——`app.tsx` 可以直接 import 它读 `intl` 字段：

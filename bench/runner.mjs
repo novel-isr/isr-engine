@@ -30,7 +30,7 @@
  */
 import autocannon from 'autocannon';
 import { writeFileSync } from 'node:fs';
-import { extractP95, sleep } from './bench-utils.mjs';
+import { extractP95, sleep } from './utils.mjs';
 
 const URL = process.env.BENCH_URL ?? 'http://localhost:3000';
 const TIERS = (process.env.BENCH_TIERS ?? '10,100,1000,10000')

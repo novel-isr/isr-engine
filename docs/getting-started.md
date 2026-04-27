@@ -181,6 +181,6 @@ Engine 按 default export 形状自动分派：含 `.fetch` → 用作 fetch han
 
 ## 下一步
 
-- 看演示站怎么用：[novel-rating-website/](../../novel-rating-website/)
+- 看 bench fixture 怎么用（最小完整 ISR app）：[bench/fixture/](../bench/fixture/)
 - 上生产前的 checklist：[deployment.md](./deployment.md)
 - 出错了：[troubleshooting.md](./troubleshooting.md)

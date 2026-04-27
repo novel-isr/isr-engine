@@ -86,7 +86,7 @@ export function App({ url }: { url: URL }) {
 
 ## 性能 benchmark
 
-baseline：[`bench/baseline.json`](./bench/baseline.json) —— 由 [`scripts/bench-fixture/`](./scripts/bench-fixture/)
+baseline：[`bench/baseline.json`](./bench/baseline.json) —— 由 [`bench/fixture/`](./bench/fixture/)
 （self-contained 最小 ISR 应用）跑出。MacBook M-series · Node 22 · 单进程 ·
 3s warmup · 8s/tier · 2s cooldown · `BENCH_DISABLE_RATE_LIMIT=1`：
 
@@ -96,7 +96,7 @@ baseline：[`bench/baseline.json`](./bench/baseline.json) —— 由 [`scripts/b
 | `/about` | SSG (express.static) | **63 362** | 7 040 | 0ms | 524ms |
 | `/books/1` | ISR + tag-based | **46 065** | 2 984 | 1.3ms | 1030ms |
 
-复现：`pnpm bench`（生产 baseline）/ `cd scripts/bench-fixture && pnpm start` 后跑
+复现：`pnpm bench`（生产 baseline）/ `cd bench/fixture && pnpm start` 后跑
 `pnpm bench`（开发 baseline）。CI bench gate 见 [`.github/workflows/bench.yml`](./.github/workflows/bench.yml)：
 退化 P95 +20% 或 QPS -15% 自动 fail。详细解释见 [docs/performance.md](./docs/performance.md)。
 

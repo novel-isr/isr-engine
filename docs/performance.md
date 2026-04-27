@@ -23,7 +23,7 @@ pnpm bench               # autocannon load test，多档并发（10/100/1000/100
 pnpm bench:compare       # 与 baseline diff
 ```
 
-`scripts/bench.mjs` 用 [autocannon](https://github.com/mcollina/autocannon) 跑 HTTP load test。`scripts/bench-compare.mjs` 解析输出做 baseline 对比，便于本地确认是否有性能退化。
+`bench/runner.mjs` 用 [autocannon](https://github.com/mcollina/autocannon) 跑 HTTP load test。`bench/compare.mjs` 解析输出做 baseline 对比，便于本地确认是否有性能退化。
 
 ## ⚠️ Bench 不阻塞 CI
 

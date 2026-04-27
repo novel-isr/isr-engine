@@ -137,9 +137,9 @@ export { extractRoutesForSitemap, nodeToWebRequest, pipeWebResponse }  // start.
 
 #### Bench 流水线
 
-- `scripts/bench-fixture/` —— self-contained 最小 ISR 应用，覆盖 ISR / SSG / 动态 ISR / SSR
+- `bench/fixture/` —— self-contained 最小 ISR 应用，覆盖 ISR / SSG / 动态 ISR / SSR
   四种渲染路径。CI 不再依赖 sibling 业务 repo
-- `scripts/bench-utils.mjs` —— 抽出可单测的 `extractP95` + `sleep` helpers
+- `bench/utils.mjs` —— 抽出可单测的 `extractP95` + `sleep` helpers
 - `bench/baseline.json` —— 10/100/1000/10000 conn × 3 paths 的代表性 baseline
 - `BENCH_DISABLE_RATE_LIMIT=1` —— bench 专用 env，每请求动态读取 `process.env`，
   绕过 RateLimiter（autocannon 单 IP 高并发需要）
@@ -197,7 +197,7 @@ export { extractRoutesForSitemap, nodeToWebRequest, pipeWebResponse }  // start.
   从 3 RTT → 1 RTT（`EVAL + EVALSHA`）。
 - **`middlewares/TraceMiddleware`：W3C traceparent 解析**。OTel/Datadog/Honeycomb
   trace 链不再在 engine 这一跳断开。
-- **`scripts/bench.mjs`：P95 真正的 P95**。旧代码把 `latency.p97_5` 当 P95
+- **`bench/runner.mjs`：P95 真正的 P95**。旧代码把 `latency.p97_5` 当 P95
   上报（偏高 ~20%，误伤 CI gate）。现在从 `latency.histogram.getValueAtPercentile(95)`
   精确取，无 hdr-histogram 时 P90↔P97.5 线性插值。
 - **`engine/ISREngine.shutdown()`：改 `Promise.allSettled` 语义**。
@@ -219,7 +219,7 @@ export { extractRoutesForSitemap, nodeToWebRequest, pipeWebResponse }  // start.
 - **`bench.yml` 之前永远 skip** —— 旧版用 `if [ -f "../novel-rating-website/..." ]`
   在 GitHub Actions clean checkout 上永远 false。每次 nightly cron / dispatch /
   perf-sensitive PR 都是 `available=false` 一行 warning 静默跳过。**现已替换为
-  self-contained `scripts/bench-fixture/`，CI 实际跑 bench**。
+  self-contained `bench/fixture/`，CI 实际跑 bench**。
 - **bench-compare 路径错** —— 之前指向 `scripts/bench-baseline.json`，实际文件
   在 `bench/baseline.json`，对比永远 skip。
 - **CI 触发太窄** —— 之前 `branches: [main, develop]` 让 feature 分支裸奔，

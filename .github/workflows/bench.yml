@@ -2,10 +2,10 @@ name: Bench (perf regression gate)
 
 # 设计：
 #   - 不在每个 PR 跑（runner 时间昂贵），改为 dispatch + nightly + perf-sensitive 路径触发
-#   - 用 scripts/bench-compare.mjs 对比 bench/baseline.json，退化 > 20% 阻断
+#   - 用 bench/compare.mjs 对比 bench/baseline.json，退化 > 20% 阻断
 #   - 没有 baseline 时（首次跑 / 新分支）自动 skip，避免空检验阻塞
 #
-# Fixture：examples/bench-fixture/ —— 自带的最小 ISR 应用，无 sibling 依赖
+# Fixture：bench/fixture/ —— 自带的最小 ISR 应用，无 sibling 依赖
 #   GitHub Actions checkout 只拉本仓库就够跑，不需要 ../novel-rating-website
 
 on:
@@ -32,8 +32,8 @@ on:
       - 'src/server/**'
       - 'src/middlewares/**'
       - 'src/cache/**'
-      - 'scripts/bench*.mjs'
-      - 'examples/bench-fixture/**'
+      - 'bench/*.mjs'
+      - 'bench/fixture/**'
       - 'bench/baseline.json'
       - '.github/workflows/bench.yml'
 
@@ -68,15 +68,15 @@ jobs:
         run: pnpm run build
 
       - name: Install bench-fixture deps
-        working-directory: examples/bench-fixture
+        working-directory: bench/fixture
         run: pnpm install --no-frozen-lockfile
 
       - name: Build bench-fixture
-        working-directory: examples/bench-fixture
+        working-directory: bench/fixture
         run: pnpm run build
 
       - name: Start bench-fixture in background
-        working-directory: examples/bench-fixture
+        working-directory: bench/fixture
         env:
           # 关键：关掉限流 —— autocannon 单 IP 模拟高并发会被 200/min 限流压成 99% 429
           # 这是 bench fixture 专用 env，生产部署绝不带
@@ -115,7 +115,7 @@ jobs:
           BENCH_QPS_REGRESSION_PCT: '15'
         run: |
           if [ -f bench/baseline.json ]; then
-            node scripts/bench-compare.mjs bench/baseline.json bench-current.json
+            node bench/compare.mjs bench/baseline.json bench-current.json
           else
             echo "::warning::no baseline at bench/baseline.json — skipping regression check"
             echo "to seed: copy bench-current.json to bench/baseline.json and commit"

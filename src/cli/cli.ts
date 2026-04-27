@@ -12,7 +12,6 @@ import pkg from '../../package.json';
 import { startDevServer } from './dev';
 import { startProductionServer } from './start';
 import { showStats } from './stats';
-import { runMigrate } from './migrate';
 import { startFallbackProxy } from './fallback';
 import { logger } from '@/logger';
 import { DEFAULT_PORT, DEFAULT_HOST } from '@/config/defaults';
@@ -97,21 +96,6 @@ program
       startFallbackProxy(options);
     } catch (error) {
       logger.error('[CLI]', 'fallback proxy 启动失败', error);
-      process.exit(1);
-    }
-  });
-
-/**
- * migrate 命令 - 扫描 Next/老 Vite 项目，给出迁移到 isr-engine 的具体修复指令
- */
-program
-  .command('migrate')
-  .description('扫描项目，报告 Next.js / 老配置的迁移问题（不自动改代码）')
-  .action(async () => {
-    try {
-      await runMigrate();
-    } catch (error) {
-      logger.error('[CLI]', 'migrate 扫描失败', error);
       process.exit(1);
     }
   });
