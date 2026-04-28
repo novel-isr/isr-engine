@@ -16,7 +16,7 @@
   "type": "module",
   "main": "./dist/novel-isr.cjs",
   "module": "./dist/novel-isr.js",
-  "types": "./dist/novel-isr.d.ts",
+  "types": "./dist/index.d.ts",
   "bin": {
     "novel-isr": "./dist/cli/cli.js"
   },
@@ -24,7 +24,7 @@
     ".": {
       "import": "./dist/novel-isr.js",
       "require": "./dist/novel-isr.cjs",
-      "types": "./dist/novel-isr.d.ts"
+      "types": "./dist/index.d.ts"
     },
     "./rsc": {
       "import": "./dist/rsc/index.js",
@@ -38,6 +38,7 @@
       "default": "./src/defaults/runtime/defineClientEntry.tsx"
     },
     "./site-hooks": {
+      "types": "./dist/defaults/runtime/defineSiteHooks.d.ts",
       "default": "./src/defaults/runtime/defineSiteHooks.ts"
     },
     "./adapters/observability": {
@@ -53,15 +54,16 @@
     "./image": {
       "import": "./dist/image/index.js",
       "require": "./dist/image/index.cjs",
-      "types": "./dist/image/index.d.ts"
+      "types": "./dist/runtime/Image.d.ts"
     },
     "./runtime": {
+      "types": "./dist/runtime/index.d.ts",
       "default": "./src/runtime/index.ts"
     },
     "./package.json": "./package.json"
   },
   "scripts": {
-    "build": "vite build && chmod +x dist/cli/cli.js dist/cli/cli.cjs && node scripts/fix-rsc-dts.mjs",
+    "build": "vite build && tsc -p tsconfig.build.json && tsc-alias -p tsconfig.build.json && chmod +x dist/cli/cli.js dist/cli/cli.cjs",
     "watch": "vite build --watch",
     "clean": "rimraf dist",
     "lint": "eslint . --ext .ts,.tsx,.js,.jsx",
@@ -131,8 +133,8 @@
     "react-server-dom-webpack": "^19.2.0",
     "rimraf": "^6.0.1",
     "rsc-html-stream": "^0.0.7",
+    "tsc-alias": "^1.8.16",
     "vite": "^8.0.0",
-    "vite-plugin-dts": "^4.5.4",
     "vitest": "^2.1.5"
   }
 }

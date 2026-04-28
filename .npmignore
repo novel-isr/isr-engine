@@ -40,6 +40,7 @@ src/utils/
 # 构建 / 工具配置
 vite.config.ts
 tsconfig.json
+tsconfig.build.json
 src/defaults/tsconfig.json
 eslint.config.mjs
 .eslintcache

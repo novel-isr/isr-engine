@@ -1,23 +1,17 @@
 import { defineConfig } from 'vite';
 import { resolve, dirname } from 'path';
 import { fileURLToPath } from 'url';
-import dts from 'vite-plugin-dts';
 import { builtinModules } from 'module';
 import pkg from './package.json';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 
+// d.ts 由 `tsc -p tsconfig.build.json` 直接 emit 多文件树（不在 vite 流程内）。
+// 曾用 vite-plugin-dts + rollupTypes，但多 entry 子 bundle rollup 失败 → 退化引用
+// 源码路径，必须脚本兜底。直接信任 tsc 一步到位，无 hack。
 export default defineConfig({
-  plugins: [
-    dts({
-      // 关键：把每个 entry 的全部 types rollup 成单文件, 文件名 = entry 名
-      // 例: src/index.ts → dist/novel-isr.d.ts (与 dist/novel-isr.js 配对, package.json types 字段直指)
-      // 默认行为是按源码目录结构逐文件 emit, 会产出 dist/src/index.d.ts 这种带 src 前缀的路径, 与 exports 字段对不上
-      rollupTypes: true,
-      tsconfigPath: './tsconfig.json',
-    }),
-  ],
+  plugins: [],
   resolve: {
     alias: {
       '@': resolve(__dirname, './src'),

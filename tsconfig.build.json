@@ -1,0 +1,33 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "rootDir": "src",
+    "outDir": "dist",
+    "declaration": true,
+    "declarationMap": true,
+    "emitDeclarationOnly": true,
+    "noEmit": false,
+    "sourceMap": false,
+    "composite": false,
+    "incremental": false,
+    "skipLibCheck": true
+  },
+  "include": ["src/**/*.ts", "src/**/*.tsx"],
+  "exclude": [
+    "node_modules",
+    "dist",
+    "**/__tests__/**",
+    "**/*.test.ts",
+    "**/*.test.tsx",
+    "src/defaults/entry.server.tsx",
+    "src/defaults/entry.server.ssr.tsx",
+    "src/defaults/entry.tsx",
+    "src/defaults/auto-observability.ts",
+    "src/defaults/types.d.ts",
+    "src/defaults/runtime/defineClientEntry.tsx",
+    "src/defaults/runtime/defineServerEntry.tsx",
+    "src/defaults/runtime/error-boundary.tsx",
+    "src/defaults/runtime/empty-config.ts",
+    "src/defaults/runtime/request.tsx"
+  ]
+}
