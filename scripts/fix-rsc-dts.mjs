@@ -8,10 +8,21 @@
 import { writeFileSync } from 'node:fs';
 
 const RSC_VALUE_EXPORTS = [
-  'revalidatePath', 'revalidateTag', 'registerInvalidator', 'RevalidationError',
-  'cacheTag', 'collectTags', 'runWithTagStore', 'debugTagStore', 'markUncacheable', 'isUncacheable',
-  'serverActionsRegistry', 'createServerAction', 'ServerActionUtils',
-  'SERVER_ACTION_ENDPOINT', 'LEGACY_SERVER_ACTION_ENDPOINT',
+  'revalidatePath',
+  'revalidateTag',
+  'registerInvalidator',
+  'RevalidationError',
+  'cacheTag',
+  'collectTags',
+  'runWithTagStore',
+  'debugTagStore',
+  'markUncacheable',
+  'isUncacheable',
+  'serverActionsRegistry',
+  'createServerAction',
+  'ServerActionUtils',
+  'SERVER_ACTION_ENDPOINT',
+  'LEGACY_SERVER_ACTION_ENDPOINT',
   'getVariant',
 ];
 const RSC_TYPE_EXPORTS = ['RevalidateInvalidator', 'ServerActionMetadata', 'ServerActionHandler'];
