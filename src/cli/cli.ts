@@ -81,12 +81,12 @@ program
   });
 
 /**
- * fallback 命令 - 本地 SSR→SPA 降级链路验证代理（nginx error_page 等价物）
+ * test-fallback-local 命令 - 本地 SSR→SPA 降级链路验证代理（nginx error_page 等价物）
  * 仅本地开发用；生产环境用 nginx
  */
 program
-  .command('fallback')
-  .description('启动本地 fallback 代理（验证 SSR 死时自动切 SPA shell）')
+  .command('test-fallback-local')
+  .description('本地启动 fallback 代理，验证 SSR 死时自动切到 SPA shell')
   .option('-p, --port <port>', '本地代理监听端口', '8080')
   .option('--ssr-port <port>', 'SSR 上游端口', String(DEFAULT_PORT))
   .option('--api-port <port>', 'API/mock 上游端口', '3001')
@@ -95,7 +95,7 @@ program
     try {
       startFallbackProxy(options);
     } catch (error) {
-      logger.error('[CLI]', 'fallback proxy 启动失败', error);
+      logger.error('[CLI]', 'test-fallback-local proxy 启动失败', error);
       process.exit(1);
     }
   });
