@@ -1,11 +1,8 @@
 name: CI
 
 # 触发：任何 push 到任何分支 + PR 到 main/develop
-# corepack 接管 pnpm（packageManager 字段是 source of truth）。
-# `Override system Node` 步骤把 /usr/bin/node 也指向 setup-node 装的 Node,
-# 确保 pnpm 在装 git deps 跑 prepare 时,即使子进程绕开 PATH 用 system
-# Node,也拿到正确版本(ubuntu runner 默认 /usr/bin/node 是 v20.10.0,
-# 不满足 vite 8 + rolldown 1.0.0-rc 的 Node 20.19+ 要求)。
+# Node 版本由 package.json engines + .nvmrc 共同声明；CI 通过 setup-node
+# 读取 .nvmrc。corepack 接管 pnpm（packageManager 字段是 source of truth）。
 
 on:
   push:
@@ -31,13 +28,6 @@ jobs:
         with:
           node-version-file: '.nvmrc'
 
-      - name: Override system Node (prevent pnpm subprocess fallback to v20)
-        run: |
-          NODE_BIN="$(which node)"
-          sudo ln -sf "$NODE_BIN" /usr/bin/node
-          sudo ln -sf "$NODE_BIN" /usr/local/bin/node || true
-          echo "system node now: $(/usr/bin/node --version)"
-
       - name: Enable corepack (pnpm via packageManager)
         run: corepack enable pnpm
 
@@ -47,7 +37,6 @@ jobs:
           pnpm --version
           which node
           which pnpm
-          /usr/bin/node --version
 
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
@@ -72,12 +61,6 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version-file: '.nvmrc'
-
-      - name: Override system Node
-        run: |
-          NODE_BIN="$(which node)"
-          sudo ln -sf "$NODE_BIN" /usr/bin/node
-          sudo ln -sf "$NODE_BIN" /usr/local/bin/node || true
 
       - name: Enable corepack (pnpm via packageManager)
         run: corepack enable pnpm

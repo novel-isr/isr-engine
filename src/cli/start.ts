@@ -130,9 +130,8 @@ export async function startProductionServer(options: StartOptions): Promise<void
   }
   // 安全头 —— helmet 默认 + 生产 CSP（prod 不允许 'unsafe-eval'）
   // CSP connect-src 自动加入 user 的 api origin（让 CSR-fallback 浏览器 fetch 不被挡）
-  const { createSecurityMiddleware, createCompressionMiddleware } = await import(
-    '@/server/middleware'
-  );
+  const { createSecurityMiddleware, createCompressionMiddleware } =
+    await import('@/server/middleware');
   app.use(createSecurityMiddleware(false, extraConnectSrc));
   if (config.server?.compression?.enabled !== false) {
     app.use(
