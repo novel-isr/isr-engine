@@ -9,7 +9,7 @@
  * 的单元测试覆盖, 不需要在 bench fixture 里再做集成测试 (那只会把响应弄成
  * 带 Set-Cookie, 从而被 ISR 中间件按设计 skip 缓存, 污染 bench 数).
  */
-import { defineSiteHooks } from '@novel-isr/engine';
+import { defineSiteHooks } from '@novel-isr/engine/site-hooks';
 
 export default defineSiteHooks({
   api: '', // 不远端取数据

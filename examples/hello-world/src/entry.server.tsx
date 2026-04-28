@@ -10,7 +10,7 @@
  *
  * 这个 hello-world 只配静态 SEO + site URL, 极简.
  */
-import { defineSiteHooks } from '@novel-isr/engine';
+import { defineSiteHooks } from '@novel-isr/engine/site-hooks';
 
 export default defineSiteHooks({
   api: '', // 不远端取数据

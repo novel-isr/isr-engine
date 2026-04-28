@@ -37,6 +37,9 @@
     "./client-entry": {
       "default": "./src/defaults/runtime/defineClientEntry.tsx"
     },
+    "./site-hooks": {
+      "default": "./src/defaults/runtime/defineSiteHooks.ts"
+    },
     "./adapters/observability": {
       "import": "./dist/adapters/observability/index.js",
       "require": "./dist/adapters/observability/index.cjs",
@@ -58,7 +61,7 @@
     "./package.json": "./package.json"
   },
   "scripts": {
-    "build": "vite build && chmod +x dist/cli/cli.js dist/cli/cli.cjs",
+    "build": "vite build && chmod +x dist/cli/cli.js dist/cli/cli.cjs && node scripts/fix-rsc-dts.mjs",
     "watch": "vite build --watch",
     "clean": "rimraf dist",
     "lint": "eslint . --ext .ts,.tsx,.js,.jsx",

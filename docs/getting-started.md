@@ -121,7 +121,7 @@ export default function HomeContent() {
 
 ```tsx
 // src/entry.server.tsx
-import { defineSiteHooks } from '@novel-isr/engine';
+import { defineSiteHooks } from '@novel-isr/engine/site-hooks';
 
 export default defineSiteHooks({
   api: process.env.API_URL!,
