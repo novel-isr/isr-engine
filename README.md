@@ -6,7 +6,7 @@
 
 > **v2.2.0 unreleased** —— ISR 缓存层 5 项性能 / 内存 / 运维优化：cache key 版本化命名空间、MISS 回源 single-flight、capture buffer OOM 防御、HIT 边缘预热、CPU-aware prerender 并发。完全向后兼容，零破坏性。详见 [CHANGELOG.md](./CHANGELOG.md)。
 
-> **通用框架，跨项目复用**。任何 Vite + React 19 + RSC 站点都可以接，不绑定特定业务。仅在私有 git/registry 发布，不发 public（`release.yml` 用 `NPM_REGISTRY_URL` + `--access restricted` 校验，避免误发）。
+> **通用框架，跨项目复用**。任何 Vite + React 19 + RSC 站点都可以接，不绑定特定业务。发到 GitHub Packages（`@novel-isr` scope，restricted），不发 public registry。
 
 ## 30 秒看明白
 
@@ -99,8 +99,9 @@ baseline：[`bench/baseline.json`](./bench/baseline.json) —— 由 [`bench/fix
 | `/books/1` | ISR + tag-based | **46 065** | 2 984 | 1.3ms | 1030ms |
 
 复现：`pnpm bench`（生产 baseline）/ `cd bench/fixture && pnpm start` 后跑
-`pnpm bench`（开发 baseline）。CI bench gate 见 [`.github/workflows/bench.yml`](./.github/workflows/bench.yml)：
-退化 P95 +20% 或 QPS -15% 自动 fail。详细解释见 [docs/performance.md](./docs/performance.md)。
+`pnpm bench`（开发 baseline）。bench 退化追踪走 [`.github/workflows/bench.yml`](./.github/workflows/bench.yml)
+nightly 信息性输出（GitHub hosted runner 跨次硬件不一致 ±60%，不能拿来 gate
+release）。详细：[docs/performance.md](./docs/performance.md)。
 
 ## 文档
 
@@ -163,15 +164,15 @@ FallbackChain（自动降级）：
 - Flight 协议委托给官方 `@vitejs/plugin-rsc@^0.5.24`，不自维护
 - 依赖全是工业级（Express / Helmet / Prometheus / sitemap / lru-cache / ioredis）
 - 543 tests / ~50% 覆盖；CI 任何分支 push 都跑 lint+typecheck+test
-- bench 退化检测纳入 CI（`P95 +20%` 或 `QPS -15%` 自动 block PR / publish）
-- 私有 npm 发布有 4 段 gate（lint+test+build+bench），任一失败 → 不发布
+- bench 退化追踪走 nightly `bench.yml`（信息性输出，不 gate release）
+- GitHub Packages 发布有 3 段 gate（lint+test+build），任一失败 → 不发布
 - 安全硬化覆盖了 Set-Cookie 跨用户回放、SSG 路径穿越、Redis Buffer 破损、
   Pub/Sub 消息丢失等 10 项审计发现项
 
 ⚠️ **生产前你仍需知道的事**：
 - Origin 协议只支持 `http1.1` / `https`；HTTP/2 / HTTP/3 应在 CDN / Nginx / Caddy / ALB 终结
-- 私有 npm 发布需配 `NPM_REGISTRY_URL` + `NPM_TOKEN` GitHub Secrets；不发 public registry
-- bench baseline 在自家 CI 硬件上首次跑后提交，跨机器对比无意义（绝对值仅参考）
+- bench baseline 跨 GitHub hosted runner 硬件不一致（同 SHA 跑两次能飘 ±60% QPS），
+  release 不 gate bench；真要做 release-blocking bench gate 需自部 self-hosted runner 锁硬件
 
 完整改动列表：[CHANGELOG.md](./CHANGELOG.md)。
 
@@ -244,15 +245,13 @@ pnpm unlink --global @novel-isr/engine && pnpm install
 
 | Workflow | 触发 | 跑什么 | 失败后果 |
 |---|---|---|---|
-| **`ci.yml`** | 任何分支 push + PR 到 main/develop | type-check / lint / format / test (580) / build | branch 标红，PR 不可 merge |
-| **`bench.yml`** | nightly 02:00 UTC + 手动 + perf-sensitive 路径 PR | 起 bench-fixture + 跑 bench + 对比 `bench/baseline.json` | P95 +20% 或 QPS -15% → fail |
-| **`release.yml`** | `git push v*.*.*` tag | 全部 4 段 gate（type+lint / test / build / bench）→ `pnpm publish --access restricted` 到私有 npm | 任一段失败 → 不发布 |
+| **`ci.yml`** | 任何分支 push + PR 到 main/develop | type-check / lint / test / build | branch 标红，PR 不可 merge |
+| **`bench.yml`** | nightly 02:00 UTC + 手动 + perf-sensitive 路径 PR | 起 bench-fixture + 跑 bench + 对比 `bench/baseline.json` | 信息性 fail（不阻断 release，只用于追踪退化） |
+| **`release.yml`** | `git push v*.*.*` tag | 3 段 gate（type+lint / test / build）→ `pnpm publish --access restricted` 到 GitHub Packages | 任一段失败 → 不发布 |
 
-**发布到私有 npm**：
+**发布到 GitHub Packages**：
 
-1. Repo `Settings → Secrets and variables → Actions` 配置：
-   - `NPM_REGISTRY_URL` —— 例如 `https://npm.your-company.com/`
-   - `NPM_TOKEN` —— 对应 registry 的 read-write token
+1. 一次性配置：repo `Settings → Actions → General → Workflow permissions` 切到 **Read and write permissions**（让 `GITHUB_TOKEN` 拿到 `write:packages`）。无需手动配 secret。
 2. 本地：
    ```bash
    # 改 package.json version 到 X.Y.Z
@@ -261,7 +260,9 @@ pnpm unlink --global @novel-isr/engine && pnpm install
    ```
 3. GitHub Actions 自动跑 release.yml；任一 gate 失败 → 不发布。
 
-**公网 npm**：本仓库 **不发 public**（`pnpm publish --access restricted`）。
+**消费侧**：见 [`.npmrc.example`](./.npmrc.example) 配 GitHub PAT (`read:packages` scope) → `pnpm install`.
+
+**不发 public**：`pnpm publish --access restricted`，GitHub Packages 默认私有。
 
 ## 设计原则
 

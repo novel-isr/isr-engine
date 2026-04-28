@@ -1,18 +1,23 @@
 name: Release (GitHub Packages)
 
 # 触发：push 到形如 v1.2.3 的 tag
-# 完整流程（任一步失败 → 整个 release 中止，npm 不会被污染）：
-#   1. lint + typecheck (lint 已通过 eslint-plugin-prettier 校验格式)
+# 流程（任一步失败 → 整个 release 中止，npm 不会被污染）：
+#   1. lint + typecheck
 #   2. tests
 #   3. build (产物 + types)
-#   4. bench-fixture build + start + bench + 对比 bench/baseline.json
-#      退化 > 20% P95 / -15% QPS → fail（保证整体不会劣化）
-#   5. 校验 package.json version 等于 tag
-#   6. publish 到 GitHub Packages（npm.pkg.github.com）
+#   4. 校验 package.json version 等于 tag
+#   5. publish 到 GitHub Packages（npm.pkg.github.com）
 #
 # Auth：用 GitHub Actions 自动注入的 GITHUB_TOKEN（无需手动配 secret）。
 #       repo settings → Actions → Workflow permissions 需开 "Read and write permissions"，
 #       否则 GITHUB_TOKEN 没有 write:packages 权限。
+#
+# 关于 bench 退化检测：
+#   不在 release 上 gate —— GitHub Actions hosted runner 跨次跑硬件不一致（相同 SHA
+#   也能飘 ±60% QPS），把 bench 当 release 硬门会自伤。
+#   bench 退化追踪走 .github/workflows/bench.yml（nightly + perf-sensitive PR），
+#   信息性输出，不阻断发布。
+#   要做真正的 release-blocking bench gate，需要自部 self-hosted runner 锁硬件。
 
 on:
   push:
@@ -29,9 +34,9 @@ permissions:
 
 jobs:
   release:
-    name: Validate + bench-gated publish
+    name: Validate + publish
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 15
 
     steps:
       - uses: actions/checkout@v5
@@ -61,8 +66,7 @@ jobs:
         with:
           node-version-file: '.nvmrc'
           cache: 'pnpm'
-          # 配置 GitHub Packages 作为 @novel-isr scope 的 registry
-          # actions/setup-node 会写一份 ~/.npmrc 把 NODE_AUTH_TOKEN 接到这个 registry
+          # actions/setup-node 写 ~/.npmrc 把 NODE_AUTH_TOKEN 接到 GitHub Packages
           registry-url: 'https://npm.pkg.github.com'
           scope: '@novel-isr'
 
@@ -92,66 +96,6 @@ jobs:
           test -f dist/cli/cli.js
           echo "✓ dist artifacts present"
 
-      # ─── Gate 4: Bench 退化检测（保证整体不会劣化）─────────────────
-      - name: Install bench-fixture deps
-        working-directory: bench/fixture
-        run: pnpm install --no-frozen-lockfile
-
-      - name: Build bench-fixture
-        working-directory: bench/fixture
-        run: pnpm run build
-
-      - name: Start bench-fixture
-        working-directory: bench/fixture
-        env:
-          BENCH_DISABLE_RATE_LIMIT: '1'
-          PORT: '3000'
-          NODE_ENV: 'production'
-          SEO_BASE_URL: 'http://localhost:3000'
-        run: |
-          pnpm run start > /tmp/fixture.log 2>&1 &
-          echo $! > /tmp/fixture.pid
-          for i in $(seq 1 30); do
-            if curl -sf http://localhost:3000/ > /dev/null 2>&1; then
-              echo "fixture up after ${i}s"
-              exit 0
-            fi
-            sleep 1
-          done
-          echo "::error::fixture failed to start in 30s"
-          cat /tmp/fixture.log
-          exit 1
-
-      - name: Run bench
-        env:
-          # 发布门槛：用 baseline 一样的档位 + 时长，确保对比有意义
-          BENCH_TIERS: '10,100,1000'
-          BENCH_DURATION: '15'
-          BENCH_PATHS: '/,/about,/books/1'
-          BENCH_WARMUP_SECONDS: '3'
-          BENCH_COOLDOWN_MS: '2000'
-          BENCH_OUTPUT: bench-release.json
-        run: pnpm run bench
-
-      - name: Bench regression gate (must pass to publish)
-        env:
-          BENCH_P95_REGRESSION_PCT: '20'
-          BENCH_QPS_REGRESSION_PCT: '15'
-        run: |
-          if [ ! -f bench/baseline.json ]; then
-            echo "::error::no bench/baseline.json — release MUST have a baseline"
-            echo "seed by running bench locally and committing the result"
-            exit 1
-          fi
-          node bench/compare.mjs bench/baseline.json bench-release.json
-
-      - name: Stop bench-fixture
-        if: always()
-        run: |
-          if [ -f /tmp/fixture.pid ]; then
-            kill $(cat /tmp/fixture.pid) || true
-          fi
-
       # ─── Publish 到 GitHub Packages ────────────────────────────────
       - name: Publish to GitHub Packages
         env:
@@ -169,6 +113,4 @@ jobs:
           name: release-${{ steps.version.outputs.tag }}
           path: |
             dist/
-            bench-release.json
-            /tmp/fixture.log
           retention-days: 90
