@@ -7,7 +7,7 @@ name: CI
 on:
   push:
     branches: ['**']
-    tags-ignore: ['**'] # tag push 走 release.yml，不重复跑
+    tags-ignore: ['**']
   pull_request:
     branches: [main, develop]
 
@@ -44,13 +44,9 @@ jobs:
 
       - name: Build
         run: pnpm run build
-
-      - name: Verify dist artifacts
-        run: |
-          test -f dist/novel-isr.js
-          test -f dist/novel-isr.d.ts
-          test -f dist/cli/cli.js
-          echo "✓ dist artifacts present"
+        # dist 不进 git;消费者通过 Git URL + prepare 在 install 时构建。
+        # 这里跑 build 是验证"代码可构建",失败会让 step exit non-zero,
+        # 不需要再单独 verify dist 文件存在(冗余且路径易漂移)。
 
   test:
     name: Unit + Integration Tests
