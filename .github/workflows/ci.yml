@@ -1,8 +1,10 @@
 name: CI
 
 # 触发：任何 push 到任何分支 + PR 到 main/develop
-# 目的：feature 分支也跑 lint+typecheck+test，提早暴露问题（之前只跑 main/develop
-# 导致 feature 分支裸奔，merge 时才发现 broken）
+# 目的：feature 分支也跑 lint+typecheck+test，提早暴露问题。
+#
+# corepack 接管 pnpm（packageManager 字段是 source of truth）—— 确保所有
+# pnpm 子进程都用 setup-node 设置的 Node 版本，不会回退到 runner system 默认。
 
 on:
   push:
@@ -24,14 +26,19 @@ jobs:
     steps:
       - uses: actions/checkout@v5
 
-      - uses: pnpm/action-setup@v5
-        with:
-          version: 9
-
       - uses: actions/setup-node@v5
         with:
           node-version-file: '.nvmrc'
-          cache: 'pnpm'
+
+      - name: Enable corepack (pnpm via packageManager)
+        run: corepack enable pnpm
+
+      - name: Diagnostics
+        run: |
+          node --version
+          pnpm --version
+          which node
+          which pnpm
 
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
@@ -44,9 +51,6 @@ jobs:
 
       - name: Build
         run: pnpm run build
-        # dist 不进 git;消费者通过 Git URL + prepare 在 install 时构建。
-        # 这里跑 build 是验证"代码可构建",失败会让 step exit non-zero,
-        # 不需要再单独 verify dist 文件存在(冗余且路径易漂移)。
 
   test:
     name: Unit + Integration Tests
@@ -56,14 +60,12 @@ jobs:
     steps:
       - uses: actions/checkout@v5
 
-      - uses: pnpm/action-setup@v5
-        with:
-          version: 9
-
       - uses: actions/setup-node@v5
         with:
           node-version-file: '.nvmrc'
-          cache: 'pnpm'
+
+      - name: Enable corepack (pnpm via packageManager)
+        run: corepack enable pnpm
 
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
