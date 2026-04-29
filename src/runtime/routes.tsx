@@ -36,6 +36,7 @@
  */
 
 import React from 'react';
+import type { DataRouteEntry, SpaRouteContext } from './createSpaApp';
 
 /** 路由匹配后传给 page 的 props */
 export interface PageProps {
@@ -63,6 +64,41 @@ export interface DefineRoutesOptions {
   fallback?: PageComponent;
 }
 
+type LazyModuleMap = Record<string, () => Promise<Record<string, unknown>>>;
+
+type LazyComponentRef = string | PageComponent;
+
+export interface UnifiedRouteEntry {
+  path: string;
+  /** SSR/RSC 页面组件；string 时从 ssrModules 里按 key lazy 加载 */
+  page?: LazyComponentRef;
+  /** CSR fallback 展示组件；string 时从 spaModules 里按 key lazy 加载 */
+  Component?: LazyComponentRef;
+  /** string Component 使用命名导出时填写；默认 'default' */
+  exportName?: string;
+  /** CSR fallback 数据加载器 */
+  loader?: (ctx: SpaRouteContext) => Promise<Record<string, unknown>>;
+  /** ISR 缓存标签 —— 仅 SSR 侧使用，SPA 侧忽略 */
+  tags?: (ctx: SpaRouteContext) => readonly string[];
+}
+
+export interface UnifiedRoutesConfig {
+  routes: readonly UnifiedRouteEntry[];
+  /** SSR 404 页面；string 时从 ssrModules 里按 key lazy 加载 */
+  fallback?: LazyComponentRef;
+  /** Vite glob map，仅 SSR/RSC 构建传入 */
+  ssrModules?: LazyModuleMap;
+  /** Vite glob map，仅 client 构建传入 */
+  spaModules?: LazyModuleMap;
+}
+
+export interface UnifiedRoutesResult {
+  /** SSR/RSC resolver */
+  routes: ResolveRoute;
+  /** CSR fallback routes */
+  spaRoutes: DataRouteEntry[];
+}
+
 interface CompiledRoute extends RouteEntry {
   re: RegExp;
   keys: string[];
@@ -88,7 +124,26 @@ export type ResolveRoute = (ctx: {
   searchParams: URLSearchParams;
 }) => React.ReactNode;
 
-export function defineRoutes(
+function resolveLazyComponent(
+  ref: LazyComponentRef | undefined,
+  modules: LazyModuleMap | undefined,
+  exportName = 'default'
+): PageComponent | undefined {
+  if (!ref) return undefined;
+  if (typeof ref !== 'string') return ref;
+  const load = modules?.[ref];
+  if (!load) return undefined;
+  return React.lazy(async () => {
+    const mod = await load();
+    const component = mod[exportName];
+    if (!component) {
+      throw new Error(`Route module "${ref}" does not export "${exportName}"`);
+    }
+    return { default: component as PageComponent };
+  });
+}
+
+function createRouteResolver(
   routes: readonly RouteEntry[],
   options: DefineRoutesOptions = {}
 ): ResolveRoute {
@@ -112,4 +167,45 @@ export function defineRoutes(
     }
     return null;
   };
+}
+
+function createUnifiedRoutes(config: UnifiedRoutesConfig): UnifiedRoutesResult {
+  const routeEntries: RouteEntry[] = [];
+  const spaRoutes: DataRouteEntry[] = [];
+
+  for (const route of config.routes) {
+    const page = resolveLazyComponent(route.page, config.ssrModules);
+    if (page) routeEntries.push({ path: route.path, page });
+
+    const Component = resolveLazyComponent(route.Component, config.spaModules, route.exportName);
+    if (Component && route.loader) {
+      spaRoutes.push({
+        path: route.path,
+        Component,
+        loader: route.loader,
+        tags: route.tags,
+      });
+    }
+  }
+
+  const fallback = resolveLazyComponent(config.fallback, config.ssrModules);
+  return {
+    routes: createRouteResolver(routeEntries, { fallback }),
+    spaRoutes,
+  };
+}
+
+export function defineRoutes(
+  routes: readonly RouteEntry[],
+  options?: DefineRoutesOptions
+): ResolveRoute;
+export function defineRoutes(config: UnifiedRoutesConfig): UnifiedRoutesResult;
+export function defineRoutes(
+  input: readonly RouteEntry[] | UnifiedRoutesConfig,
+  options: DefineRoutesOptions = {}
+): ResolveRoute | UnifiedRoutesResult {
+  if (Array.isArray(input)) {
+    return createRouteResolver(input as readonly RouteEntry[], options);
+  }
+  return createUnifiedRoutes(input as UnifiedRoutesConfig);
 }
