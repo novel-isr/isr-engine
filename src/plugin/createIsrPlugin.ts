@@ -196,15 +196,19 @@ function createBrowserShimPlugin(): Plugin {
 }
 
 function createEngineDefaultEntriesPlugin(): Plugin {
+  const virtualEntryIds = new Set<string>(Object.values(VIRTUAL_ENTRY_IDS));
+  const resolvedVirtualEntryIds = new Set<string>(
+    Object.values(VIRTUAL_ENTRY_IDS).map(id => `${RESOLVED_VIRTUAL_PREFIX}${id}`)
+  );
+
   return {
     name: 'isr:engine-default-entries',
     enforce: 'pre',
     resolveId(id) {
-      if (
-        Object.values(VIRTUAL_ENTRY_IDS).includes(
-          id as (typeof VIRTUAL_ENTRY_IDS)[keyof typeof VIRTUAL_ENTRY_IDS]
-        )
-      ) {
+      if (resolvedVirtualEntryIds.has(id)) {
+        return id;
+      }
+      if (virtualEntryIds.has(id)) {
         return `${RESOLVED_VIRTUAL_PREFIX}${id}`;
       }
       return null;
