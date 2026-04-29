@@ -63,8 +63,13 @@ export const { routes } = defineRoutes({
 import type { ISRConfig } from '@novel-isr/engine';
 
 export const runtime = {
-  api: process.env.ADMIN_API_URL ?? process.env.API_URL ?? 'http://localhost:8080',
   site: process.env.SEO_BASE_URL ?? 'http://localhost:3000',
+  services: {
+    api: process.env.API_URL ?? 'http://localhost:8080',
+    admin: process.env.ADMIN_API_URL ?? 'http://localhost:8100',
+    i18n: process.env.I18N_API_URL ?? process.env.ADMIN_API_URL ?? 'http://localhost:8100',
+    seo: process.env.SEO_API_URL ?? process.env.ADMIN_API_URL ?? 'http://localhost:8100',
+  },
   redis: process.env.REDIS_URL ? { url: process.env.REDIS_URL, keyPrefix: 'isr:' } : undefined,
   sentry: process.env.SENTRY_DSN ? { dsn: process.env.SENTRY_DSN } : undefined,
   rateLimit: { windowMs: 60_000, max: 200 },
@@ -90,38 +95,19 @@ export default {
 ## 6. `src/entry.server.ts` —— 请求期 SiteHooks
 
 ```ts
-import {
-  createAdminIntlLoader,
-  createAdminSeoLoader,
-  defineSiteHooks,
-} from '@novel-isr/engine/site-hooks';
+import { defineAdminSiteHooks } from '@novel-isr/engine/site-hooks';
 import baseline from './config/site-baseline.json';
 
-export default defineSiteHooks({
-  intl: {
-    locales: baseline.site.locales,
-    defaultLocale: baseline.site.defaultLocale,
-    load: createAdminIntlLoader({
-      endpoint: '/api/i18n/{locale}/manifest',
-      fallbackMessages: baseline.i18n.strings,
-      defaultLocale: baseline.site.defaultLocale,
-    }),
-    ttl: 60_000,
-  },
-  seo: {
-    '/*': {
-      load: createAdminSeoLoader({
-        endpoint: '/api/seo?path={pathname}',
-        fallbackEntries: baseline.seo.entries,
-      }),
-      ttl: 60_000,
-    },
-  },
+export default defineAdminSiteHooks({
+  baseline,
+  intl: { ttl: 60_000 },
+  seo: { ttl: 60_000 },
 });
 ```
 
-`entry.server.ts` 只描述如何在请求期加载 i18n / SEO / request context。`api` 和 `site`
-只写在 `ssr.config.ts` 的 `runtime`，engine 会注入到默认 server entry，避免同一项配置散落多处。i18n 字典和 SEO 都可以远程下发，engine 会做 TTL / SWR / 并发去重缓存。
+`entry.server.ts` 只描述如何在请求期加载 i18n / SEO / request context。`site` 和
+`services` 只写在 `ssr.config.ts` 的 `runtime`，engine 会注入到默认 server entry，
+避免同一项配置散落多处。i18n 字典和 SEO 都可以远程下发，engine 会做 TTL / SWR / 并发去重缓存。
 
 ## 7. `src/app.tsx` —— App shell
 
@@ -217,8 +203,13 @@ export default function PublishBookForm() {
 ```ts
 // ssr.config.ts
 export const runtime = {
-  api: process.env.ADMIN_API_URL ?? process.env.API_URL ?? 'http://localhost:8080',
   site: process.env.SEO_BASE_URL ?? 'http://localhost:3000',
+  services: {
+    api: process.env.API_URL ?? 'http://localhost:8080',
+    admin: process.env.ADMIN_API_URL ?? 'http://localhost:8100',
+    i18n: process.env.I18N_API_URL ?? process.env.ADMIN_API_URL ?? 'http://localhost:8100',
+    seo: process.env.SEO_API_URL ?? process.env.ADMIN_API_URL ?? 'http://localhost:8100',
+  },
 
   redis: process.env.REDIS_URL ? { url: process.env.REDIS_URL, keyPrefix: 'isr:' } : undefined,
   sentry: process.env.SENTRY_DSN ? { dsn: process.env.SENTRY_DSN } : undefined,

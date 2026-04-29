@@ -81,8 +81,13 @@ export function App({ url }: { url: URL }) {
 import type { ISRConfig } from '@novel-isr/engine';
 
 export const runtime = {
-  api: process.env.ADMIN_API_URL ?? process.env.API_URL ?? 'http://localhost:8080',
   site: process.env.SEO_BASE_URL ?? 'http://localhost:3000',
+  services: {
+    api: process.env.API_URL ?? 'http://localhost:8080',
+    admin: process.env.ADMIN_API_URL ?? 'http://localhost:8100',
+    i18n: process.env.I18N_API_URL ?? process.env.ADMIN_API_URL ?? 'http://localhost:8100',
+    seo: process.env.SEO_API_URL ?? process.env.ADMIN_API_URL ?? 'http://localhost:8100',
+  },
   redis: process.env.REDIS_URL ? { url: process.env.REDIS_URL, keyPrefix: 'isr:' } : undefined,
   sentry: process.env.SENTRY_DSN ? { dsn: process.env.SENTRY_DSN } : undefined,
   rateLimit: { windowMs: 60_000, max: 200 },
@@ -108,33 +113,13 @@ export default {
 
 ```ts
 // src/entry.server.ts —— 请求期 hooks：如何加载 i18n / SEO / request ctx
-import {
-  createAdminIntlLoader,
-  createAdminSeoLoader,
-  defineSiteHooks,
-} from '@novel-isr/engine/site-hooks';
+import { defineAdminSiteHooks } from '@novel-isr/engine/site-hooks';
 import baseline from './config/site-baseline.json';
 
-export default defineSiteHooks({
-  intl: {
-    locales: ['zh-CN', 'en'],
-    defaultLocale: 'zh-CN',
-    load: createAdminIntlLoader({
-      endpoint: '/api/i18n/{locale}/manifest',
-      fallbackMessages: baseline.i18n.strings,
-      defaultLocale: baseline.site.defaultLocale,
-    }),
-    ttl: 60_000,
-  },
-  seo: {
-    '/*': {
-      load: createAdminSeoLoader({
-        endpoint: '/api/seo?path={pathname}',
-        fallbackEntries: baseline.seo.entries,
-      }),
-      ttl: 60_000,
-    },
-  },
+export default defineAdminSiteHooks({
+  baseline,
+  intl: { ttl: 60_000 },
+  seo: { ttl: 60_000 },
 });
 ```
 
@@ -305,8 +290,8 @@ export default async function BookDetailPage() {
 }
 ```
 
-`defineSiteHooks({ seo })` 用来接 admin / CMS / API 下发的 SEO。`api/site/redis/sentry/rateLimit/experiments`
-这类平台配置只放在 `ssr.config.ts` 的 `runtime`，engine 会把 `runtime.api/site`
+`defineSiteHooks({ seo })` 用来接 admin / CMS / API 下发的 SEO。`site/services/redis/sentry/rateLimit/experiments`
+这类平台配置只放在 `ssr.config.ts` 的 `runtime`，engine 会把 `runtime.site/services`
 注入到默认 server entry；业务的 `entry.server.tsx` 只声明请求期 loader。推荐商业项目用
 `/*` 统一下发，按 `pathname` 决策：
 
@@ -320,7 +305,7 @@ export default defineSiteHooks({
       load: createAdminSeoLoader({
         endpoint: '/api/seo?path={pathname}',
         fallbackEntries: baseline.seo.entries,
-        // apiBaseUrl: 'https://admin.example.com', // 可选；默认使用 ssr.config.ts runtime.api
+        // baseUrl: 'https://admin.example.com', // 可选；默认使用 runtime.services.seo/admin
       }),
       ttl: 60_000,
     },
@@ -346,7 +331,7 @@ export default defineSiteHooks({
       endpoint: '/api/i18n/{locale}/manifest',
       fallbackMessages: baseline.i18n.strings,
       defaultLocale: baseline.site.defaultLocale,
-      // apiBaseUrl: 'https://admin.example.com', // 可选；默认使用 ssr.config.ts runtime.api
+      // baseUrl: 'https://admin.example.com', // 可选；默认使用 runtime.services.i18n/admin
     }),
     ttl: 60_000,
   },

@@ -89,9 +89,19 @@ export async function startProductionServer(options: StartOptions): Promise<void
 
   // 平台运行时配置只从 ssr.config.ts runtime 读取。
   const runtime = config.runtime;
-  const extraConnectSrc: string[] = [];
-  const apiOrigin = safeOrigin(runtime?.api);
-  if (apiOrigin) extraConnectSrc.push(apiOrigin);
+  const extraConnectSrc = Array.from(
+    new Set(
+      [
+        runtime?.services?.api ?? runtime?.api,
+        runtime?.services?.admin,
+        runtime?.services?.i18n,
+        runtime?.services?.seo,
+        runtime?.services?.mock,
+      ]
+        .map(safeOrigin)
+        .filter((origin): origin is string => !!origin)
+    )
+  );
 
   const app: Express = express();
   app.disable('x-powered-by');
@@ -101,7 +111,7 @@ export async function startProductionServer(options: StartOptions): Promise<void
     logger.warn(`[Admin] ${warning}`);
   }
   // 安全头 —— helmet 默认 + 生产 CSP（prod 不允许 'unsafe-eval'）
-  // CSP connect-src 自动加入 user 的 api origin（让 CSR-fallback 浏览器 fetch 不被挡）
+  // CSP connect-src 自动加入用户配置的服务 origin（让 CSR-fallback / 业务 fetch 不被挡）
   const { createSecurityMiddleware, createCompressionMiddleware } =
     await import('@/server/middleware');
   app.use(createSecurityMiddleware(false, extraConnectSrc));

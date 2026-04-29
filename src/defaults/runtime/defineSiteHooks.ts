@@ -8,33 +8,14 @@
  *   - i18n 字典缓存（createCachedFetcher: TTL/SWR/dedup/fallback）
  *   - SEO 路由表 pattern → resolver
  *   - locale 检测（cookie → Accept-Language → 默认）
+ *   - admin/i18n/seo 远端 origin 从 ssr.config.ts runtime.services 注入
  *   - 错误打印 / Sentry adapter 透传
  *
  * 用户态写法（商业项目推荐）：
- *   import {
- *     createAdminIntlLoader,
- *     createAdminSeoLoader,
- *     defineSiteHooks,
- *   } from '@novel-isr/engine/site-hooks';
+ *   import { defineAdminSiteHooks } from '@novel-isr/engine/site-hooks';
  *   import baseline from './config/site-baseline.json';
  *
- *   export default defineSiteHooks({
- *     intl: {
- *       locales: baseline.site.locales,
- *       defaultLocale: baseline.site.defaultLocale,
- *       load: createAdminIntlLoader({
- *         fallbackMessages: baseline.i18n.strings,
- *         defaultLocale: baseline.site.defaultLocale,
- *       }),
- *       ttl: 60_000,
- *     },
- *     seo: {
- *       '/*': {
- *         load: createAdminSeoLoader({ fallbackEntries: baseline.seo.entries }),
- *         ttl: 60_000,
- *       },
- *     },
- *   });
+ *   export default defineAdminSiteHooks({ baseline });
  */
 import { createCachedFetcher } from './createCachedFetcher';
 import type { IntlPayload, PageSeoMeta } from './seo-runtime';
@@ -44,19 +25,32 @@ export type SiteRuntimeConfig = NonNullable<ISRConfig['runtime']>;
 
 export interface SiteRuntimeContext {
   runtime: SiteRuntimeConfig;
+  services: RuntimeServices;
   api?: string;
+  admin?: string;
+  i18n?: string;
+  seo?: string;
+  mock?: string;
   site?: string;
 }
 
-export type AdminApiBase = string | ((ctx: SiteRuntimeContext) => string | null | undefined);
+export interface RuntimeServices {
+  api?: string;
+  admin?: string;
+  i18n?: string;
+  seo?: string;
+  mock?: string;
+}
+
+export type RuntimeServiceBase = string | ((ctx: SiteRuntimeContext) => string | null | undefined);
 
 export type IntlMessagesByLocale = Record<string, Record<string, unknown>>;
 
 export interface CreateAdminIntlLoaderOptions {
-  /** 远端字典端点；相对路径会用 runtime.api 或 apiBaseUrl 拼接 */
+  /** 远端字典端点；相对路径会用 runtime.services.i18n/admin 拼接 */
   endpoint?: string;
-  /** 显式覆盖远端 API base；不传时使用 ssr.config.ts runtime.api */
-  apiBaseUrl?: AdminApiBase;
+  /** 显式覆盖远端 origin；不传时使用 ssr.config.ts runtime.services.i18n/admin */
+  baseUrl?: RuntimeServiceBase;
   /** 本地兜底字典，通常来自业务自己的 site-baseline.json */
   fallbackMessages?: IntlMessagesByLocale;
   /** 远端和本地都无法命中时使用的 locale */
@@ -77,12 +71,47 @@ export interface AdminSeoFallbackEntry extends PageSeoMeta {
 export interface CreateAdminSeoLoaderOptions {
   /** 远端 SEO 端点；支持 {pathname} 和路由 params 占位符 */
   endpoint?: string;
-  /** 显式覆盖远端 API base；不传时使用 ssr.config.ts runtime.api */
-  apiBaseUrl?: AdminApiBase;
+  /** 显式覆盖远端 origin；不传时使用 ssr.config.ts runtime.services.seo/admin */
+  baseUrl?: RuntimeServiceBase;
   /** 本地兜底 SEO 条目，通常来自业务自己的 site-baseline.json */
   fallbackEntries?: readonly AdminSeoFallbackEntry[];
   /** 远端请求超时，默认 1200ms */
   timeoutMs?: number;
+}
+
+export interface AdminSiteBaseline {
+  site: {
+    defaultLocale: string;
+    locales: readonly string[];
+  };
+  i18n?: {
+    strings?: IntlMessagesByLocale;
+  };
+  seo?: {
+    entries?: readonly AdminSeoFallbackEntry[];
+  };
+}
+
+export interface DefineAdminSiteHooksOptions {
+  baseline: AdminSiteBaseline;
+  intl?: {
+    endpoint?: string;
+    ttl?: number;
+    prefixDefault?: boolean;
+    detect?: IntlConfig['detect'];
+    baseUrl?: RuntimeServiceBase;
+    timeoutMs?: number;
+    remoteSource?: string;
+    fallbackSource?: string;
+  };
+  seo?: {
+    endpoint?: string;
+    ttl?: number;
+    baseUrl?: RuntimeServiceBase;
+    timeoutMs?: number;
+  };
+  beforeRequest?: SiteHooksConfig['beforeRequest'];
+  onError?: SiteHooksConfig['onError'];
 }
 
 export interface IntlConfig {
@@ -181,7 +210,7 @@ export function createAdminIntlLoader(
       supportedLocales.length && defaultLocale
         ? normalizeLocale(locale, supportedLocales, defaultLocale)
         : locale;
-    const remoteUrl = resolveAdminUrl(endpoint, { locale: normalizedLocale }, ctx, options);
+    const remoteUrl = resolveAdminUrl(endpoint, { locale: normalizedLocale }, ctx, options, 'i18n');
     const remote = remoteUrl
       ? await fetchJsonWithTimeout<unknown>(remoteUrl, options.timeoutMs)
       : null;
@@ -211,7 +240,7 @@ export function createAdminSeoLoader(
 
   return async (params, ctx) => {
     const pathname = normalizePathname(params.pathname || '/');
-    const remoteUrl = resolveAdminUrl(endpoint, { ...params, pathname }, ctx, options);
+    const remoteUrl = resolveAdminUrl(endpoint, { ...params, pathname }, ctx, options, 'seo');
     const remote = remoteUrl
       ? await fetchJsonWithTimeout<unknown>(remoteUrl, options.timeoutMs)
       : null;
@@ -225,6 +254,41 @@ export function createAdminSeoLoader(
     delete meta.group;
     return meta as PageSeoMeta;
   };
+}
+
+export function defineAdminSiteHooks(options: DefineAdminSiteHooksOptions): ServerHooksOutput {
+  const { baseline, intl = {}, seo = {}, beforeRequest, onError } = options;
+  return defineSiteHooks({
+    beforeRequest,
+    onError,
+    intl: {
+      locales: baseline.site.locales,
+      defaultLocale: baseline.site.defaultLocale,
+      prefixDefault: intl.prefixDefault,
+      detect: intl.detect,
+      load: createAdminIntlLoader({
+        endpoint: intl.endpoint,
+        baseUrl: intl.baseUrl,
+        fallbackMessages: baseline.i18n?.strings ?? {},
+        defaultLocale: baseline.site.defaultLocale,
+        timeoutMs: intl.timeoutMs,
+        remoteSource: intl.remoteSource,
+        fallbackSource: intl.fallbackSource,
+      }),
+      ttl: intl.ttl ?? 60_000,
+    },
+    seo: {
+      '/*': {
+        load: createAdminSeoLoader({
+          endpoint: seo.endpoint,
+          baseUrl: seo.baseUrl,
+          fallbackEntries: baseline.seo?.entries ?? [],
+          timeoutMs: seo.timeoutMs,
+        }),
+        ttl: seo.ttl ?? 60_000,
+      },
+    },
+  });
 }
 
 export interface ServerHooksOutput {
@@ -265,24 +329,32 @@ export function applyRuntimeToServerHooks<T extends object>(
     siteBaseUrl?: string;
     apiBaseUrl?: string;
   };
+  const services = resolveRuntimeServices(runtime);
   return {
     ...hooks,
     siteBaseUrl: baseHooks.siteBaseUrl ?? runtime.site,
-    apiBaseUrl: baseHooks.apiBaseUrl ?? runtime.api,
+    apiBaseUrl: baseHooks.apiBaseUrl ?? services.api,
   } as T;
 }
 
 function createSiteHooks(config: SiteHooksConfig, runtime: SiteRuntimeConfig): ServerHooksOutput {
-  const api = runtime.api ?? '';
+  const services = resolveRuntimeServices(runtime);
+  const api = services.api ?? '';
   const site = runtime.site ?? '';
   const runtimeCtx: SiteRuntimeContext = {
     runtime,
+    services,
     api: api || undefined,
+    admin: services.admin,
+    i18n: services.i18n,
+    seo: services.seo,
+    mock: services.mock,
     site: site || undefined,
   };
-  const fetchJson = async (path: string): Promise<unknown> => {
+  const fetchJson = async (path: string, baseUrl?: string): Promise<unknown> => {
     try {
-      const r = await fetch(api + path);
+      if (!baseUrl) return null;
+      const r = await fetch(baseUrl + path);
       if (!r.ok) return null;
       return await r.json();
     } catch {
@@ -321,7 +393,7 @@ function createSiteHooks(config: SiteHooksConfig, runtime: SiteRuntimeConfig): S
       }
       if (intlCfg.endpoint) {
         const url = fillTemplate(intlCfg.endpoint, { locale });
-        const json = await fetchJson(url);
+        const json = await fetchJson(url, services.i18n ?? services.admin ?? services.api);
         if (json !== null && intlCfg.transform) {
           const transformed = await intlCfg.transform(json, locale);
           if (transformed) {
@@ -364,7 +436,10 @@ function createSiteHooks(config: SiteHooksConfig, runtime: SiteRuntimeConfig): S
         ttl: remote.ttl ?? 300_000,
         fetch: async paramKey => {
           const params = JSON.parse(paramKey) as Record<string, string>;
-          const data = await fetchJson(fillTemplate(remote.endpoint, params));
+          const data = await fetchJson(
+            fillTemplate(remote.endpoint, params),
+            services.seo ?? services.admin ?? services.api
+          );
           if (data === null) return null;
           return remote.transform(data, params);
         },
@@ -541,20 +616,37 @@ function resolveAdminUrl(
   endpoint: string,
   vars: Record<string, string>,
   ctx: SiteRuntimeContext,
-  options: { apiBaseUrl?: AdminApiBase }
+  options: { baseUrl?: RuntimeServiceBase },
+  service: keyof RuntimeServices
 ): string | null {
   const filled = fillTemplate(endpoint, vars);
   if (/^(https?:)?\/\//i.test(filled)) return filled;
-  const apiBase = resolveAdminApiBase(ctx, options.apiBaseUrl);
-  if (!apiBase) return null;
-  return `${apiBase.replace(/\/+$/, '')}/${filled.replace(/^\/+/, '')}`;
+  const base = resolveRuntimeServiceBase(ctx, service, options.baseUrl);
+  if (!base) return null;
+  return `${base.replace(/\/+$/, '')}/${filled.replace(/^\/+/, '')}`;
 }
 
-function resolveAdminApiBase(ctx: SiteRuntimeContext, apiBaseUrl?: AdminApiBase): string | null {
-  if (typeof apiBaseUrl === 'function') {
-    return apiBaseUrl(ctx) ?? null;
+function resolveRuntimeServiceBase(
+  ctx: SiteRuntimeContext,
+  service: keyof RuntimeServices,
+  baseUrl?: RuntimeServiceBase
+): string | null {
+  if (typeof baseUrl === 'function') {
+    return baseUrl(ctx) ?? null;
   }
-  return apiBaseUrl ?? ctx.api ?? null;
+  if (baseUrl) return baseUrl;
+  return ctx.services[service] ?? ctx.services.admin ?? null;
+}
+
+function resolveRuntimeServices(runtime: SiteRuntimeConfig): RuntimeServices {
+  const services = runtime.services ?? {};
+  return {
+    api: services.api ?? runtime.api,
+    admin: services.admin,
+    i18n: services.i18n ?? services.admin,
+    seo: services.seo ?? services.admin,
+    mock: services.mock ?? services.admin,
+  };
 }
 
 function normalizePathname(pathname: string): string {

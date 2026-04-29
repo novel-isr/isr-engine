@@ -51,7 +51,7 @@ const PROD_CSP = {
 /**
  * 创建安全中间件
  *
- * extraConnectSrc：用户的 API 域（来自 ssr.config.ts runtime.api）
+ * extraConnectSrc：用户的服务域（来自 ssr.config.ts runtime.services）
  * 自动加入 CSP connect-src，避免浏览器 CSR-fallback / 业务 fetch 被 CSP 挡
  */
 export function createSecurityMiddleware(

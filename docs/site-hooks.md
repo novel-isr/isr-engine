@@ -2,7 +2,7 @@
 
 成熟项目建议把配置分成两层：
 
-- `ssr.config.ts`：启动期 / 部署期 / 平台级配置，例如 `runtime.api`、`runtime.site`、Redis、Sentry、限流、A/B 实验、路由渲染模式。
+- `ssr.config.ts`：启动期 / 部署期 / 平台级配置，例如 `runtime.site`、`runtime.services`、Redis、Sentry、限流、A/B 实验、路由渲染模式。
 - `src/entry.server.tsx`：请求期 hooks，例如 locale 协商、i18n 字典加载、SEO 远程加载、`beforeRequest`、`onResponse`、`onError`。
 
 第一性原则是：会影响整个运行时拓扑的东西放配置文件；会依赖本次请求的东西放 server entry。
@@ -14,8 +14,14 @@
 import type { ISRConfig } from '@novel-isr/engine';
 
 export const runtime = {
-  api: process.env.ADMIN_API_URL ?? process.env.API_URL ?? 'http://localhost:8080',
   site: process.env.SEO_BASE_URL ?? 'http://localhost:3000',
+  services: {
+    api: process.env.API_URL ?? 'http://localhost:8080',
+    admin: process.env.ADMIN_API_URL ?? 'http://localhost:8100',
+    i18n: process.env.I18N_API_URL ?? process.env.ADMIN_API_URL ?? 'http://localhost:8100',
+    seo: process.env.SEO_API_URL ?? process.env.ADMIN_API_URL ?? 'http://localhost:8100',
+    mock: process.env.MOCK_SERVER_URL ?? process.env.ADMIN_API_URL ?? 'http://localhost:8100',
+  },
   redis: process.env.REDIS_URL ? { url: process.env.REDIS_URL, keyPrefix: 'isr:' } : undefined,
   sentry: process.env.SENTRY_DSN ? { dsn: process.env.SENTRY_DSN } : undefined,
   rateLimit: { windowMs: 60_000, max: 200 },
@@ -41,48 +47,30 @@ export default {
 
 ```tsx
 // src/entry.server.tsx
-import {
-  createAdminIntlLoader,
-  createAdminSeoLoader,
-  defineSiteHooks,
-} from '@novel-isr/engine/site-hooks';
+import { defineAdminSiteHooks } from '@novel-isr/engine/site-hooks';
 import baseline from './config/site-baseline.json';
 
-export default defineSiteHooks({
-  intl: {
-    locales: baseline.site.locales,
-    defaultLocale: baseline.site.defaultLocale,
-    load: createAdminIntlLoader({
-      endpoint: '/api/i18n/{locale}/manifest',
-      fallbackMessages: baseline.i18n.strings,
-      defaultLocale: baseline.site.defaultLocale,
-      // apiBaseUrl: 'https://admin.example.com', // 可选；默认使用 ssr.config.ts runtime.api
-    }),
-    ttl: 60_000,
-  },
-  seo: {
-    '/*': {
-      load: createAdminSeoLoader({
-        endpoint: '/api/seo?path={pathname}',
-        fallbackEntries: baseline.seo.entries,
-        // apiBaseUrl: 'https://admin.example.com', // 可选；默认使用 ssr.config.ts runtime.api
-      }),
-      ttl: 60_000,
-    },
-  },
+export default defineAdminSiteHooks({
+  baseline,
+  intl: { ttl: 60_000 },
+  seo: { ttl: 60_000 },
 });
 ```
 
 `defineSiteHooks` 不接收 Redis、Sentry、限流或 A/B 实验配置。这些能力只从
-`ssr.config.ts runtime` 读取。`runtime.api/site` 也由 engine 注入到默认 server
+`ssr.config.ts runtime` 读取。`runtime.site/services` 也由 engine 注入到默认 server
 entry，业务不需要在 `entry.server.tsx` 里 import `ssr.config.ts`。
 
 ## `runtime`
 
 `runtime` 是平台配置入口：
 
-- `api`：admin/API base URL。`entry.server.tsx` 的 i18n / SEO endpoint 会以它为前缀，生产 CSP 的 `connect-src` 也会自动加入它。
 - `site`：站点公网 base URL。用于 canonical、OG image、sitemap、robots；如果没有显式 `seo.baseUrl`，engine 会用 `runtime.site`。
+- `services.api`：业务 API base URL，例如书籍、用户、评分服务。
+- `services.admin`：管理后台 / 控制面 base URL。`services.i18n/seo/mock` 不配置时优先回退到它。
+- `services.i18n`：i18n 字典下发 base URL。
+- `services.seo`：SEO 配置下发 base URL。
+- `services.mock`：mock / fixture 下发 base URL。
 - `redis`：分布式 ISR 缓存和跨实例失效广播。没有 Redis 时自动使用进程内 memory cache。
 - `sentry`：服务端错误监控。
 - `rateLimit`：站点级限流。
@@ -99,6 +87,7 @@ intl: {
     endpoint: '/api/i18n/{locale}/manifest',
     fallbackMessages: baseline.i18n.strings,
     defaultLocale: baseline.site.defaultLocale,
+    // baseUrl: 'https://admin.example.com', // 可选；默认使用 runtime.services.i18n/admin
   }),
   ttl: 60_000,
 }
@@ -160,6 +149,7 @@ seo: {
     load: createAdminSeoLoader({
       endpoint: '/api/seo?path={pathname}',
       fallbackEntries: baseline.seo.entries,
+      // baseUrl: 'https://admin.example.com', // 可选；默认使用 runtime.services.seo/admin
     }),
     ttl: 60_000,
   },

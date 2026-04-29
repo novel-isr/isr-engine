@@ -75,6 +75,19 @@ export interface RuntimeRateLimitConfig {
   max?: number;
 }
 
+export interface RuntimeServicesConfig {
+  /** 业务 API origin，例如书籍、用户、评分等业务数据服务 */
+  api?: string;
+  /** 管理后台 / 控制面 origin；i18n/seo/mock 未单独配置时优先使用它 */
+  admin?: string;
+  /** i18n 字典下发 origin；不配置时回退到 admin */
+  i18n?: string;
+  /** SEO 配置下发 origin；不配置时回退到 admin */
+  seo?: string;
+  /** mock/fixture 下发 origin；不配置时回退到 admin */
+  mock?: string;
+}
+
 /**
  * 平台运行时配置。
  *
@@ -83,10 +96,15 @@ export interface RuntimeRateLimitConfig {
  *   - 请求期业务逻辑仍放 entry.server.tsx hooks
  */
 export interface RuntimeConfig {
-  /** 用户可访问或服务端可访问的业务/admin API base */
+  /**
+   * 旧的单 API base。新项目优先使用 services.api/admin/i18n/seo/mock；
+   * 保留该字段只作为低层 fallback，避免把业务 API 与配置控制面混在一起。
+   */
   api?: string;
   /** 站点公网 base URL，用于 SEO canonical / sitemap / robots */
   site?: string;
+  /** 按职责拆开的后端服务 origin */
+  services?: RuntimeServicesConfig;
   /** 分布式 ISR 缓存与跨实例失效广播 */
   redis?: RuntimeRedisConfig;
   /** 服务端错误监控 */

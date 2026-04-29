@@ -13,6 +13,7 @@ import {
   applyRuntimeToServerHooks,
   createAdminIntlLoader,
   createAdminSeoLoader,
+  defineAdminSiteHooks,
   defineSiteHooks,
 } from '../defaults/runtime/defineSiteHooks';
 
@@ -193,7 +194,7 @@ describe('defineSiteHooks: i18n loader', () => {
 });
 
 describe('admin loaders', () => {
-  it('createAdminIntlLoader 使用 runtime.api 拉远端并展开 dotted keys', async () => {
+  it('createAdminIntlLoader 使用 runtime.services.i18n 拉远端并展开 dotted keys', async () => {
     const fetchSpy = vi
       .spyOn(globalThis, 'fetch')
       .mockResolvedValue(
@@ -211,12 +212,12 @@ describe('admin loaders', () => {
           }),
         },
       }),
-      { api: 'http://api.x' }
+      { services: { api: 'http://api.x', i18n: 'http://i18n.x' } }
     );
     const intl = await hooks.loadIntl(
       new Request('http://x.com', { headers: { cookie: 'locale=zh' } })
     );
-    expect(fetchSpy).toHaveBeenCalledWith('http://api.x/api/i18n/zh/manifest', expect.any(Object));
+    expect(fetchSpy).toHaveBeenCalledWith('http://i18n.x/api/i18n/zh/manifest', expect.any(Object));
     expect(intl?.messages).toEqual({ home: { title: '首页' } });
     expect(intl?.source).toBe('admin');
   });
@@ -234,7 +235,7 @@ describe('admin loaders', () => {
           }),
         },
       }),
-      { api: 'http://api.x' }
+      { services: { i18n: 'http://i18n.x' } }
     );
     const intl = await hooks.loadIntl(
       new Request('http://x.com', { headers: { cookie: 'locale=fr' } })
@@ -244,7 +245,7 @@ describe('admin loaders', () => {
     expect(intl?.source).toBe('local-fallback');
   });
 
-  it('createAdminSeoLoader 支持显式 apiBaseUrl 覆盖 runtime.api', async () => {
+  it('createAdminSeoLoader 支持显式 baseUrl 覆盖 runtime.services.seo', async () => {
     const fetchSpy = vi
       .spyOn(globalThis, 'fetch')
       .mockResolvedValue(
@@ -256,13 +257,13 @@ describe('admin loaders', () => {
           '/*': {
             load: createAdminSeoLoader({
               endpoint: '/api/seo?path={pathname}',
-              apiBaseUrl: 'http://admin.x',
+              baseUrl: 'http://admin.x',
               fallbackEntries: [{ path: '/', title: '本地 SEO', group: 'marketing' }],
             }),
           },
         },
       }),
-      { api: 'http://runtime.x' }
+      { services: { seo: 'http://seo.x' } }
     );
     const meta = await hooks.loadSeoMeta(new Request('http://x.com/'));
     expect(fetchSpy).toHaveBeenCalledWith('http://admin.x/api/seo?path=%2F', expect.any(Object));
@@ -281,10 +282,31 @@ describe('admin loaders', () => {
           },
         },
       }),
-      { api: 'http://api.x' }
+      { services: { seo: 'http://seo.x' } }
     );
     const meta = await hooks.loadSeoMeta(new Request('http://x.com/about'));
     expect(meta).toEqual({ title: '关于' });
+  });
+
+  it('defineAdminSiteHooks 从 baseline 生成商业默认 SiteHooks', async () => {
+    vi.spyOn(globalThis, 'fetch').mockRejectedValue(new Error('down'));
+    const hooks = applyRuntimeToServerHooks(
+      defineAdminSiteHooks({
+        baseline: {
+          site: { locales: ['zh', 'en'], defaultLocale: 'zh' },
+          i18n: { strings: { zh: { 'home.title': '首页' } } },
+          seo: { entries: [{ path: '/', title: '首页 SEO' }] },
+        },
+      }),
+      { services: { admin: 'http://admin.x' } }
+    );
+    const intl = await hooks.loadIntl(
+      new Request('http://x.com', { headers: { cookie: 'locale=zh' } })
+    );
+    const meta = await hooks.loadSeoMeta(new Request('http://x.com/'));
+    expect(intl?.messages).toEqual({ home: { title: '首页' } });
+    expect(intl?.source).toBe('local-fallback');
+    expect(meta).toEqual({ title: '首页 SEO' });
   });
 });
 
