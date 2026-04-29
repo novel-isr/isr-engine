@@ -29,6 +29,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import type { PluginOption, Plugin } from 'vite';
 import vitePluginRsc from '@vitejs/plugin-rsc';
 
+import { createDevAssetRequestMiddleware } from './devAssetRequestMiddleware';
 import { createIsrCacheMiddleware } from './isrCacheMiddleware';
 import { createSsgPostBuildPlugin } from './createSsgPostBuildPlugin';
 import { Logger } from '../logger/Logger';
@@ -410,6 +411,7 @@ export function createIsrPlugin(options: CreateIsrPluginOptions = {}): PluginOpt
   const plugins: PluginOption[] = [
     createEngineDefaultEntriesPlugin(),
     createAppAliasPlugin(root),
+    createDevAssetRequestMiddleware(root),
     createBrowserShimPlugin(),
     createReactVirtualModuleInteropPlugin(),
   ];

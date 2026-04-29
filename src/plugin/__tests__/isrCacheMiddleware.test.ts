@@ -216,6 +216,33 @@ describe('isrCacheMiddleware —— query 参数归一化', () => {
   });
 });
 
+describe('isrCacheMiddleware —— dev/client-reference 资源旁路', () => {
+  let fx: TestFixture;
+  beforeEach(async () => {
+    fx = await startFixture();
+  });
+  afterEach(async () => {
+    await teardown(fx);
+  });
+
+  it('带 $$cache 后缀的 TSX client reference 不进入页面缓存链路', async () => {
+    let callCount = 0;
+    fx.renderImpl.current = (_req, res) => {
+      callCount++;
+      res.setHeader('content-type', 'text/javascript');
+      res.statusCode = 200;
+      res.end('export default {};');
+    };
+
+    const r1 = await httpGet(`${fx.baseUrl}/src/components/Header/index.tsx$$cache=abc`);
+    const r2 = await httpGet(`${fx.baseUrl}/src/components/Header/index.tsx$$cache=abc`);
+
+    expect(r1.cacheStatus).toBe('BYPASS');
+    expect(r2.cacheStatus).toBe('BYPASS');
+    expect(callCount).toBe(2);
+  });
+});
+
 describe('isrCacheMiddleware —— A/B variant 隔离', () => {
   it('variantIsolation=false（默认）→ 不同 ab cookie 共享缓存', async () => {
     const fx = await startFixture({});

@@ -49,6 +49,7 @@ import { registerInvalidator } from '@/rsc/revalidate';
 import { collectTags, runWithTagStore, isUncacheable } from '@/rsc/cacheTag';
 import { loadConfig } from '../config/loadConfig';
 import { resolveAdminConfig, createAdminAuthMiddleware } from '@/server/adminConfig';
+import { stripRscClientReferenceCacheSuffix } from './devAssetRequestMiddleware';
 
 const logger = Logger.getInstance();
 
@@ -1037,7 +1038,7 @@ function isCacheableMode(mode: RenderModeType): boolean {
 }
 
 function isBypassPath(url: string): boolean {
-  const p = stripQuery(url);
+  const p = stripRscClientReferenceCacheSuffix(stripQuery(url));
   if (p.startsWith('/@')) return true;
   if (p.startsWith('/__vite')) return true;
   if (p.startsWith('/__isr')) return true;
