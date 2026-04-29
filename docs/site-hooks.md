@@ -41,21 +41,33 @@ export default {
 
 ```tsx
 // src/entry.server.tsx
-import type { PageSeoMeta } from '@novel-isr/engine';
-import { defineSiteHooks } from '@novel-isr/engine/site-hooks';
+import {
+  createAdminIntlLoader,
+  createAdminSeoLoader,
+  defineSiteHooks,
+} from '@novel-isr/engine/site-hooks';
+import baseline from './config/site-baseline.json';
 
 export default defineSiteHooks({
   intl: {
-    locales: ['zh-CN', 'en'] as const,
-    defaultLocale: 'zh-CN',
-    endpoint: '/api/i18n/{locale}/manifest',
+    locales: baseline.site.locales,
+    defaultLocale: baseline.site.defaultLocale,
+    load: createAdminIntlLoader({
+      endpoint: '/api/i18n/{locale}/manifest',
+      fallbackMessages: baseline.i18n.strings,
+      defaultLocale: baseline.site.defaultLocale,
+      // apiBaseUrl: 'https://admin.example.com', // 可选；默认使用 ssr.config.ts runtime.api
+    }),
     ttl: 60_000,
   },
   seo: {
     '/*': {
-      endpoint: '/api/seo?path={pathname}',
+      load: createAdminSeoLoader({
+        endpoint: '/api/seo?path={pathname}',
+        fallbackEntries: baseline.seo.entries,
+        // apiBaseUrl: 'https://admin.example.com', // 可选；默认使用 ssr.config.ts runtime.api
+      }),
       ttl: 60_000,
-      transform: raw => (raw as { data?: PageSeoMeta | null }).data ?? null,
     },
   },
 });
@@ -83,7 +95,11 @@ intl: {
   locales: ['zh-CN', 'en'] as const,
   defaultLocale: 'zh-CN',
   prefixDefault: false,
-  endpoint: '/api/i18n/{locale}/manifest',
+  load: createAdminIntlLoader({
+    endpoint: '/api/i18n/{locale}/manifest',
+    fallbackMessages: baseline.i18n.strings,
+    defaultLocale: baseline.site.defaultLocale,
+  }),
   ttl: 60_000,
 }
 ```
@@ -137,11 +153,15 @@ export async function seo({ params }: { params: { id: string } }) {
 
 ```ts
 // src/entry.server.tsx
+import { createAdminSeoLoader } from '@novel-isr/engine/site-hooks';
+
 seo: {
   '/*': {
-    endpoint: '/api/seo?path={pathname}',
+    load: createAdminSeoLoader({
+      endpoint: '/api/seo?path={pathname}',
+      fallbackEntries: baseline.seo.entries,
+    }),
     ttl: 60_000,
-    transform: raw => (raw as { data?: PageSeoMeta | null }).data ?? null,
   },
 }
 ```

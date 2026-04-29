@@ -10,14 +10,29 @@
  *   - locale 检测（cookie → Accept-Language → 默认）
  *   - 错误打印 / Sentry adapter 透传
  *
- * 用户态写法（最小）：
- *   import { defineSiteHooks } from '@novel-isr/engine';
+ * 用户态写法（商业项目推荐）：
+ *   import {
+ *     createAdminIntlLoader,
+ *     createAdminSeoLoader,
+ *     defineSiteHooks,
+ *   } from '@novel-isr/engine/site-hooks';
+ *   import baseline from './config/site-baseline.json';
  *
  *   export default defineSiteHooks({
- *     intl: { endpoint: '/api/i18n?locale={locale}' },
+ *     intl: {
+ *       locales: baseline.site.locales,
+ *       defaultLocale: baseline.site.defaultLocale,
+ *       load: createAdminIntlLoader({
+ *         fallbackMessages: baseline.i18n.strings,
+ *         defaultLocale: baseline.site.defaultLocale,
+ *       }),
+ *       ttl: 60_000,
+ *     },
  *     seo: {
- *       '/': { title: 'Home', description: '...' },
- *       '/books/:id': { endpoint: '/api/books/{id}', transform: book => ({ title: book.data.title, ... }) },
+ *       '/*': {
+ *         load: createAdminSeoLoader({ fallbackEntries: baseline.seo.entries }),
+ *         ttl: 60_000,
+ *       },
  *     },
  *   });
  */
@@ -31,6 +46,43 @@ export interface SiteRuntimeContext {
   runtime: SiteRuntimeConfig;
   api?: string;
   site?: string;
+}
+
+export type AdminApiBase = string | ((ctx: SiteRuntimeContext) => string | null | undefined);
+
+export type IntlMessagesByLocale = Record<string, Record<string, unknown>>;
+
+export interface CreateAdminIntlLoaderOptions {
+  /** 远端字典端点；相对路径会用 runtime.api 或 apiBaseUrl 拼接 */
+  endpoint?: string;
+  /** 显式覆盖远端 API base；不传时使用 ssr.config.ts runtime.api */
+  apiBaseUrl?: AdminApiBase;
+  /** 本地兜底字典，通常来自业务自己的 site-baseline.json */
+  fallbackMessages?: IntlMessagesByLocale;
+  /** 远端和本地都无法命中时使用的 locale */
+  defaultLocale?: string;
+  /** 远端请求超时，默认 1200ms */
+  timeoutMs?: number;
+  /** 响应头 / dev inspector 里显示的远端来源名 */
+  remoteSource?: string;
+  /** 响应头 / dev inspector 里显示的 fallback 来源名 */
+  fallbackSource?: string;
+}
+
+export interface AdminSeoFallbackEntry extends PageSeoMeta {
+  path: string;
+  group?: string;
+}
+
+export interface CreateAdminSeoLoaderOptions {
+  /** 远端 SEO 端点；支持 {pathname} 和路由 params 占位符 */
+  endpoint?: string;
+  /** 显式覆盖远端 API base；不传时使用 ssr.config.ts runtime.api */
+  apiBaseUrl?: AdminApiBase;
+  /** 本地兜底 SEO 条目，通常来自业务自己的 site-baseline.json */
+  fallbackEntries?: readonly AdminSeoFallbackEntry[];
+  /** 远端请求超时，默认 1200ms */
+  timeoutMs?: number;
 }
 
 export interface IntlConfig {
@@ -114,6 +166,65 @@ function compilePattern(pattern: string): { re: RegExp; paramNames: string[] } {
 
 function fillTemplate(template: string, vars: Record<string, string>): string {
   return template.replace(/\{(\w+)\}/g, (_, k) => encodeURIComponent(vars[k] ?? ''));
+}
+
+export function createAdminIntlLoader(
+  options: CreateAdminIntlLoaderOptions = {}
+): NonNullable<IntlConfig['load']> {
+  const endpoint = options.endpoint ?? '/api/i18n/{locale}/manifest';
+  const fallbackMessages = options.fallbackMessages ?? {};
+  const defaultLocale = options.defaultLocale;
+  const supportedLocales = Object.keys(fallbackMessages);
+
+  return async (locale, ctx) => {
+    const normalizedLocale =
+      supportedLocales.length && defaultLocale
+        ? normalizeLocale(locale, supportedLocales, defaultLocale)
+        : locale;
+    const remoteUrl = resolveAdminUrl(endpoint, { locale: normalizedLocale }, ctx, options);
+    const remote = remoteUrl
+      ? await fetchJsonWithTimeout<unknown>(remoteUrl, options.timeoutMs)
+      : null;
+    const remoteMessages = extractIntlMessagesOrNull(remote);
+    const localMessages =
+      fallbackMessages[normalizedLocale] ??
+      (defaultLocale ? fallbackMessages[defaultLocale] : undefined) ??
+      {};
+    const messages = remoteMessages ?? normalizeMessages(localMessages);
+
+    return {
+      locale: normalizedLocale,
+      messages,
+      direction: rtlOf(normalizedLocale),
+      source: remoteMessages
+        ? (options.remoteSource ?? 'admin')
+        : (options.fallbackSource ?? 'local-fallback'),
+    };
+  };
+}
+
+export function createAdminSeoLoader(
+  options: CreateAdminSeoLoaderOptions = {}
+): SeoLocalEntry['load'] {
+  const endpoint = options.endpoint ?? '/api/seo?path={pathname}';
+  const fallbackEntries = options.fallbackEntries ?? [];
+
+  return async (params, ctx) => {
+    const pathname = normalizePathname(params.pathname || '/');
+    const remoteUrl = resolveAdminUrl(endpoint, { ...params, pathname }, ctx, options);
+    const remote = remoteUrl
+      ? await fetchJsonWithTimeout<unknown>(remoteUrl, options.timeoutMs)
+      : null;
+    const remoteMeta = extractSeoMetaOrNull(remote);
+    if (remoteMeta) return remoteMeta;
+
+    const fallback = fallbackEntries.find(entry => normalizePathname(entry.path) === pathname);
+    if (!fallback) return null;
+    const meta = { ...fallback } as Record<string, unknown>;
+    delete meta.path;
+    delete meta.group;
+    return meta as PageSeoMeta;
+  };
 }
 
 export interface ServerHooksOutput {
@@ -384,14 +495,75 @@ function normalizeLocale(
 }
 
 function extractIntlMessages(data: unknown): Record<string, unknown> {
-  if (!data || typeof data !== 'object') return {};
+  return extractIntlMessagesOrNull(data) ?? {};
+}
+
+function extractIntlMessagesOrNull(data: unknown): Record<string, unknown> | null {
+  if (!data || typeof data !== 'object') return null;
   const raw = data as Record<string, unknown>;
-  const candidate = raw.data ?? raw.messages ?? raw.strings;
-  if (!candidate || typeof candidate !== 'object') return {};
-  if (raw.strings === candidate || isFlatRecord(candidate)) {
-    return expandDottedRecord(candidate as Record<string, unknown>);
+  const dataValue = raw.data;
+  const candidate =
+    raw.strings ??
+    raw.messages ??
+    (isRecord(dataValue) && 'strings' in dataValue ? dataValue.strings : dataValue);
+  if (!candidate || typeof candidate !== 'object') return null;
+  return normalizeMessages(candidate as Record<string, unknown>);
+}
+
+function normalizeMessages(messages: Record<string, unknown>): Record<string, unknown> {
+  if (isFlatRecord(messages)) {
+    return expandDottedRecord(messages);
   }
-  return candidate as Record<string, unknown>;
+  return messages;
+}
+
+function extractSeoMetaOrNull(data: unknown): PageSeoMeta | null {
+  if (!isRecord(data)) return null;
+  const candidate = 'data' in data ? data.data : data;
+  if (!isRecord(candidate)) return null;
+  return candidate as PageSeoMeta;
+}
+
+async function fetchJsonWithTimeout<T>(url: string, timeoutMs = 1200): Promise<T | null> {
+  try {
+    const response = await fetch(url, {
+      headers: { Accept: 'application/json' },
+      signal: timeoutMs > 0 ? AbortSignal.timeout(timeoutMs) : undefined,
+    });
+    if (!response.ok) return null;
+    return (await response.json()) as T;
+  } catch {
+    return null;
+  }
+}
+
+function resolveAdminUrl(
+  endpoint: string,
+  vars: Record<string, string>,
+  ctx: SiteRuntimeContext,
+  options: { apiBaseUrl?: AdminApiBase }
+): string | null {
+  const filled = fillTemplate(endpoint, vars);
+  if (/^(https?:)?\/\//i.test(filled)) return filled;
+  const apiBase = resolveAdminApiBase(ctx, options.apiBaseUrl);
+  if (!apiBase) return null;
+  return `${apiBase.replace(/\/+$/, '')}/${filled.replace(/^\/+/, '')}`;
+}
+
+function resolveAdminApiBase(ctx: SiteRuntimeContext, apiBaseUrl?: AdminApiBase): string | null {
+  if (typeof apiBaseUrl === 'function') {
+    return apiBaseUrl(ctx) ?? null;
+  }
+  return apiBaseUrl ?? ctx.api ?? null;
+}
+
+function normalizePathname(pathname: string): string {
+  if (pathname === '/') return '/';
+  return pathname.replace(/\/+$/, '') || '/';
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return !!value && typeof value === 'object' && !Array.isArray(value);
 }
 
 function isFlatRecord(value: unknown): boolean {

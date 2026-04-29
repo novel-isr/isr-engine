@@ -108,20 +108,31 @@ export default {
 
 ```ts
 // src/entry.server.ts —— 请求期 hooks：如何加载 i18n / SEO / request ctx
-import { defineSiteHooks } from '@novel-isr/engine/site-hooks';
+import {
+  createAdminIntlLoader,
+  createAdminSeoLoader,
+  defineSiteHooks,
+} from '@novel-isr/engine/site-hooks';
+import baseline from './config/site-baseline.json';
 
 export default defineSiteHooks({
   intl: {
     locales: ['zh-CN', 'en'],
     defaultLocale: 'zh-CN',
-    endpoint: '/api/i18n/{locale}/manifest',
+    load: createAdminIntlLoader({
+      endpoint: '/api/i18n/{locale}/manifest',
+      fallbackMessages: baseline.i18n.strings,
+      defaultLocale: baseline.site.defaultLocale,
+    }),
     ttl: 60_000,
   },
   seo: {
     '/*': {
-      endpoint: '/api/seo?path={pathname}',
+      load: createAdminSeoLoader({
+        endpoint: '/api/seo?path={pathname}',
+        fallbackEntries: baseline.seo.entries,
+      }),
       ttl: 60_000,
-      transform: raw => (raw as { data?: unknown } | null)?.data ?? null,
     },
   },
 });
@@ -300,15 +311,18 @@ export default async function BookDetailPage() {
 `/*` 统一下发，按 `pathname` 决策：
 
 ```ts
-import type { PageSeoMeta } from '@novel-isr/engine';
-import { defineSiteHooks } from '@novel-isr/engine/site-hooks';
+import { createAdminSeoLoader, defineSiteHooks } from '@novel-isr/engine/site-hooks';
+import baseline from './config/site-baseline.json';
 
 export default defineSiteHooks({
   seo: {
     '/*': {
-      endpoint: '/api/seo?path={pathname}',
+      load: createAdminSeoLoader({
+        endpoint: '/api/seo?path={pathname}',
+        fallbackEntries: baseline.seo.entries,
+        // apiBaseUrl: 'https://admin.example.com', // 可选；默认使用 ssr.config.ts runtime.api
+      }),
       ttl: 60_000,
-      transform: raw => (raw as { data?: PageSeoMeta | null }).data ?? null,
     },
   },
 });
@@ -321,13 +335,19 @@ export default defineSiteHooks({
 商业项目推荐由 admin/API 下发字典：
 
 ```ts
-import { defineSiteHooks } from '@novel-isr/engine/site-hooks';
+import { createAdminIntlLoader, defineSiteHooks } from '@novel-isr/engine/site-hooks';
+import baseline from './config/site-baseline.json';
 
 export default defineSiteHooks({
   intl: {
     locales: ['zh-CN', 'en'],
     defaultLocale: 'zh-CN',
-    endpoint: '/api/i18n/{locale}/manifest',
+    load: createAdminIntlLoader({
+      endpoint: '/api/i18n/{locale}/manifest',
+      fallbackMessages: baseline.i18n.strings,
+      defaultLocale: baseline.site.defaultLocale,
+      // apiBaseUrl: 'https://admin.example.com', // 可选；默认使用 ssr.config.ts runtime.api
+    }),
     ttl: 60_000,
   },
 });

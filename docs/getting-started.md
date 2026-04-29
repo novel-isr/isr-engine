@@ -90,21 +90,31 @@ export default {
 ## 6. `src/entry.server.ts` —— 请求期 SiteHooks
 
 ```ts
-import type { PageSeoMeta } from '@novel-isr/engine';
-import { defineSiteHooks } from '@novel-isr/engine/site-hooks';
+import {
+  createAdminIntlLoader,
+  createAdminSeoLoader,
+  defineSiteHooks,
+} from '@novel-isr/engine/site-hooks';
+import baseline from './config/site-baseline.json';
 
 export default defineSiteHooks({
   intl: {
-    locales: ['zh-CN', 'en'] as const,
-    defaultLocale: 'zh-CN',
-    endpoint: '/api/i18n/{locale}/manifest',
+    locales: baseline.site.locales,
+    defaultLocale: baseline.site.defaultLocale,
+    load: createAdminIntlLoader({
+      endpoint: '/api/i18n/{locale}/manifest',
+      fallbackMessages: baseline.i18n.strings,
+      defaultLocale: baseline.site.defaultLocale,
+    }),
     ttl: 60_000,
   },
   seo: {
     '/*': {
-      endpoint: '/api/seo?path={pathname}',
+      load: createAdminSeoLoader({
+        endpoint: '/api/seo?path={pathname}',
+        fallbackEntries: baseline.seo.entries,
+      }),
       ttl: 60_000,
-      transform: raw => (raw as { data?: PageSeoMeta | null }).data ?? null,
     },
   },
 });

@@ -9,7 +9,12 @@
  *   - canonical 自动用 site + pattern
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { applyRuntimeToServerHooks, defineSiteHooks } from '../defaults/runtime/defineSiteHooks';
+import {
+  applyRuntimeToServerHooks,
+  createAdminIntlLoader,
+  createAdminSeoLoader,
+  defineSiteHooks,
+} from '../defaults/runtime/defineSiteHooks';
 
 const baseline = { traceId: 't', startedAt: 0 };
 
@@ -184,6 +189,102 @@ describe('defineSiteHooks: i18n loader', () => {
     });
     const intl = await hooks.loadIntl(new Request('http://x.com'));
     expect(intl?.messages).toEqual({ custom: 1 });
+  });
+});
+
+describe('admin loaders', () => {
+  it('createAdminIntlLoader 使用 runtime.api 拉远端并展开 dotted keys', async () => {
+    const fetchSpy = vi
+      .spyOn(globalThis, 'fetch')
+      .mockResolvedValue(
+        new Response(JSON.stringify({ strings: { 'home.title': '首页' } }), { status: 200 })
+      );
+    const hooks = applyRuntimeToServerHooks(
+      defineSiteHooks({
+        intl: {
+          locales: ['zh', 'en'],
+          defaultLocale: 'zh',
+          load: createAdminIntlLoader({
+            endpoint: '/api/i18n/{locale}/manifest',
+            fallbackMessages: { zh: { 'home.title': '本地首页' } },
+            defaultLocale: 'zh',
+          }),
+        },
+      }),
+      { api: 'http://api.x' }
+    );
+    const intl = await hooks.loadIntl(
+      new Request('http://x.com', { headers: { cookie: 'locale=zh' } })
+    );
+    expect(fetchSpy).toHaveBeenCalledWith('http://api.x/api/i18n/zh/manifest', expect.any(Object));
+    expect(intl?.messages).toEqual({ home: { title: '首页' } });
+    expect(intl?.source).toBe('admin');
+  });
+
+  it('createAdminIntlLoader 远端失败时使用本地 fallback 与默认 locale', async () => {
+    vi.spyOn(globalThis, 'fetch').mockRejectedValue(new Error('down'));
+    const hooks = applyRuntimeToServerHooks(
+      defineSiteHooks({
+        intl: {
+          locales: ['zh', 'en'],
+          defaultLocale: 'zh',
+          load: createAdminIntlLoader({
+            fallbackMessages: { zh: { 'home.title': '本地首页' } },
+            defaultLocale: 'zh',
+          }),
+        },
+      }),
+      { api: 'http://api.x' }
+    );
+    const intl = await hooks.loadIntl(
+      new Request('http://x.com', { headers: { cookie: 'locale=fr' } })
+    );
+    expect(intl?.locale).toBe('zh');
+    expect(intl?.messages).toEqual({ home: { title: '本地首页' } });
+    expect(intl?.source).toBe('local-fallback');
+  });
+
+  it('createAdminSeoLoader 支持显式 apiBaseUrl 覆盖 runtime.api', async () => {
+    const fetchSpy = vi
+      .spyOn(globalThis, 'fetch')
+      .mockResolvedValue(
+        new Response(JSON.stringify({ data: { title: '远端 SEO' } }), { status: 200 })
+      );
+    const hooks = applyRuntimeToServerHooks(
+      defineSiteHooks({
+        seo: {
+          '/*': {
+            load: createAdminSeoLoader({
+              endpoint: '/api/seo?path={pathname}',
+              apiBaseUrl: 'http://admin.x',
+              fallbackEntries: [{ path: '/', title: '本地 SEO', group: 'marketing' }],
+            }),
+          },
+        },
+      }),
+      { api: 'http://runtime.x' }
+    );
+    const meta = await hooks.loadSeoMeta(new Request('http://x.com/'));
+    expect(fetchSpy).toHaveBeenCalledWith('http://admin.x/api/seo?path=%2F', expect.any(Object));
+    expect(meta?.title).toBe('远端 SEO');
+  });
+
+  it('createAdminSeoLoader 远端失败时按 pathname 命中本地 fallback 并去除管理字段', async () => {
+    vi.spyOn(globalThis, 'fetch').mockRejectedValue(new Error('down'));
+    const hooks = applyRuntimeToServerHooks(
+      defineSiteHooks({
+        seo: {
+          '/*': {
+            load: createAdminSeoLoader({
+              fallbackEntries: [{ path: '/about', title: '关于', group: 'system' }],
+            }),
+          },
+        },
+      }),
+      { api: 'http://api.x' }
+    );
+    const meta = await hooks.loadSeoMeta(new Request('http://x.com/about'));
+    expect(meta).toEqual({ title: '关于' });
   });
 });
 

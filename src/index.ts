@@ -94,8 +94,18 @@ export { createCachedFetcher } from './defaults/runtime/createCachedFetcher';
 export type { CachedFetcher, CachedFetcherOptions } from './defaults/runtime/createCachedFetcher';
 
 // ========== 高阶 FaaS hooks 工厂（声明式配置 → 完整 hooks）==========
-export { applyRuntimeToServerHooks, defineSiteHooks } from './defaults/runtime/defineSiteHooks';
+export {
+  applyRuntimeToServerHooks,
+  createAdminIntlLoader,
+  createAdminSeoLoader,
+  defineSiteHooks,
+} from './defaults/runtime/defineSiteHooks';
 export type {
+  AdminApiBase,
+  AdminSeoFallbackEntry,
+  CreateAdminIntlLoaderOptions,
+  CreateAdminSeoLoaderOptions,
+  IntlMessagesByLocale,
   SiteHooksConfig,
   SiteRuntimeConfig,
   SiteRuntimeContext,
