@@ -334,7 +334,8 @@ function createEngineDefaultEntriesPlugin(root: string): Plugin {
         return `
           import * as configModule from ${JSON.stringify(pathToFileURL(configPath).href)};
           const defaultConfig = configModule.default ?? {};
-          export default defaultConfig.runtime ?? configModule.runtime ?? {};
+          const namedRuntime = configModule['runtime'];
+          export default defaultConfig.runtime ?? namedRuntime ?? {};
         `;
       }
 
