@@ -24,7 +24,7 @@
 
 import fs from 'node:fs';
 import path from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 
 import type { PluginOption, Plugin } from 'vite';
 import vitePluginRsc from '@vitejs/plugin-rsc';
@@ -200,6 +200,9 @@ function createEngineDefaultEntriesPlugin(): Plugin {
   const resolvedVirtualEntryIds = new Set<string>(
     Object.values(VIRTUAL_ENTRY_IDS).map(id => `${RESOLVED_VIRTUAL_PREFIX}${id}`)
   );
+  const defaultsDir = resolveEngineDefaultsDir();
+  const fileImport = (relativePath: string) =>
+    JSON.stringify(pathToFileURL(path.resolve(defaultsDir, relativePath)).href);
 
   return {
     name: 'isr:engine-default-entries',
@@ -216,7 +219,7 @@ function createEngineDefaultEntriesPlugin(): Plugin {
     load(id) {
       if (id === `${RESOLVED_VIRTUAL_PREFIX}${VIRTUAL_ENTRY_IDS.client}`) {
         return `
-          import { defineClientEntry } from '@novel-isr/engine/client-entry';
+          import { defineClientEntry } from ${fileImport('runtime/defineClientEntry.tsx')};
           import userConfig from '@app/_client-config';
 
           defineClientEntry((userConfig ?? {}));
@@ -225,8 +228,8 @@ function createEngineDefaultEntriesPlugin(): Plugin {
 
       if (id === `${RESOLVED_VIRTUAL_PREFIX}${VIRTUAL_ENTRY_IDS.rsc}`) {
         return `
-          import { defineServerEntry } from '@novel-isr/engine/server-entry';
-          import { createAutoServerHooks } from '@novel-isr/engine/auto-observability';
+          import { defineServerEntry } from ${fileImport('runtime/defineServerEntry.tsx')};
+          import { createAutoServerHooks } from ${fileImport('auto-observability.ts')};
           import userConfig from '@app/_server-config';
 
           function hasFetchHandler(x) {

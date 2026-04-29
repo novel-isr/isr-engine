@@ -7,6 +7,8 @@
  *   3. 确保 ssr.noExternal 包含 `@novel-isr/engine` —— 防止子路径解析失败
  */
 
+import net from 'node:net';
+
 import {
   createServer,
   loadConfigFromFile,
@@ -18,6 +20,26 @@ import { Logger } from '@/logger/Logger';
 
 /** Vite 服务器单例 */
 let viteServer: ViteDevServer | null = null;
+
+const DEFAULT_HMR_PORT = 24678;
+
+async function isPortAvailable(port: number, host = '127.0.0.1'): Promise<boolean> {
+  return new Promise(resolve => {
+    const server = net.createServer();
+    server.once('error', () => resolve(false));
+    server.once('listening', () => {
+      server.close(() => resolve(true));
+    });
+    server.listen(port, host);
+  });
+}
+
+async function resolveHmrPort(preferredPort: number): Promise<number> {
+  for (let port = preferredPort; port < preferredPort + 20; port++) {
+    if (await isPortAvailable(port)) return port;
+  }
+  return 0;
+}
 
 /**
  * 创建 Vite 开发服务器
@@ -39,8 +61,25 @@ export async function createViteDevServer(): Promise<ViteDevServer> {
   );
 
   // 引擎强制覆盖的配置
+  const userHmr = loadResult?.config?.server?.hmr;
+  const hmrDisabled = userHmr === false;
+  const userHmrOptions = typeof userHmr === 'object' ? userHmr : {};
+  const preferredHmrPort = userHmrOptions.port ?? DEFAULT_HMR_PORT;
+  const hmrPort = hmrDisabled ? preferredHmrPort : await resolveHmrPort(preferredHmrPort);
+  if (!hmrDisabled && hmrPort !== preferredHmrPort) {
+    logger.info(`Vite HMR 端口 ${preferredHmrPort} 已占用，使用 ${hmrPort || '随机端口'}`);
+  }
+
   const engineOverrides: InlineConfig = {
-    server: { middlewareMode: true },
+    server: {
+      middlewareMode: true,
+      hmr: hmrDisabled
+        ? false
+        : {
+            ...userHmrOptions,
+            port: hmrPort || undefined,
+          },
+    },
     appType: 'custom',
   };
 
