@@ -14,8 +14,6 @@
  *   import { defineSiteHooks } from '@novel-isr/engine';
  *
  *   export default defineSiteHooks({
- *     api: runtime.api,
- *     site: runtime.site,
  *     intl: { endpoint: '/api/i18n?locale={locale}' },
  *     seo: {
  *       '/': { title: 'Home', description: '...' },
@@ -25,6 +23,15 @@
  */
 import { createCachedFetcher } from './createCachedFetcher';
 import type { IntlPayload, PageSeoMeta } from './seo-runtime';
+import type { ISRConfig } from '../../types';
+
+export type SiteRuntimeConfig = NonNullable<ISRConfig['runtime']>;
+
+export interface SiteRuntimeContext {
+  runtime: SiteRuntimeConfig;
+  api?: string;
+  site?: string;
+}
 
 export interface IntlConfig {
   // ─── URL 路由层（被 parseLocale / withLocale 等消费）───────────
@@ -44,7 +51,7 @@ export interface IntlConfig {
     locale: string
   ) => IntlPayload | null | undefined | Promise<IntlPayload | null | undefined>;
   /** 本地或自定义加载器；与 endpoint 互斥（优先级更高） */
-  load?: (locale: string) => Promise<IntlPayload | null>;
+  load?: (locale: string, ctx: SiteRuntimeContext) => Promise<IntlPayload | null>;
   /** locale 检测（默认：cookie `locale` → Accept-Language 前缀 → defaultLocale） */
   detect?: (req: Request) => string;
   /** 缓存 TTL 毫秒，默认 60_000 */
@@ -65,7 +72,10 @@ export interface SeoRemoteEntry<T = unknown> {
 
 export interface SeoLocalEntry {
   /** 本地加载器：dynamic import / fs.readFile / 内存 Map 都可 */
-  load: (params: Record<string, string>) => Promise<PageSeoMeta | null> | PageSeoMeta | null;
+  load: (
+    params: Record<string, string>,
+    ctx: SiteRuntimeContext
+  ) => Promise<PageSeoMeta | null> | PageSeoMeta | null;
   /** 缓存 TTL 毫秒，默认 300_000 */
   ttl?: number;
 }
@@ -73,14 +83,6 @@ export interface SeoLocalEntry {
 export type SeoEntry = SeoStaticEntry | SeoRemoteEntry | SeoLocalEntry;
 
 export interface SiteHooksConfig {
-  /**
-   * API 基地址（用于 intl + seo 远程 endpoint 的前缀）
-   * 同时自动加入 CSP connect-src（让浏览器 CSR-fallback 模式能 fetch）
-   * 推荐从 ssr.config.ts 的 runtime.api 传入，避免重复声明。
-   */
-  api?: string;
-  /** 站点根 URL（用于 canonical / og:image 默认前缀），推荐从 runtime.site 传入 */
-  site?: string;
   /** i18n 配置 */
   intl?: IntlConfig;
   /** SEO 路由表：path pattern（支持 `:param`）→ 静态 meta 或 remote loader */
@@ -131,11 +133,42 @@ export interface ServerHooksOutput {
   loadIntl: (req: Request) => Promise<IntlPayload | null>;
   loadSeoMeta: (req: Request) => Promise<PageSeoMeta | null>;
   onError: (err: unknown, req: Request, ctx: { traceId: string; locale?: string }) => void;
+  __configureRuntime?: (runtime: SiteRuntimeConfig) => ServerHooksOutput;
 }
 
 export function defineSiteHooks(config: SiteHooksConfig): ServerHooksOutput {
-  const api = config.api ?? '';
-  const site = config.site ?? '';
+  return createSiteHooks(config, {});
+}
+
+export function applyRuntimeToServerHooks<T extends object>(
+  hooks: T,
+  runtime: SiteRuntimeConfig
+): T {
+  const maybeRuntimeAware = hooks as T & {
+    __configureRuntime?: (runtime: SiteRuntimeConfig) => T;
+  };
+  if (typeof maybeRuntimeAware.__configureRuntime === 'function') {
+    return maybeRuntimeAware.__configureRuntime(runtime);
+  }
+  const baseHooks = hooks as T & {
+    siteBaseUrl?: string;
+    apiBaseUrl?: string;
+  };
+  return {
+    ...hooks,
+    siteBaseUrl: baseHooks.siteBaseUrl ?? runtime.site,
+    apiBaseUrl: baseHooks.apiBaseUrl ?? runtime.api,
+  } as T;
+}
+
+function createSiteHooks(config: SiteHooksConfig, runtime: SiteRuntimeConfig): ServerHooksOutput {
+  const api = runtime.api ?? '';
+  const site = runtime.site ?? '';
+  const runtimeCtx: SiteRuntimeContext = {
+    runtime,
+    api: api || undefined,
+    site: site || undefined,
+  };
   const fetchJson = async (path: string): Promise<unknown> => {
     try {
       const r = await fetch(api + path);
@@ -172,7 +205,7 @@ export function defineSiteHooks(config: SiteHooksConfig): ServerHooksOutput {
     swr: true,
     fetch: async locale => {
       if (intlCfg.load) {
-        const r = await intlCfg.load(locale);
+        const r = await intlCfg.load(locale, runtimeCtx);
         return r ?? { locale, messages: {}, direction: rtlOf(locale) };
       }
       if (intlCfg.endpoint) {
@@ -241,7 +274,7 @@ export function defineSiteHooks(config: SiteHooksConfig): ServerHooksOutput {
         ttl: local.ttl ?? 300_000,
         fetch: async paramKey => {
           const params = JSON.parse(paramKey) as Record<string, string>;
-          return await local.load(params);
+          return await local.load(params, runtimeCtx);
         },
         fallback: () => null,
       });
@@ -275,7 +308,7 @@ export function defineSiteHooks(config: SiteHooksConfig): ServerHooksOutput {
       });
     });
 
-  return {
+  const output: ServerHooksOutput = {
     siteBaseUrl: site || undefined,
     apiBaseUrl: api || undefined,
     intl: config.intl,
@@ -301,6 +334,11 @@ export function defineSiteHooks(config: SiteHooksConfig): ServerHooksOutput {
     },
     onError,
   };
+  Object.defineProperty(output, '__configureRuntime', {
+    enumerable: false,
+    value: (nextRuntime: SiteRuntimeConfig) => createSiteHooks(config, nextRuntime),
+  });
+  return output;
 }
 
 function rtlOf(locale: string): 'ltr' | 'rtl' {

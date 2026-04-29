@@ -6,7 +6,7 @@
  *   // src/entry.tsx
  *   import { defineClientEntry } from '@novel-isr/engine/client-entry';
  *   defineClientEntry({
- *     beforeHydrate: () => { initSentry(); startWebVitals(); },
+ *     beforeStart: () => { initSentry(); startWebVitals(); },
  *     onNavigate:    (url) => analytics.pageview(url.pathname),
  *     onActionError: (err, id) => console.error('action failed', id, err),
  *   });
@@ -127,18 +127,12 @@ function CsrShellFallback(): React.ReactElement {
 }
 
 export interface ClientEntryHooks {
-  /** 首次水合前调用 —— 适合 SDK 初始化 / 监控启动 */
-  beforeHydrate?: () => void | Promise<void>;
+  /** Client runtime 启动前调用 —— 适合 SDK 初始化 / Web Vitals / 全局埋点 */
+  beforeStart?: () => void | Promise<void>;
   /** 客户端导航发生时调用（同源 <a> 点击 / pushState / popstate）—— 适合 PV 上报 */
   onNavigate?: (url: URL) => void;
   /** Server Action 调用失败时调用 —— 适合错误上报 */
   onActionError?: (error: unknown, actionId: string) => void;
-  /**
-   * SPA fallback App —— 部署层（Nginx error_page / CDN edge）切到 dist/spa/index.html 时
-   * 浏览器加载同一个 client bundle 检测到 __SPA_MODE__=1 → 调用本组件挂到 root
-   * 不写 → 显示默认 "服务暂时不可用" 静态页
-   */
-  spaApp?: React.ComponentType<{ url: URL }>;
   /**
    * 开发态渲染检查器。默认启用；业务如需完全隐藏可在 src/entry.tsx 返回
    * `{ devInspector: false }`。
@@ -151,56 +145,11 @@ export function defineClientEntry(hooks: ClientEntryHooks = {}): void {
 }
 
 async function main(hooks: ClientEntryHooks): Promise<void> {
-  if (hooks.beforeHydrate) await hooks.beforeHydrate();
+  if (hooks.beforeStart) await hooks.beforeStart();
 
   const installInspector = () => {
     if (hooks.devInspector !== false) installDevRenderInspector();
   };
-
-  function mountSpaFallback(App: React.ComponentType<{ url: URL }>): void {
-    document.body.classList.remove('csr-shell-body');
-    document.body.removeAttribute('style');
-
-    const SpaMount = (): React.ReactElement => {
-      const [url, setUrl] = React.useState(() => new URL(window.location.href));
-      React.useEffect(() => {
-        const fire = () => setUrl(new URL(window.location.href));
-        window.addEventListener('popstate', fire);
-        const oldPush = window.history.pushState;
-        window.history.pushState = function (...args) {
-          const r = oldPush.apply(this, args);
-          fire();
-          return r;
-        };
-        const onClick = (e: MouseEvent) => {
-          const target = e.target;
-          if (!(target instanceof Element)) return;
-          const link = target.closest('a');
-          if (
-            link instanceof HTMLAnchorElement &&
-            link.origin === location.origin &&
-            !e.metaKey &&
-            !e.ctrlKey &&
-            e.button === 0
-          ) {
-            e.preventDefault();
-            history.pushState(null, '', link.href);
-          }
-        };
-        document.addEventListener('click', onClick);
-        return () => {
-          window.removeEventListener('popstate', fire);
-          window.history.pushState = oldPush;
-          document.removeEventListener('click', onClick);
-        };
-      }, []);
-      return React.createElement(App, { url });
-    };
-
-    const mount = document.createElement('div');
-    document.body.replaceChildren(mount);
-    createRoot(mount).render(React.createElement(SpaMount));
-  }
 
   function mountRscShellFallback(): void {
     document.body.classList.remove('csr-shell-body');
@@ -282,12 +231,6 @@ async function main(hooks: ClientEntryHooks): Promise<void> {
 
   // SPA fallback：浏览器加载 dist/spa/index.html 触发，由部署层（Nginx/CDN）在 SSR 5xx 时切入
   if ((globalThis as { __SPA_MODE__?: boolean }).__SPA_MODE__) {
-    const App = hooks.spaApp;
-    if (App) {
-      mountSpaFallback(App);
-      installInspector();
-      return;
-    }
     mountRscShellFallback();
     installInspector();
     return;
@@ -295,12 +238,6 @@ async function main(hooks: ClientEntryHooks): Promise<void> {
 
   // SSR 渲染抛异常的 csr-shell 兜底分支（与 __SPA_MODE__ 不同：这是 SSR 半死状态）
   if ('__NO_HYDRATE' in globalThis) {
-    const App = hooks.spaApp;
-    if (App) {
-      mountSpaFallback(App);
-      installInspector();
-      return;
-    }
     mountRscShellFallback();
     installInspector();
     return;

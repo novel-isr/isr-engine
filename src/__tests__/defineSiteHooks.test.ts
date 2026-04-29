@@ -9,7 +9,7 @@
  *   - canonical 自动用 site + pattern
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { defineSiteHooks } from '../defaults/runtime/defineSiteHooks';
+import { applyRuntimeToServerHooks, defineSiteHooks } from '../defaults/runtime/defineSiteHooks';
 
 const baseline = { traceId: 't', startedAt: 0 };
 
@@ -69,12 +69,14 @@ describe('defineSiteHooks: locale detection', () => {
 
 describe('defineSiteHooks: SEO 路由表', () => {
   it('静态条目按 pattern 命中 + canonical 自动补齐', async () => {
-    const hooks = defineSiteHooks({
-      site: 'https://x.com',
-      seo: {
-        '/about': { title: 'About', description: 'd' },
-      },
-    });
+    const hooks = applyRuntimeToServerHooks(
+      defineSiteHooks({
+        seo: {
+          '/about': { title: 'About', description: 'd' },
+        },
+      }),
+      { site: 'https://x.com' }
+    );
     const meta = await hooks.loadSeoMeta(new Request('http://x.com/about'));
     expect(meta?.title).toBe('About');
     expect(meta?.canonical).toBe('https://x.com/about');
@@ -86,18 +88,20 @@ describe('defineSiteHooks: SEO 路由表', () => {
       .mockResolvedValue(
         new Response(JSON.stringify({ data: { name: '诡秘之主' } }), { status: 200 })
       );
-    const hooks = defineSiteHooks({
-      api: 'http://api.x',
-      seo: {
-        '/books/:id': {
-          endpoint: '/api/books/{id}',
-          transform: (data, params) => ({
-            title: `${(data as { data: { name: string } }).data.name} · ${params.id}`,
-            ogType: 'article',
-          }),
+    const hooks = applyRuntimeToServerHooks(
+      defineSiteHooks({
+        seo: {
+          '/books/:id': {
+            endpoint: '/api/books/{id}',
+            transform: (data, params) => ({
+              title: `${(data as { data: { name: string } }).data.name} · ${params.id}`,
+              ogType: 'article',
+            }),
+          },
         },
-      },
-    });
+      }),
+      { api: 'http://api.x' }
+    );
     const meta = await hooks.loadSeoMeta(new Request('http://x.com/books/42'));
     expect(meta?.title).toBe('诡秘之主 · 42');
     expect(fetchSpy).toHaveBeenCalledWith('http://api.x/api/books/42');
@@ -111,15 +115,17 @@ describe('defineSiteHooks: SEO 路由表', () => {
 
   it('远程拉取失败 → fallback null', async () => {
     vi.spyOn(globalThis, 'fetch').mockRejectedValue(new Error('boom'));
-    const hooks = defineSiteHooks({
-      api: 'http://api.x',
-      seo: {
-        '/books/:id': {
-          endpoint: '/api/books/{id}',
-          transform: () => ({ title: 'x' }),
+    const hooks = applyRuntimeToServerHooks(
+      defineSiteHooks({
+        seo: {
+          '/books/:id': {
+            endpoint: '/api/books/{id}',
+            transform: () => ({ title: 'x' }),
+          },
         },
-      },
-    });
+      }),
+      { api: 'http://api.x' }
+    );
     const meta = await hooks.loadSeoMeta(new Request('http://x.com/books/1'));
     expect(meta).toBeNull();
   });
@@ -140,10 +146,12 @@ describe('defineSiteHooks: i18n loader', () => {
     vi.spyOn(globalThis, 'fetch').mockResolvedValue(
       new Response(JSON.stringify({ data: { hello: '你好' } }), { status: 200 })
     );
-    const hooks = defineSiteHooks({
-      api: 'http://api.x',
-      intl: { endpoint: '/api/i18n?locale={locale}' },
-    });
+    const hooks = applyRuntimeToServerHooks(
+      defineSiteHooks({
+        intl: { endpoint: '/api/i18n?locale={locale}' },
+      }),
+      { api: 'http://api.x' }
+    );
     const intl = await hooks.loadIntl(
       new Request('http://x.com', { headers: { cookie: 'locale=zh-CN' } })
     );
@@ -154,7 +162,10 @@ describe('defineSiteHooks: i18n loader', () => {
 
   it('RTL 语言自动标记', async () => {
     vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response('null', { status: 200 }));
-    const hooks = defineSiteHooks({ api: 'http://api.x', intl: { endpoint: '/x?l={locale}' } });
+    const hooks = applyRuntimeToServerHooks(
+      defineSiteHooks({ intl: { endpoint: '/x?l={locale}' } }),
+      { api: 'http://api.x' }
+    );
     const intl = await hooks.loadIntl(
       new Request('http://x.com', { headers: { cookie: 'locale=ar' } })
     );

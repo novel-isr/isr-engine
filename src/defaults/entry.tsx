@@ -5,7 +5,7 @@
  *
  *   形状 A · FaaS 配置（推荐）：
  *     export default {
- *       beforeHydrate: () => initSentry(),
+ *       beforeStart: () => initSentry(),
  *       onNavigate: (url) => analytics.pageview(url.pathname),
  *       onActionError: (err, id) => console.error('action failed', id, err),
  *     };

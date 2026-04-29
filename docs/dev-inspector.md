@@ -38,10 +38,9 @@ export default {
 `src/entry.tsx` 是浏览器侧 hooks 的入口，适合放：
 
 - `devInspector`
-- `beforeHydrate`
+- `beforeStart`
 - `onNavigate`
 - `onActionError`
-- `spaApp`
 
 不要写到 `src/entry.server.tsx`：
 

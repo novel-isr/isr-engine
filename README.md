@@ -109,11 +109,8 @@ export default {
 ```ts
 // src/entry.server.ts —— 请求期 hooks：如何加载 i18n / SEO / request ctx
 import { defineSiteHooks } from '@novel-isr/engine/site-hooks';
-import { runtime } from '../ssr.config';
 
 export default defineSiteHooks({
-  api: runtime.api,
-  site: runtime.site,
   intl: {
     locales: ['zh-CN', 'en'],
     defaultLocale: 'zh-CN',
@@ -298,18 +295,15 @@ export default async function BookDetailPage() {
 ```
 
 `defineSiteHooks({ seo })` 用来接 admin / CMS / API 下发的 SEO。`api/site/redis/sentry/rateLimit/experiments`
-这类平台配置只放在 `ssr.config.ts` 的 `runtime`，`entry.server.tsx` 只从同一份
-`runtime` 读取 `api/site` 并声明请求期 loader。推荐商业项目用 `/*` 统一下发，按
-`pathname` 决策：
+这类平台配置只放在 `ssr.config.ts` 的 `runtime`，engine 会把 `runtime.api/site`
+注入到默认 server entry；业务的 `entry.server.tsx` 只声明请求期 loader。推荐商业项目用
+`/*` 统一下发，按 `pathname` 决策：
 
 ```ts
 import type { PageSeoMeta } from '@novel-isr/engine';
 import { defineSiteHooks } from '@novel-isr/engine/site-hooks';
-import { runtime } from '../ssr.config';
 
 export default defineSiteHooks({
-  api: runtime.api,
-  site: runtime.site,
   seo: {
     '/*': {
       endpoint: '/api/seo?path={pathname}',
@@ -328,10 +322,8 @@ export default defineSiteHooks({
 
 ```ts
 import { defineSiteHooks } from '@novel-isr/engine/site-hooks';
-import { runtime } from '../ssr.config';
 
 export default defineSiteHooks({
-  api: runtime.api,
   intl: {
     locales: ['zh-CN', 'en'],
     defaultLocale: 'zh-CN',
@@ -364,7 +356,7 @@ getI18n('book.count', { count: 12 }); // 字典里写 "共 {count} 本书"
 性能路径：
 - SSR / ISR / SSG：server 端按 cookie `locale` → `Accept-Language` → `defaultLocale` 协商 locale，远程字典走 TTL + SWR + 并发去重缓存；同一份 `intl` 进入 RSC payload，客户端水合不二次拉取。
 - 客户端导航：浏览器拉 `_.rsc`，payload 带最新 `intl`，engine 自动更新 `getI18n()` 的客户端存储。
-- CSR recovery：如果是 engine 默认 RSC shell fallback，会先 fetch 当前页面 `_.rsc`，拿到 `intl` 后再渲染页面；如果项目自定义 `spaApp`，则由 `spaApp` 自己接同一套 admin i18n API。
+- CSR recovery：engine 默认 RSC shell fallback 会先 fetch 当前页面 `_.rsc`，拿到 `intl` 后再渲染页面；业务不再需要维护第二套路由或自定义 CSR App。
 - 服务端完全不可用且 `_.rsc` 也失败时，只会显示最终不可用壳；这时没有远程 i18n，因为数据源本身不可达。
 - 诊断：响应头 `x-i18n-source` 会显示字典来源，例如 `admin` / `local-fallback`。
 

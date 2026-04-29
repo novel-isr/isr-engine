@@ -43,11 +43,8 @@ export default {
 // src/entry.server.tsx
 import type { PageSeoMeta } from '@novel-isr/engine';
 import { defineSiteHooks } from '@novel-isr/engine/site-hooks';
-import { runtime } from '../ssr.config';
 
 export default defineSiteHooks({
-  api: runtime.api,
-  site: runtime.site,
   intl: {
     locales: ['zh-CN', 'en'] as const,
     defaultLocale: 'zh-CN',
@@ -65,7 +62,8 @@ export default defineSiteHooks({
 ```
 
 `defineSiteHooks` 不接收 Redis、Sentry、限流或 A/B 实验配置。这些能力只从
-`ssr.config.ts runtime` 读取。
+`ssr.config.ts runtime` 读取。`runtime.api/site` 也由 engine 注入到默认 server
+entry，业务不需要在 `entry.server.tsx` 里 import `ssr.config.ts`。
 
 ## `runtime`
 

@@ -40,6 +40,7 @@ const logger = Logger.getInstance();
 const VIRTUAL_ENTRY_IDS = {
   client: 'virtual:novel-isr/client-entry',
   rsc: 'virtual:novel-isr/rsc-entry',
+  runtime: 'virtual:novel-isr/runtime-config',
 } as const;
 
 const RESOLVED_VIRTUAL_PREFIX = '\0';
@@ -208,7 +209,7 @@ function createReactVirtualModuleInteropPlugin(): Plugin {
   };
 }
 
-function createEngineDefaultEntriesPlugin(): Plugin {
+function createEngineDefaultEntriesPlugin(root: string): Plugin {
   const virtualEntryIds = new Set<string>(Object.values(VIRTUAL_ENTRY_IDS));
   const resolvedVirtualEntryIds = new Set<string>(
     Object.values(VIRTUAL_ENTRY_IDS).map(id => `${RESOLVED_VIRTUAL_PREFIX}${id}`)
@@ -250,8 +251,10 @@ function createEngineDefaultEntriesPlugin(): Plugin {
         // 的构建上下文里二次打包，不能预先 bundle 成普通 JS。
         return `
           import { defineServerEntry } from ${fileImport('runtime/defineServerEntry.tsx')};
+          import { applyRuntimeToServerHooks } from ${fileImport('runtime/defineSiteHooks.ts')};
           import { createAutoServerHooks } from '@novel-isr/engine/auto-observability';
           import userConfig from '@app/_server-config';
+          import runtimeConfig from '${VIRTUAL_ENTRY_IDS.runtime}';
 
           function hasFetchHandler(x) {
             return !!x && typeof x.fetch === 'function';
@@ -270,7 +273,7 @@ function createEngineDefaultEntriesPlugin(): Plugin {
                     if (!realHandler) {
                       initPromise ??= (async () => {
                         const auto = await autoHooksPromise;
-                        const user = userConfig ?? {};
+                        const user = applyRuntimeToServerHooks(userConfig ?? {}, runtimeConfig ?? {});
                         const merged = {
                           ...auto,
                           ...user,
@@ -320,6 +323,18 @@ function createEngineDefaultEntriesPlugin(): Plugin {
           if (import.meta.hot) {
             import.meta.hot.accept();
           }
+        `;
+      }
+
+      if (id === `${RESOLVED_VIRTUAL_PREFIX}${VIRTUAL_ENTRY_IDS.runtime}`) {
+        const configPath = path.resolve(root, 'ssr.config.ts');
+        if (!fs.existsSync(configPath)) {
+          return `export default {};`;
+        }
+        return `
+          import * as configModule from ${JSON.stringify(pathToFileURL(configPath).href)};
+          const defaultConfig = configModule.default ?? {};
+          export default defaultConfig.runtime ?? configModule.runtime ?? {};
         `;
       }
 
@@ -420,7 +435,7 @@ export function createIsrPlugin(options: CreateIsrPluginOptions = {}): PluginOpt
   logger.info(`   ssr    = ${fmt('ssr')}`);
 
   const plugins: PluginOption[] = [
-    createEngineDefaultEntriesPlugin(),
+    createEngineDefaultEntriesPlugin(root),
     createAppAliasPlugin(root),
     createDevAssetRequestMiddleware(root),
     createBrowserShimPlugin(),

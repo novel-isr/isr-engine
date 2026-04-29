@@ -20,11 +20,14 @@
  *   否则当 hooks 配置        → 用 defineServerEntry 包一层
  */
 import { defineServerEntry, type ServerEntryHooks } from './runtime/defineServerEntry';
+import { applyRuntimeToServerHooks } from './runtime/defineSiteHooks';
 import { createAutoServerHooks } from './auto-observability';
 // @ts-expect-error - @app/_server-config 由 createIsrPlugin 注入：
 //   - 用户提供 src/entry.server.tsx 时 → 解析到该文件
 //   - 用户没提供时              → 解析到 engine 内置 empty-config（默认 {}）
 import userConfig from '@app/_server-config';
+// @ts-expect-error - virtual:novel-isr/runtime-config 由 createIsrPlugin 注入 ssr.config.ts runtime
+import runtimeConfig from 'virtual:novel-isr/runtime-config';
 
 interface FetchHandlerLike {
   fetch: (request: Request) => Promise<Response>;
@@ -50,7 +53,10 @@ const resolved: FetchHandlerLike = hasFetchHandler(userConfig)
           if (!realHandler) {
             initPromise ??= (async () => {
               const auto = await autoHooksPromise;
-              const user = (userConfig ?? {}) as ServerEntryHooks;
+              const user = applyRuntimeToServerHooks(
+                (userConfig ?? {}) as ServerEntryHooks,
+                runtimeConfig ?? {}
+              );
               // 合并顺序：auto 先（SDK 模板），user 覆盖（业务定制赢）
               const merged: ServerEntryHooks = {
                 ...auto,

@@ -128,11 +128,11 @@ server {
 
 ## 模式 C：Service Worker（OKX 交易页用）
 
-### 注册 SW（在 entry.tsx 的 beforeHydrate 里）
+### 注册 SW（在 entry.tsx 的 beforeStart 里）
 
 ```ts
 export default {
-  beforeHydrate: () => {
+  beforeStart: () => {
     if ('serviceWorker' in navigator) {
       navigator.serviceWorker.register('/sw.js');
     }

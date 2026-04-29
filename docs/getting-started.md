@@ -92,11 +92,8 @@ export default {
 ```ts
 import type { PageSeoMeta } from '@novel-isr/engine';
 import { defineSiteHooks } from '@novel-isr/engine/site-hooks';
-import { runtime } from '../ssr.config';
 
 export default defineSiteHooks({
-  api: runtime.api,
-  site: runtime.site,
   intl: {
     locales: ['zh-CN', 'en'] as const,
     defaultLocale: 'zh-CN',
@@ -114,7 +111,7 @@ export default defineSiteHooks({
 ```
 
 `entry.server.ts` 只描述如何在请求期加载 i18n / SEO / request context。`api` 和 `site`
-从 `ssr.config.ts` 的 `runtime` 读取，避免同一项配置散落多处。i18n 字典和 SEO 都可以远程下发，engine 会做 TTL / SWR / 并发去重缓存。
+只写在 `ssr.config.ts` 的 `runtime`，engine 会注入到默认 server entry，避免同一项配置散落多处。i18n 字典和 SEO 都可以远程下发，engine 会做 TTL / SWR / 并发去重缓存。
 
 ## 7. `src/app.tsx` —— App shell
 

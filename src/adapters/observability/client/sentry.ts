@@ -11,7 +11,7 @@
  *     webVitals: true,        // 默认 true：自动接 web-vitals 上报
  *   }));
  *
- * 自动：beforeHydrate init + onNavigate 面包屑 + onActionError 上报 + 可选 web-vitals
+ * 自动：beforeStart init + onNavigate 面包屑 + onActionError 上报 + 可选 web-vitals
  */
 
 interface SentryBrowserLike {
@@ -34,7 +34,7 @@ export interface SentryClientHooksOptions {
 export function createSentryClientHooks(opts: SentryClientHooksOptions) {
   const { Sentry } = opts;
   return {
-    beforeHydrate: async () => {
+    beforeStart: async () => {
       try {
         opts.init?.();
       } catch (err) {
