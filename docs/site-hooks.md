@@ -20,6 +20,18 @@ export default defineSiteHooks({
 });
 ```
 
+`entry.server.tsx` 是 server/RSC hooks 入口。不要在这里配置浏览器侧能力，例如
+`devInspector: false`。开发态渲染检查器属于 client runtime，关闭方式是：
+
+```ts
+// src/entry.tsx
+export default {
+  devInspector: false,
+};
+```
+
+详见 [dev-inspector.md](./dev-inspector.md)。
+
 ## 字段速查
 
 ### `api`, `site`
@@ -51,6 +63,9 @@ intl: {
 ```
 
 URL 路由部分被 `parseLocale` 消费；翻译消息层被 server render、page SEO、客户端导航和 `getI18n()` 消费。远程字典响应可以是嵌套对象，也可以是 dotted keys（engine 会展开）。详细：[i18n.md](./i18n.md)。
+
+如果业务希望在开发态确认字典来源，可以让 `load` 返回 `source` 字段，或在 `transform`
+结果里带上 `source`。Engine 会把它写到 `X-I18n-Source` 响应头，dev inspector 也会展示。
 
 ### `seo`
 

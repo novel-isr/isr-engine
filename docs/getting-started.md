@@ -117,7 +117,20 @@ pnpm build && pnpm start          # 生产模式
 - LRU 缓存 + SWR + 标签级失效
 - SEO `/sitemap.xml` / `/robots.txt`
 - 自动注入 `x-trace-id` + `x-render-ms` 响应头
+- dev render inspector（右下角模式/缓存/i18n 来源浮层）
 - React 19 RSC 完整流水线
+
+开发态浮层属于 engine，不需要业务 import。要关闭时才写 client entry：
+
+```ts
+// src/entry.tsx
+export default {
+  devInspector: false,
+};
+```
+
+不要写到 `src/entry.server.tsx`；那个文件只负责 server hooks。详见
+[dev-inspector.md](./dev-inspector.md)。
 
 ## 加 Server Components 和 Server Actions
 
@@ -144,12 +157,12 @@ export async function publishBook(data: FormData) {
 ```
 
 ```tsx
-// src/components/HomeContent.tsx —— Client Component
+// src/components/PublishBookForm.tsx —— Client Component
 'use client';
 import { useState } from 'react';
 import { publishBook } from '../actions/books';
 
-export default function HomeContent() {
+export default function PublishBookForm() {
   const [name, setName] = useState('');
   return <form action={publishBook}>...</form>;
 }

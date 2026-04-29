@@ -2,7 +2,7 @@
 
 > Vite + React 19 RSC 的 ISR / SSG / Fallback 编排层。基于 [@vitejs/plugin-rsc](https://github.com/vitejs/vite-plugin-react/tree/main/packages/plugin-rsc) 官方插件——**不手写 Flight 协议**。业务只维护一个 `routes` 路由源、一个 `App` 壳和可选的 `SiteHooks` 配置，其余 SSR / ISR / SSG / CSR recovery 协议细节全部由 engine 收口。
 
-[![Vite 8](https://img.shields.io/badge/Vite-8-646CFF.svg)](https://vitejs.dev/) [![React 19](https://img.shields.io/badge/React-19-61DAFB.svg)](https://react.dev/) [![Express 5](https://img.shields.io/badge/Express-5-000000.svg)](https://expressjs.com/) [![Node 22.21.1](https://img.shields.io/badge/Node-22.21.1-339933.svg)](https://nodejs.org/) [![Tests 543](https://img.shields.io/badge/Tests-543%20passing-brightgreen.svg)](./CHANGELOG.md)
+[![Vite 8](https://img.shields.io/badge/Vite-8-646CFF.svg)](https://vitejs.dev/) [![React 19](https://img.shields.io/badge/React-19-61DAFB.svg)](https://react.dev/) [![Express 5](https://img.shields.io/badge/Express-5-000000.svg)](https://expressjs.com/) [![Node 22.21.1](https://img.shields.io/badge/Node-22.21.1-339933.svg)](https://nodejs.org/) [![Tests 551](https://img.shields.io/badge/Tests-551%20passing-brightgreen.svg)](./CHANGELOG.md)
 
 > **v2.3.1（2026-04-29）** —— 消费侧首跑 0 配置：修复 `import React from 'react'`
 > 在 React 19 ESM 下导致浏览器报 `does not provide an export named 'default' / 'jsxDEV'`
@@ -99,7 +99,17 @@ export default defineSiteHooks({
 });
 ```
 
-`pnpm dev` → http://localhost:3000。完事。
+`pnpm dev` → http://localhost:3000。开发模式会自动注入 **Novel ISR Inspector** 浮层，
+可直接切换/验证 ISR、SSR、SSG、CSR fallback。业务不需要 import 调试组件。
+如需隐藏浮层，新建 `src/entry.tsx`：
+
+```ts
+export default {
+  devInspector: false,
+};
+```
+
+完事。
 
 完整的「getting started」（含 i18n / SEO / Server Actions）请看 **[docs/getting-started.md](./docs/getting-started.md)**。
 
@@ -128,6 +138,7 @@ export default defineSiteHooks({
 │    • i18n URL 路由 + 字典缓存 + getI18n()              │
 │    • A/B 实验、限流                                    │
 │    • csr-shell fallback（server 崩溃自救）            │
+│    • dev render inspector（开发态渲染模式浮层）        │
 │    • Sentry / Datadog / OTel adapter（一行接入）       │
 │    • Image / Font 优化插件（next-style）              │
 └──────────────────────────────────────────────────────┘
@@ -166,6 +177,7 @@ release）。详细：[docs/performance.md](./docs/performance.md)。
 |---|---|
 | 从零搭一个站 | [getting-started.md](./docs/getting-started.md) |
 | 渲染模式（ISR / SSR / SSG / csr-shell） | [render-modes.md](./docs/render-modes.md) |
+| 开发态渲染检查器（Novel ISR Inspector） | [dev-inspector.md](./docs/dev-inspector.md) |
 | 缓存与失效（cacheTag / revalidate / Redis 双层） | [caching.md](./docs/caching.md) |
 | SiteHooks 配置（i18n / SEO / Sentry / 限流） | [site-hooks.md](./docs/site-hooks.md) |
 | i18n URL 路由 + 语言协商 | [i18n.md](./docs/i18n.md) |
@@ -192,6 +204,29 @@ FallbackChain（自动降级）：
 ```
 
 详情：[docs/render-modes.md](./docs/render-modes.md)。
+
+## 开发态渲染检查器
+
+`pnpm dev` 时，engine 默认 client runtime 会自动注入右下角 **Novel ISR Inspector**。
+它属于 engine，不属于业务 UI：
+
+- 通过响应头读取 `x-resolved-mode`、`x-render-strategy`、`x-cache-status`、`x-fallback-used`、`content-language`、`x-i18n-source`
+- 可以在当前 URL 上切换 `?mode=isr|ssr|ssg`，或强制 `?__csr-shell=1` 验证 CSR fallback
+- Shadow DOM 隔离样式，不污染业务 CSS
+- 仅 dev 显示，生产不显示
+
+如果业务要关闭它，放到 **client entry**：
+
+```ts
+// src/entry.tsx
+export default {
+  devInspector: false,
+};
+```
+
+不要放到 `src/entry.server.tsx`。`entry.server.tsx` 是 server hooks，不能把 server-only
+配置直接透给浏览器；需要跨端公共配置时应该走 `ssr.config.ts` 或 engine 注入的 client-safe
+public config。详见 [docs/dev-inspector.md](./docs/dev-inspector.md)。
 
 ## Routes / SEO / i18n 标准写法
 
@@ -295,6 +330,7 @@ getI18n('book.count', { count: 12 }); // 字典里写 "共 {count} 本书"
 - 客户端导航：浏览器拉 `_.rsc`，payload 带最新 `intl`，engine 自动更新 `getI18n()` 的客户端存储。
 - CSR recovery：如果是 engine 默认 RSC shell fallback，会先 fetch 当前页面 `_.rsc`，拿到 `intl` 后再渲染页面；如果项目自定义 `spaApp`，则由 `spaApp` 自己接同一套 admin i18n API。
 - 服务端完全不可用且 `_.rsc` 也失败时，只会显示最终不可用壳；这时没有远程 i18n，因为数据源本身不可达。
+- 诊断：响应头 `x-i18n-source` 会显示字典来源，例如 `admin` / `local-fallback`。
 
 ## 与业界方案对比
 
@@ -310,7 +346,7 @@ getI18n('book.count', { count: 12 }); // 字典里写 "共 {count} 本书"
 | 构建栈灵活度 | ❌ 绑死自家栈 | ✅ Vite | ❌ 绑死自家栈 | ✅ Vite |
 | 内置图片 / 字体优化 | ✅ | ❌ | ⚠️ | ✅ |
 | Edge runtime 支持 | ✅ | ⚠️ | ❌ | ✅（CF / Vercel adapter；Deno / Bun 走原生 `{fetch}`） |
-| 单元测试覆盖 | 数千用例 | ⚠️ | ✅ | 38 文件 / 543 tests / ~50% |
+| 单元测试覆盖 | 数千用例 | ⚠️ | ✅ | 38 文件 / 551 tests / ~50% |
 
 定位：**中等规模业务的 ISR / SSG / Fallback 编排层**，构建于 React 19 + `@vitejs/plugin-rsc` 官方流水线之上。
 
@@ -324,7 +360,7 @@ v2.3.1 收口了消费侧首跑 0 配置 + express 5 + 入口架构清理。但*
 ✅ **稳的部分**：
 - Flight 协议委托给官方 `@vitejs/plugin-rsc@^0.5.24`，不自维护
 - 依赖全是工业级（Express 5 / Helmet / Prometheus / sitemap / lru-cache / ioredis）
-- 543 tests / ~50% 覆盖；CI 任何分支 push 都跑 lint+typecheck+test
+- 551 tests / ~50% 覆盖；CI 任何分支 push 都跑 lint+typecheck+test
 - bench 退化追踪走 nightly `bench.yml`（信息性输出，不 gate release）
 - GitHub Packages 发布有 3 段 gate（lint+test+build），任一失败 → 不发布
 - 安全硬化覆盖了 Set-Cookie 跨用户回放、SSG 路径穿越、Redis Buffer 破损、

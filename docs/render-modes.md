@@ -60,6 +60,10 @@ ssr  →                       server → csr-shell
 构建期：`vite build` 的 `closeBundle` 钩子自动 spider 一遍 `ssg.routes` 列表。
 运行时：默认 TTL × 24（极长），相当于"几乎永不过期"。需要更新就重新部署。
 
+开发态没有生产构建产物，所以不会假装从 `dist/client` 返回静态文件；但路由策略解析、
+响应头和 dev inspector 展示都走同一套 engine 决策链。验证真正的磁盘静态产物要跑
+`pnpm build && pnpm start`。
+
 SSG spider 内置 retry / timeout / 失败率门槛 —— 单页 fetch 失败不会静默吞掉整个 build：
 
 - `ssg.requestTimeoutMs`（默认 30_000）—— 单页超时
@@ -94,15 +98,30 @@ curl -I 'http://localhost:3000/?__crash=1'
 ## 模式切换 query param（dev only）
 
 任何路由加 `?mode=isr|ssr|ssg` 可以临时覆盖配置（仅 dev）。`csr-shell` 不接受
-query 触发——它只在 server 渲染抛异常时由 FallbackChain 自动兜底。
+`mode=csr` 触发，因为 CSR 不是用户级渲染模式；开发态可用 `?__csr-shell=1`
+强制验证 fallback 壳。
 
 ```bash
-curl -sSI 'http://localhost:3000/?mode=ssr'
+curl -sS -D - 'http://localhost:3000/?mode=ssr' -o /dev/null
 # X-Resolved-Mode: ssr
 # X-Mode-Source: query-override
 ```
 
 便于 staging 排查"这个页慢是 cache miss 还是 SSR 慢"。
+
+## Novel ISR Inspector（dev only）
+
+开发模式下 engine 会自动注入右下角 **Novel ISR Inspector**。它读取真实响应头，
+不 mock、不伪造：
+
+- `X-Resolved-Mode`：`isr` / `ssr` / `ssg`
+- `X-Render-Strategy`：`rsc-ssr` / `csr-shell`
+- `X-Cache-Status`：`HIT` / `MISS` / `STALE` / `BYPASS`
+- `X-Fallback-Used`：是否进入 fallback
+- `Content-Language` + `X-I18n-Source`：i18n locale 和字典来源
+
+浮层切换只改当前 URL 的调试参数，不跳转到其它业务页面。SSR 显示 `BYPASS`
+是正确语义，因为 SSR 永不写页面缓存。详细见 [dev-inspector.md](./dev-inspector.md)。
 
 ## 怎么选？
 
