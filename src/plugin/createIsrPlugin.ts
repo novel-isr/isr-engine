@@ -332,7 +332,7 @@ function createEngineDefaultEntriesPlugin(root: string): Plugin {
           return `export default {};`;
         }
         return `
-          import * as configModule from ${JSON.stringify(pathToFileURL(configPath).href)};
+          const configModule = await import(${JSON.stringify(pathToFileURL(configPath).href)});
           const defaultConfig = configModule.default ?? {};
           const namedRuntime = configModule['runtime'];
           export default defaultConfig.runtime ?? namedRuntime ?? {};
