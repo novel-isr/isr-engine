@@ -5,7 +5,7 @@
  */
 import * as React from 'react';
 
-import './error-boundary.style.scss';
+import './error-boundary.style.css';
 
 export function GlobalErrorBoundary(props: { children?: React.ReactNode }): React.ReactElement {
   return <ErrorBoundary errorComponent={DefaultGlobalErrorPage}>{props.children}</ErrorBoundary>;

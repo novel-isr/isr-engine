@@ -1,0 +1,46 @@
+/**
+ * 默认 fallback 样式 —— 仅在用户没传 loading/error 自定义节点时启用
+ * 业务长出自家设计后，把自定义节点传进 <Boundary loading={...} error={...}> 即可
+ *
+ * 用平面 CSS（不嵌套）—— 让消费方零依赖即可使用 engine，
+ * 不强制要求装 sass / sass-embedded。
+ */
+
+.errorRoot {
+  padding: 24px;
+  border: 1px solid #5a1d1d;
+  border-radius: 8px;
+  background: #2a0a0a;
+  color: #ffb4b4;
+}
+
+.errorRoot__title {
+  margin: 0;
+  font-weight: 600;
+}
+
+.errorRoot__message {
+  margin: 8px 0;
+  opacity: 0.8;
+  font-size: 13px;
+}
+
+.errorRoot__retry {
+  padding: 6px 14px;
+  background: #7b5cff;
+  color: #fff;
+  border: none;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 13px;
+}
+
+.errorRoot__retry:hover {
+  filter: brightness(1.1);
+}
+
+.loadingRoot {
+  padding: 32px;
+  text-align: center;
+  opacity: 0.6;
+}

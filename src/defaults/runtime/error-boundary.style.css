@@ -1,15 +1,12 @@
-// 全局错误边界 fallback 页面 —— 整个 <body> 接管，不依赖业务样式
+/* 全局错误边界 fallback 页面 —— 整个 <body> 接管，不依赖业务样式
+ * 用平面 CSS（无 sass 依赖），让 engine 对消费方零额外依赖。 */
 .eb-body {
   min-height: 100vh;
   display: flex;
   flex-direction: column;
   place-content: center;
   place-items: center;
-  font-family:
-    system-ui,
-    -apple-system,
-    'PingFang SC',
-    sans-serif;
+  font-family: system-ui, -apple-system, 'PingFang SC', sans-serif;
   padding: 2rem;
   gap: 1rem;
 }

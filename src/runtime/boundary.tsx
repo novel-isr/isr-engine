@@ -32,7 +32,7 @@
 'use client';
 
 import * as React from 'react';
-import styles from './boundary.module.scss';
+import styles from './boundary.module.css';
 
 interface BoundaryProps {
   /** Suspense fallback —— 子组件 await 数据时显示 */

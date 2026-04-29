@@ -87,7 +87,7 @@
     "test": "vitest run",
     "bench": "node bench/runner.mjs",
     "check": "pnpm run type-check && pnpm run lint && pnpm run test",
-    "release": "pnpm run check && pnpm run build && pnpm publish --access restricted --no-git-checks",
+    "release": "pnpm run check && pnpm run build && npm publish --access restricted",
     "prepare": "pnpm run build"
   },
   "engines": {
