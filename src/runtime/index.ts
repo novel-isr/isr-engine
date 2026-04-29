@@ -24,6 +24,7 @@ export {
   defineRoutes,
   type RouteEntry,
   type RouteComponentRef,
+  type RouteModuleLoader,
   type RouteModuleRef,
   type PageProps,
   type PageComponent,

@@ -55,9 +55,10 @@ export interface PageProps {
 export type PageComponent = React.ComponentType<any>;
 
 type RouteModule = Record<string, unknown>;
+export type RouteModuleLoader = () => Promise<RouteModule>;
 
 export interface RouteModuleRef {
-  load: () => Promise<RouteModule>;
+  load: RouteModuleLoader;
   /** 命名导出；默认读取 default */
   export?: string;
 }
@@ -66,7 +67,15 @@ export type RouteComponentRef = PageComponent | RouteModuleRef;
 
 export interface RouteEntry {
   path: string;
-  page: RouteComponentRef;
+  /**
+   * 推荐写法：一个 route module 同时承载不同执行视图。
+   *
+   * - default export: SSR/RSC page
+   * - named export `Spa`: CSR shell view（可选；未提供时回退 default）
+   */
+  load?: RouteModuleLoader;
+  /** 兼容旧写法；新业务优先使用 load */
+  page?: RouteComponentRef;
   /**
    * CSR shell 页面。
    *
@@ -83,6 +92,8 @@ export interface DefineRoutesOptions {
 
 export interface RouteManifest {
   routes: readonly RouteEntry[];
+  /** 推荐写法：404 route module。保留 fallback 仅做兼容。 */
+  notFound?: RouteComponentRef;
   fallback?: RouteComponentRef;
 }
 
@@ -123,17 +134,33 @@ function isRouteModuleRef(ref: RouteComponentRef | undefined): ref is RouteModul
   return Boolean(ref && typeof ref === 'object' && 'load' in ref && typeof ref.load === 'function');
 }
 
-function resolveRouteComponent(ref: RouteComponentRef, label: string): PageComponent {
+function resolveRouteComponent(
+  ref: RouteComponentRef,
+  label: string,
+  exportName = 'default',
+  fallbackExport?: string
+): PageComponent {
   if (!isRouteModuleRef(ref)) return ref;
+  const requestedExport = ref.export ?? exportName;
   return React.lazy(async () => {
     const mod = await ref.load();
-    const exportName = ref.export ?? 'default';
-    const component = mod[exportName];
+    const component = mod[requestedExport] ?? (fallbackExport ? mod[fallbackExport] : undefined);
     if (!component) {
-      throw new Error(`Route component "${label}" does not export "${exportName}"`);
+      throw new Error(`Route component "${label}" does not export "${requestedExport}"`);
     }
     return { default: component as PageComponent };
   });
+}
+
+function resolvePageComponent(route: RouteEntry): PageComponent {
+  const ref = route.page ?? (route.load ? { load: route.load } : undefined);
+  if (!ref) throw new Error(`Route "${route.path}" must define "load" or "page"`);
+  return resolveRouteComponent(ref, route.path);
+}
+
+function resolveSpaComponent(route: RouteEntry): PageComponent | undefined {
+  const ref = route.spa ?? (route.load ? { load: route.load } : undefined);
+  return ref ? resolveRouteComponent(ref, `${route.path}:spa`, 'Spa', 'default') : undefined;
 }
 
 function createRouteResolver(
@@ -142,7 +169,7 @@ function createRouteResolver(
 ): ResolveRoute {
   const compiled: CompiledRoute[] = routes.map(r => ({
     ...r,
-    page: resolveRouteComponent(r.page, r.path),
+    page: resolvePageComponent(r),
     ...compile(r.path),
   }));
   const Fallback = options.fallback
@@ -169,14 +196,17 @@ function createRouteResolver(
 }
 
 function createDefinedRoutes(config: RouteManifest): DefinedRoutes {
+  const fallback = config.notFound ?? config.fallback;
   return {
-    routes: createRouteResolver(config.routes, { fallback: config.fallback }),
+    routes: createRouteResolver(config.routes, {
+      fallback: fallback ? resolveRouteComponent(fallback, '__not_found__') : undefined,
+    }),
     spaRoutes: config.routes
-      .filter((route): route is RouteEntry & { spa: RouteComponentRef } => Boolean(route.spa))
-      .map(route => ({
-        path: route.path,
-        Component: resolveRouteComponent(route.spa, `${route.path}:spa`),
-      })),
+      .map(route => {
+        const Component = resolveSpaComponent(route);
+        return Component ? { path: route.path, Component } : null;
+      })
+      .filter((route): route is SpaRouteEntry => Boolean(route)),
   };
 }
 
