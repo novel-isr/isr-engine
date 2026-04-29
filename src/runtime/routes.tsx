@@ -54,26 +54,36 @@ export interface PageProps {
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 export type PageComponent = React.ComponentType<any>;
 
+type RouteModule = Record<string, unknown>;
+
+export interface RouteModuleRef {
+  load: () => Promise<RouteModule>;
+  /** 命名导出；默认读取 default */
+  export?: string;
+}
+
+export type RouteComponentRef = PageComponent | RouteModuleRef;
+
 export interface RouteEntry {
   path: string;
-  page: PageComponent;
+  page: RouteComponentRef;
   /**
    * CSR shell 页面。
    *
    * 不传时该路由只参与 SSR/RSC；传入时 engine 自动生成 spaRoutes。
    * 数据加载必须内聚在 client 页面内部，业务路由表不再暴露 loader。
    */
-  spa?: PageComponent;
+  spa?: RouteComponentRef;
 }
 
 export interface DefineRoutesOptions {
   /** 没匹配到时渲染的组件；不传 → 返回 null */
-  fallback?: PageComponent;
+  fallback?: RouteComponentRef;
 }
 
 export interface RouteManifest {
   routes: readonly RouteEntry[];
-  fallback?: PageComponent;
+  fallback?: RouteComponentRef;
 }
 
 export interface DefinedRoutes {
@@ -86,6 +96,7 @@ export interface DefinedRoutes {
 interface CompiledRoute extends RouteEntry {
   re: RegExp;
   keys: string[];
+  page: PageComponent;
 }
 
 function compile(path: string): { re: RegExp; keys: string[] } {
@@ -108,12 +119,35 @@ export type ResolveRoute = (ctx: {
   searchParams: URLSearchParams;
 }) => React.ReactNode;
 
+function isRouteModuleRef(ref: RouteComponentRef | undefined): ref is RouteModuleRef {
+  return Boolean(ref && typeof ref === 'object' && 'load' in ref && typeof ref.load === 'function');
+}
+
+function resolveRouteComponent(ref: RouteComponentRef, label: string): PageComponent {
+  if (!isRouteModuleRef(ref)) return ref;
+  return React.lazy(async () => {
+    const mod = await ref.load();
+    const exportName = ref.export ?? 'default';
+    const component = mod[exportName];
+    if (!component) {
+      throw new Error(`Route component "${label}" does not export "${exportName}"`);
+    }
+    return { default: component as PageComponent };
+  });
+}
+
 function createRouteResolver(
   routes: readonly RouteEntry[],
   options: DefineRoutesOptions = {}
 ): ResolveRoute {
-  const compiled: CompiledRoute[] = routes.map(r => ({ ...r, ...compile(r.path) }));
-  const Fallback = options.fallback;
+  const compiled: CompiledRoute[] = routes.map(r => ({
+    ...r,
+    page: resolveRouteComponent(r.page, r.path),
+    ...compile(r.path),
+  }));
+  const Fallback = options.fallback
+    ? resolveRouteComponent(options.fallback, '__fallback__')
+    : undefined;
 
   return function resolveRoute({ pathname, searchParams }) {
     const clean = pathname.replace(/\/+$/, '') || '/';
@@ -138,8 +172,11 @@ function createDefinedRoutes(config: RouteManifest): DefinedRoutes {
   return {
     routes: createRouteResolver(config.routes, { fallback: config.fallback }),
     spaRoutes: config.routes
-      .filter((route): route is RouteEntry & { spa: PageComponent } => Boolean(route.spa))
-      .map(route => ({ path: route.path, Component: route.spa })),
+      .filter((route): route is RouteEntry & { spa: RouteComponentRef } => Boolean(route.spa))
+      .map(route => ({
+        path: route.path,
+        Component: resolveRouteComponent(route.spa, `${route.path}:spa`),
+      })),
   };
 }
 

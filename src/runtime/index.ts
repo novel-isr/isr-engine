@@ -23,6 +23,8 @@ export { LocaleProvider, useLocale } from './LocaleContext';
 export {
   defineRoutes,
   type RouteEntry,
+  type RouteComponentRef,
+  type RouteModuleRef,
   type PageProps,
   type PageComponent,
   type DefineRoutesOptions,
