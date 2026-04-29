@@ -35,7 +35,7 @@ import '@app/_routes';
 
 import { parseRenderRequest } from './request';
 import { type IntlPayload, type PageSeoMeta, injectSeoMeta, mergePageSeoMeta } from './seo-runtime';
-import { runWithI18n } from '../../rsc/i18n';
+import { runWithI18n } from './i18n-server';
 import { resolvePageSeoMeta } from '../../runtime/routes';
 
 interface DefaultRscPayload {
