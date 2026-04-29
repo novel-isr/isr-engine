@@ -88,7 +88,7 @@ export interface AdminSiteBaseline {
     strings?: IntlMessagesByLocale;
   };
   seo?: {
-    entries?: readonly AdminSeoFallbackEntry[];
+    entries?: readonly Record<string, unknown>[];
   };
 }
 
@@ -282,7 +282,7 @@ export function defineAdminSiteHooks(options: DefineAdminSiteHooksOptions): Serv
         load: createAdminSeoLoader({
           endpoint: seo.endpoint,
           baseUrl: seo.baseUrl,
-          fallbackEntries: baseline.seo?.entries ?? [],
+          fallbackEntries: normalizeAdminSeoFallbackEntries(baseline.seo?.entries),
           timeoutMs: seo.timeoutMs,
         }),
         ttl: seo.ttl ?? 60_000,
@@ -597,6 +597,14 @@ function extractSeoMetaOrNull(data: unknown): PageSeoMeta | null {
   const candidate = 'data' in data ? data.data : data;
   if (!isRecord(candidate)) return null;
   return candidate as PageSeoMeta;
+}
+
+function normalizeAdminSeoFallbackEntries(
+  entries: readonly Record<string, unknown>[] = []
+): readonly AdminSeoFallbackEntry[] {
+  return entries.filter(
+    entry => typeof entry.path === 'string'
+  ) as unknown as readonly AdminSeoFallbackEntry[];
 }
 
 async function fetchJsonWithTimeout<T>(url: string, timeoutMs = 1200): Promise<T | null> {
