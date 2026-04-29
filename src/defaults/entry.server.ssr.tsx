@@ -12,7 +12,7 @@
  * 下放一个同名文件覆盖此默认实现。
  */
 import { createFromReadableStream } from '@vitejs/plugin-rsc/ssr';
-import React from 'react';
+import * as React from 'react';
 import type { ReactFormState } from 'react-dom/client';
 import { renderToReadableStream } from 'react-dom/server.edge';
 import { injectRSCPayload } from 'rsc-html-stream/server';

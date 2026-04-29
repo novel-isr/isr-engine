@@ -3,7 +3,7 @@
 /**
  * 全局错误边界 —— 运行在浏览器环境，捕获 RSC 水合后的渲染异常
  */
-import React from 'react';
+import * as React from 'react';
 
 import './error-boundary.style.scss';
 

@@ -26,7 +26,7 @@ import {
   encodeReply,
   setServerCallback,
 } from '@vitejs/plugin-rsc/browser';
-import React from 'react';
+import * as React from 'react';
 import { createRoot, hydrateRoot } from 'react-dom/client';
 import { rscStream } from 'rsc-html-stream/client';
 

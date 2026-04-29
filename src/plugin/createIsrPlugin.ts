@@ -195,6 +195,18 @@ function createBrowserShimPlugin(): Plugin {
   };
 }
 
+function createReactVirtualModuleInteropPlugin(): Plugin {
+  return {
+    name: 'isr:react-virtual-module-interop',
+    enforce: 'post',
+    transform(code, id) {
+      if (!id.includes('vite-rsc/remove-duplicate-server-css')) return null;
+      if (!code.includes('import React from "react";')) return null;
+      return code.replace('import React from "react";', 'import * as React from "react";');
+    },
+  };
+}
+
 function createEngineDefaultEntriesPlugin(): Plugin {
   const virtualEntryIds = new Set<string>(Object.values(VIRTUAL_ENTRY_IDS));
   const resolvedVirtualEntryIds = new Set<string>(
@@ -338,6 +350,20 @@ function createAppAliasPlugin(root: string): Plugin {
           alias: aliases,
           dedupe: ['react', 'react-dom', 'react-server-dom-webpack', 'rsc-html-stream'],
         },
+        // engine 把 client/rsc 入口指向虚拟模块 → 再 alias 到 engine 源 .tsx 文件，
+        // 不在用户 node_modules 树里。Vite 的 optimizeDeps scanner 默认不跟 file:// URL
+        // 进入 React 等 CJS 依赖，导致浏览器侧加载到原始 CJS 报
+        // "does not provide an export named 'default'/'jsxDEV'"。
+        // 显式声明这些依赖必须 pre-bundle，业务侧零配置。
+        optimizeDeps: {
+          include: [
+            'react',
+            'react/jsx-runtime',
+            'react/jsx-dev-runtime',
+            'react-dom',
+            'react-dom/client',
+          ],
+        },
       };
     },
   };
@@ -374,6 +400,7 @@ export function createIsrPlugin(options: CreateIsrPluginOptions = {}): PluginOpt
     createEngineDefaultEntriesPlugin(),
     createAppAliasPlugin(root),
     createBrowserShimPlugin(),
+    createReactVirtualModuleInteropPlugin(),
   ];
 
   if (isrCacheOptions?.enabled !== false) {

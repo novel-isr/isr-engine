@@ -39,7 +39,7 @@
  */
 'use client';
 
-import React from 'react';
+import * as React from 'react';
 
 export interface SpaRouteContext<P = Record<string, string>> {
   pathname: string;

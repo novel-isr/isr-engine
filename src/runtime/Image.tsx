@@ -11,7 +11,7 @@
  *   - 强制 width/height 防 CLS（next/image 经验：忘了写就 layout shift）
  *   - 透传到 /_/img endpoint，支持 q/fmt
  */
-import React from 'react';
+import * as React from 'react';
 
 export interface ImageProps {
   src: string;

@@ -17,11 +17,14 @@
  *   import BookDetail from './components/BookDetail'; // async Server Component
  *   import NotFoundPage from './pages/NotFoundPage';
  *
- *   export const resolveRoute = defineRoutes([
- *     { path: '/',          page: HomePage },
- *     { path: '/books/:id', page: BookDetail },
- *     { path: '/about',     page: AboutPage },
- *   ], { fallback: NotFoundPage });
+ *   export const { routes } = defineRoutes({
+ *     notFound: { load: () => import('./pages/NotFoundPage') },
+ *     routes: [
+ *       { path: '/',          load: () => import('./pages/HomePage') },
+ *       { path: '/books/:id', load: () => import('./components/BookDetail') },
+ *       { path: '/about',     load: () => import('./pages/AboutPage') },
+ *     ],
+ *   });
  *
  *   // src/pages/HomePage.tsx —— 一切都在这里
  *   import { cacheTag } from '@novel-isr/engine/rsc';
@@ -35,9 +38,7 @@
  * Engine 自动把 path params 注入 page 的 `params` 属性
  */
 
-import React from 'react';
-import type { SpaRouteEntry } from './createSpaApp';
-
+import * as React from 'react';
 /** 路由匹配后传给 page 的 props */
 export interface PageProps {
   pathname: string;
@@ -68,19 +69,15 @@ export type RouteComponentRef = PageComponent | RouteModuleRef;
 export interface RouteEntry {
   path: string;
   /**
-   * 推荐写法：一个 route module 同时承载不同执行视图。
-   *
-   * - default export: SSR/RSC page
-   * - named export `Spa`: CSR shell view（可选；未提供时回退 default）
+   * 推荐写法：route module default export 即唯一页面入口。
+   * SSR/ISR/SSG/CSR recovery 都由 engine 用同一份 RSC tree 执行。
    */
   load?: RouteModuleLoader;
   /** 兼容旧写法；新业务优先使用 load */
   page?: RouteComponentRef;
   /**
-   * CSR shell 页面。
-   *
-   * 不传时该路由只参与 SSR/RSC；传入时 engine 自动生成 spaRoutes。
-   * 数据加载必须内聚在 client 页面内部，业务路由表不再暴露 loader。
+   * @deprecated CSR recovery is handled by the engine RSC shell. Keep this only
+   * for older apps that still call createSpaApp directly.
    */
   spa?: RouteComponentRef;
 }
@@ -100,8 +97,6 @@ export interface RouteManifest {
 export interface DefinedRoutes {
   /** SSR/RSC resolver */
   routes: ResolveRoute;
-  /** CSR shell routes，由 engine 从同一份 route manifest 派生 */
-  spaRoutes: SpaRouteEntry[];
 }
 
 interface CompiledRoute extends RouteEntry {
@@ -158,11 +153,6 @@ function resolvePageComponent(route: RouteEntry): PageComponent {
   return resolveRouteComponent(ref, route.path);
 }
 
-function resolveSpaComponent(route: RouteEntry): PageComponent | undefined {
-  const ref = route.spa ?? (route.load ? { load: route.load } : undefined);
-  return ref ? resolveRouteComponent(ref, `${route.path}:spa`, 'Spa', 'default') : undefined;
-}
-
 function createRouteResolver(
   routes: readonly RouteEntry[],
   options: DefineRoutesOptions = {}
@@ -201,12 +191,6 @@ function createDefinedRoutes(config: RouteManifest): DefinedRoutes {
     routes: createRouteResolver(config.routes, {
       fallback: fallback ? resolveRouteComponent(fallback, '__not_found__') : undefined,
     }),
-    spaRoutes: config.routes
-      .map(route => {
-        const Component = resolveSpaComponent(route);
-        return Component ? { path: route.path, Component } : null;
-      })
-      .filter((route): route is SpaRouteEntry => Boolean(route)),
   };
 }
 
