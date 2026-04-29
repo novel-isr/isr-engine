@@ -17,11 +17,20 @@ export {
   type I18nConfig,
   type ParsedLocale,
 } from './i18n';
+export {
+  getI18n,
+  getI18nLocale,
+  getCurrentI18n,
+  setClientI18n,
+  type I18nParams,
+  type Translate,
+} from './i18n-store';
 export { LocaleProvider, useLocale } from './LocaleContext';
 
 // 路由 —— Next.js 风格（{ path, page: ServerComponent }）
 export {
   defineRoutes,
+  resolvePageSeoMeta,
   type RouteEntry,
   type RouteComponentRef,
   type RouteModuleLoader,
@@ -32,6 +41,8 @@ export {
   type ResolveRoute,
   type RouteManifest,
   type DefinedRoutes,
+  type PageSeoContext,
+  type PageSeoExport,
 } from './routes';
 
 // SPA fallback —— 浏览器侧降级渲染（独立运行模型，不与 SSR routes 共享）

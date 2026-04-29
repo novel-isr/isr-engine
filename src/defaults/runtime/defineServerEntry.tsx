@@ -30,12 +30,17 @@ import type { ReactFormState } from 'react-dom/client';
 
 // @ts-expect-error - @app 别名在 createIsrPlugin 注入；指向用户的 src/app.tsx
 import { App } from '@app/_entry';
+// @ts-expect-error - @app 别名在 createIsrPlugin 注入；评估用户 src/routes.tsx 以注册 page-level SEO
+import '@app/_routes';
 
 import { parseRenderRequest } from './request';
-import { type IntlPayload, type PageSeoMeta, injectSeoMeta } from './seo-runtime';
+import { type IntlPayload, type PageSeoMeta, injectSeoMeta, mergePageSeoMeta } from './seo-runtime';
+import { runWithI18n } from '../../rsc/i18n';
+import { resolvePageSeoMeta } from '../../runtime/routes';
 
 interface DefaultRscPayload {
   root: React.ReactNode;
+  intl?: IntlPayload | null;
   returnValue?: { ok: boolean; data: unknown };
   formState?: ReactFormState;
 }
@@ -147,22 +152,30 @@ export function defineServerEntry<C extends ServerCtx = ServerCtx>(
           ctx = { ...baseline, ...userExt } as C;
         }
 
-        // ─── i18n / SEO 数据 hook（并发拉取，互不阻塞）─────────
-        const [intl, seoMeta] = await Promise.all([
-          hooks.loadIntl ? Promise.resolve(hooks.loadIntl(request, ctx)) : Promise.resolve(null),
-          hooks.loadSeoMeta
-            ? Promise.resolve(hooks.loadSeoMeta(request, ctx))
-            : Promise.resolve(null),
-        ]);
+        // ─── i18n 先加载并进入请求作用域；SEO 可在 page seo 中直接 getI18n() ─────
+        const intl = hooks.loadIntl ? await Promise.resolve(hooks.loadIntl(request, ctx)) : null;
         if (intl) (ctx as ServerCtx).intl = intl;
+
+        const seoMeta = await runWithI18n(intl, async () => {
+          const url = new URL(request.url);
+          const [pageSeoMeta, hookSeoMeta] = await Promise.all([
+            resolvePageSeoMeta(url),
+            hooks.loadSeoMeta
+              ? Promise.resolve(hooks.loadSeoMeta(request, ctx))
+              : Promise.resolve(null),
+          ]);
+          return mergePageSeoMeta(pageSeoMeta, hookSeoMeta);
+        });
         if (seoMeta) (ctx as ServerCtx).seoMeta = seoMeta;
 
-        const response = await runRscPipeline(request, {
-          intl,
-          seoMeta,
-          siteBaseUrl: hooks.siteBaseUrl,
-          apiBaseUrl: hooks.apiBaseUrl,
-        });
+        const response = await runWithI18n(intl, () =>
+          runRscPipeline(request, {
+            intl,
+            seoMeta,
+            siteBaseUrl: hooks.siteBaseUrl,
+            apiBaseUrl: hooks.apiBaseUrl,
+          })
+        );
 
         // ─── 自动注入观测头（用户无需写代码）──────────────────
         response.headers.set('x-trace-id', baseline.traceId);
@@ -234,6 +247,7 @@ async function runRscPipeline(request: Request, extras: PipelineExtras): Promise
 
   const rscPayload: DefaultRscPayload = {
     root: <App url={renderRequest.url} intl={extras.intl ?? undefined} />,
+    intl: extras.intl ?? null,
     formState,
     returnValue,
   };

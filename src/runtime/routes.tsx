@@ -39,6 +39,12 @@
  */
 
 import * as React from 'react';
+import type { PageSeoMeta } from '../defaults/runtime/seo-runtime';
+
+declare global {
+  var __NOVEL_ISR_ROUTE_MANIFESTS__: RouteManifest[] | undefined;
+}
+
 /** 路由匹配后传给 page 的 props */
 export interface PageProps {
   pathname: string;
@@ -98,6 +104,18 @@ export interface DefinedRoutes {
   /** SSR/RSC resolver */
   routes: ResolveRoute;
 }
+
+export interface PageSeoContext extends PageProps {
+  url: URL;
+}
+
+export type PageSeoExport =
+  | PageSeoMeta
+  | null
+  | undefined
+  | ((
+      ctx: PageSeoContext
+    ) => PageSeoMeta | null | undefined | Promise<PageSeoMeta | null | undefined>);
 
 interface CompiledRoute extends RouteEntry {
   re: RegExp;
@@ -186,6 +204,7 @@ function createRouteResolver(
 }
 
 function createDefinedRoutes(config: RouteManifest): DefinedRoutes {
+  registerRouteManifest(config);
   const fallback = config.notFound ?? config.fallback;
   return {
     routes: createRouteResolver(config.routes, {
@@ -204,7 +223,67 @@ export function defineRoutes(
   options: DefineRoutesOptions = {}
 ): ResolveRoute | DefinedRoutes {
   if (Array.isArray(input)) {
+    registerRouteManifest({ routes: input, fallback: options.fallback });
     return createRouteResolver(input as readonly RouteEntry[], options);
   }
   return createDefinedRoutes(input as RouteManifest);
+}
+
+function getRouteRegistry(): RouteManifest[] {
+  globalThis.__NOVEL_ISR_ROUTE_MANIFESTS__ ??= [];
+  return globalThis.__NOVEL_ISR_ROUTE_MANIFESTS__;
+}
+
+function registerRouteManifest(config: RouteManifest): void {
+  getRouteRegistry().push(config);
+}
+
+export async function resolvePageSeoMeta(url: URL): Promise<PageSeoMeta | null> {
+  const pathname = url.pathname.replace(/\/+$/, '') || '/';
+  for (const manifest of getRouteRegistry()) {
+    for (const route of manifest.routes) {
+      const matched = matchRoute(pathname, route);
+      if (!matched) continue;
+      return await loadPageSeo(route, {
+        url,
+        pathname,
+        searchParams: url.searchParams,
+        params: matched.params,
+      });
+    }
+  }
+  return null;
+}
+
+function matchRoute(
+  pathname: string,
+  route: RouteEntry
+): { params: Record<string, string> } | null {
+  const compiled = compile(route.path);
+  const m = compiled.re.exec(pathname);
+  if (!m) return null;
+  const params: Record<string, string> = {};
+  compiled.keys.forEach((k, i) => {
+    params[k] = decodeURIComponent(m[i + 1] ?? '');
+  });
+  return { params };
+}
+
+async function loadPageSeo(route: RouteEntry, ctx: PageSeoContext): Promise<PageSeoMeta | null> {
+  const loader = route.load ?? (isRouteModuleRef(route.page) ? route.page.load : undefined);
+  if (!loader) return null;
+
+  const mod = await loader();
+  const exported = mod.seo ?? mod.generateSeo;
+  if (!exported) return null;
+  if (typeof exported === 'function') {
+    return (
+      (await (
+        exported as (
+          ctx: PageSeoContext
+        ) => PageSeoMeta | null | undefined | Promise<PageSeoMeta | null | undefined>
+      )(ctx)) ?? null
+    );
+  }
+  return exported as PageSeoMeta;
 }

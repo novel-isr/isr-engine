@@ -120,8 +120,16 @@ export {
   ServerActionUtils,
   SERVER_ACTION_ENDPOINT,
   LEGACY_SERVER_ACTION_ENDPOINT,
+  getI18n,
+  getI18nLocale,
 } from './rsc';
-export type { RevalidateInvalidator, ServerActionMetadata, ServerActionHandler } from './rsc';
+export type {
+  RevalidateInvalidator,
+  ServerActionMetadata,
+  ServerActionHandler,
+  I18nParams,
+  Translate,
+} from './rsc';
 
 // ========== 工具 ==========
 export { Logger } from '@/logger/Logger';

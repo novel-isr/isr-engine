@@ -16,6 +16,8 @@ import * as React from 'react';
 import type { ReactFormState } from 'react-dom/client';
 import { renderToReadableStream } from 'react-dom/server.edge';
 import { injectRSCPayload } from 'rsc-html-stream/server';
+import { setClientI18n } from './runtime/i18n-store';
+import type { IntlPayload } from './runtime/seo-runtime';
 // @ts-expect-error - 虚拟模块由 plugin-rsc 注入
 import assetsManifest from 'virtual:vite-rsc/assets-manifest';
 
@@ -37,6 +39,7 @@ function collectAllCss(): string[] {
 
 interface DefaultRscPayload {
   root: React.ReactNode;
+  intl?: IntlPayload | null;
   formState?: ReactFormState;
   returnValue?: { ok: boolean; data: unknown };
 }
@@ -115,7 +118,9 @@ export async function renderHTML(
 
   function SsrRoot() {
     payload ??= createFromReadableStream<DefaultRscPayload>(rscStream1);
-    return React.use(payload).root;
+    const data = React.use(payload);
+    setClientI18n(data.intl);
+    return data.root;
   }
 
   const bootstrapScriptContent = await import.meta.viteRsc.loadBootstrapScriptContent('index');

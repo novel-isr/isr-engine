@@ -34,6 +34,21 @@ export interface PageSeoMeta {
   jsonLd?: object | object[];
 }
 
+export function mergePageSeoMeta(
+  base: PageSeoMeta | null | undefined,
+  override: PageSeoMeta | null | undefined
+): PageSeoMeta | null {
+  if (!base) return override ?? null;
+  if (!override) return base;
+  return {
+    ...base,
+    ...override,
+    keywords: override.keywords ?? base.keywords,
+    alternates: override.alternates ?? base.alternates,
+    jsonLd: override.jsonLd ?? base.jsonLd,
+  };
+}
+
 // ─── PageSeoMeta → HTML 片段 ───────────────────────
 
 /**

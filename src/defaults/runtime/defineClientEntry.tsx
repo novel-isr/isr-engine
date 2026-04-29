@@ -32,9 +32,12 @@ import { rscStream } from 'rsc-html-stream/client';
 
 import { GlobalErrorBoundary } from './error-boundary';
 import { createRscRenderRequest } from './request';
+import { setClientI18n } from '../../runtime/i18n-store';
+import type { IntlPayload } from './seo-runtime';
 
 interface DefaultRscPayload {
   root: React.ReactNode;
+  intl?: IntlPayload | null;
   formState?: import('react-dom/client').ReactFormState;
   returnValue?: { ok: boolean; data: unknown };
 }
@@ -165,6 +168,7 @@ async function main(hooks: ClientEntryHooks): Promise<void> {
     async function fetchRscPayload(): Promise<void> {
       const renderRequest = createRscRenderRequest(window.location.href);
       const payload = await createFromFetch<DefaultRscPayload>(fetch(renderRequest));
+      setClientI18n(payload.intl);
       setPayload(payload);
     }
 
@@ -208,6 +212,7 @@ async function main(hooks: ClientEntryHooks): Promise<void> {
       const payload = await createFromFetch<DefaultRscPayload>(fetch(renderRequest), {
         temporaryReferences,
       });
+      setClientI18n(payload.intl);
       setPayload(payload);
       const { ok, data } = payload.returnValue!;
       if (!ok) {
@@ -256,6 +261,7 @@ async function main(hooks: ClientEntryHooks): Promise<void> {
 
   let setPayload: (v: DefaultRscPayload) => void = () => {};
   const initialPayload = await createFromReadableStream<DefaultRscPayload>(rscStream);
+  setClientI18n(initialPayload.intl);
 
   function BrowserRoot(): React.ReactNode {
     const [payload, setPayload_] = React.useState(initialPayload);
@@ -269,6 +275,7 @@ async function main(hooks: ClientEntryHooks): Promise<void> {
   async function fetchRscPayload(): Promise<void> {
     const renderRequest = createRscRenderRequest(window.location.href);
     const payload = await createFromFetch<DefaultRscPayload>(fetch(renderRequest));
+    setClientI18n(payload.intl);
     setPayload(payload);
   }
 
@@ -281,6 +288,7 @@ async function main(hooks: ClientEntryHooks): Promise<void> {
     const payload = await createFromFetch<DefaultRscPayload>(fetch(renderRequest), {
       temporaryReferences,
     });
+    setClientI18n(payload.intl);
     setPayload(payload);
     const { ok, data } = payload.returnValue!;
     if (!ok) {

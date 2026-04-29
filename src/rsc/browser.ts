@@ -97,3 +97,22 @@ export function shouldSkipServerActionEndpointRetry(endpoint: string): boolean {
 export function getVariant(): string | undefined {
   return undefined;
 }
+
+export function getI18n(key: string, _params?: Record<string, unknown>, fallback = key): string {
+  return fallback;
+}
+
+export function getI18nLocale(fallback = ''): string {
+  return fallback;
+}
+
+export function getCurrentI18n(): null {
+  return null;
+}
+
+export function runWithI18n<T>(_intl: unknown, fn: () => T): T {
+  return fn();
+}
+
+export type I18nParams = Record<string, string | number | boolean | null | undefined>;
+export type Translate = (key: string, params?: I18nParams, fallback?: string) => string;

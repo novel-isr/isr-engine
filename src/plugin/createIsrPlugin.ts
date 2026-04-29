@@ -324,8 +324,10 @@ function createAppAliasPlugin(root: string): Plugin {
   const userSrc = path.resolve(root, 'src');
   const defaultsDir = resolveEngineDefaultsDir();
   const emptyConfig = path.resolve(defaultsDir, 'runtime/empty-config.ts');
+  const emptyRoutes = path.resolve(defaultsDir, 'runtime/empty-routes.ts');
 
   const appEntry = path.resolve(userSrc, 'app.tsx');
+  const appRoutes = path.resolve(userSrc, 'routes.tsx');
 
   const userOrEmpty = (rel: string) => {
     const abs = path.resolve(root, rel);
@@ -339,6 +341,7 @@ function createAppAliasPlugin(root: string): Plugin {
       // 精确匹配优先于通用 @app/* 模式
       const aliases: Array<{ find: string | RegExp; replacement: string }> = [
         { find: '@app/_entry', replacement: appEntry },
+        { find: '@app/_routes', replacement: fs.existsSync(appRoutes) ? appRoutes : emptyRoutes },
         { find: '@app/_client-config', replacement: userOrEmpty(ENTRY_CONVENTION.client) },
         { find: '@app/_server-config', replacement: userOrEmpty(ENTRY_CONVENTION.rsc) },
         { find: '@app/_ssr-config', replacement: userOrEmpty(ENTRY_CONVENTION.ssr) },

@@ -36,6 +36,11 @@ export interface IntlConfig {
   // ─── 翻译消息加载层（被 SEO/Header 等消费）─────────────────────
   /** 远程 endpoint；`{locale}` 占位符自动替换 */
   endpoint?: string;
+  /** 远端响应适配器；支持 admin manifest / SaaS CMS 等非标准响应 */
+  transform?: (
+    data: unknown,
+    locale: string
+  ) => IntlPayload | null | undefined | Promise<IntlPayload | null | undefined>;
   /** 本地或自定义加载器；与 endpoint 互斥（优先级更高） */
   load?: (locale: string) => Promise<IntlPayload | null>;
   /** locale 检测（默认：cookie `locale` → Accept-Language 前缀 → defaultLocale） */
@@ -136,11 +141,14 @@ interface CompiledRoute {
 /** 把 `/books/:id/reviews/:rid` 编译成 RegExp + 参数名列表 */
 function compilePattern(pattern: string): { re: RegExp; paramNames: string[] } {
   const paramNames: string[] = [];
-  const reSrc = pattern.replace(/:(\w+)/g, (_, name) => {
+  const wildcard = pattern.endsWith('/*');
+  const base = wildcard ? pattern.slice(0, -2) : pattern;
+  const escaped = base.replace(/[.+?^${}()|[\]\\]/g, '\\$&');
+  const reSrc = escaped.replace(/:(\w+)/g, (_, name) => {
     paramNames.push(name);
     return '([^/]+)';
   });
-  return { re: new RegExp(`^${reSrc}$`), paramNames };
+  return { re: new RegExp(`^${reSrc}${wildcard ? '(?:/.*)?' : ''}$`), paramNames };
 }
 
 function fillTemplate(template: string, vars: Record<string, string>): string {
@@ -200,15 +208,16 @@ export function defineSiteHooks(config: SiteHooksConfig): ServerHooksOutput {
   // ─── i18n 缓存（一次创建，请求级复用）──────────────
   const intlCfg = config.intl ?? {};
   const fallbackLocale = intlCfg.defaultLocale ?? 'zh-CN';
+  const supportedLocales = intlCfg.locales?.length ? intlCfg.locales : [fallbackLocale];
   const detectLocale =
     intlCfg.detect ??
     ((req: Request): string => {
       const cookie = req.headers.get('cookie')?.match(/(?:^|;\s*)locale=([^;]+)/)?.[1];
-      if (cookie) return decodeURIComponent(cookie);
+      if (cookie) {
+        return normalizeLocale(decodeURIComponent(cookie), supportedLocales, fallbackLocale);
+      }
       const accept = req.headers.get('accept-language') ?? '';
-      if (accept.startsWith('zh')) return 'zh-CN';
-      if (accept.startsWith('en')) return 'en';
-      return fallbackLocale;
+      return normalizeLocale(parseAcceptLanguage(accept), supportedLocales, fallbackLocale);
     });
 
   const intlLoader = createCachedFetcher<string, IntlPayload>({
@@ -222,10 +231,19 @@ export function defineSiteHooks(config: SiteHooksConfig): ServerHooksOutput {
       }
       if (intlCfg.endpoint) {
         const url = fillTemplate(intlCfg.endpoint, { locale });
-        const json = (await fetchJson(url)) as { data?: Record<string, unknown> } | null;
+        const json = await fetchJson(url);
+        if (json !== null && intlCfg.transform) {
+          const transformed = await intlCfg.transform(json, locale);
+          if (transformed) {
+            return {
+              ...transformed,
+              direction: transformed.direction ?? rtlOf(transformed.locale),
+            };
+          }
+        }
         return {
           locale,
-          messages: json?.data ?? {},
+          messages: extractIntlMessages(json),
           direction: rtlOf(locale),
         };
       }
@@ -328,7 +346,7 @@ export function defineSiteHooks(config: SiteHooksConfig): ServerHooksOutput {
       for (const { re, paramNames, resolver } of seoRoutes) {
         const m = path.match(re);
         if (m) {
-          const params: Record<string, string> = {};
+          const params: Record<string, string> = { pathname: path };
           paramNames.forEach((n, i) => (params[n] = m[i + 1] ?? ''));
           return await resolver(params);
         }
@@ -357,4 +375,67 @@ function safeOrigin(url: string): string | undefined {
 
 function rtlOf(locale: string): 'ltr' | 'rtl' {
   return /^(ar|he|fa|ur)/.test(locale) ? 'rtl' : 'ltr';
+}
+
+function parseAcceptLanguage(accept: string): string {
+  let best = '';
+  let bestQ = -1;
+  for (const part of accept.split(',')) {
+    const [rawLocale, ...attrs] = part.trim().split(';');
+    if (!rawLocale) continue;
+    const qAttr = attrs.find(attr => attr.trim().startsWith('q='));
+    const q = qAttr ? Number(qAttr.trim().slice(2)) : 1;
+    if (Number.isFinite(q) && q > bestQ) {
+      best = rawLocale;
+      bestQ = q;
+    }
+  }
+  return best;
+}
+
+function normalizeLocale(
+  value: string,
+  supportedLocales: readonly string[],
+  fallbackLocale: string
+): string {
+  const lower = value.toLowerCase();
+  const exact = supportedLocales.find(locale => locale.toLowerCase() === lower);
+  if (exact) return exact;
+  const prefix = lower.split('-')[0];
+  const byPrefix = supportedLocales.find(locale => locale.toLowerCase().split('-')[0] === prefix);
+  return byPrefix ?? fallbackLocale;
+}
+
+function extractIntlMessages(data: unknown): Record<string, unknown> {
+  if (!data || typeof data !== 'object') return {};
+  const raw = data as Record<string, unknown>;
+  const candidate = raw.data ?? raw.messages ?? raw.strings;
+  if (!candidate || typeof candidate !== 'object') return {};
+  if (raw.strings === candidate || isFlatRecord(candidate)) {
+    return expandDottedRecord(candidate as Record<string, unknown>);
+  }
+  return candidate as Record<string, unknown>;
+}
+
+function isFlatRecord(value: unknown): boolean {
+  if (!value || typeof value !== 'object') return false;
+  return Object.keys(value as Record<string, unknown>).some(key => key.includes('.'));
+}
+
+function expandDottedRecord(flat: Record<string, unknown>): Record<string, unknown> {
+  const out: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(flat)) {
+    const parts = key.split('.');
+    let cur = out;
+    parts.forEach((part, index) => {
+      if (index === parts.length - 1) {
+        cur[part] = value;
+        return;
+      }
+      const next = cur[part];
+      if (!next || typeof next !== 'object') cur[part] = {};
+      cur = cur[part] as Record<string, unknown>;
+    });
+  }
+  return out;
 }
