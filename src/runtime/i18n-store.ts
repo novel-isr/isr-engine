@@ -6,21 +6,26 @@ export type Translate = (key: string, params?: I18nParams, fallback?: string) =>
 
 type ServerReader = () => IntlPayload | null | undefined;
 
-let clientIntl: IntlPayload | null = null;
-let serverReader: ServerReader | null = null;
+interface I18nRuntimeState {
+  clientIntl: IntlPayload | null;
+  serverReader: ServerReader | null;
+  keyPathCache: Map<string, string[]>;
+}
 
-const keyPathCache = new Map<string, string[]>();
+const I18N_RUNTIME_STATE_KEY = '__NOVEL_ISR_I18N_RUNTIME_STATE__';
+
+const runtimeState = getRuntimeState();
 
 export function setClientI18n(intl: IntlPayload | null | undefined): void {
-  clientIntl = intl ?? null;
+  runtimeState.clientIntl = intl ?? null;
 }
 
 export function registerServerI18nReader(reader: ServerReader): void {
-  serverReader = reader;
+  runtimeState.serverReader = reader;
 }
 
 export function getCurrentI18n(): IntlPayload | null {
-  return serverReader?.() ?? clientIntl;
+  return runtimeState.serverReader?.() ?? runtimeState.clientIntl;
 }
 
 export function getI18nLocale(fallback = ''): string {
@@ -34,10 +39,10 @@ export const getI18n: Translate = (key, params, fallback = key) => {
 };
 
 function readPath(source: unknown, key: string): unknown {
-  let path = keyPathCache.get(key);
+  let path = runtimeState.keyPathCache.get(key);
   if (!path) {
     path = key.split('.');
-    keyPathCache.set(key, path);
+    runtimeState.keyPathCache.set(key, path);
   }
 
   let cur = source;
@@ -46,6 +51,20 @@ function readPath(source: unknown, key: string): unknown {
     cur = (cur as Record<string, unknown>)[part];
   }
   return cur;
+}
+
+function getRuntimeState(): I18nRuntimeState {
+  const globalState = globalThis as typeof globalThis & {
+    [I18N_RUNTIME_STATE_KEY]?: I18nRuntimeState;
+  };
+
+  globalState[I18N_RUNTIME_STATE_KEY] ??= {
+    clientIntl: null,
+    serverReader: null,
+    keyPathCache: new Map<string, string[]>(),
+  };
+
+  return globalState[I18N_RUNTIME_STATE_KEY];
 }
 
 function interpolate(message: string, params?: I18nParams): string {

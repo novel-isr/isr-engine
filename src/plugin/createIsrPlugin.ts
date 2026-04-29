@@ -375,6 +375,7 @@ function createAppAliasPlugin(root: string): Plugin {
             'react-dom',
             'react-dom/client',
           ],
+          exclude: ['@novel-isr/engine', '@novel-isr/engine/runtime'],
         },
       };
     },
