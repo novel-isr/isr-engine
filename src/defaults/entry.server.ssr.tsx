@@ -136,10 +136,12 @@ export async function renderHTML(
     // 改返回最小壳 HTML + self.__NO_HYDRATE=1，让浏览器走 createRoot 自救
     csrShellFallback = true;
     status = 200; // 我们成功交付了壳；客户端去尝试 _.rsc 自愈
-    console.warn(
-      '[isr-engine] SSR render failed → falling back to csr-shell:',
-      err instanceof Error ? err.message : err
-    );
+    const reason = err instanceof Error ? err.message : err;
+    if (options.forceCsrShell) {
+      console.info('[isr-engine] CSR shell fallback requested by debug flag');
+    } else {
+      console.warn('[isr-engine] SSR render failed → falling back to csr-shell:', reason);
+    }
     // 注入用户的全部 client CSS chunks 到 csr-shell —— 否则 CSR fallback 渲染丢样式
     const cssLinks = collectAllCss();
     htmlStream = await renderToReadableStream(
