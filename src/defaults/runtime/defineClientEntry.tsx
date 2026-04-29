@@ -156,6 +156,82 @@ async function main(hooks: ClientEntryHooks): Promise<void> {
     createRoot(mount).render(React.createElement(SpaMount));
   }
 
+  function mountRscShellFallback(): void {
+    document.body.classList.remove('csr-shell-body');
+    document.body.removeAttribute('style');
+
+    let setPayload: (v: DefaultRscPayload) => void = () => {};
+
+    async function fetchRscPayload(): Promise<void> {
+      const renderRequest = createRscRenderRequest(window.location.href);
+      const payload = await createFromFetch<DefaultRscPayload>(fetch(renderRequest));
+      setPayload(payload);
+    }
+
+    function RscShellRoot(): React.ReactNode {
+      const [payload, setPayload_] = React.useState<DefaultRscPayload | null>(null);
+      const [failed, setFailed] = React.useState(false);
+
+      React.useEffect(() => {
+        setPayload = v => React.startTransition(() => setPayload_(v));
+      }, [setPayload_]);
+
+      React.useEffect(() => {
+        fetchRscPayload().catch(() => setFailed(true));
+        return listenNavigation(() => {
+          setFailed(false);
+          fetchRscPayload().catch(() => setFailed(true));
+        }, hooks.onNavigate);
+      }, []);
+
+      if (failed) return React.createElement(CsrShellFallback);
+      if (!payload) {
+        return React.createElement(
+          'html',
+          { lang: 'zh-CN' },
+          React.createElement(
+            'body',
+            null,
+            React.createElement('div', { className: 'csr-shell-page' }, '加载中…')
+          )
+        );
+      }
+      return payload.root;
+    }
+
+    setServerCallback(async (id: string, args: unknown[]) => {
+      const temporaryReferences = createTemporaryReferenceSet();
+      const renderRequest = createRscRenderRequest(window.location.href, {
+        id,
+        body: await encodeReply(args, { temporaryReferences }),
+      });
+      const payload = await createFromFetch<DefaultRscPayload>(fetch(renderRequest), {
+        temporaryReferences,
+      });
+      setPayload(payload);
+      const { ok, data } = payload.returnValue!;
+      if (!ok) {
+        if (hooks.onActionError) {
+          try {
+            hooks.onActionError(data, id);
+          } catch {
+            /* hook 抛错不影响主流程 */
+          }
+        }
+        throw data;
+      }
+      return data;
+    });
+
+    createRoot(document as unknown as Element).render(
+      React.createElement(
+        React.StrictMode,
+        null,
+        React.createElement(GlobalErrorBoundary, null, React.createElement(RscShellRoot))
+      )
+    );
+  }
+
   // SPA fallback：浏览器加载 dist/spa/index.html 触发，由部署层（Nginx/CDN）在 SSR 5xx 时切入
   if ((globalThis as { __SPA_MODE__?: boolean }).__SPA_MODE__) {
     const App = hooks.spaApp;
@@ -163,8 +239,7 @@ async function main(hooks: ClientEntryHooks): Promise<void> {
       mountSpaFallback(App);
       return;
     }
-    // 没配 spaApp → 走默认静态页
-    createRoot(document.body).render(React.createElement(CsrShellFallback));
+    mountRscShellFallback();
     return;
   }
 
@@ -175,7 +250,7 @@ async function main(hooks: ClientEntryHooks): Promise<void> {
       mountSpaFallback(App);
       return;
     }
-    createRoot(document.body).render(React.createElement(CsrShellFallback));
+    mountRscShellFallback();
     return;
   }
 
