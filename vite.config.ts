@@ -32,11 +32,26 @@ export default defineConfig({
         'adapters/runtime/index': resolve(__dirname, 'src/adapters/runtime/index.ts'),
         // <Image> 组件 —— 用户在 React 树里引用
         'image/index': resolve(__dirname, 'src/runtime/Image.tsx'),
+        // ─── 消费方加载的辅助入口（无 'use client' / plugin-rsc 依赖） ────────
+        // defineSiteHooks / auto-observability 是纯逻辑模块，预打包成 ESM JS
+        // 让消费方 Vite scanner 能正常发现 React 等依赖（不再 alias 到源文件）。
+        //
+        // 注 1：defineClientEntry / defineServerEntry / entry.server.ssr.tsx 必须
+        // 维持源码形式 —— 它们依赖 `@vitejs/plugin-rsc/browser` `/rsc`
+        // `import.meta.viteRsc` 等 plugin-rsc 运行时虚拟模块，只能在消费方
+        // plugin-rsc 构建上下文里二次打包。
+        //
+        // 注 2：./runtime 也维持源码形式 —— runtime/index 重导出 boundary /
+        // LocaleContext / createSpaApp 等带 'use client' 指令的模块，bundle 后
+        // Rollup 会丢失模块级 'use client' 指令，plugin-rsc 无法把它们识别为
+        // 客户端组件引用，导致 RSC 边界错误。保持源码让 plugin-rsc 按文件粒度
+        // 解析 directives。
+        'defaults/runtime/defineSiteHooks': resolve(
+          __dirname,
+          'src/defaults/runtime/defineSiteHooks.ts'
+        ),
+        'defaults/auto-observability': resolve(__dirname, 'src/defaults/auto-observability.ts'),
       },
-      // 注：内置默认 SSR 入口（src/defaults/entry.server.ssr.tsx）不在此处打包，
-      // 因为它依赖 `import.meta.viteRsc`（plugin-rsc 运行时注入的 API），
-      // 只能在用户项目的 plugin-rsc 构建上下文里被消费。我们直接以源码形式
-      // 暴露给用户的 plugin-rsc 进行二次打包，详见 createIsrPlugin.ts
       formats: ['es', 'cjs'],
       fileName: (format, entryName) => `${entryName}.${format === 'es' ? 'js' : 'cjs'}`,
     },
@@ -47,8 +62,11 @@ export default defineConfig({
         ...Object.keys(pkg.dependencies || {}),
         ...Object.keys(pkg.optionalDependencies || {}),
         ...Object.keys(pkg.peerDependencies || {}),
-        // 子路径外部化（如 react-dom/server, react-dom/client）
+        // 子路径外部化（如 react-dom/server, react-dom/client, @vitejs/plugin-rsc/browser）
         /^react(-dom)?(\/.*)?$/,
+        /^@vitejs\/plugin-rsc(\/.*)?$/,
+        // engine 自身子路径 —— auto-observability 用 dynamic import 自己的 adapters 子包
+        /^@novel-isr\/engine(\/.*)?$/,
         // 可选 SDK —— 用户没装时静默跳过（adapters/observability 里 dynamic import）
         // 不写进 deps（避免强制安装），但必须 external 防止 bundler inline + 解析失败
         'web-vitals',

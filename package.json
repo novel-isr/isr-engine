@@ -1,6 +1,6 @@
 {
   "name": "@novel-isr/engine",
-  "version": "2.3.0",
+  "version": "2.3.1",
   "description": "ISR/SSG/Fallback rendering orchestration on Vite + React 19 RSC.",
   "license": "UNLICENSED",
   "repository": {
@@ -20,6 +20,13 @@
   "bin": {
     "novel-isr": "./dist/cli/cli.js"
   },
+  "files": [
+    "dist",
+    "src/defaults",
+    "src/runtime",
+    "README.md",
+    "CHANGELOG.md"
+  ],
   "exports": {
     ".": {
       "import": "./dist/novel-isr.js",
@@ -40,11 +47,13 @@
     },
     "./auto-observability": {
       "types": "./dist/defaults/auto-observability.d.ts",
-      "default": "./src/defaults/auto-observability.ts"
+      "import": "./dist/defaults/auto-observability.js",
+      "require": "./dist/defaults/auto-observability.cjs"
     },
     "./site-hooks": {
       "types": "./dist/defaults/runtime/defineSiteHooks.d.ts",
-      "default": "./src/defaults/runtime/defineSiteHooks.ts"
+      "import": "./dist/defaults/runtime/defineSiteHooks.js",
+      "require": "./dist/defaults/runtime/defineSiteHooks.cjs"
     },
     "./adapters/observability": {
       "import": "./dist/adapters/observability/index.js",
@@ -91,7 +100,7 @@
     "commander": "^12.1.0",
     "compression": "^1.7.4",
     "esbuild": "^0.28.0",
-    "express": "^4.21.0",
+    "express": "^5.1.0",
     "helmet": "^7.1.0",
     "lru-cache": "^10.4.3",
     "ora": "^8.1.0",
@@ -110,15 +119,10 @@
     "ioredis": "^5.4.1",
     "sharp": "^0.33.5"
   },
-  "pnpm": {
-    "overrides": {
-      "path-to-regexp@<0.1.13": "0.1.13"
-    }
-  },
   "devDependencies": {
     "@eslint/js": "^9.15.0",
     "@types/compression": "^1.7.5",
-    "@types/express": "^4.17.21",
+    "@types/express": "^5.0.0",
     "@types/ioredis-mock": "^8.2.5",
     "@types/node": "^22.7.4",
     "@types/react": "^19.0.0",
@@ -140,6 +144,7 @@
     "react-server-dom-webpack": "^19.2.0",
     "rimraf": "^6.0.1",
     "rsc-html-stream": "^0.0.7",
+    "sass-embedded": "^1.79.4",
     "tsc-alias": "^1.8.16",
     "vite": "^8.0.0",
     "vitest": "^2.1.5"

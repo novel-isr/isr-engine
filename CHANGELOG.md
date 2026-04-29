@@ -8,6 +8,61 @@
 
 ---
 
+## [2.3.1] - 2026-04-29
+
+发布主题：**消费侧首跑 0 配置 / Express 5 / 入口架构清理**。修复一个会导致消费方
+`pnpm dev` 直接报 React 默认导出错误的兼容缺陷，并把历史「虚拟入口 alias 到源 .tsx」
+导致的依赖发现盲区在 engine 内部消化掉，业务侧 `vite.config.ts` 不再需要任何兜底配置。
+
+### Fixed — 关键修复
+
+- **消费方 `pnpm dev` 立刻报 `does not provide an export named 'default' / 'jsxDEV'`** ——
+  engine 自带的 client / runtime 源文件原先用 `import React from 'react'`，
+  叠加 `optimizeDeps.exclude + alias 到源 .tsx + file:// URL` 的虚拟入口
+  让 Vite scanner 不跟到 React 等 CJS 包，浏览器最终拿到原始 CJS 模块崩溃。
+  统一改为 `import * as React from 'react'`，并在 `createIsrPlugin()` 内自动
+  注入 `optimizeDeps.include = ['react', 'react/jsx-runtime', 'react/jsx-dev-runtime',
+  'react-dom', 'react-dom/client']`。业务侧零修改即可跑起来。
+
+### Changed — 重构
+
+- **express 升级到 5.1**。删除 `pnpm.overrides` 对 `path-to-regexp@<0.1.13`
+  的强制锁定 —— express 5 内置 path-to-regexp 6.x，不再受 4.x 解析到 8.x
+  的 `pathRegexp is not a function` 兼容坑影响。父目录 `pnpm ls -r`
+  不再触发误报警告。
+- **engine 子路径 exports 部分迁移到 `dist/`**：`./auto-observability` /
+  `./site-hooks` 现在指向 `dist/.../*.js`（普通 ESM JS），消费方 Vite scanner
+  能正常发现传递依赖。这两个文件无 `'use client'` 指令、无 `@vitejs/plugin-rsc`
+  虚拟模块依赖，可安全预打包。
+- **保留为源码的子路径**：`./client-entry` `./server-entry` `./runtime` 必须
+  维持 `.tsx`/`.ts` 源 —— 它们要么依赖 `@vitejs/plugin-rsc/browser`、`/rsc`、
+  `import.meta.viteRsc` 等只能在消费方 plugin-rsc 构建上下文里解析的虚拟模块；
+  要么内部混合了带 `'use client'` 指令的多个模块，bundle 后 Rollup 会丢失模块级
+  指令导致 plugin-rsc 无法识别客户端边界。CHANGELOG 在此明确边界，不再随意揉合。
+
+### Added — 工程
+
+- `package.json` 新增 `files` 字段，明确列出 npm publish 应包含的 `dist`、
+  `src/defaults`、`src/runtime`、`README.md`、`CHANGELOG.md`。`dist` 维持
+  `.gitignore`，由 `prepare` 脚本在 install / publish 前生成。
+
+### Migration — 升级指引
+
+如果你为了绕过 React 默认导出报错在 `vite.config.ts` 加过：
+
+```ts
+optimizeDeps: {
+  include: ['react', 'react/jsx-runtime', 'react/jsx-dev-runtime', ...],
+}
+```
+
+**现在可以删除**。engine 自动注入。
+
+如果你为了 path-to-regexp 兼容性在 `package.json` 加过 `pnpm.overrides`，
+也可以删除 —— express 5 已经原生兼容。
+
+---
+
 ## [2.2.0] - 2026-04-28
 
 发布主题：**ISR 缓存层 5 项性能 / 内存 / 运维优化**。所有改动**完全向后兼容**（新选项默认值即旧行为或安全保守值，零破坏性变更）。

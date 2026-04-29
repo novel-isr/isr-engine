@@ -2,11 +2,18 @@
 
 > Vite + React 19 RSC 的 ISR / SSG / Fallback 编排层。基于 [@vitejs/plugin-rsc](https://github.com/vitejs/vite-plugin-react/tree/main/packages/plugin-rsc) 官方插件——**不手写 Flight 协议**。业务只维护一个 `routes` 路由源、一个 `App` 壳和可选的 `SiteHooks` 配置，其余 SSR / ISR / SSG / CSR recovery 协议细节全部由 engine 收口。
 
-[![Vite 8](https://img.shields.io/badge/Vite-8-646CFF.svg)](https://vitejs.dev/) [![React 19](https://img.shields.io/badge/React-19-61DAFB.svg)](https://react.dev/) [![Node 22.21.1](https://img.shields.io/badge/Node-22.21.1-339933.svg)](https://nodejs.org/) [![Tests 543](https://img.shields.io/badge/Tests-543%20passing-brightgreen.svg)](./CHANGELOG.md)
+[![Vite 8](https://img.shields.io/badge/Vite-8-646CFF.svg)](https://vitejs.dev/) [![React 19](https://img.shields.io/badge/React-19-61DAFB.svg)](https://react.dev/) [![Express 5](https://img.shields.io/badge/Express-5-000000.svg)](https://expressjs.com/) [![Node 22.21.1](https://img.shields.io/badge/Node-22.21.1-339933.svg)](https://nodejs.org/) [![Tests 543](https://img.shields.io/badge/Tests-543%20passing-brightgreen.svg)](./CHANGELOG.md)
 
-> **v2.3.0** —— 在 v2.2 ISR 缓存层优化基础上，收口 engine-managed routes、page-level SEO、请求作用域 i18n 和 CSR fallback 样式注入。完全向后兼容，零破坏性。详见 [CHANGELOG.md](./CHANGELOG.md)。
+> **v2.3.1（2026-04-29）** —— 消费侧首跑 0 配置：修复 `import React from 'react'`
+> 在 React 19 ESM 下导致浏览器报 `does not provide an export named 'default' / 'jsxDEV'`
+> 的兼容缺陷；express 4 → 5（移除 `path-to-regexp` 兼容 hack）；
+> 子路径 exports 部分迁移到 `dist/`，业务侧 `vite.config.ts` 不再需要任何
+> `optimizeDeps.include` 兜底。详见 [CHANGELOG.md](./CHANGELOG.md#231---2026-04-29)。
 
-> **通用框架，跨项目复用**。任何 Vite + React 19 + RSC 站点都可以接，不绑定特定业务。发到 GitHub Packages（`@novel-isr` scope，restricted），不发 public registry。
+> **通用框架，与业务无关**。任何 Vite + React 19 + RSC 站点都可以接。
+> 包名前缀 `@novel-isr` 仅是首发项目代号，与小说业务**无任何耦合**——
+> grep 全仓源码无业务硬编码，运行时无业务假设。发到 GitHub Packages
+> （restricted），不发 public registry；项目仍处于 **alpha** 阶段（详见末尾「生产可用性诚实评估」）。
 
 ## 30 秒看明白
 
@@ -309,21 +316,31 @@ getI18n('book.count', { count: 12 }); // 字典里写 "共 {count} 本书"
 
 ## 生产可用性诚实评估
 
-**v2.3.0 后 production-eligible**（中等规模业务）。v2.1 完成 Security & Reliability 硬化，v2.2 在 ISR 缓存层加上 single-flight / OOM 防御 / 命名空间失效 / 边缘预热 / CPU-aware 并发 5 项工业级优化；v2.3 继续把 routes、page-level SEO、request-scoped i18n、CSR recovery 样式注入收口到 engine。
+**当前阶段：alpha** —— 单一首发项目（novel-rating）在自用，外部用户尚未 burn-in。
+v2.1 做了 Security & Reliability 硬化，v2.2 加了 ISR 缓存层 single-flight /
+OOM 防御 / 命名空间失效 / 边缘预热 / CPU-aware 并发 5 项工业级优化，
+v2.3.1 收口了消费侧首跑 0 配置 + express 5 + 入口架构清理。但**离 1.0 stable 还差**：
 
 ✅ **稳的部分**：
 - Flight 协议委托给官方 `@vitejs/plugin-rsc@^0.5.24`，不自维护
-- 依赖全是工业级（Express / Helmet / Prometheus / sitemap / lru-cache / ioredis）
+- 依赖全是工业级（Express 5 / Helmet / Prometheus / sitemap / lru-cache / ioredis）
 - 543 tests / ~50% 覆盖；CI 任何分支 push 都跑 lint+typecheck+test
 - bench 退化追踪走 nightly `bench.yml`（信息性输出，不 gate release）
 - GitHub Packages 发布有 3 段 gate（lint+test+build），任一失败 → 不发布
 - 安全硬化覆盖了 Set-Cookie 跨用户回放、SSG 路径穿越、Redis Buffer 破损、
   Pub/Sub 消息丢失等 10 项审计发现项
+- 消费侧首跑 0 配置：v2.3.1 后 `vite.config.ts` 三件套真的能跑起来（详见 CHANGELOG）
 
-⚠️ **生产前你仍需知道的事**：
+⚠️ **真上生产你必须知道**：
+- **只有首发项目在用**，未在第二个独立项目里完整 burn-in 过；社区 review 才刚开始
+- 浏览器侧没有持续跑的 e2e（543 测试主要是 Node 侧单测），靠人工
+  smoke test。任何 React 19 / plugin-rsc / Vite 升级都需要先在 fixture 项目里手验
 - Origin 协议只支持 `http1.1` / `https`；HTTP/2 / HTTP/3 应在 CDN / Nginx / Caddy / ALB 终结
 - bench baseline 跨 GitHub hosted runner 硬件不一致（同 SHA 跑两次能飘 ±60% QPS），
-  release 不 gate bench；真要做 release-blocking bench gate 需自部 self-hosted runner 锁硬件
+  release 不 gate bench；要做 release-blocking bench gate 需自部 self-hosted runner 锁硬件
+- API 在 v1.0 之前可能有破坏性变更，主要风险面：路由 `defineRoutes` 形态、
+  `SiteHooks` 配置 schema、ISR cacheTag/revalidate API。会在 CHANGELOG 中
+  明确标注 `BREAKING`，但**没有 codemod**。
 
 完整改动列表：[CHANGELOG.md](./CHANGELOG.md)。
 
@@ -338,24 +355,6 @@ pnpm bench               # autocannon load test（不阻塞）
 pnpm check               # type-check + lint + test
 pnpm build               # vite build → dist/
 ```
-
-### 关于 `pnpm.overrides` 警告
-
-`isr-engine/package.json` 里的 `pnpm.overrides` 把 `path-to-regexp` 锁到 `0.1.13`（与 express 4.21 兼容；不锁会被解析到 8.x 导致 `pathRegexp is not a function`）。
-
-**始终在 `isr-engine/` 目录内执行 pnpm 命令**，override 会正常生效，无任何警告。
-
-仅当从 `isr-engine/` 外的父目录跑 `pnpm ls -r` 等递归命令时，pnpm 会打：
-
-```
-WARN The field "pnpm.overrides" was found in .../isr-engine/package.json.
-     This will not take effect. You should configure "pnpm.overrides" at
-     the root of the workspace instead.
-```
-
-这是 pnpm 的 false positive —— **本仓库不是 workspace**，父目录只是文件夹聚合。该警告对实际安装行为无影响（已通过 `pnpm ls express` 验证 express 拿到的是 0.1.13）。
-
-如果觉得碍眼，要么不在父目录跑 `-r` 命令，要么 `pnpm ls -r 2>/dev/null` 屏蔽 stderr。
 
 ## 与消费者解耦
 

@@ -230,6 +230,11 @@ function createEngineDefaultEntriesPlugin(): Plugin {
     },
     load(id) {
       if (id === `${RESOLVED_VIRTUAL_PREFIX}${VIRTUAL_ENTRY_IDS.client}`) {
+        // 客户端入口仍以源码形式注入 plugin-rsc 的 client 环境 ——
+        // defineClientEntry 依赖 `@vitejs/plugin-rsc/browser`（虚拟模块
+        // virtual:vite-rsc/client-references），只能在消费方 plugin-rsc 构建
+        // 上下文里二次打包。靠 createIsrPlugin 注入 optimizeDeps.include 让
+        // 消费方 Vite scanner 把 React 等依赖纳入 pre-bundle。
         return `
           import { defineClientEntry } from ${fileImport('runtime/defineClientEntry.tsx')};
           import userConfig from '@app/_client-config';
@@ -239,9 +244,12 @@ function createEngineDefaultEntriesPlugin(): Plugin {
       }
 
       if (id === `${RESOLVED_VIRTUAL_PREFIX}${VIRTUAL_ENTRY_IDS.rsc}`) {
+        // RSC 入口仍以源码形式注入 plugin-rsc 的 RSC 环境 ——
+        // defineServerEntry 依赖 `@vitejs/plugin-rsc/rsc`，必须在 plugin-rsc
+        // 的构建上下文里二次打包，不能预先 bundle 成普通 JS。
         return `
           import { defineServerEntry } from ${fileImport('runtime/defineServerEntry.tsx')};
-          import { createAutoServerHooks } from ${fileImport('auto-observability.ts')};
+          import { createAutoServerHooks } from '@novel-isr/engine/auto-observability';
           import userConfig from '@app/_server-config';
 
           function hasFetchHandler(x) {
