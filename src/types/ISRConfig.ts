@@ -47,6 +47,56 @@ export interface RouteRuleObject {
  */
 export type RouteRule = RenderModeType | RouteRuleObject;
 
+export interface RuntimeRedisConfig {
+  /** 完整 Redis URL（redis://[:pass@]host:port/db），优先级高于 host/port */
+  url?: string;
+  host?: string;
+  port?: number;
+  password?: string;
+  /** 页面缓存 key 前缀，默认由 cache layer 使用 isr: */
+  keyPrefix?: string;
+  /** 跨实例 revalidate 广播频道 */
+  invalidationChannel?: string;
+}
+
+export interface RuntimeSentryConfig {
+  dsn: string;
+  tracesSampleRate?: number;
+  environment?: string;
+}
+
+export interface RuntimeExperimentConfig {
+  variants: readonly string[];
+  weights?: readonly number[];
+}
+
+export interface RuntimeRateLimitConfig {
+  windowMs?: number;
+  max?: number;
+}
+
+/**
+ * 平台运行时配置。
+ *
+ * 第一性原则：
+ *   - 启动期 / 部署期 / 平台级能力放 ssr.config.ts 的 runtime
+ *   - 请求期业务逻辑仍放 entry.server.tsx hooks
+ */
+export interface RuntimeConfig {
+  /** 用户可访问或服务端可访问的业务/admin API base */
+  api?: string;
+  /** 站点公网 base URL，用于 SEO canonical / sitemap / robots */
+  site?: string;
+  /** 分布式 ISR 缓存与跨实例失效广播 */
+  redis?: RuntimeRedisConfig;
+  /** 服务端错误监控 */
+  sentry?: RuntimeSentryConfig;
+  /** 站点级限流 */
+  rateLimit?: RuntimeRateLimitConfig;
+  /** A/B 实验定义，供 getVariant() 在 Server Component 中读取 */
+  experiments?: Record<string, RuntimeExperimentConfig>;
+}
+
 export const RenderModes = {
   SSG: 'ssg' as const, // 构建期预生成磁盘文件
   ISR: 'isr' as const, // 运行时缓存 + TTL + SWR
@@ -119,6 +169,14 @@ export interface ISRConfig {
    * 消费端可使用 routes 代替 routeOverrides
    */
   routes?: Record<string, RouteRule>;
+
+  /**
+   * 平台运行时配置。
+   *
+   * 这些是稳定的部署/启动配置，成熟项目应放在 ssr.config.ts，而不是散落在
+   * entry.server.tsx 里。entry.server.tsx 只负责如何在请求期使用这些配置。
+   */
+  runtime?: RuntimeConfig;
 
   cache: {
     strategy: CacheStrategyType;

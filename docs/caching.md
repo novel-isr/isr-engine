@@ -75,29 +75,18 @@ if (!response.ok) {
 默认 cache 是单层进程内 LRU——重启清零、多 pod 各持独立缓存。生产多实例部署接 Redis 走 L1+L2 双层（**sync 先查 L1**，**L1 miss 时 async 回源 L2 并回填本地 L1**，**write 同步 L1 + 异步写穿 L2**）：
 
 ```ts
-// vite.config.ts
-import { createIsrPlugin, RedisCacheAdapter, createHybridCacheStore } from '@novel-isr/engine';
+// ssr.config.ts
+import type { ISRConfig } from '@novel-isr/engine';
 
-const redisAdapter = new RedisCacheAdapter({
-  host: process.env.REDIS_HOST!,
-  port: 6379,
-  keyPrefix: 'isr:',
-});
-
-export default defineConfig({
-  plugins: [
-    ...createIsrPlugin({
-      isrCache: {
-        store: createHybridCacheStore({
-          redis: redisAdapter,
-          max: 5000,
-          redisKeyPrefix: 'resp:',
-          onRedisError: (err, op, key) => Sentry.captureException(err, { tags: { op, key } }),
-        }),
-      },
-    }),
-  ],
-});
+export const runtime = {
+  redis: process.env.REDIS_URL
+    ? {
+        url: process.env.REDIS_URL,
+        keyPrefix: 'isr:',
+        invalidationChannel: 'isr:invalidate',
+      }
+    : undefined,
+} satisfies NonNullable<ISRConfig['runtime']>;
 ```
 
 ### 行为细节
@@ -110,9 +99,9 @@ export default defineConfig({
 
 ### Cross-pod invalidation
 
-`revalidate.ts` 用 `Symbol.for(globalThis)` 注册本进程 invalidator；生产启动器在检测到
-`REDIS_URL` / `REDIS_HOST` 或 `defineSiteHooks({ redis })` 时，会额外启用 Redis Pub/Sub
-失效广播：
+`revalidate.ts` 用 `Symbol.for(globalThis)` 注册本进程 invalidator；engine 在检测到
+`ssr.config.ts runtime.redis`、`REDIS_URL` 或 `REDIS_HOST` 时，会额外启用 Redis Pub/Sub
+失效广播。`defineSiteHooks({ redis })` 仍作为旧项目兼容入口：
 
 - 当前 pod 先清本地 L1，再 publish `{ kind, value }`
 - 其他 pod 收到消息后只清自己的 L1，不会再次 publish，避免广播风暴
@@ -121,17 +110,17 @@ export default defineConfig({
 最小配置：
 
 ```ts
-// src/entry.server.tsx
-import { defineSiteHooks } from '@novel-isr/engine/server-entry';
+// ssr.config.ts
+import type { ISRConfig } from '@novel-isr/engine';
 
-export default defineSiteHooks({
+export const runtime = {
   redis: {
     url: process.env.REDIS_URL,
     keyPrefix: 'isr:',
     // 可选；默认 `${keyPrefix}invalidate`
     invalidationChannel: 'isr:invalidate',
   },
-});
+} satisfies NonNullable<ISRConfig['runtime']>;
 ```
 
 注意：Pub/Sub 不是持久化队列。Redis 短暂不可用或 pod 断线期间的失效事件可能丢失，

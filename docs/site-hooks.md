@@ -1,120 +1,120 @@
 # SiteHooks Configuration
 
-`defineSiteHooks` 是单一的声明式配置入口，覆盖 i18n / SEO / Sentry / Redis / 限流 / A/B / 错误回调。
+成熟项目建议把配置分成两层：
 
-写法：
+- `ssr.config.ts`：启动期 / 部署期 / 平台级配置，例如 `runtime.api`、`runtime.site`、Redis、Sentry、限流、A/B 实验、路由渲染模式。
+- `src/entry.server.tsx`：请求期 hooks，例如 locale 协商、i18n 字典加载、SEO 远程加载、`beforeRequest`、`onResponse`、`onError`。
+
+第一性原则是：会影响整个运行时拓扑的东西放配置文件；会依赖本次请求的东西放 server entry。
+
+## 推荐结构
+
+```ts
+// ssr.config.ts
+import type { ISRConfig } from '@novel-isr/engine';
+
+export const runtime = {
+  api: process.env.ADMIN_API_URL ?? process.env.API_URL ?? 'http://localhost:8080',
+  site: process.env.SEO_BASE_URL ?? 'http://localhost:3000',
+  redis: process.env.REDIS_URL ? { url: process.env.REDIS_URL, keyPrefix: 'isr:' } : undefined,
+  sentry: process.env.SENTRY_DSN ? { dsn: process.env.SENTRY_DSN } : undefined,
+  rateLimit: { windowMs: 60_000, max: 200 },
+  experiments: {
+    'hero-style': { variants: ['classic', 'bold'], weights: [50, 50] },
+  },
+} satisfies NonNullable<ISRConfig['runtime']>;
+
+export default {
+  renderMode: 'isr',
+  runtime,
+  routes: {
+    '/': { mode: 'isr', ttl: 60, staleWhileRevalidate: 300 },
+    '/about': 'ssg',
+    '/login': 'ssr',
+    '/*': 'isr',
+  },
+  ssg: { routes: ['/about'] },
+  isr: { revalidate: 3600 },
+  cache: { strategy: 'memory', ttl: 3600 },
+} satisfies ISRConfig;
+```
 
 ```tsx
 // src/entry.server.tsx
+import type { PageSeoMeta } from '@novel-isr/engine';
 import { defineSiteHooks } from '@novel-isr/engine/site-hooks';
+import { runtime } from '../ssr.config';
 
 export default defineSiteHooks({
-  api: process.env.API_URL!,
-  site: process.env.SEO_BASE_URL!,
-  intl: { /* ... */ },
-  seo: { /* ... */ },
-  redis: { /* ... */ },
-  sentry: { /* ... */ },
-  rateLimit: { /* ... */ },
-  experiments: { /* ... */ },
+  api: runtime.api,
+  site: runtime.site,
+  intl: {
+    locales: ['zh-CN', 'en'] as const,
+    defaultLocale: 'zh-CN',
+    endpoint: '/api/i18n/{locale}/manifest',
+    ttl: 60_000,
+  },
+  seo: {
+    '/*': {
+      endpoint: '/api/seo?path={pathname}',
+      ttl: 60_000,
+      transform: raw => (raw as { data?: PageSeoMeta | null }).data ?? null,
+    },
+  },
 });
 ```
 
-`entry.server.tsx` 是 server/RSC hooks 入口。不要在这里配置浏览器侧能力，例如
-`devInspector: false`。开发态渲染检查器属于 client runtime，关闭方式是：
+`redis`、`sentry`、`rateLimit`、`experiments` 仍然能写在 `defineSiteHooks` 里，这是为了兼容旧项目；新项目不要这样写。
 
-```ts
-// src/entry.tsx
-export default {
-  devInspector: false,
-};
-```
+## `runtime`
 
-详见 [dev-inspector.md](./dev-inspector.md)。
+`runtime` 是平台配置入口：
 
-## 字段速查
+- `api`：admin/API base URL。`entry.server.tsx` 的 i18n / SEO endpoint 会以它为前缀，生产 CSP 的 `connect-src` 也会自动加入它。
+- `site`：站点公网 base URL。用于 canonical、OG image、sitemap、robots；如果没有显式 `seo.baseUrl`，engine 会用 `runtime.site`。
+- `redis`：分布式 ISR 缓存和跨实例失效广播。没有 Redis 时自动使用进程内 memory cache。
+- `sentry`：服务端错误监控。
+- `rateLimit`：站点级限流。
+- `experiments`：A/B 实验定义，Server Component 用 `getVariant()` 读取。
 
-### `api`, `site`
-
-```ts
-api: process.env.API_URL ?? 'http://localhost:3001',
-site: process.env.SEO_BASE_URL ?? 'http://localhost:3000',
-```
-
-- `api` —— 远程 endpoint 的前缀（`intl.endpoint` / `seo.*.endpoint` 都会拼这个）。同时自动加入 CSP `connect-src` 让浏览器 csr-fallback 能 fetch。
-- `site` —— 用于 SEO `canonical` / `og:image` 默认绝对路径前缀（社交爬虫不解析相对路径）。
-
-### `intl`
+## `intl`
 
 ```ts
 intl: {
-  // URL 路由层
-  locales: ['zh', 'en'] as const,
-  defaultLocale: 'zh',
-  prefixDefault: false,        // false: '/about'  +  '/en/about'
-                               // true:  '/zh/about' + '/en/about'
-
-  // 翻译消息加载层
-  endpoint: '/api/i18n?locale={locale}',   // 远程 fetch
-  // 或 load: async locale => (await import(`./locales/${locale}.json`)).default,
+  locales: ['zh-CN', 'en'] as const,
+  defaultLocale: 'zh-CN',
+  prefixDefault: false,
+  endpoint: '/api/i18n/{locale}/manifest',
   ttl: 60_000,
-  // detect: req => 'zh',     // 自定义 locale 协商；默认 cookie → Accept-Language → defaultLocale
 }
 ```
 
-URL 路由部分被 `parseLocale` 消费；翻译消息层被 server render、page SEO、客户端导航和 `getI18n()` 消费。远程字典响应可以是嵌套对象，也可以是 dotted keys（engine 会展开）。详细：[i18n.md](./i18n.md)。
+远程字典响应可以是嵌套对象，也可以是 dotted keys，engine 会展开并注入到 SSR/RSC payload。页面里直接用：
 
-如果业务希望在开发态确认字典来源，可以让 `load` 返回 `source` 字段，或在 `transform`
-结果里带上 `source`。Engine 会把它写到 `X-I18n-Source` 响应头，dev inspector 也会展示。
+```tsx
+import { getI18n } from '@novel-isr/engine/runtime';
 
-### `seo`
-
-路由 pattern → 静态 meta 或 `{ endpoint, transform }` 或 `{ load }`。商业项目通常让页面模块声明默认 SEO，再由 admin/API 通过 `/*` 下发覆盖值。
-
-```ts
-seo: {
-  // 静态 meta —— 适合纯静态页
-  '/': {
-    title: 'Home',
-    description: '...',
-    ogType: 'website',
-    jsonLd: { '@context': 'https://schema.org', '@type': 'WebSite' },
-  },
-
-  // 远程 endpoint —— 数据来自上游 API
-  '/books/:id': {
-    endpoint: '/api/books/{id}',          // {id} 来自路由捕获
-    ttl: 300_000,
-    transform: (raw, { id }) => ({
-      title: `${raw.data.title} · 书评`,
-      image: raw.data.cover,              // 相对路径，engine 自动加 site URL
-      ogType: 'article',
-      alternates: [
-        { hreflang: 'zh-CN', href: `/books/${id}` },
-        { hreflang: 'en', href: `/en/books/${id}` },
-      ],
-      jsonLd: {
-        '@context': 'https://schema.org',
-        '@type': 'Book',
-        name: raw.data.title,
-      },
-    }),
-  },
-
-  // 本地 load 函数 —— 读 fs / dynamic import / 内存对象
-  '/dev/observability': {
-    load: () => ({
-      title: 'Dev · Observability',
-      description: '...',
-      noindex: true,
-    }),
-  },
-},
+export default function Page() {
+  return <h1>{getI18n('home.hero.title')}</h1>;
+}
 ```
 
-Engine 在 `loadSeoMeta` hook 自动按 pattern 匹配，并与页面模块导出的 `seo` / `generateSeo` 合并后注入到 SSR HTML 的 `</head>` 之前。用户**不需要**在组件里写 `<title>` / `<meta>`。
+带变量：
 
-页面级 SEO：
+```tsx
+getI18n('book.reviewCount', { count: 12 });
+```
+
+字典里的占位符用 `{count}` 形式，例如：`"{count} 条评价"`。SSR 时字典已经在 server context 中；CSR recovery 时字典会随 RSC payload 或本地 fallback 一起可用，不需要页面自己重新设计 provider。
+
+如果 `load` / `transform` 返回 `source`，engine 会写 `X-I18n-Source`，dev inspector 也会显示，例如 `admin` 或 `local-fallback`。
+
+## `seo`
+
+SEO 推荐两层：
+
+- 页面模块导出 `seo` / `generateSeo`，声明跟页面数据绑定的默认 SEO。
+- admin/API 通过 `entry.server.tsx` 的 `seo: { '/*': ... }` 下发运营覆盖值。
 
 ```tsx
 // src/pages/BookDetailPage.tsx
@@ -126,119 +126,53 @@ export async function seo({ params }: { params: { id: string } }) {
     title: getI18n('seo.book.title', { title: book.title }),
     description: book.summary,
     image: book.cover,
+    ogType: 'article',
+    jsonLd: {
+      '@context': 'https://schema.org',
+      '@type': 'Book',
+      name: book.title,
+    },
   };
 }
 ```
 
-admin 统一下发：
-
 ```ts
-import type { PageSeoMeta } from '@novel-isr/engine';
-import { defineSiteHooks } from '@novel-isr/engine/site-hooks';
-
-export default defineSiteHooks({
-  api: process.env.ADMIN_API_URL,
-  site: process.env.SEO_BASE_URL,
-  seo: {
-    '/*': {
-      endpoint: '/api/seo?path={pathname}',
-      ttl: 60_000,
-      transform: raw => (raw as { data?: PageSeoMeta | null }).data ?? null,
-    },
+// src/entry.server.tsx
+seo: {
+  '/*': {
+    endpoint: '/api/seo?path={pathname}',
+    ttl: 60_000,
+    transform: raw => (raw as { data?: PageSeoMeta | null }).data ?? null,
   },
-});
+}
 ```
 
-合并顺序：`page seo` 是页面默认值，`SiteHooks seo` 是上游覆盖值；这样业务页面可以随代码发布基础 SEO，运营/admin 可以热更新标题、描述、OG 图、JSON-LD。
+合并顺序：页面 SEO 是代码默认值，SiteHooks SEO 是上游覆盖值。用户不需要在组件里写 `<title>` / `<meta>`。
 
-### `redis`
-
-```ts
-redis: process.env.REDIS_URL
-  ? { url: process.env.REDIS_URL, keyPrefix: 'my-app:' }
-  : undefined,
-```
-
-- 设了 → 自动启用 L1+L2 双层缓存（详见 [caching.md](./caching.md)）
-- 不设 → 看 `REDIS_URL` / `REDIS_HOST` 环境变量
-- 都没 → 单层 memory backend
-
-### `sentry`
+## `beforeRequest` / `onResponse` / `onError`
 
 ```ts
-sentry: process.env.SENTRY_DSN
-  ? {
-      dsn: process.env.SENTRY_DSN,
-      tracesSampleRate: 0.1,
-      environment: process.env.NODE_ENV,
-    }
-  : undefined,
-```
-
-设了 → engine 自动 init Sentry + 把 `onError` 接到 `Sentry.captureException`。
-要更细粒度（自定义 span / scope）请用 `@novel-isr/engine/adapters/observability` 的 `createSentryServerHooks`，详见 [observability.md](./observability.md)。
-
-### `rateLimit`
-
-```ts
-rateLimit: { windowMs: 60_000, max: 200 },
-```
-
-Per-IP token bucket。`/health` 与 `/__isr/*` 自动免限流。
-
-### `experiments`
-
-```ts
-experiments: {
-  'hero-style': { variants: ['classic', 'bold'], weights: [50, 50] },
+beforeRequest: async req => ({
+  user: parseJwt(req.headers.get('authorization')),
+}),
+onResponse: async (res, ctx) => {
+  res.headers.set('x-trace-id', ctx.traceId);
+},
+onError: async (err, req, ctx) => {
+  console.error('[render error]', { traceId: ctx.traceId, url: req.url, err });
 },
 ```
 
-Cookie-sticky A/B 变体。Server Component 用：
+`beforeRequest` 返回值会和 engine baseline context 合并。`onError` 不要返回 `Response`，兜底策略由 engine 统一处理。
 
-```tsx
-import { getVariant } from '@novel-isr/engine';
-const variant = getVariant('hero-style');   // 'classic' | 'bold'
-```
+## Client Entry
 
-### `onError`
+开发态浮层属于浏览器 client runtime，关闭时写在 `src/entry.tsx`：
 
 ```ts
-onError: (err, req, ctx) => {
-  // ctx 含 traceId, locale
-  console.error('[onError]', { traceId: ctx.traceId, url: req.url });
-}
+export default {
+  devInspector: false,
+};
 ```
 
-默认行为：`console.error` 或 `Sentry.captureException`（如果配了 sentry）。自定义会覆盖。**不要 return Response**——兜底由 engine 处理。
-
-### `beforeRequest`
-
-```ts
-beforeRequest: async (req) => {
-  return {
-    user: parseJwt(req.headers.get('authorization')),
-  };
-}
-```
-
-返回的扩展字段会与 engine 的 baseline ctx (含 `traceId` / `startedAt` / `locale`) 合并。
-
-## 暴露给 app.tsx
-
-`defineSiteHooks` 返回的对象在 server 上下文里也是普通 object——`app.tsx` 可以直接 import 它读 `intl` 字段：
-
-```tsx
-// app.tsx
-import { resolveI18nConfig } from '@novel-isr/engine/runtime';
-import siteHooks from './entry.server';
-
-const I18N = resolveI18nConfig(siteHooks.intl);
-// 把 I18N 喂给 parseLocale / withLocale
-```
-
-这样 i18n 配置只声明一次，URL 路由层和翻译消息层共享同一份。
-
-## 想完全跳过 SiteHooks？
-
-可以——99% 业务用 SiteHooks 就够了。L0（零配置）和 L2（手写 fetch handler）也支持，详见 [getting-started.md#三种使用层级](./getting-started.md#三种使用层级)。
+不要写到 `src/entry.server.tsx`。详见 [dev-inspector.md](./dev-inspector.md)。

@@ -2,6 +2,8 @@
  * defineSiteHooks —— 高阶 FaaS hooks 工厂（声明式配置 → 完整 ServerEntryHooks）
  *
  * 让用户的 src/entry.server.tsx 收紧到「一个 export default + 一个声明式对象」。
+ * 成熟项目的部署/平台配置（api/site/redis/sentry/rateLimit/experiments）推荐放
+ * ssr.config.ts 的 runtime 字段；entry.server.tsx 只保留请求期 hooks 和 loader。
  * 内部固化：
  *   - i18n 字典缓存（createCachedFetcher: TTL/SWR/dedup/fallback）
  *   - SEO 路由表 pattern → resolver
@@ -12,8 +14,8 @@
  *   import { defineSiteHooks } from '@novel-isr/engine';
  *
  *   export default defineSiteHooks({
- *     api: process.env.API_URL!,
- *     site: process.env.SEO_BASE_URL!,
+ *     api: runtime.api,
+ *     site: runtime.site,
  *     intl: { endpoint: '/api/i18n?locale={locale}' },
  *     seo: {
  *       '/': { title: 'Home', description: '...' },
@@ -99,30 +101,35 @@ export interface SiteHooksConfig {
   /**
    * API 基地址（用于 intl + seo 远程 endpoint 的前缀）
    * 同时自动加入 CSP connect-src（让浏览器 CSR-fallback 模式能 fetch）
+   * 推荐从 ssr.config.ts 的 runtime.api 传入，避免重复声明。
    */
   api?: string;
-  /** 站点根 URL（用于 canonical / og:image 默认前缀） */
+  /** 站点根 URL（用于 canonical / og:image 默认前缀），推荐从 runtime.site 传入 */
   site?: string;
   /** i18n 配置 */
   intl?: IntlConfig;
   /**
    * A/B 实验定义（cookie-sticky；engine 自动挂中间件）
    * Server Component 用 `import { getVariant } from '@novel-isr/engine'` 读取
+   * 新项目推荐配置在 ssr.config.ts runtime.experiments。
    */
   experiments?: Record<string, ExperimentEntry>;
   /**
-   * 限流（per-IP token bucket）—— 不传则不限流
+   * 限流（per-IP token bucket）—— 不传则不限流。
+   * 新项目推荐配置在 ssr.config.ts runtime.rateLimit。
    */
   rateLimit?: { windowMs?: number; max?: number };
   /** SEO 路由表：path pattern（支持 `:param`）→ 静态 meta 或 remote loader */
   seo?: Record<string, SeoEntry | (() => Promise<PageSeoMeta | null> | PageSeoMeta | null)>;
   /**
-   * Redis 配置 —— FaaS 层显式配置（优先级 > REDIS_URL 环境变量）
+   * Redis 配置 —— FaaS 层显式配置（兼容旧项目）
+   * 新项目推荐配置在 ssr.config.ts runtime.redis。
    * 不传 → 看 env REDIS_URL/REDIS_HOST → 都没 → memory backend
    */
   redis?: RedisConfig;
   /**
-   * Sentry 配置 —— FaaS 层显式配置（优先级 > SENTRY_DSN 环境变量）
+   * Sentry 配置 —— FaaS 层显式配置（兼容旧项目）
+   * 新项目推荐配置在 ssr.config.ts runtime.sentry。
    * 不传 → 看 env SENTRY_DSN → 都没 → 默认 console 上报
    */
   sentry?: SentryConfig;

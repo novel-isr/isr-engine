@@ -33,7 +33,7 @@ export interface AutoCacheStoreOptions {
 }
 
 export function createAutoCacheStore(opts: AutoCacheStoreOptions = {}): IsrCacheStore {
-  // 优先级：显式参数 > FaaS 配置（user 传 opts）> 环境变量
+  // 优先级：显式参数（通常来自 ssr.config.ts runtime.redis）> 环境变量
   const url = opts.redisUrl ?? process.env.REDIS_URL;
   const host = opts.redisHost ?? process.env.REDIS_HOST;
   const max = opts.max ?? 1000;

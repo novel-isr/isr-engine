@@ -50,6 +50,8 @@ import { collectTags, runWithTagStore, isUncacheable } from '@/rsc/cacheTag';
 import { loadConfig } from '../config/loadConfig';
 import { resolveAdminConfig, createAdminAuthMiddleware } from '@/server/adminConfig';
 import { stripRscClientReferenceCacheSuffix } from './devAssetRequestMiddleware';
+import { createAutoCacheStore } from '@/cache/createAutoCacheStore';
+import { RedisInvalidationBus } from '@/cache/RedisInvalidationBus';
 
 const logger = Logger.getInstance();
 
@@ -78,8 +80,8 @@ export interface IsrCacheMiddlewareOptions {
   defaultTtlSeconds?: number;
   /**
    * 自定义 cache store —— 默认 createMemoryCacheStore({ max })
-   * 想用 Redis/Hybrid：用户自己 createHybridCacheStore({ redis: yourAdapter, max }) 传入
-   * engine 不强依赖 ioredis，符合 optionalDependencies 设计
+   * 想用 Redis/Hybrid：优先在 ssr.config.ts 配 runtime.redis；更底层的自定义 store
+   * 仍可通过这里传入。engine 不强依赖 ioredis，符合 optionalDependencies 设计。
    */
   store?: IsrCacheStore;
   /**
@@ -258,6 +260,44 @@ function matchRouteRule(path: string, rules: RoutingRules): ResolvedRouteRule {
   return parseRouteRule(globalMode, defaultTtlSeconds);
 }
 
+function hasRedisRuntime(config: Partial<ISRConfig> | undefined): boolean {
+  const redis = config?.runtime?.redis;
+  return Boolean(redis?.url || redis?.host || process.env.REDIS_URL || process.env.REDIS_HOST);
+}
+
+function withRuntimeCacheOptions(
+  config: Partial<ISRConfig> | undefined,
+  options: IsrCacheMiddlewareOptions
+): IsrCacheMiddlewareOptions {
+  if (options.store) return options;
+
+  const redis = config?.runtime?.redis;
+  const hasRedis = hasRedisRuntime(config);
+  return {
+    ...options,
+    store: createAutoCacheStore({
+      max: options.max,
+      redisUrl: redis?.url,
+      redisHost: redis?.host,
+      redisPort: redis?.port,
+      redisPassword: redis?.password,
+      redisKeyPrefix: redis?.keyPrefix,
+    }),
+    invalidationBus:
+      options.invalidationBus ??
+      (hasRedis
+        ? new RedisInvalidationBus({
+            url: redis?.url,
+            host: redis?.host,
+            port: redis?.port,
+            password: redis?.password,
+            keyPrefix: redis?.keyPrefix,
+            channel: redis?.invalidationChannel,
+          })
+        : undefined),
+  };
+}
+
 function matchGlob(pattern: string, path: string): boolean {
   const escaped = pattern.replace(/[.+?^${}()|[\]\\]/g, '\\$&').replace(/\*/g, '.*');
   return new RegExp(`^${escaped}$`).test(path);
@@ -431,7 +471,10 @@ export function createIsrCacheMiddleware(
         }
       }
 
-      handler = createIsrCacheHandler(resolvedConfig, options);
+      handler = createIsrCacheHandler(
+        resolvedConfig,
+        withRuntimeCacheOptions(resolvedConfig, options)
+      );
       const adminConfig = resolveAdminConfig(resolvedConfig, 'development');
 
       // dev 也暴露 admin 端点 —— 与生产 cli/start.ts 行为对齐，

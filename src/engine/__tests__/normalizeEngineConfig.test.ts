@@ -4,7 +4,8 @@
  * 职责：
  *   1) 兼容别名：`mode` → `renderMode`, `routes` → `routeOverrides`
  *   2) 兜底默认：缺 `renderMode` 时设 'isr'，缺 `routeOverrides` 时设 {}
- *   3) 不破坏其他字段（cache/server/seo 等透传）
+ *   3) runtime.site 自动补齐 seo.baseUrl（seo.baseUrl 显式配置优先）
+ *   4) 不破坏其他字段（cache/server/seo 等透传）
  *
  * 这是 engine 启动链路上唯一的"配置结构清洗"点。旧配置通过别名仍能跑起来，
  * 升级 v2 后用户不用改 ssr.config.ts。
@@ -112,6 +113,29 @@ describe('normalizeEngineConfig —— 不破坏其他字段', () => {
     // 但原入参没有被写入这两个字段（兼容 ssr.config.ts 被多次 load 不变异）
     expect((config as ISRConfig).renderMode).toBeUndefined();
     expect((config as ISRConfig).routeOverrides).toBeUndefined();
+  });
+});
+
+describe('normalizeEngineConfig —— runtime 平台配置', () => {
+  it('runtime.site 自动作为 seo.baseUrl', () => {
+    const r = normalizeEngineConfig(
+      base({
+        runtime: { site: 'https://novel.example.com' },
+        seo: { enabled: true },
+      })
+    );
+    expect(r.seo?.baseUrl).toBe('https://novel.example.com');
+    expect(r.runtime?.site).toBe('https://novel.example.com');
+  });
+
+  it('显式 seo.baseUrl 优先于 runtime.site', () => {
+    const r = normalizeEngineConfig(
+      base({
+        runtime: { site: 'https://runtime.example.com' },
+        seo: { enabled: true, baseUrl: 'https://seo.example.com' },
+      })
+    );
+    expect(r.seo?.baseUrl).toBe('https://seo.example.com');
   });
 });
 

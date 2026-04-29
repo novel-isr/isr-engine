@@ -59,6 +59,13 @@ export function normalizeEngineConfig(config: ISRConfig): ISRConfig {
     normalized.routeOverrides = {};
   }
 
+  if (normalized.runtime?.site) {
+    normalized.seo = {
+      ...normalized.seo,
+      baseUrl: normalized.seo?.baseUrl ?? normalized.runtime.site,
+    };
+  }
+
   return normalized;
 }
 

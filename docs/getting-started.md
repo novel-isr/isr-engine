@@ -57,15 +57,46 @@ export const { routes } = defineRoutes({
 
 同一份 `routes` 会被 SSR / ISR / SSG / CSR recovery 复用。业务不要再维护 `routes.ssr`、`routes.spa`、`spaModules` 或 `ssrModules`。
 
-## 5. `src/entry.server.ts` —— SiteHooks
+## 5. `ssr.config.ts` —— 平台配置和渲染模式
+
+```ts
+import type { ISRConfig } from '@novel-isr/engine';
+
+export const runtime = {
+  api: process.env.ADMIN_API_URL ?? process.env.API_URL ?? 'http://localhost:8080',
+  site: process.env.SEO_BASE_URL ?? 'http://localhost:3000',
+  redis: process.env.REDIS_URL ? { url: process.env.REDIS_URL, keyPrefix: 'isr:' } : undefined,
+  sentry: process.env.SENTRY_DSN ? { dsn: process.env.SENTRY_DSN } : undefined,
+  rateLimit: { windowMs: 60_000, max: 200 },
+} satisfies NonNullable<ISRConfig['runtime']>;
+
+export default {
+  renderMode: 'isr',
+  runtime,
+  routes: {
+    '/': { mode: 'isr', ttl: 60, staleWhileRevalidate: 300 },
+    '/about': 'ssg',
+    '/login': 'ssr',
+    '/*': 'isr',
+  },
+  ssg: { routes: ['/about'] },
+  isr: { revalidate: 3600 },
+  cache: { strategy: 'memory', ttl: 3600 },
+} satisfies ISRConfig;
+```
+
+`ssr.config.ts` 是启动期单一配置入口。路由渲染模式、Redis、Sentry、限流、A/B、站点 URL 都放这里。
+
+## 6. `src/entry.server.ts` —— 请求期 SiteHooks
 
 ```ts
 import type { PageSeoMeta } from '@novel-isr/engine';
 import { defineSiteHooks } from '@novel-isr/engine/site-hooks';
+import { runtime } from '../ssr.config';
 
 export default defineSiteHooks({
-  api: process.env.ADMIN_API_URL ?? process.env.API_URL!,
-  site: process.env.SEO_BASE_URL!,
+  api: runtime.api,
+  site: runtime.site,
   intl: {
     locales: ['zh-CN', 'en'] as const,
     defaultLocale: 'zh-CN',
@@ -82,9 +113,10 @@ export default defineSiteHooks({
 });
 ```
 
-`api` 指向 admin/API 服务。i18n 字典和 SEO 都可以远程下发，engine 会做 TTL / SWR / 并发去重缓存。
+`entry.server.ts` 只描述如何在请求期加载 i18n / SEO / request context。`api` 和 `site`
+从 `ssr.config.ts` 的 `runtime` 读取，避免同一项配置散落多处。i18n 字典和 SEO 都可以远程下发，engine 会做 TTL / SWR / 并发去重缓存。
 
-## 6. `src/app.tsx` —— App shell
+## 7. `src/app.tsx` —— App shell
 
 ```tsx
 import { parseLocale, resolveI18nConfig } from '@novel-isr/engine/runtime';
@@ -105,7 +137,7 @@ export function App({ url }: { url: URL }) {
 
 **契约**：`src/app.tsx` 必须 `export function App({ url }: { url: URL })`，返回完整的 `<html>` 树；`src/routes.tsx` 只负责声明页面入口。
 
-## 7. 跑
+## 8. 跑
 
 ```bash
 pnpm dev                          # → http://localhost:3000
@@ -171,41 +203,27 @@ export default function PublishBookForm() {
 详细模式语义：[render-modes.md](./render-modes.md)。
 缓存与失效：[caching.md](./caching.md)。
 
-## 扩展 SiteHooks（Redis / Sentry / 限流）
+## 扩展平台配置（Redis / Sentry / 限流 / A/B）
 
-在上面的 `entry.server.ts` 里继续加横切能力：
+继续写在 `ssr.config.ts` 的 `runtime`：
 
-```tsx
-// src/entry.server.tsx
-import type { PageSeoMeta } from '@novel-isr/engine';
-import { defineSiteHooks } from '@novel-isr/engine/site-hooks';
+```ts
+// ssr.config.ts
+export const runtime = {
+  api: process.env.ADMIN_API_URL ?? process.env.API_URL ?? 'http://localhost:8080',
+  site: process.env.SEO_BASE_URL ?? 'http://localhost:3000',
 
-export default defineSiteHooks({
-  api: process.env.ADMIN_API_URL ?? process.env.API_URL!,
-  site: process.env.SEO_BASE_URL!,
-
-  intl: {
-    locales: ['zh-CN', 'en'] as const,
-    defaultLocale: 'zh-CN',
-    endpoint: '/api/i18n/{locale}/manifest',
-    ttl: 60_000,
-  },
-
-  seo: {
-    '/*': {
-      endpoint: '/api/seo?path={pathname}',
-      ttl: 60_000,
-      transform: raw => (raw as { data?: PageSeoMeta | null }).data ?? null,
-    },
-  },
-
-  redis: process.env.REDIS_URL ? { url: process.env.REDIS_URL } : undefined,
+  redis: process.env.REDIS_URL ? { url: process.env.REDIS_URL, keyPrefix: 'isr:' } : undefined,
   sentry: process.env.SENTRY_DSN ? { dsn: process.env.SENTRY_DSN } : undefined,
   rateLimit: { windowMs: 60_000, max: 200 },
-});
+  experiments: {
+    'hero-style': { variants: ['classic', 'bold'], weights: [50, 50] },
+  },
+};
 ```
 
-完整字段说明：[site-hooks.md](./site-hooks.md)。
+完整字段说明：[site-hooks.md](./site-hooks.md)。旧项目把这些写在 `defineSiteHooks`
+里仍然兼容；新项目不推荐。
 
 页面模块可以声明默认 SEO，admin/API 下发值会覆盖：
 

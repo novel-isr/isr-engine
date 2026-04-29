@@ -77,12 +77,43 @@ export function App({ url }: { url: URL }) {
 ```
 
 ```ts
-// src/entry.server.ts —— 把 admin/API 下发的 i18n、SEO、Redis、Sentry 等接入引擎
+// ssr.config.ts —— 启动期 / 部署期 / 平台级配置
+import type { ISRConfig } from '@novel-isr/engine';
+
+export const runtime = {
+  api: process.env.ADMIN_API_URL ?? process.env.API_URL ?? 'http://localhost:8080',
+  site: process.env.SEO_BASE_URL ?? 'http://localhost:3000',
+  redis: process.env.REDIS_URL ? { url: process.env.REDIS_URL, keyPrefix: 'isr:' } : undefined,
+  sentry: process.env.SENTRY_DSN ? { dsn: process.env.SENTRY_DSN } : undefined,
+  rateLimit: { windowMs: 60_000, max: 200 },
+  experiments: {
+    'hero-style': { variants: ['classic', 'bold'], weights: [50, 50] },
+  },
+} satisfies NonNullable<ISRConfig['runtime']>;
+
+export default {
+  renderMode: 'isr',
+  runtime,
+  routes: {
+    '/': { mode: 'isr', ttl: 60, staleWhileRevalidate: 300 },
+    '/about': 'ssg',
+    '/login': 'ssr',
+    '/*': 'isr',
+  },
+  ssg: { routes: ['/about'] },
+  isr: { revalidate: 3600 },
+  cache: { strategy: 'memory', ttl: 3600 },
+} satisfies ISRConfig;
+```
+
+```ts
+// src/entry.server.ts —— 请求期 hooks：如何加载 i18n / SEO / request ctx
 import { defineSiteHooks } from '@novel-isr/engine/site-hooks';
+import { runtime } from '../ssr.config';
 
 export default defineSiteHooks({
-  api: process.env.ADMIN_API_URL ?? process.env.API_URL,
-  site: process.env.SEO_BASE_URL,
+  api: runtime.api,
+  site: runtime.site,
   intl: {
     locales: ['zh-CN', 'en'],
     defaultLocale: 'zh-CN',
@@ -266,15 +297,19 @@ export default async function BookDetailPage() {
 }
 ```
 
-`defineSiteHooks({ seo })` 用来接 admin / CMS / API 下发的 SEO。推荐商业项目用 `/*` 统一下发，按 `pathname` 决策：
+`defineSiteHooks({ seo })` 用来接 admin / CMS / API 下发的 SEO。`api/site/redis/sentry/rateLimit/experiments`
+这类平台配置推荐放在 `ssr.config.ts` 的 `runtime`，`entry.server.tsx` 只从同一份
+`runtime` 读取 `api/site` 并声明请求期 loader。推荐商业项目用 `/*` 统一下发，按
+`pathname` 决策：
 
 ```ts
 import type { PageSeoMeta } from '@novel-isr/engine';
 import { defineSiteHooks } from '@novel-isr/engine/site-hooks';
+import { runtime } from '../ssr.config';
 
 export default defineSiteHooks({
-  api: process.env.ADMIN_API_URL,
-  site: process.env.SEO_BASE_URL,
+  api: runtime.api,
+  site: runtime.site,
   seo: {
     '/*': {
       endpoint: '/api/seo?path={pathname}',
@@ -293,9 +328,10 @@ export default defineSiteHooks({
 
 ```ts
 import { defineSiteHooks } from '@novel-isr/engine/site-hooks';
+import { runtime } from '../ssr.config';
 
 export default defineSiteHooks({
-  api: process.env.ADMIN_API_URL,
+  api: runtime.api,
   intl: {
     locales: ['zh-CN', 'en'],
     defaultLocale: 'zh-CN',

@@ -52,9 +52,10 @@ export default defineSiteHooks({
 });
 ```
 
-`entry.server.tsx` 只在 server/RSC 环境执行，承载 i18n、SEO、Redis、Sentry、限流、
-A/B 等 server hooks。把 client-only 开关塞进 server entry 会让 server-only 配置边界变模糊，
-也可能诱导浏览器 bundle 误引用服务端代码。
+`entry.server.tsx` 只在 server/RSC 环境执行，承载 i18n、SEO、request hooks 和数据
+loader。Redis、Sentry、限流、A/B 等平台配置推荐放在 `ssr.config.ts` 的 `runtime`。
+把 client-only 开关塞进 server entry 会让配置边界变模糊，也可能诱导浏览器 bundle
+误引用服务端代码。
 
 如果未来需要全局公共开关，成熟设计应该是放到 `ssr.config.ts` 的 client-safe public config，
 再由 engine 插件注入浏览器环境，而不是让 client 直接 import server entry。

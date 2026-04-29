@@ -6,6 +6,7 @@
 
 import path from 'path';
 import fs from 'fs';
+import { randomUUID } from 'node:crypto';
 import express, { type Express } from 'express';
 import type { ISRConfig } from '@/types';
 import { Logger } from '@/logger/Logger';
@@ -14,6 +15,9 @@ import type { RouteSetupFn, ServerContext } from './types';
 import { createViteDevServer, closeViteDevServer } from './viteDevServer';
 import { applyBaseMiddlewaresWithOptions, mountViteOrStatic } from './middleware';
 import { startServer, closeServer } from './httpServer';
+import { requestContext } from '@/context/RequestContext';
+import { createRateLimiter } from '@/middlewares/RateLimiter';
+import { createABVariantMiddleware } from '@/middlewares/ABVariantMiddleware';
 
 const logger = Logger.getInstance();
 
@@ -119,6 +123,40 @@ async function initServerContext(config?: ISRConfig): Promise<ServerContext> {
     threshold: config?.server?.compression?.threshold,
     level: config?.server?.compression?.level,
   });
+
+  serverContext.requestHandler.use((req, _res, next) => {
+    const headerReqId = req.headers['x-request-id'];
+    requestContext.run(
+      {
+        traceId:
+          typeof req.headers['traceparent'] === 'string'
+            ? req.headers['traceparent']
+            : randomUUID(),
+        requestId: typeof headerReqId === 'string' ? headerReqId : randomUUID(),
+      },
+      () => next()
+    );
+  });
+
+  if (config?.runtime?.rateLimit) {
+    serverContext.requestHandler.use(
+      createRateLimiter({
+        windowMs: config.runtime.rateLimit.windowMs ?? 60_000,
+        max: config.runtime.rateLimit.max ?? 100,
+        skip: req => req.path === '/health' || req.path === '/metrics',
+      })
+    );
+    logger.info(
+      `🚦 限流已启用：${config.runtime.rateLimit.max ?? 100} req / ${(config.runtime.rateLimit.windowMs ?? 60_000) / 1000}s per IP`
+    );
+  }
+
+  if (config?.runtime?.experiments && Object.keys(config.runtime.experiments).length > 0) {
+    serverContext.requestHandler.use(
+      createABVariantMiddleware({ experiments: config.runtime.experiments })
+    );
+    logger.info(`🧪 A/B 实验已启用：${Object.keys(config.runtime.experiments).join(', ')}`);
+  }
 
   logger.info(`✅ 服务器上下文已初始化 (${isDev() ? '开发' : '生产'}模式)`);
 

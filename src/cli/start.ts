@@ -21,6 +21,7 @@ import { DEFAULT_PORT } from '@/config/defaults';
 import { createIsrCacheHandler } from '@/plugin/isrCacheMiddleware';
 import { startServer, closeServer } from '@/server/httpServer';
 import { resolveAdminConfig, createAdminAuthMiddleware } from '@/server/adminConfig';
+import type { RuntimeConfig } from '@/types';
 
 interface StartOptions {
   port: string;
@@ -28,26 +29,12 @@ interface StartOptions {
 }
 
 /**
- * 从用户 entry.server 的 default export 里挖 __engineConfig
- * defineSiteHooks 在返回的 hooks 上注入此字段，承载 redis / sentry 等基础设施配置
+ * 旧项目兼容：从用户 entry.server 的 default export 里读取 __engineConfig。
+ * 新项目以 ssr.config.ts runtime 为主入口，读取到的旧配置会与 runtime 合并，runtime 优先。
  */
-async function readUserEngineConfig(rscDistEntry: string): Promise<
-  | {
-      redis?: {
-        url?: string;
-        host?: string;
-        port?: number;
-        password?: string;
-        keyPrefix?: string;
-        invalidationChannel?: string;
-      };
-      sentry?: { dsn: string; tracesSampleRate?: number; environment?: string };
-      apiOrigin?: string;
-      experiments?: Record<string, { variants: readonly string[]; weights?: readonly number[] }>;
-      rateLimit?: { windowMs?: number; max?: number };
-    }
-  | undefined
-> {
+async function readUserEngineConfig(
+  rscDistEntry: string
+): Promise<(RuntimeConfig & { apiOrigin?: string; siteBaseUrl?: string }) | undefined> {
   try {
     const mod = (await import(/* @vite-ignore */ rscDistEntry)) as {
       default?: unknown;
@@ -60,6 +47,57 @@ async function readUserEngineConfig(rscDistEntry: string): Promise<
     /* 加载失败不阻塞 server 启动 */
   }
   return undefined;
+}
+
+function safeOrigin(url: string | undefined): string | undefined {
+  if (!url) return undefined;
+  try {
+    return new URL(url).origin;
+  } catch {
+    return undefined;
+  }
+}
+
+function mergeSentryConfig(
+  legacy: RuntimeConfig['sentry'],
+  current: RuntimeConfig['sentry']
+): RuntimeConfig['sentry'] {
+  const dsn = current?.dsn ?? legacy?.dsn;
+  if (!dsn) return undefined;
+  return {
+    ...legacy,
+    ...current,
+    dsn,
+  };
+}
+
+function mergeRuntimeConfig(
+  legacyHooksConfig: (RuntimeConfig & { apiOrigin?: string; siteBaseUrl?: string }) | undefined,
+  configRuntime: RuntimeConfig | undefined
+): RuntimeConfig & { apiOrigin?: string; siteBaseUrl?: string } {
+  const merged: RuntimeConfig & { apiOrigin?: string; siteBaseUrl?: string } = {
+    ...legacyHooksConfig,
+    ...configRuntime,
+    redis:
+      legacyHooksConfig?.redis || configRuntime?.redis
+        ? { ...legacyHooksConfig?.redis, ...configRuntime?.redis }
+        : undefined,
+    sentry: mergeSentryConfig(legacyHooksConfig?.sentry, configRuntime?.sentry),
+    rateLimit:
+      legacyHooksConfig?.rateLimit || configRuntime?.rateLimit
+        ? { ...legacyHooksConfig?.rateLimit, ...configRuntime?.rateLimit }
+        : undefined,
+    experiments: {
+      ...(legacyHooksConfig?.experiments ?? {}),
+      ...(configRuntime?.experiments ?? {}),
+    },
+  };
+  if (Object.keys(merged.experiments ?? {}).length === 0) {
+    delete merged.experiments;
+  }
+  merged.apiOrigin = safeOrigin(configRuntime?.api) ?? legacyHooksConfig?.apiOrigin;
+  merged.siteBaseUrl = configRuntime?.site ?? legacyHooksConfig?.siteBaseUrl;
+  return merged;
 }
 
 /**
@@ -116,8 +154,12 @@ export async function startProductionServer(options: StartOptions): Promise<void
     throw new Error('dist/rsc/index.js 未导出 { fetch } 或 default.fetch，无法启动生产服务器');
   }
 
-  // 提前读用户 __engineConfig —— security middleware 需要 apiOrigin 来配 CSP connect-src
-  const userEngineCfg = await readUserEngineConfig(rscDistEntry);
+  // 提前合并平台运行时配置 —— security middleware 需要 apiOrigin 来配 CSP connect-src。
+  // ssr.config.ts 的 runtime 是成熟主入口；entry.server.tsx 的 __engineConfig 仅作为旧项目兼容。
+  const userEngineCfg = mergeRuntimeConfig(
+    await readUserEngineConfig(rscDistEntry),
+    config.runtime
+  );
   const extraConnectSrc: string[] = [];
   if (userEngineCfg?.apiOrigin) extraConnectSrc.push(userEngineCfg.apiOrigin);
 
@@ -163,7 +205,7 @@ export async function startProductionServer(options: StartOptions): Promise<void
     );
   });
 
-  // Rate limiting —— 用户在 defineSiteHooks({ rateLimit: {...} }) 配了才挂
+  // Rate limiting —— 推荐在 ssr.config.ts runtime.rateLimit 配置；entry.server 旧配置仍兼容
   if (userEngineCfg?.rateLimit) {
     const { createRateLimiter } = await import('@/middlewares/RateLimiter');
     app.use(
@@ -178,7 +220,7 @@ export async function startProductionServer(options: StartOptions): Promise<void
     );
   }
 
-  // A/B variant —— 用户在 defineSiteHooks({ experiments: {...} }) 配了才挂
+  // A/B variant —— 推荐在 ssr.config.ts runtime.experiments 配置；entry.server 旧配置仍兼容
   if (userEngineCfg?.experiments && Object.keys(userEngineCfg.experiments).length > 0) {
     const { createABVariantMiddleware } = await import('@/middlewares/ABVariantMiddleware');
     app.use(createABVariantMiddleware({ experiments: userEngineCfg.experiments }));
@@ -235,7 +277,7 @@ export async function startProductionServer(options: StartOptions): Promise<void
   const { createImageMiddleware } = await import('@/plugin/createImagePlugin');
   app.use(createImageMiddleware({ remoteAllowlist: [] }));
 
-  // ISR 缓存：FaaS 配置 (entry.server 的 defineSiteHooks({ redis })) 优先级高于 env REDIS_URL
+  // ISR 缓存：ssr.config.ts runtime.redis 优先级高于 entry.server 旧配置与 env REDIS_URL
   const { createAutoCacheStore } = await import('@/cache/createAutoCacheStore');
   const { RedisInvalidationBus } = await import('@/cache/RedisInvalidationBus');
   const redisCfg = userEngineCfg?.redis;
@@ -263,8 +305,7 @@ export async function startProductionServer(options: StartOptions): Promise<void
   });
   app.use(cache);
 
-  // Sentry：FaaS 配置优先 → 暴露给 SDK init（auto.ts 已读 SENTRY_DSN env）
-  // FaaS 传了 sentry.dsn 时覆盖环境变量
+  // Sentry：ssr.config.ts runtime.sentry 优先 → 暴露给 SDK init（auto.ts 已读 SENTRY_DSN env）
   if (userEngineCfg?.sentry?.dsn) {
     process.env.SENTRY_DSN = userEngineCfg.sentry.dsn;
     if (userEngineCfg.sentry.tracesSampleRate !== undefined) {

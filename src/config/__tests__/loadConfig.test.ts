@@ -134,6 +134,36 @@ export default {
       await rmTmp(cwd);
     }
   });
+
+  it('保留 runtime 平台配置', async () => {
+    const cwd = await mkTmpDir();
+    try {
+      await writeConfig(
+        cwd,
+        'ssr.config.ts',
+        `
+export const runtime = {
+  api: 'https://admin.example.com',
+  site: 'https://www.example.com',
+  redis: { url: 'redis://127.0.0.1:6379', keyPrefix: 'app:' },
+  rateLimit: { windowMs: 60000, max: 200 },
+};
+export default {
+  renderMode: 'isr' as const,
+  runtime,
+  cache: { strategy: 'memory' as const, ttl: 3600 },
+};
+`
+      );
+      const config = await loadConfig({ cwd });
+      expect(config.runtime?.api).toBe('https://admin.example.com');
+      expect(config.runtime?.site).toBe('https://www.example.com');
+      expect(config.runtime?.redis?.keyPrefix).toBe('app:');
+      expect(config.runtime?.rateLimit?.max).toBe(200);
+    } finally {
+      await rmTmp(cwd);
+    }
+  });
 });
 
 describe('loadConfig —— 缓存与 forceReload', () => {
