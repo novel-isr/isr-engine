@@ -707,7 +707,9 @@ function runMissPath(
       // 渲染期 Server Component 调用了 markUncacheable() —— 比如上游接口失败、
       // 渲染了降级 UI —— 跳过入缓存，避免错误内容被反复 HIT 回放
       if (isUncacheable()) {
-        logger.info(`⏭️  ISR cache skip ${cacheKey} —— 标记为 uncacheable（上游异常或降级渲染）`);
+        logger.info(
+          `⏭️  ISR cache skip ${cacheKey} —— Server Component 调用了 markUncacheable()，本次响应正常返回但不写入 ISR 缓存`
+        );
         return;
       }
 
