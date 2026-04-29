@@ -154,6 +154,7 @@ export async function startAppServer(
   const serverConfig = {
     port: config.server?.port ?? 3000,
     host: config.server?.host,
+    strictPort: config.server?.strictPort ?? !isDev(),
     protocol: config.server?.protocol ?? 'http1.1',
     ssl: config.server?.ssl ?? null,
     timeouts: config.server?.timeouts,

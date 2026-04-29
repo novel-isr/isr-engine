@@ -2,6 +2,7 @@
  * 开发服务器命令
  */
 
+import { spawn } from 'node:child_process';
 import { logger } from '@/logger';
 import { createISRApp } from '../app/createISRApp';
 import { loadConfig } from '../config/loadConfig';
@@ -10,10 +11,22 @@ import { DEFAULT_PORT, DEFAULT_PROTOCOL } from '@/config/defaults';
 interface StartOptions {
   port: string;
   host?: string;
+  open?: boolean;
+}
+
+function openBrowser(url: string): void {
+  const command =
+    process.platform === 'darwin' ? 'open' : process.platform === 'win32' ? 'cmd' : 'xdg-open';
+  const args = process.platform === 'win32' ? ['/c', 'start', '', url] : [url];
+  const child = spawn(command, args, { stdio: 'ignore', detached: true });
+  child.on('error', error => {
+    logger.warn('[CLI]', `自动打开浏览器失败：${error.message}`);
+  });
+  child.unref();
 }
 
 export async function startDevServer(options: StartOptions) {
-  const { port, host } = options;
+  const { port, host, open = false } = options;
 
   logger.info('[CLI]', '启动开发服务器');
   logger.spin('初始化开发环境...');
@@ -35,6 +48,7 @@ export async function startDevServer(options: StartOptions) {
     if (host) {
       config.server.host = host;
     }
+    config.server.strictPort ??= false;
 
     // 创建应用实例
     const app = await createISRApp(config);
@@ -46,8 +60,12 @@ export async function startDevServer(options: StartOptions) {
 
     logger.success('[CLI]', '开发服务器已启动');
     if (serverContext.url) {
+      logger.info('[Server]', `页面地址: ${serverContext.url}/`);
       logger.info('[Server]', `服务地址: ${serverContext.url}`);
       logger.info('[Server]', `健康检查: ${serverContext.url}/health`);
+      if (open) {
+        openBrowser(serverContext.url);
+      }
     } else {
       logger.info('[Server]', `端口: ${config.server.port}`);
       logger.info('[Server]', '健康检查: /health');

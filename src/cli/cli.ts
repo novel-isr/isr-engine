@@ -34,6 +34,8 @@ program
   .description('启动开发服务器')
   .option('-p, --port <port>', '端口号', String(DEFAULT_PORT))
   .option('-h, --host <host>', '主机地址')
+  .option('--open', '启动后自动打开浏览器', true)
+  .option('--no-open', '启动后不自动打开浏览器')
   .action(async options => {
     try {
       await startDevServer(options);

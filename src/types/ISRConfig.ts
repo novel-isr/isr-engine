@@ -147,6 +147,10 @@ export interface ISRConfig {
     port: number;
     host?: string;
     /**
+     * false 时端口占用自动尝试下一个端口。生产建议保持 true；dev 默认 false。
+     */
+    strictPort?: boolean;
+    /**
      * Origin 协议。HTTP/2/HTTP/3 应该在 CDN / Nginx / Caddy / ALB 终结，
      * Node origin 只对接 HTTP/1.1（或 HTTPS 直连场景）。
      */

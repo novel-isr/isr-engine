@@ -16,6 +16,11 @@ export type ServerProtocol = 'http1.1' | 'https';
 export interface ServerConfig {
   port: number;
   host?: string;
+  /**
+   * When false, retry the next available port on EADDRINUSE. Keep production
+   * strict by default; dev server can opt into fallback ports.
+   */
+  strictPort?: boolean;
   protocol?: ServerProtocol;
   ssl?: { key: string; cert: string } | null;
   /**

@@ -58,6 +58,35 @@ const CSR_SHELL_STYLES = `
   }
 `;
 
+function standardizePreloadHints(stream: ReadableStream<Uint8Array>): ReadableStream<Uint8Array> {
+  const decoder = new TextDecoder();
+  const encoder = new TextEncoder();
+  let carry = '';
+  const preloadStylesheetAsRe =
+    /(<link\b(?=[^>]*\brel=(["'])preload\2)(?=[^>]*\bas=(["'])stylesheet\3)[^>]*?)\bas=(["'])stylesheet\4/gi;
+
+  const normalize = (html: string) =>
+    html.replace(preloadStylesheetAsRe, (_match, prefix, _relQuote, _asQuote, asAttrQuote) => {
+      return `${prefix}as=${asAttrQuote}style${asAttrQuote}`;
+    });
+
+  return stream.pipeThrough(
+    new TransformStream<Uint8Array, Uint8Array>({
+      transform(chunk, controller) {
+        const text = carry + decoder.decode(chunk, { stream: true });
+        const splitAt = Math.max(0, text.lastIndexOf('<link'));
+        const ready = text.slice(0, splitAt);
+        carry = text.slice(splitAt);
+        if (ready) controller.enqueue(encoder.encode(normalize(ready)));
+      },
+      flush(controller) {
+        const text = carry + decoder.decode();
+        if (text) controller.enqueue(encoder.encode(normalize(text)));
+      },
+    })
+  );
+}
+
 export interface RenderHtmlOptions {
   formState?: ReactFormState;
   nonce?: string;
@@ -145,6 +174,8 @@ export async function renderHTML(
       injectRSCPayload(rscStream2, { nonce: options.nonce })
     );
   }
+
+  responseStream = standardizePreloadHints(responseStream);
 
   return { stream: responseStream, status, csrShellFallback };
 }

@@ -52,6 +52,9 @@ function getServerAddress(server: Server): { address: string; port: number } {
 }
 
 function formatHostForUrl(address: string): string {
+  if (address === '::' || address === '0.0.0.0' || address === '') {
+    return 'localhost';
+  }
   if (address.includes(':') && !address.startsWith('[')) {
     return `[${address}]`;
   }
@@ -60,23 +63,46 @@ function formatHostForUrl(address: string): string {
 
 /** 启动 HTTP/1.1 服务器 */
 export function startHttp1Server(app: Express, config: ServerConfig): Promise<ServerStartResult> {
+  const maxAttempts = config.strictPort === false ? 20 : 1;
+  const startPort = config.port;
+
   return new Promise((resolve, reject) => {
     const server = createHttpServer(app);
     applyHttpTimeouts(server, config);
 
-    server.listen(config.port, config.host, () => {
+    let attempt = 0;
+    const listen = (port: number) => {
+      server.listen(port, config.host);
+    };
+
+    server.on('listening', () => {
       const { address, port } = getServerAddress(server);
       const url = `http://${formatHostForUrl(address)}:${port || config.port}`;
       logger.info(`HTTP/1.1 服务器已启动: ${url}`);
       resolve({ server, url });
     });
 
-    server.on('error', reject);
+    server.on('error', error => {
+      const nodeError = error as NodeJS.ErrnoException;
+      if (nodeError.code === 'EADDRINUSE' && attempt + 1 < maxAttempts) {
+        attempt += 1;
+        const nextPort = startPort + attempt;
+        logger.warn(`端口 ${startPort + attempt - 1} 已占用，尝试 ${nextPort}`);
+        listen(nextPort);
+        return;
+      }
+      reject(error);
+    });
+
+    listen(startPort);
   });
 }
 
 /** 启动 HTTPS 服务器 */
 export function startHttpsServer(app: Express, config: ServerConfig): Promise<ServerStartResult> {
+  const maxAttempts = config.strictPort === false ? 20 : 1;
+  const startPort = config.port;
+
   return new Promise((resolve, reject) => {
     if (!config.ssl) {
       reject(new Error('HTTPS 需要 SSL 配置'));
@@ -92,14 +118,31 @@ export function startHttpsServer(app: Express, config: ServerConfig): Promise<Se
     );
     applyHttpTimeouts(server as unknown as Server, config);
 
-    server.listen(config.port, config.host, () => {
+    let attempt = 0;
+    const listen = (port: number) => {
+      server.listen(port, config.host);
+    };
+
+    server.on('listening', () => {
       const { address, port } = getServerAddress(server as unknown as Server);
       const url = `https://${formatHostForUrl(address)}:${port || config.port}`;
       logger.info(`HTTPS 服务器已启动: ${url}`);
       resolve({ server: server as unknown as Server, url });
     });
 
-    server.on('error', reject);
+    server.on('error', error => {
+      const nodeError = error as NodeJS.ErrnoException;
+      if (nodeError.code === 'EADDRINUSE' && attempt + 1 < maxAttempts) {
+        attempt += 1;
+        const nextPort = startPort + attempt;
+        logger.warn(`端口 ${startPort + attempt - 1} 已占用，尝试 ${nextPort}`);
+        listen(nextPort);
+        return;
+      }
+      reject(error);
+    });
+
+    listen(startPort);
   });
 }
 
