@@ -23,20 +23,24 @@ let viteServer: ViteDevServer | null = null;
 
 const DEFAULT_HMR_PORT = 24678;
 
-async function isPortAvailable(port: number, host = '127.0.0.1'): Promise<boolean> {
+async function isPortAvailable(port: number, host?: string): Promise<boolean> {
   return new Promise(resolve => {
     const server = net.createServer();
     server.once('error', () => resolve(false));
     server.once('listening', () => {
       server.close(() => resolve(true));
     });
-    server.listen(port, host);
+    if (host) {
+      server.listen(port, host);
+      return;
+    }
+    server.listen(port);
   });
 }
 
-async function resolveHmrPort(preferredPort: number): Promise<number> {
+async function resolveHmrPort(preferredPort: number, host?: string): Promise<number> {
   for (let port = preferredPort; port < preferredPort + 20; port++) {
-    if (await isPortAvailable(port)) return port;
+    if (await isPortAvailable(port, host)) return port;
   }
   return 0;
 }
@@ -65,7 +69,8 @@ export async function createViteDevServer(): Promise<ViteDevServer> {
   const hmrDisabled = userHmr === false;
   const userHmrOptions = typeof userHmr === 'object' ? userHmr : {};
   const preferredHmrPort = userHmrOptions.port ?? DEFAULT_HMR_PORT;
-  const hmrPort = hmrDisabled ? preferredHmrPort : await resolveHmrPort(preferredHmrPort);
+  const hmrHost = typeof userHmrOptions.host === 'string' ? userHmrOptions.host : undefined;
+  const hmrPort = hmrDisabled ? preferredHmrPort : await resolveHmrPort(preferredHmrPort, hmrHost);
   if (!hmrDisabled && hmrPort !== preferredHmrPort) {
     logger.info(`Vite HMR 端口 ${preferredHmrPort} 已占用，使用 ${hmrPort || '随机端口'}`);
   }
