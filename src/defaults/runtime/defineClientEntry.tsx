@@ -112,6 +112,9 @@ async function main(hooks: ClientEntryHooks): Promise<void> {
   if (hooks.beforeHydrate) await hooks.beforeHydrate();
 
   function mountSpaFallback(App: React.ComponentType<{ url: URL }>): void {
+    document.body.classList.remove('csr-shell-body');
+    document.body.removeAttribute('style');
+
     const SpaMount = (): React.ReactElement => {
       const [url, setUrl] = React.useState(() => new URL(window.location.href));
       React.useEffect(() => {
