@@ -76,16 +76,12 @@ export interface RuntimeRateLimitConfig {
 }
 
 export interface RuntimeServicesConfig {
-  /** 业务 API origin，例如书籍、用户、评分等业务数据服务 */
+  /** 默认后端 API origin；业务数据、admin 配置、mock fixture 未拆服务时都走这里 */
   api?: string;
-  /** 管理后台 / 控制面 origin；i18n/seo/mock 未单独配置时优先使用它 */
-  admin?: string;
-  /** i18n 字典下发 origin；不配置时回退到 admin */
+  /** i18n 字典下发 origin；不配置时回退到 api */
   i18n?: string;
-  /** SEO 配置下发 origin；不配置时回退到 admin */
+  /** SEO 配置下发 origin；不配置时回退到 api */
   seo?: string;
-  /** mock/fixture 下发 origin；不配置时回退到 admin */
-  mock?: string;
 }
 
 /**
@@ -97,8 +93,8 @@ export interface RuntimeServicesConfig {
  */
 export interface RuntimeConfig {
   /**
-   * 旧的单 API base。新项目优先使用 services.api/admin/i18n/seo/mock；
-   * 保留该字段只作为低层 fallback，避免把业务 API 与配置控制面混在一起。
+   * 旧的单 API base。新项目优先使用 services.api；
+   * 保留该字段只作为低层 fallback。
    */
   api?: string;
   /** 站点公网 base URL，用于 SEO canonical / sitemap / robots */

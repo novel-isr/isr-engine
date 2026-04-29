@@ -17,10 +17,8 @@ export const runtime = {
   site: process.env.SEO_BASE_URL ?? 'http://localhost:3000',
   services: {
     api: process.env.API_URL ?? 'http://localhost:8080',
-    admin: process.env.ADMIN_API_URL ?? 'http://localhost:8100',
-    i18n: process.env.I18N_API_URL ?? process.env.ADMIN_API_URL ?? 'http://localhost:8100',
-    seo: process.env.SEO_API_URL ?? process.env.ADMIN_API_URL ?? 'http://localhost:8100',
-    mock: process.env.MOCK_SERVER_URL ?? process.env.ADMIN_API_URL ?? 'http://localhost:8100',
+    i18n: process.env.I18N_API_URL ?? process.env.API_URL ?? 'http://localhost:8080',
+    seo: process.env.SEO_API_URL ?? process.env.API_URL ?? 'http://localhost:8080',
   },
   redis: process.env.REDIS_URL ? { url: process.env.REDIS_URL, keyPrefix: 'isr:' } : undefined,
   sentry: process.env.SENTRY_DSN ? { dsn: process.env.SENTRY_DSN } : undefined,
@@ -65,12 +63,10 @@ entry，业务不需要在 `entry.server.tsx` 里 import `ssr.config.ts`。
 
 `runtime` 是平台配置入口：
 
-- `site`：站点公网 base URL。用于 canonical、OG image、sitemap、robots；如果没有显式 `seo.baseUrl`，engine 会用 `runtime.site`。
-- `services.api`：业务 API base URL，例如书籍、用户、评分服务。
-- `services.admin`：管理后台 / 控制面 base URL。`services.i18n/seo/mock` 不配置时优先回退到它。
-- `services.i18n`：i18n 字典下发 base URL。
-- `services.seo`：SEO 配置下发 base URL。
-- `services.mock`：mock / fixture 下发 base URL。
+- `site`：站点公网 base URL。用于 canonical、OG image、sitemap、robots；它是用户访问域名，不是后端 API 地址。
+- `services.api`：默认后端 API base URL，例如书籍、用户、评分、admin 配置和 mock fixture。i18n / SEO 未拆服务时都回退到它。
+- `services.i18n`：i18n 字典下发 base URL。只有字典服务独立部署时才需要配置。
+- `services.seo`：SEO 配置下发 base URL。只有 SEO 配置服务独立部署时才需要配置。
 - `redis`：分布式 ISR 缓存和跨实例失效广播。没有 Redis 时自动使用进程内 memory cache。
 - `sentry`：服务端错误监控。
 - `rateLimit`：站点级限流。
@@ -87,7 +83,7 @@ intl: {
     endpoint: '/api/i18n/{locale}/manifest',
     fallbackMessages: baseline.i18n.strings,
     defaultLocale: baseline.site.defaultLocale,
-    // baseUrl: 'https://admin.example.com', // 可选；默认使用 runtime.services.i18n/admin
+    // baseUrl: 'https://i18n.example.com', // 可选；默认使用 runtime.services.i18n/api
   }),
   ttl: 60_000,
 }
@@ -149,7 +145,7 @@ seo: {
     load: createAdminSeoLoader({
       endpoint: '/api/seo?path={pathname}',
       fallbackEntries: baseline.seo.entries,
-      // baseUrl: 'https://admin.example.com', // 可选；默认使用 runtime.services.seo/admin
+      // baseUrl: 'https://seo.example.com', // 可选；默认使用 runtime.services.seo/api
     }),
     ttl: 60_000,
   },

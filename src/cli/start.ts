@@ -91,13 +91,7 @@ export async function startProductionServer(options: StartOptions): Promise<void
   const runtime = config.runtime;
   const extraConnectSrc = Array.from(
     new Set(
-      [
-        runtime?.services?.api ?? runtime?.api,
-        runtime?.services?.admin,
-        runtime?.services?.i18n,
-        runtime?.services?.seo,
-        runtime?.services?.mock,
-      ]
+      [runtime?.services?.api ?? runtime?.api, runtime?.services?.i18n, runtime?.services?.seo]
         .map(safeOrigin)
         .filter((origin): origin is string => !!origin)
     )

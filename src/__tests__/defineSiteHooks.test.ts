@@ -219,7 +219,7 @@ describe('admin loaders', () => {
     );
     expect(fetchSpy).toHaveBeenCalledWith('http://i18n.x/api/i18n/zh/manifest', expect.any(Object));
     expect(intl?.messages).toEqual({ home: { title: '首页' } });
-    expect(intl?.source).toBe('admin');
+    expect(intl?.source).toBe('remote');
   });
 
   it('createAdminIntlLoader 远端失败时使用本地 fallback 与默认 locale', async () => {
@@ -298,7 +298,7 @@ describe('admin loaders', () => {
           seo: { entries: [{ path: '/', title: '首页 SEO' }] },
         },
       }),
-      { services: { admin: 'http://admin.x' } }
+      { services: { api: 'http://api.x' } }
     );
     const intl = await hooks.loadIntl(
       new Request('http://x.com', { headers: { cookie: 'locale=zh' } })

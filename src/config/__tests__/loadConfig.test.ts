@@ -146,7 +146,6 @@ export const runtime = {
   site: 'https://www.example.com',
   services: {
     api: 'https://api.example.com',
-    admin: 'https://admin.example.com',
     i18n: 'https://i18n.example.com',
     seo: 'https://seo.example.com',
   },
@@ -163,7 +162,6 @@ export default {
       const config = await loadConfig({ cwd });
       expect(config.runtime?.site).toBe('https://www.example.com');
       expect(config.runtime?.services?.api).toBe('https://api.example.com');
-      expect(config.runtime?.services?.admin).toBe('https://admin.example.com');
       expect(config.runtime?.services?.i18n).toBe('https://i18n.example.com');
       expect(config.runtime?.services?.seo).toBe('https://seo.example.com');
       expect(config.runtime?.redis?.keyPrefix).toBe('app:');

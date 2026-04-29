@@ -8,7 +8,7 @@
  *   - i18n 字典缓存（createCachedFetcher: TTL/SWR/dedup/fallback）
  *   - SEO 路由表 pattern → resolver
  *   - locale 检测（cookie → Accept-Language → 默认）
- *   - admin/i18n/seo 远端 origin 从 ssr.config.ts runtime.services 注入
+ *   - api/i18n/seo 远端 origin 从 ssr.config.ts runtime.services 注入
  *   - 错误打印 / Sentry adapter 透传
  *
  * 用户态写法（商业项目推荐）：
@@ -27,19 +27,15 @@ export interface SiteRuntimeContext {
   runtime: SiteRuntimeConfig;
   services: RuntimeServices;
   api?: string;
-  admin?: string;
   i18n?: string;
   seo?: string;
-  mock?: string;
   site?: string;
 }
 
 export interface RuntimeServices {
   api?: string;
-  admin?: string;
   i18n?: string;
   seo?: string;
-  mock?: string;
 }
 
 export type RuntimeServiceBase = string | ((ctx: SiteRuntimeContext) => string | null | undefined);
@@ -47,9 +43,9 @@ export type RuntimeServiceBase = string | ((ctx: SiteRuntimeContext) => string |
 export type IntlMessagesByLocale = Record<string, Record<string, unknown>>;
 
 export interface CreateAdminIntlLoaderOptions {
-  /** 远端字典端点；相对路径会用 runtime.services.i18n/admin 拼接 */
+  /** 远端字典端点；相对路径会用 runtime.services.i18n/api 拼接 */
   endpoint?: string;
-  /** 显式覆盖远端 origin；不传时使用 ssr.config.ts runtime.services.i18n/admin */
+  /** 显式覆盖远端 origin；不传时使用 ssr.config.ts runtime.services.i18n/api */
   baseUrl?: RuntimeServiceBase;
   /** 本地兜底字典，通常来自业务自己的 site-baseline.json */
   fallbackMessages?: IntlMessagesByLocale;
@@ -71,7 +67,7 @@ export interface AdminSeoFallbackEntry extends PageSeoMeta {
 export interface CreateAdminSeoLoaderOptions {
   /** 远端 SEO 端点；支持 {pathname} 和路由 params 占位符 */
   endpoint?: string;
-  /** 显式覆盖远端 origin；不传时使用 ssr.config.ts runtime.services.seo/admin */
+  /** 显式覆盖远端 origin；不传时使用 ssr.config.ts runtime.services.seo/api */
   baseUrl?: RuntimeServiceBase;
   /** 本地兜底 SEO 条目，通常来自业务自己的 site-baseline.json */
   fallbackEntries?: readonly AdminSeoFallbackEntry[];
@@ -226,7 +222,7 @@ export function createAdminIntlLoader(
       messages,
       direction: rtlOf(normalizedLocale),
       source: remoteMessages
-        ? (options.remoteSource ?? 'admin')
+        ? (options.remoteSource ?? 'remote')
         : (options.fallbackSource ?? 'local-fallback'),
     };
   };
@@ -345,10 +341,8 @@ function createSiteHooks(config: SiteHooksConfig, runtime: SiteRuntimeConfig): S
     runtime,
     services,
     api: api || undefined,
-    admin: services.admin,
     i18n: services.i18n,
     seo: services.seo,
-    mock: services.mock,
     site: site || undefined,
   };
   const fetchJson = async (path: string, baseUrl?: string): Promise<unknown> => {
@@ -393,7 +387,7 @@ function createSiteHooks(config: SiteHooksConfig, runtime: SiteRuntimeConfig): S
       }
       if (intlCfg.endpoint) {
         const url = fillTemplate(intlCfg.endpoint, { locale });
-        const json = await fetchJson(url, services.i18n ?? services.admin ?? services.api);
+        const json = await fetchJson(url, services.i18n ?? services.api);
         if (json !== null && intlCfg.transform) {
           const transformed = await intlCfg.transform(json, locale);
           if (transformed) {
@@ -438,7 +432,7 @@ function createSiteHooks(config: SiteHooksConfig, runtime: SiteRuntimeConfig): S
           const params = JSON.parse(paramKey) as Record<string, string>;
           const data = await fetchJson(
             fillTemplate(remote.endpoint, params),
-            services.seo ?? services.admin ?? services.api
+            services.seo ?? services.api
           );
           if (data === null) return null;
           return remote.transform(data, params);
@@ -643,17 +637,16 @@ function resolveRuntimeServiceBase(
     return baseUrl(ctx) ?? null;
   }
   if (baseUrl) return baseUrl;
-  return ctx.services[service] ?? ctx.services.admin ?? null;
+  return ctx.services[service] ?? ctx.services.api ?? null;
 }
 
 function resolveRuntimeServices(runtime: SiteRuntimeConfig): RuntimeServices {
   const services = runtime.services ?? {};
+  const api = services.api ?? runtime.api;
   return {
-    api: services.api ?? runtime.api,
-    admin: services.admin,
-    i18n: services.i18n ?? services.admin,
-    seo: services.seo ?? services.admin,
-    mock: services.mock ?? services.admin,
+    api,
+    i18n: services.i18n ?? api,
+    seo: services.seo ?? api,
   };
 }
 

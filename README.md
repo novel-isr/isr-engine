@@ -84,9 +84,8 @@ export const runtime = {
   site: process.env.SEO_BASE_URL ?? 'http://localhost:3000',
   services: {
     api: process.env.API_URL ?? 'http://localhost:8080',
-    admin: process.env.ADMIN_API_URL ?? 'http://localhost:8100',
-    i18n: process.env.I18N_API_URL ?? process.env.ADMIN_API_URL ?? 'http://localhost:8100',
-    seo: process.env.SEO_API_URL ?? process.env.ADMIN_API_URL ?? 'http://localhost:8100',
+    i18n: process.env.I18N_API_URL ?? process.env.API_URL ?? 'http://localhost:8080',
+    seo: process.env.SEO_API_URL ?? process.env.API_URL ?? 'http://localhost:8080',
   },
   redis: process.env.REDIS_URL ? { url: process.env.REDIS_URL, keyPrefix: 'isr:' } : undefined,
   sentry: process.env.SENTRY_DSN ? { dsn: process.env.SENTRY_DSN } : undefined,
@@ -305,7 +304,7 @@ export default defineSiteHooks({
       load: createAdminSeoLoader({
         endpoint: '/api/seo?path={pathname}',
         fallbackEntries: baseline.seo.entries,
-        // baseUrl: 'https://admin.example.com', // 可选；默认使用 runtime.services.seo/admin
+        // baseUrl: 'https://seo.example.com', // 可选；默认使用 runtime.services.seo/api
       }),
       ttl: 60_000,
     },
@@ -331,7 +330,7 @@ export default defineSiteHooks({
       endpoint: '/api/i18n/{locale}/manifest',
       fallbackMessages: baseline.i18n.strings,
       defaultLocale: baseline.site.defaultLocale,
-      // baseUrl: 'https://admin.example.com', // 可选；默认使用 runtime.services.i18n/admin
+      // baseUrl: 'https://i18n.example.com', // 可选；默认使用 runtime.services.i18n/api
     }),
     ttl: 60_000,
   },
