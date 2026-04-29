@@ -39,7 +39,6 @@ const logger = Logger.getInstance();
 const VIRTUAL_ENTRY_IDS = {
   client: 'virtual:novel-isr/client-entry',
   rsc: 'virtual:novel-isr/rsc-entry',
-  ssr: 'virtual:novel-isr/ssr-entry',
 } as const;
 
 const RESOLVED_VIRTUAL_PREFIX = '\0';
@@ -297,11 +296,6 @@ function createEngineDefaultEntriesPlugin(): Plugin {
         `;
       }
 
-      if (id === `${RESOLVED_VIRTUAL_PREFIX}${VIRTUAL_ENTRY_IDS.ssr}`) {
-        const defaultsDir = resolveEngineDefaultsDir();
-        return fs.readFileSync(path.resolve(defaultsDir, ENGINE_DEFAULTS.ssr), 'utf8');
-      }
-
       return null;
     },
   };
@@ -390,7 +384,7 @@ export function createIsrPlugin(options: CreateIsrPluginOptions = {}): PluginOpt
       entries: {
         client: VIRTUAL_ENTRY_IDS.client,
         rsc: VIRTUAL_ENTRY_IDS.rsc,
-        ssr: entries.source.ssr === 'user' ? entries.ssr : VIRTUAL_ENTRY_IDS.ssr,
+        ssr: entries.ssr,
       },
     })
   );
