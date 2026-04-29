@@ -37,6 +37,10 @@
     "./client-entry": {
       "default": "./src/defaults/runtime/defineClientEntry.tsx"
     },
+    "./auto-observability": {
+      "types": "./dist/defaults/auto-observability.d.ts",
+      "default": "./src/defaults/auto-observability.ts"
+    },
     "./site-hooks": {
       "types": "./dist/defaults/runtime/defineSiteHooks.d.ts",
       "default": "./src/defaults/runtime/defineSiteHooks.ts"

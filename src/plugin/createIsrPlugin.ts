@@ -36,6 +36,14 @@ import type { ISRConfig } from '../types';
 
 const logger = Logger.getInstance();
 
+const VIRTUAL_ENTRY_IDS = {
+  client: 'virtual:novel-isr/client-entry',
+  rsc: 'virtual:novel-isr/rsc-entry',
+  ssr: 'virtual:novel-isr/ssr-entry',
+} as const;
+
+const RESOLVED_VIRTUAL_PREFIX = '\0';
+
 export interface CreateIsrPluginOptions {
   /** 显式传入 ssr.config —— 未传则缓存中间件内异步自动 loadConfig() */
   config?: Partial<ISRConfig>;
@@ -188,6 +196,117 @@ function createBrowserShimPlugin(): Plugin {
   };
 }
 
+function createEngineDefaultEntriesPlugin(): Plugin {
+  return {
+    name: 'isr:engine-default-entries',
+    enforce: 'pre',
+    resolveId(id) {
+      if (
+        Object.values(VIRTUAL_ENTRY_IDS).includes(
+          id as (typeof VIRTUAL_ENTRY_IDS)[keyof typeof VIRTUAL_ENTRY_IDS]
+        )
+      ) {
+        return `${RESOLVED_VIRTUAL_PREFIX}${id}`;
+      }
+      return null;
+    },
+    load(id) {
+      if (id === `${RESOLVED_VIRTUAL_PREFIX}${VIRTUAL_ENTRY_IDS.client}`) {
+        return `
+          import { defineClientEntry } from '@novel-isr/engine/client-entry';
+          import userConfig from '@app/_client-config';
+
+          defineClientEntry((userConfig ?? {}));
+        `;
+      }
+
+      if (id === `${RESOLVED_VIRTUAL_PREFIX}${VIRTUAL_ENTRY_IDS.rsc}`) {
+        return `
+          import { defineServerEntry } from '@novel-isr/engine/server-entry';
+          import { createAutoServerHooks } from '@novel-isr/engine/auto-observability';
+          import userConfig from '@app/_server-config';
+
+          function hasFetchHandler(x) {
+            return !!x && typeof x.fetch === 'function';
+          }
+
+          const autoHooksPromise = createAutoServerHooks();
+
+          const resolved = hasFetchHandler(userConfig)
+            ? userConfig
+            : (() => {
+                let realHandler = null;
+                let initPromise = null;
+
+                return {
+                  __engineConfig: userConfig?.__engineConfig,
+                  async fetch(request) {
+                    if (!realHandler) {
+                      initPromise ??= (async () => {
+                        const auto = await autoHooksPromise;
+                        const user = userConfig ?? {};
+                        const merged = {
+                          ...auto,
+                          ...user,
+                          beforeRequest: chainBefore(auto.beforeRequest, user.beforeRequest),
+                          onResponse: chainResponse(auto.onResponse, user.onResponse),
+                          onError: chainError(auto.onError, user.onError),
+                        };
+                        return defineServerEntry(merged);
+                      })();
+                      realHandler = await initPromise;
+                    }
+                    return realHandler.fetch(request);
+                  },
+                };
+              })();
+
+          function chainBefore(a, b) {
+            if (!a) return b;
+            if (!b) return a;
+            return async (req, baseline) => {
+              const ax = (await a(req, baseline)) ?? {};
+              const bx = (await b(req, baseline)) ?? {};
+              return { ...ax, ...bx };
+            };
+          }
+
+          function chainResponse(a, b) {
+            if (!a) return b;
+            if (!b) return a;
+            return async (res, ctx) => {
+              await a(res, ctx);
+              await b(res, ctx);
+            };
+          }
+
+          function chainError(a, b) {
+            if (!a) return b;
+            if (!b) return a;
+            return async (err, req, ctx) => {
+              await a(err, req, ctx);
+              await b(err, req, ctx);
+            };
+          }
+
+          export default resolved;
+
+          if (import.meta.hot) {
+            import.meta.hot.accept();
+          }
+        `;
+      }
+
+      if (id === `${RESOLVED_VIRTUAL_PREFIX}${VIRTUAL_ENTRY_IDS.ssr}`) {
+        const defaultsDir = resolveEngineDefaultsDir();
+        return fs.readFileSync(path.resolve(defaultsDir, ENGINE_DEFAULTS.ssr), 'utf8');
+      }
+
+      return null;
+    },
+  };
+}
+
 function createAppAliasPlugin(root: string): Plugin {
   const userSrc = path.resolve(root, 'src');
   const defaultsDir = resolveEngineDefaultsDir();
@@ -250,7 +369,11 @@ export function createIsrPlugin(options: CreateIsrPluginOptions = {}): PluginOpt
   logger.info(`   server = ${fmt('rsc')}`);
   logger.info(`   ssr    = ${fmt('ssr')}`);
 
-  const plugins: PluginOption[] = [createAppAliasPlugin(root), createBrowserShimPlugin()];
+  const plugins: PluginOption[] = [
+    createEngineDefaultEntriesPlugin(),
+    createAppAliasPlugin(root),
+    createBrowserShimPlugin(),
+  ];
 
   if (isrCacheOptions?.enabled !== false) {
     plugins.push(
@@ -264,7 +387,11 @@ export function createIsrPlugin(options: CreateIsrPluginOptions = {}): PluginOpt
   plugins.push(
     vitePluginRsc({
       ...rscOptions,
-      entries: { client: entries.client, rsc: entries.rsc, ssr: entries.ssr },
+      entries: {
+        client: VIRTUAL_ENTRY_IDS.client,
+        rsc: VIRTUAL_ENTRY_IDS.rsc,
+        ssr: entries.source.ssr === 'user' ? entries.ssr : VIRTUAL_ENTRY_IDS.ssr,
+      },
     })
   );
 
