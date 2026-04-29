@@ -208,16 +208,21 @@ export function defineSiteHooks(config: SiteHooksConfig): ServerHooksOutput {
   // ─── i18n 缓存（一次创建，请求级复用）──────────────
   const intlCfg = config.intl ?? {};
   const fallbackLocale = intlCfg.defaultLocale ?? 'zh-CN';
-  const supportedLocales = intlCfg.locales?.length ? intlCfg.locales : [fallbackLocale];
+  const supportedLocales = intlCfg.locales?.length ? intlCfg.locales : undefined;
   const detectLocale =
     intlCfg.detect ??
     ((req: Request): string => {
       const cookie = req.headers.get('cookie')?.match(/(?:^|;\s*)locale=([^;]+)/)?.[1];
       if (cookie) {
-        return normalizeLocale(decodeURIComponent(cookie), supportedLocales, fallbackLocale);
+        const decoded = decodeURIComponent(cookie);
+        return supportedLocales
+          ? normalizeLocale(decoded, supportedLocales, fallbackLocale)
+          : decoded;
       }
       const accept = req.headers.get('accept-language') ?? '';
-      return normalizeLocale(parseAcceptLanguage(accept), supportedLocales, fallbackLocale);
+      return supportedLocales
+        ? normalizeLocale(parseAcceptLanguage(accept), supportedLocales, fallbackLocale)
+        : inferLocaleFromAcceptLanguage(accept, fallbackLocale);
     });
 
   const intlLoader = createCachedFetcher<string, IntlPayload>({
@@ -391,6 +396,15 @@ function parseAcceptLanguage(accept: string): string {
     }
   }
   return best;
+}
+
+function inferLocaleFromAcceptLanguage(accept: string, fallbackLocale: string): string {
+  const best = parseAcceptLanguage(accept);
+  if (!best) return fallbackLocale;
+  const primary = best.toLowerCase().split('-')[0];
+  if (primary === 'zh') return 'zh-CN';
+  if (primary === 'en') return 'en';
+  return fallbackLocale;
 }
 
 function normalizeLocale(
