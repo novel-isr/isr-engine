@@ -7,6 +7,7 @@ import { logger } from '@/logger';
 import { createISRApp } from '../app/createISRApp';
 import { loadConfig } from '../config/loadConfig';
 import { DEFAULT_PORT, DEFAULT_PROTOCOL } from '@/config/defaults';
+import type { ISRConfig } from '@/types';
 
 interface StartOptions {
   port: string;
@@ -23,6 +24,34 @@ function openBrowser(url: string): void {
     logger.warn('[CLI]', `自动打开浏览器失败：${error.message}`);
   });
   child.unref();
+}
+
+function getSamplePath(config: ISRConfig, mode: 'isr' | 'ssr' | 'ssg'): string {
+  const routes = config.routes ?? {};
+  for (const [route, value] of Object.entries(routes)) {
+    const routeMode = typeof value === 'string' ? value : value?.mode;
+    if (routeMode === mode && !route.includes('*')) return route;
+  }
+  if (mode === 'ssg') {
+    const ssgRoutes = config.ssg?.routes;
+    return Array.isArray(ssgRoutes) ? (ssgRoutes[0] ?? '/about') : '/about';
+  }
+  if (mode === 'ssr') return '/login';
+  return '/';
+}
+
+function printRenderModeLinks(baseUrl: string, config: ISRConfig): void {
+  const trimBase = baseUrl.replace(/\/$/, '');
+  const isrPath = getSamplePath(config, 'isr');
+  const ssrPath = getSamplePath(config, 'ssr');
+  const ssgPath = getSamplePath(config, 'ssg');
+
+  logger.info('[Dev Links]', `ISR: ${trimBase}${isrPath}?mode=isr`);
+  logger.info('[Dev Links]', `SSR: ${trimBase}${ssrPath}?mode=ssr`);
+  logger.info('[Dev Links]', `SSG: ${trimBase}${ssgPath}?mode=ssg`);
+  logger.info('[Dev Links]', `CSR fallback: ${trimBase}${isrPath}?__csr-shell=1`);
+  logger.info('[Dev Links]', `No-JS/SSR HTML: ${trimBase}${isrPath}?__nojs=1`);
+  logger.info('[Dev Links]', `响应头查看: x-resolved-mode / x-render-strategy / x-fallback-used`);
 }
 
 export async function startDevServer(options: StartOptions) {
@@ -63,6 +92,7 @@ export async function startDevServer(options: StartOptions) {
       logger.info('[Server]', `页面地址: ${serverContext.url}/`);
       logger.info('[Server]', `服务地址: ${serverContext.url}`);
       logger.info('[Server]', `健康检查: ${serverContext.url}/health`);
+      printRenderModeLinks(serverContext.url, config);
       if (open) {
         openBrowser(serverContext.url);
       }

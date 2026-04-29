@@ -273,8 +273,10 @@ async function runRscPipeline(request: Request, extras: PipelineExtras): Promise
 
   const responseHeaders = new Headers();
   responseHeaders.set('content-type', 'text/html; charset=utf-8');
+  responseHeaders.set('x-render-strategy', ssrResult.csrShellFallback ? 'csr-shell' : 'rsc-ssr');
+  responseHeaders.set('x-fallback-used', ssrResult.csrShellFallback ? 'true' : 'false');
   if (ssrResult.csrShellFallback) {
-    responseHeaders.set('x-render-strategy', 'csr-shell');
+    responseHeaders.set('x-fallback-target', 'client createRoot fallback shell');
   }
 
   // 仅当用户提供 seoMeta 且非 csr-shell 兜底时注入；csr-shell 的 head 已固化
