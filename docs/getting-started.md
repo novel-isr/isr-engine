@@ -41,35 +41,78 @@ export default defineConfig({
 
 `build` 直接走 `vite build` —— isr-engine 是运行时编排层，不接管构建系统。SSG 预渲染由 `createIsrPlugin` 的 `closeBundle` 钩子自动触发。
 
-## 4. `src/app.tsx` —— 唯一必需文件
+## 4. `src/routes.tsx` —— 业务唯一路由源
 
 ```tsx
+import { defineRoutes } from '@novel-isr/engine/runtime';
+
+export const { routes } = defineRoutes({
+  notFound: { load: () => import('./pages/NotFoundPage') },
+  routes: [
+    { path: '/', load: () => import('./pages/HomePage') },
+    { path: '/books/:id', load: () => import('./pages/BookDetailPage') },
+  ],
+});
+```
+
+同一份 `routes` 会被 SSR / ISR / SSG / CSR recovery 复用。业务不要再维护 `routes.ssr`、`routes.spa`、`spaModules` 或 `ssrModules`。
+
+## 5. `src/entry.server.ts` —— SiteHooks
+
+```ts
+import type { PageSeoMeta } from '@novel-isr/engine';
+import { defineSiteHooks } from '@novel-isr/engine/site-hooks';
+
+export default defineSiteHooks({
+  api: process.env.ADMIN_API_URL ?? process.env.API_URL!,
+  site: process.env.SEO_BASE_URL!,
+  intl: {
+    locales: ['zh-CN', 'en'] as const,
+    defaultLocale: 'zh-CN',
+    endpoint: '/api/i18n/{locale}/manifest',
+    ttl: 60_000,
+  },
+  seo: {
+    '/*': {
+      endpoint: '/api/seo?path={pathname}',
+      ttl: 60_000,
+      transform: raw => (raw as { data?: PageSeoMeta | null }).data ?? null,
+    },
+  },
+});
+```
+
+`api` 指向 admin/API 服务。i18n 字典和 SEO 都可以远程下发，engine 会做 TTL / SWR / 并发去重缓存。
+
+## 6. `src/app.tsx` —— App shell
+
+```tsx
+import { parseLocale, resolveI18nConfig } from '@novel-isr/engine/runtime';
+import siteHooks from './entry.server';
+import { routes } from './routes';
+
+const I18N = resolveI18nConfig(siteHooks.intl);
+
 export function App({ url }: { url: URL }) {
-  const path = url.pathname;
+  const { locale, pathname } = parseLocale(url.pathname, I18N);
   return (
-    <html lang="en">
-      <head><title>My App</title></head>
-      <body>
-        {path === '/' ? <Home /> : <NotFound />}
-      </body>
+    <html lang={locale}>
+      <body>{routes({ pathname, searchParams: url.searchParams })}</body>
     </html>
   );
 }
-
-function Home() { return <h1>Welcome</h1>; }
-function NotFound() { return <h1>404</h1>; }
 ```
 
-**契约**：`src/app.tsx` 必须 `export function App({ url }: { url: URL })`，返回完整的 `<html>` 树。其余约定优于配置——不写任何 entry 文件就能跑。
+**契约**：`src/app.tsx` 必须 `export function App({ url }: { url: URL })`，返回完整的 `<html>` 树；`src/routes.tsx` 只负责声明页面入口。
 
-## 5. 跑
+## 7. 跑
 
 ```bash
 pnpm dev                          # → http://localhost:3000
 pnpm build && pnpm start          # 生产模式
 ```
 
-完事。**无需写 entry.tsx / entry.server.tsx / 任何模板代码**，自动获得：
+完事。**无需写 entry.tsx / entry.ssr.tsx / 任何协议模板代码**，自动获得：
 - 3 种渲染模式（ISR / SSR / SSG）+ csr-shell server 崩溃兜底
 - LRU 缓存 + SWR + 标签级失效
 - SEO `/sitemap.xml` / `/robots.txt`
@@ -115,34 +158,31 @@ export default function HomeContent() {
 详细模式语义：[render-modes.md](./render-modes.md)。
 缓存与失效：[caching.md](./caching.md)。
 
-## 加 SiteHooks（i18n / SEO / Sentry / 限流）
+## 扩展 SiteHooks（Redis / Sentry / 限流）
 
-99% 业务**不需要**写 entry 文件。需要扩展时按声明式配置写：
+在上面的 `entry.server.ts` 里继续加横切能力：
 
 ```tsx
 // src/entry.server.tsx
+import type { PageSeoMeta } from '@novel-isr/engine';
 import { defineSiteHooks } from '@novel-isr/engine/site-hooks';
 
 export default defineSiteHooks({
-  api: process.env.API_URL!,
+  api: process.env.ADMIN_API_URL ?? process.env.API_URL!,
   site: process.env.SEO_BASE_URL!,
 
   intl: {
-    locales: ['zh', 'en'] as const,
-    defaultLocale: 'zh',
-    endpoint: '/api/i18n?locale={locale}',
+    locales: ['zh-CN', 'en'] as const,
+    defaultLocale: 'zh-CN',
+    endpoint: '/api/i18n/{locale}/manifest',
     ttl: 60_000,
   },
 
   seo: {
-    '/': { title: 'Home', description: '...', ogType: 'website' },
-    '/books/:id': {
-      endpoint: '/api/books/{id}',
-      transform: (raw, { id }) => ({
-        title: raw.data.title,
-        image: raw.data.cover,
-        ogType: 'article',
-      }),
+    '/*': {
+      endpoint: '/api/seo?path={pathname}',
+      ttl: 60_000,
+      transform: raw => (raw as { data?: PageSeoMeta | null }).data ?? null,
     },
   },
 
@@ -153,6 +193,20 @@ export default defineSiteHooks({
 ```
 
 完整字段说明：[site-hooks.md](./site-hooks.md)。
+
+页面模块可以声明默认 SEO，admin/API 下发值会覆盖：
+
+```tsx
+import { getI18n } from '@novel-isr/engine/runtime';
+
+export async function seo({ params }: { params: { id: string } }) {
+  const book = await fetchBook(params.id);
+  return {
+    title: getI18n('seo.book.title', { title: book.title }),
+    description: book.summary,
+  };
+}
+```
 
 ## 加路由级渲染模式
 

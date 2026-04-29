@@ -50,11 +50,11 @@ intl: {
 }
 ```
 
-URL 路由部分被 `parseLocale` 消费；翻译消息层被 SEO/Header 等消费。详细：[i18n.md](./i18n.md)。
+URL 路由部分被 `parseLocale` 消费；翻译消息层被 server render、page SEO、客户端导航和 `getI18n()` 消费。远程字典响应可以是嵌套对象，也可以是 dotted keys（engine 会展开）。详细：[i18n.md](./i18n.md)。
 
 ### `seo`
 
-路由 pattern → 静态 meta 或 `{ endpoint, transform }` 或 `{ load }`。
+路由 pattern → 静态 meta 或 `{ endpoint, transform }` 或 `{ load }`。商业项目通常让页面模块声明默认 SEO，再由 admin/API 通过 `/*` 下发覆盖值。
 
 ```ts
 seo: {
@@ -97,7 +97,44 @@ seo: {
 },
 ```
 
-Engine 在 `loadSeoMeta` hook 自动按 pattern 匹配并注入到 SSR HTML 的 `</head>` 之前。用户**不需要**在组件里写 `<title>` / `<meta>`。
+Engine 在 `loadSeoMeta` hook 自动按 pattern 匹配，并与页面模块导出的 `seo` / `generateSeo` 合并后注入到 SSR HTML 的 `</head>` 之前。用户**不需要**在组件里写 `<title>` / `<meta>`。
+
+页面级 SEO：
+
+```tsx
+// src/pages/BookDetailPage.tsx
+import { getI18n } from '@novel-isr/engine/runtime';
+
+export async function seo({ params }: { params: { id: string } }) {
+  const book = await fetchBook(params.id);
+  return {
+    title: getI18n('seo.book.title', { title: book.title }),
+    description: book.summary,
+    image: book.cover,
+  };
+}
+```
+
+admin 统一下发：
+
+```ts
+import type { PageSeoMeta } from '@novel-isr/engine';
+import { defineSiteHooks } from '@novel-isr/engine/site-hooks';
+
+export default defineSiteHooks({
+  api: process.env.ADMIN_API_URL,
+  site: process.env.SEO_BASE_URL,
+  seo: {
+    '/*': {
+      endpoint: '/api/seo?path={pathname}',
+      ttl: 60_000,
+      transform: raw => (raw as { data?: PageSeoMeta | null }).data ?? null,
+    },
+  },
+});
+```
+
+合并顺序：`page seo` 是页面默认值，`SiteHooks seo` 是上游覆盖值；这样业务页面可以随代码发布基础 SEO，运营/admin 可以热更新标题、描述、OG 图、JSON-LD。
 
 ### `redis`
 
