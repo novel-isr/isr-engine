@@ -16,8 +16,8 @@ import * as React from 'react';
 import type { ReactFormState } from 'react-dom/client';
 import { renderToReadableStream } from 'react-dom/server.edge';
 import { injectRSCPayload } from 'rsc-html-stream/server';
-import { setClientI18n } from './runtime/i18n-store';
 import type { IntlPayload } from './runtime/seo-runtime';
+import { setClientI18n } from '../runtime/i18n-store';
 // @ts-expect-error - 虚拟模块由 plugin-rsc 注入
 import assetsManifest from 'virtual:vite-rsc/assets-manifest';
 
