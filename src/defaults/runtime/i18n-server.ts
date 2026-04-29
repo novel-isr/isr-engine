@@ -2,6 +2,7 @@ import { AsyncLocalStorage } from 'node:async_hooks';
 
 import type { IntlPayload } from './seo-runtime';
 import { getI18n, getI18nLocale, registerServerI18nReader } from '../../runtime/i18n-store';
+import { getRequestContext } from '../../context/RequestContext';
 
 const store = new AsyncLocalStorage<IntlPayload | null>();
 
@@ -10,10 +11,17 @@ export function runWithI18n<T>(intl: IntlPayload | null | undefined, fn: () => T
 }
 
 export function getCurrentI18n(): IntlPayload | null {
-  return store.getStore() ?? null;
+  const scoped = store.getStore();
+  if (scoped) return scoped;
+  const requestIntl = getRequestContext()?.intl;
+  return isIntlPayload(requestIntl) ? requestIntl : null;
 }
 
 registerServerI18nReader(getCurrentI18n);
 
 export { getI18n, getI18nLocale };
 export type { I18nParams, Translate } from '../../runtime/i18n-store';
+
+function isIntlPayload(value: unknown): value is IntlPayload {
+  return !!value && typeof value === 'object' && typeof (value as IntlPayload).locale === 'string';
+}

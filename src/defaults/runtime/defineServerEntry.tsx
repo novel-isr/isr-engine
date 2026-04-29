@@ -166,7 +166,12 @@ export function defineServerEntry<C extends ServerCtx = ServerCtx>(
 
         // ─── i18n 先加载并进入请求作用域；SEO 可在 page seo 中直接 getI18n() ─────
         const intl = hooks.loadIntl ? await Promise.resolve(hooks.loadIntl(request, ctx)) : null;
-        if (intl) (ctx as ServerCtx).intl = intl;
+        if (intl) {
+          (ctx as ServerCtx).intl = intl;
+          if (requestStore) {
+            requestStore.intl = intl;
+          }
+        }
 
         const seoMeta = await runWithI18n(intl, async () => {
           const url = new URL(request.url);
