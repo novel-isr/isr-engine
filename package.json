@@ -22,8 +22,10 @@
   },
   "files": [
     "dist",
+    "src/context",
     "src/defaults",
     "src/runtime",
+    "src/types",
     "README.md",
     "CHANGELOG.md"
   ],
