@@ -50,7 +50,7 @@ interface DefaultRscPayload {
  *   - 不让任何 server 错误进 React 树（避免 console 噪声 + 错误传播）
  *   - 给用户明确状态（不是白屏，不是错误堆栈）+ 显式 retry 按钮
  *
- * 类比：GitHub "unicorn page" / Twitter "fail whale"
+ * 类比：成熟产品的 outage / recovery 页面。
  */
 function CsrShellFallback(): React.ReactElement {
   return React.createElement(
@@ -64,12 +64,20 @@ function CsrShellFallback(): React.ReactElement {
       React.createElement('style', {
         dangerouslySetInnerHTML: {
           __html: `
-            body { margin:0; background:#1a1a1a; color:#ccc; font:14px system-ui,sans-serif; }
-            .csr-shell-page { min-height:100vh; display:flex; flex-direction:column; align-items:center; justify-content:center; padding:48px 24px; gap:16px; }
-            .csr-shell-page h1 { margin:0; font-size:24px; color:#f0f0f0; font-weight:600; }
-            .csr-shell-page p { margin:0; max-width:480px; text-align:center; opacity:0.7; line-height:1.6; }
-            .csr-shell-page button { padding:8px 20px; background:#7b5cff; color:#fff; border:none; border-radius:6px; font-size:14px; cursor:pointer; margin-top:8px; }
-            .csr-shell-page button:hover { background:#6e4eee; }
+            :root { color-scheme: dark; }
+            body { margin:0; background:#111418; color:#e7edf4; font:14px Inter,ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif; }
+            .csr-shell-page { min-height:100vh; display:grid; place-items:center; padding:32px 20px; }
+            .csr-shell-card { width:min(520px,100%); padding:28px; border:1px solid rgba(255,255,255,.12); border-radius:8px; background:#171b21; box-shadow:0 24px 80px rgba(0,0,0,.32); }
+            .csr-shell-badge { display:inline-flex; align-items:center; height:24px; padding:0 10px; border:1px solid rgba(125,211,252,.24); border-radius:999px; background:rgba(14,165,233,.12); color:#7dd3fc; font-size:12px; font-weight:700; letter-spacing:0; }
+            .csr-shell-card h1 { margin:18px 0 8px; color:#f8fafc; font-size:clamp(24px,4vw,34px); line-height:1.15; letter-spacing:0; }
+            .csr-shell-card p { margin:0; color:#aab4c1; line-height:1.7; }
+            .csr-shell-grid { display:grid; gap:10px; margin-top:22px; }
+            .csr-shell-row { display:flex; justify-content:space-between; gap:16px; padding:12px; border:1px solid rgba(255,255,255,.08); border-radius:8px; background:rgba(255,255,255,.04); }
+            .csr-shell-row span:first-child { color:#8894a3; }
+            .csr-shell-row span:last-child { color:#f8fafc; font-weight:700; text-align:right; }
+            .csr-shell-page button { min-height:38px; margin-top:22px; padding:0 16px; border:0; border-radius:6px; background:#f97316; color:#111418; font-weight:800; cursor:pointer; }
+            .csr-shell-page button:focus-visible { outline:2px solid #fed7aa; outline-offset:2px; }
+            .csr-shell-page button:hover { background:#fb923c; }
           `,
         },
       })
@@ -80,12 +88,37 @@ function CsrShellFallback(): React.ReactElement {
       React.createElement(
         'div',
         { className: 'csr-shell-page' },
-        React.createElement('h1', null, '服务暂时不可用'),
-        React.createElement('p', null, '服务端遇到问题，正在恢复中。请稍后重新加载页面。'),
         React.createElement(
-          'button',
-          { type: 'button', onClick: () => location.reload() },
-          '重新加载'
+          'main',
+          { className: 'csr-shell-card', role: 'status', 'aria-live': 'polite' },
+          React.createElement('span', { className: 'csr-shell-badge' }, 'CSR fallback'),
+          React.createElement('h1', null, '服务端暂时不可用'),
+          React.createElement(
+            'p',
+            null,
+            '客户端自救也未能拿到 RSC 数据。请稍后重新加载，或检查服务端日志。'
+          ),
+          React.createElement(
+            'div',
+            { className: 'csr-shell-grid', 'aria-label': '降级状态' },
+            React.createElement(
+              'div',
+              { className: 'csr-shell-row' },
+              React.createElement('span', null, 'Render strategy'),
+              React.createElement('span', null, 'client recovery')
+            ),
+            React.createElement(
+              'div',
+              { className: 'csr-shell-row' },
+              React.createElement('span', null, 'Next action'),
+              React.createElement('span', null, 'retry')
+            )
+          ),
+          React.createElement(
+            'button',
+            { type: 'button', onClick: () => location.reload() },
+            '重新加载'
+          )
         )
       )
     )

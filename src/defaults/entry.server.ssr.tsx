@@ -46,18 +46,84 @@ interface DefaultRscPayload {
 
 /** csr-shell fallback 页面的内联样式（自包含，不依赖任何外部 stylesheet）*/
 const CSR_SHELL_STYLES = `
+  :root { color-scheme: dark; }
   .csr-shell-body {
-    background: #1a1a1a;
-    color: #bbb;
-    font: 14px system-ui, sans-serif;
-    padding: 48px 24px;
-    text-align: center;
     margin: 0;
+    background: #111418;
+    color: #e7edf4;
+    font: 14px Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
   }
-  .csr-shell-hint {
-    max-width: 520px;
-    margin: 0 auto;
-    opacity: 0.7;
+  .csr-shell-page {
+    display: grid;
+    min-height: 100vh;
+    place-items: center;
+    padding: 32px 20px;
+  }
+  .csr-shell-card {
+    width: min(520px, 100%);
+    padding: 28px;
+    border: 1px solid rgba(255, 255, 255, 0.12);
+    border-radius: 8px;
+    background: #171b21;
+    box-shadow: 0 24px 80px rgba(0, 0, 0, 0.32);
+  }
+  .csr-shell-badge {
+    display: inline-flex;
+    align-items: center;
+    height: 24px;
+    padding: 0 10px;
+    border: 1px solid rgba(125, 211, 252, 0.24);
+    border-radius: 999px;
+    background: rgba(14, 165, 233, 0.12);
+    color: #7dd3fc;
+    font-size: 12px;
+    font-weight: 700;
+    letter-spacing: 0;
+  }
+  .csr-shell-title {
+    margin: 18px 0 8px;
+    color: #f8fafc;
+    font-size: clamp(24px, 4vw, 34px);
+    line-height: 1.15;
+    letter-spacing: 0;
+  }
+  .csr-shell-copy {
+    margin: 0;
+    color: #aab4c1;
+    line-height: 1.7;
+  }
+  .csr-shell-grid {
+    display: grid;
+    gap: 10px;
+    margin-top: 22px;
+  }
+  .csr-shell-row {
+    display: flex;
+    justify-content: space-between;
+    gap: 16px;
+    padding: 12px;
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    border-radius: 8px;
+    background: rgba(255, 255, 255, 0.04);
+  }
+  .csr-shell-row span:first-child { color: #8894a3; }
+  .csr-shell-row span:last-child { color: #f8fafc; font-weight: 700; text-align: right; }
+  .csr-shell-action {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-height: 38px;
+    margin-top: 22px;
+    padding: 0 16px;
+    border-radius: 6px;
+    background: #f97316;
+    color: #111418;
+    font-weight: 800;
+    text-decoration: none;
+  }
+  .csr-shell-action:focus-visible {
+    outline: 2px solid #fed7aa;
+    outline-offset: 2px;
   }
 `;
 
@@ -161,7 +227,28 @@ export async function renderHTML(
         </head>
         <body className='csr-shell-body'>
           <noscript>需要启用 JavaScript 以加载页面。</noscript>
-          <div className='csr-shell-hint'>服务端暂时不可用，正在尝试客户端加载…</div>
+          <div className='csr-shell-page'>
+            <main className='csr-shell-card' role='status' aria-live='polite'>
+              <span className='csr-shell-badge'>CSR fallback</span>
+              <h1 className='csr-shell-title'>服务端暂时不可用</h1>
+              <p className='csr-shell-copy'>
+                已交付客户端自救壳，正在加载前端资源并尝试恢复页面。刷新后会重新请求服务端渲染。
+              </p>
+              <div className='csr-shell-grid' aria-label='降级状态'>
+                <div className='csr-shell-row'>
+                  <span>Render strategy</span>
+                  <span>csr-shell</span>
+                </div>
+                <div className='csr-shell-row'>
+                  <span>Cache policy</span>
+                  <span>not cached</span>
+                </div>
+              </div>
+              <a className='csr-shell-action' href='/'>
+                返回首页
+              </a>
+            </main>
+          </div>
         </body>
       </html>,
       {

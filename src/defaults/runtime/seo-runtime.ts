@@ -20,6 +20,8 @@ export interface IntlPayload {
   direction?: 'ltr' | 'rtl';
   /** 时区（用于日期格式化），默认 UTC */
   timeZone?: string;
+  /** 诊断字段：标记消息来源，如 admin / local-fallback，便于 dev inspector 与响应头观测 */
+  source?: string;
 }
 
 export interface PageSeoMeta {

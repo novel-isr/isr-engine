@@ -181,6 +181,7 @@ export function defineServerEntry<C extends ServerCtx = ServerCtx>(
         response.headers.set('x-trace-id', baseline.traceId);
         response.headers.set('x-render-ms', String(Date.now() - baseline.startedAt));
         if (intl?.locale) response.headers.set('content-language', intl.locale);
+        if (intl?.source) response.headers.set('x-i18n-source', intl.source);
 
         if (hooks.onResponse) {
           await hooks.onResponse(response, ctx);
