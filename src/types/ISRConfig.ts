@@ -75,6 +75,38 @@ export interface RuntimeRateLimitConfig {
   max?: number;
 }
 
+export interface RuntimeI18nConfig {
+  /** 支持的 locale 列表，用于 URL locale 前缀解析和请求协商 */
+  locales?: readonly string[];
+  /** 默认 locale；不配置时取 locales[0] */
+  defaultLocale?: string;
+  /** 默认 locale 是否带 URL 前缀 */
+  prefixDefault?: boolean;
+  /** 远端字典端点；相对路径会拼到 services.i18n/api 上 */
+  endpoint?: string;
+  /** 本地兜底字典；配置 API 不可用时使用 */
+  fallbackLocal?: Record<string, Record<string, unknown>>;
+  /** 字典缓存 TTL（毫秒） */
+  ttl?: number;
+  /** 远端请求超时（毫秒） */
+  timeoutMs?: number;
+  /** 响应头 / dev inspector 里显示的远端来源名 */
+  remoteSource?: string;
+  /** 响应头 / dev inspector 里显示的本地兜底来源名 */
+  fallbackSource?: string;
+}
+
+export interface RuntimeSeoConfig {
+  /** 远端 SEO 端点；支持 {pathname} */
+  endpoint?: string;
+  /** 本地兜底 SEO 路由表；配置 API 不可用时使用 */
+  fallbackLocal?: readonly Record<string, unknown>[];
+  /** SEO 元数据缓存 TTL（毫秒） */
+  ttl?: number;
+  /** 远端请求超时（毫秒） */
+  timeoutMs?: number;
+}
+
 export interface RuntimeServicesConfig {
   /** 默认后端 API origin；业务数据、admin 配置、mock fixture 未拆服务时都走这里 */
   api?: string;
@@ -109,6 +141,10 @@ export interface RuntimeConfig {
   rateLimit?: RuntimeRateLimitConfig;
   /** A/B 实验定义，供 getVariant() 在 Server Component 中读取 */
   experiments?: Record<string, RuntimeExperimentConfig>;
+  /** i18n 字典源配置；请求期加载由 engine 默认 SiteHooks 消费 */
+  i18n?: RuntimeI18nConfig;
+  /** 页面 SEO 元数据源配置；不要和 ISRConfig 顶层 seo.baseUrl 混淆 */
+  seo?: RuntimeSeoConfig;
 }
 
 export const RenderModes = {

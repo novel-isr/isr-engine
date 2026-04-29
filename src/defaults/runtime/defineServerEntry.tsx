@@ -37,6 +37,7 @@ import { parseRenderRequest } from './request';
 import { type IntlPayload, type PageSeoMeta, injectSeoMeta, mergePageSeoMeta } from './seo-runtime';
 import { runWithI18n } from './i18n-server';
 import { resolvePageSeoMeta } from '../../runtime/routes';
+import { getRequestContext } from '../../context/RequestContext';
 
 interface DefaultRscPayload {
   root: React.ReactNode;
@@ -45,16 +46,16 @@ interface DefaultRscPayload {
   formState?: ReactFormState;
 }
 
-/** 默认始终注入的上下文 —— engine 自动维护，不需要用户写代码 */
-export interface BaselineCtx {
+/** 默认始终注入的请求上下文 —— engine 自动维护，不需要用户写代码 */
+export interface EngineRequestContext {
   /** trace-id：从入站头 X-Request-Id / X-Trace-Id 读取，没有则自动生成 */
   traceId: string;
   /** 请求处理起点（毫秒）—— 用于自动算 X-Render-Ms */
   startedAt: number;
 }
 
-/** 用户 hook 之间共享的请求级上下文（基线 + 用户扩展） */
-export type ServerCtx = BaselineCtx & Record<string, unknown>;
+/** 用户 hook 之间共享的请求级上下文（engine 字段 + 用户扩展） */
+export type ServerCtx = EngineRequestContext & Record<string, unknown>;
 
 export interface ServerEntryHooks<C extends ServerCtx = ServerCtx> {
   /**
@@ -68,12 +69,15 @@ export interface ServerEntryHooks<C extends ServerCtx = ServerCtx> {
    */
   apiBaseUrl?: string;
   /**
-   * 请求进入时调用 —— 返回的对象**与 BaselineCtx 合并**作为后续 hook 的 ctx
+   * 请求进入时调用 —— 返回的对象**与 engine 请求上下文合并**作为后续 hook 的 ctx
    * 适用：auth 解析、自定义业务 ctx 字段
    *
    * 注意：trace-id 和 startedAt 由 engine 自动维护，**不需要**在这里手动设
    */
-  beforeRequest?: (request: Request, baseline: BaselineCtx) => Partial<C> | Promise<Partial<C>>;
+  beforeRequest?: (
+    request: Request,
+    engineCtx: EngineRequestContext
+  ) => Partial<C> | Promise<Partial<C>>;
   /**
    * Response 返回前调用 —— 用于追加自定义响应头
    *
@@ -138,18 +142,26 @@ export function defineServerEntry<C extends ServerCtx = ServerCtx>(
 ): ServerEntryModule {
   return {
     async fetch(request) {
-      // ─── engine baseline（每个请求自动有）─────────────────────
-      const baseline: BaselineCtx = {
+      const requestStore = getRequestContext();
+
+      // ─── engine request context（每个请求自动有）───────────────
+      const engineCtx: EngineRequestContext = {
         traceId:
-          request.headers.get('x-request-id') || request.headers.get('x-trace-id') || genTraceId(),
+          request.headers.get('x-request-id') ||
+          request.headers.get('x-trace-id') ||
+          requestStore?.traceId ||
+          genTraceId(),
         startedAt: Date.now(),
       };
-      let ctx: C = baseline as C;
+      let ctx: C = { ...(requestStore ?? {}), ...engineCtx } as C;
 
       try {
         if (hooks.beforeRequest) {
-          const userExt = (await hooks.beforeRequest(request, baseline)) ?? {};
-          ctx = { ...baseline, ...userExt } as C;
+          const userExt = (await hooks.beforeRequest(request, engineCtx)) ?? {};
+          ctx = { ...(requestStore ?? {}), ...engineCtx, ...userExt } as C;
+        }
+        if (requestStore) {
+          Object.assign(requestStore, ctx);
         }
 
         // ─── i18n 先加载并进入请求作用域；SEO 可在 page seo 中直接 getI18n() ─────
@@ -178,8 +190,8 @@ export function defineServerEntry<C extends ServerCtx = ServerCtx>(
         );
 
         // ─── 自动注入观测头（用户无需写代码）──────────────────
-        response.headers.set('x-trace-id', baseline.traceId);
-        response.headers.set('x-render-ms', String(Date.now() - baseline.startedAt));
+        response.headers.set('x-trace-id', engineCtx.traceId);
+        response.headers.set('x-render-ms', String(Date.now() - engineCtx.startedAt));
         if (intl?.locale) response.headers.set('content-language', intl.locale);
         if (intl?.source) response.headers.set('x-i18n-source', intl.source);
 

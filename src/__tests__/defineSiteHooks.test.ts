@@ -15,9 +15,10 @@ import {
   createAdminSeoLoader,
   defineAdminSiteHooks,
   defineSiteHooks,
+  type ServerHooksOutput,
 } from '../defaults/runtime/defineSiteHooks';
 
-const baseline = { traceId: 't', startedAt: 0 };
+const engineCtx = { traceId: 't', startedAt: 0 };
 
 beforeEach(() => {
   vi.restoreAllMocks();
@@ -27,7 +28,7 @@ describe('defineSiteHooks: locale detection', () => {
   it('cookie locale 优先', async () => {
     const hooks = defineSiteHooks({});
     const req = new Request('http://x.com', { headers: { cookie: 'a=b; locale=fr; c=d' } });
-    const ext = await hooks.beforeRequest(req, baseline);
+    const ext = await hooks.beforeRequest(req, engineCtx);
     expect(ext.locale).toBe('fr');
   });
 
@@ -37,7 +38,7 @@ describe('defineSiteHooks: locale detection', () => {
       (
         await hooks.beforeRequest(
           new Request('http://x.com', { headers: { 'accept-language': 'en-US,en' } }),
-          baseline
+          engineCtx
         )
       ).locale
     ).toBe('en');
@@ -45,7 +46,7 @@ describe('defineSiteHooks: locale detection', () => {
       (
         await hooks.beforeRequest(
           new Request('http://x.com', { headers: { 'accept-language': 'zh-CN,zh' } }),
-          baseline
+          engineCtx
         )
       ).locale
     ).toBe('zh-CN');
@@ -53,7 +54,7 @@ describe('defineSiteHooks: locale detection', () => {
 
   it('都无时用 defaultLocale', async () => {
     const hooks = defineSiteHooks({ intl: { defaultLocale: 'ja' } });
-    const ext = await hooks.beforeRequest(new Request('http://x.com'), baseline);
+    const ext = await hooks.beforeRequest(new Request('http://x.com'), engineCtx);
     expect(ext.locale).toBe('ja');
   });
 
@@ -61,14 +62,14 @@ describe('defineSiteHooks: locale detection', () => {
     const hooks = defineSiteHooks({ intl: { detect: () => 'custom' } });
     const ext = await hooks.beforeRequest(
       new Request('http://x.com', { headers: { cookie: 'locale=zh' } }),
-      baseline
+      engineCtx
     );
     expect(ext.locale).toBe('custom');
   });
 
   it('beforeRequest 用户扩展字段合并', async () => {
     const hooks = defineSiteHooks({ beforeRequest: () => ({ user: 'u1' }) });
-    const ext = await hooks.beforeRequest(new Request('http://x.com'), baseline);
+    const ext = await hooks.beforeRequest(new Request('http://x.com'), engineCtx);
     expect(ext).toMatchObject({ locale: 'zh-CN', user: 'u1' });
   });
 });
@@ -288,24 +289,56 @@ describe('admin loaders', () => {
     expect(meta).toEqual({ title: '关于' });
   });
 
-  it('defineAdminSiteHooks 从 baseline 生成商业默认 SiteHooks', async () => {
+  it('defineAdminSiteHooks 从 runtime.i18n/runtime.seo 生成商业默认 SiteHooks', async () => {
     vi.spyOn(globalThis, 'fetch').mockRejectedValue(new Error('down'));
-    const hooks = applyRuntimeToServerHooks(
-      defineAdminSiteHooks({
-        baseline: {
-          site: { locales: ['zh', 'en'], defaultLocale: 'zh' },
-          i18n: { strings: { zh: { 'home.title': '首页' } } },
-          seo: { entries: [{ path: '/', title: '首页 SEO' }] },
-        },
-      }),
-      { services: { api: 'http://api.x' } }
-    );
+    const hooks = applyRuntimeToServerHooks(defineAdminSiteHooks(), {
+      services: { api: 'http://api.x' },
+      i18n: {
+        locales: ['zh', 'en'],
+        defaultLocale: 'zh',
+        fallbackLocal: { zh: { 'home.title': '首页' } },
+      },
+      seo: { fallbackLocal: [{ path: '/', title: '首页 SEO' }] },
+    });
     const intl = await hooks.loadIntl(
       new Request('http://x.com', { headers: { cookie: 'locale=zh' } })
     );
     const meta = await hooks.loadSeoMeta(new Request('http://x.com/'));
     expect(intl?.messages).toEqual({ home: { title: '首页' } });
     expect(intl?.source).toBe('local-fallback');
+    expect(meta).toEqual({ title: '首页 SEO' });
+  });
+
+  it('applyRuntimeToServerHooks 在没有 entry.server 数据 loader 时自动使用 runtime 配置', async () => {
+    vi.spyOn(globalThis, 'fetch').mockRejectedValue(new Error('down'));
+    const hooks = applyRuntimeToServerHooks(
+      {
+        beforeRequest: (req: Request) => ({
+          tenantId: req.headers.get('x-tenant-id') ?? 'public',
+        }),
+      },
+      {
+        services: { api: 'http://api.x' },
+        i18n: {
+          locales: ['zh', 'en'],
+          defaultLocale: 'zh',
+          fallbackLocal: { zh: { 'home.title': '首页' } },
+        },
+        seo: { fallbackLocal: [{ path: '/', title: '首页 SEO' }] },
+      }
+    ) as unknown as ServerHooksOutput;
+    const ctx = await hooks.beforeRequest(
+      new Request('http://x.com', {
+        headers: { cookie: 'locale=zh', 'x-tenant-id': 'tenant-a' },
+      }),
+      { traceId: 't1', startedAt: 1 }
+    );
+    const intl = await hooks.loadIntl(
+      new Request('http://x.com', { headers: { cookie: 'locale=zh' } })
+    );
+    const meta = await hooks.loadSeoMeta(new Request('http://x.com/'));
+    expect(ctx).toEqual({ locale: 'zh', tenantId: 'tenant-a' });
+    expect(intl?.messages).toEqual({ home: { title: '首页' } });
     expect(meta).toEqual({ title: '首页 SEO' });
   });
 });

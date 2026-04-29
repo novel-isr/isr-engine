@@ -2,8 +2,8 @@
 
 成熟项目建议把配置分成两层：
 
-- `ssr.config.ts`：启动期 / 部署期 / 平台级配置，例如 `runtime.site`、`runtime.services`、Redis、Sentry、限流、A/B 实验、路由渲染模式。
-- `src/entry.server.tsx`：请求期 hooks，例如 locale 协商、i18n 字典加载、SEO 远程加载、`beforeRequest`、`onResponse`、`onError`。
+- `ssr.config.ts`：启动期 / 部署期 / 平台级配置，例如 `runtime.site`、`runtime.services`、`runtime.i18n`、`runtime.seo`、Redis、Sentry、限流、A/B 实验、路由渲染模式。
+- `src/entry.server.tsx`：请求期 hooks，例如用户、租户、灰度上下文、`beforeRequest`、`onResponse`、`onError`。
 
 第一性原则是：会影响整个运行时拓扑的东西放配置文件；会依赖本次请求的东西放 server entry。
 
@@ -12,6 +12,7 @@
 ```ts
 // ssr.config.ts
 import type { ISRConfig } from '@novel-isr/engine';
+import fallbackLocal from './src/config/site-fallback-local.json';
 
 export const runtime = {
   site: process.env.SEO_BASE_URL ?? 'http://localhost:3000',
@@ -25,6 +26,18 @@ export const runtime = {
   rateLimit: { windowMs: 60_000, max: 200 },
   experiments: {
     'hero-style': { variants: ['classic', 'bold'], weights: [50, 50] },
+  },
+  i18n: {
+    locales: fallbackLocal.site.locales,
+    defaultLocale: fallbackLocal.site.defaultLocale,
+    endpoint: '/api/i18n/{locale}/manifest',
+    fallbackLocal: fallbackLocal.i18n.strings,
+    ttl: 60_000,
+  },
+  seo: {
+    endpoint: '/api/seo?path={pathname}',
+    fallbackLocal: fallbackLocal.seo.entries,
+    ttl: 60_000,
   },
 } satisfies NonNullable<ISRConfig['runtime']>;
 
@@ -46,18 +59,17 @@ export default {
 ```tsx
 // src/entry.server.tsx
 import { defineAdminSiteHooks } from '@novel-isr/engine/site-hooks';
-import baseline from './config/site-baseline.json';
 
 export default defineAdminSiteHooks({
-  baseline,
-  intl: { ttl: 60_000 },
-  seo: { ttl: 60_000 },
+  beforeRequest: req => ({
+    tenantId: req.headers.get('x-tenant-id') ?? 'public',
+  }),
 });
 ```
 
 `defineSiteHooks` 不接收 Redis、Sentry、限流或 A/B 实验配置。这些能力只从
-`ssr.config.ts runtime` 读取。`runtime.site/services` 也由 engine 注入到默认 server
-entry，业务不需要在 `entry.server.tsx` 里 import `ssr.config.ts`。
+`ssr.config.ts runtime` 读取。`runtime.site/services/i18n/seo` 也由 engine 注入到默认
+server entry，业务不需要在 `entry.server.tsx` 里 import `ssr.config.ts`。
 
 ## `runtime`
 
@@ -71,23 +83,13 @@ entry，业务不需要在 `entry.server.tsx` 里 import `ssr.config.ts`。
 - `sentry`：服务端错误监控。
 - `rateLimit`：站点级限流。
 - `experiments`：A/B 实验定义，Server Component 用 `getVariant()` 读取。
+- `i18n`：字典 endpoint、TTL、locale 列表和本地 `fallbackLocal`。
+- `seo`：页面 SEO endpoint、TTL 和本地 `fallbackLocal`。它和 `ISRConfig.seo.baseUrl` 不同，后者只管 sitemap/robots/canonical base URL。
 
-## `intl`
+## `runtime.i18n`
 
-```ts
-intl: {
-  locales: ['zh-CN', 'en'] as const,
-  defaultLocale: 'zh-CN',
-  prefixDefault: false,
-  load: createAdminIntlLoader({
-    endpoint: '/api/i18n/{locale}/manifest',
-    fallbackMessages: baseline.i18n.strings,
-    defaultLocale: baseline.site.defaultLocale,
-    // baseUrl: 'https://i18n.example.com', // 可选；默认使用 runtime.services.i18n/api
-  }),
-  ttl: 60_000,
-}
-```
+商业项目优先在 `ssr.config.ts runtime.i18n` 配置。engine 会自动生成 `loadIntl`，
+服务端首次渲染时拉取字典，并把结果随 RSC payload 复用到客户端。
 
 远程字典响应可以是嵌套对象，也可以是 dotted keys，engine 会展开并注入到 SSR/RSC payload。页面里直接用：
 
@@ -107,14 +109,15 @@ getI18n('book.reviewCount', { count: 12 });
 
 字典里的占位符用 `{count}` 形式，例如：`"{count} 条评价"`。SSR 时字典已经在 server context 中；CSR recovery 时字典会随 RSC payload 或本地 fallback 一起可用，不需要页面自己重新设计 provider。
 
-如果 `load` / `transform` 返回 `source`，engine 会写 `X-I18n-Source`，dev inspector 也会显示，例如 `admin` 或 `local-fallback`。
+如果远端命中，engine 会写 `X-I18n-Source: remote`；如果使用本地兜底，会写
+`X-I18n-Source: local-fallback`，dev inspector 也会显示。
 
 ## `seo`
 
 SEO 推荐两层：
 
 - 页面模块导出 `seo` / `generateSeo`，声明跟页面数据绑定的默认 SEO。
-- admin/API 通过 `entry.server.tsx` 的 `seo: { '/*': ... }` 下发运营覆盖值。
+- API 通过 `runtime.seo.endpoint` 下发运营覆盖值。
 
 ```tsx
 // src/pages/BookDetailPage.tsx
@@ -136,22 +139,6 @@ export async function seo({ params }: { params: { id: string } }) {
 }
 ```
 
-```ts
-// src/entry.server.tsx
-import { createAdminSeoLoader } from '@novel-isr/engine/site-hooks';
-
-seo: {
-  '/*': {
-    load: createAdminSeoLoader({
-      endpoint: '/api/seo?path={pathname}',
-      fallbackEntries: baseline.seo.entries,
-      // baseUrl: 'https://seo.example.com', // 可选；默认使用 runtime.services.seo/api
-    }),
-    ttl: 60_000,
-  },
-}
-```
-
 合并顺序：页面 SEO 是代码默认值，SiteHooks SEO 是上游覆盖值。用户不需要在组件里写 `<title>` / `<meta>`。
 
 ## `beforeRequest` / `onResponse` / `onError`
@@ -159,6 +146,7 @@ seo: {
 ```ts
 beforeRequest: async req => ({
   user: parseJwt(req.headers.get('authorization')),
+  tenantId: req.headers.get('x-tenant-id') ?? 'public',
 }),
 onResponse: async (res, ctx) => {
   res.headers.set('x-trace-id', ctx.traceId);
@@ -168,7 +156,9 @@ onError: async (err, req, ctx) => {
 },
 ```
 
-`beforeRequest` 返回值会和 engine baseline context 合并。`onError` 不要返回 `Response`，兜底策略由 engine 统一处理。
+`beforeRequest` 返回值会和 engine 基线 context 合并，并同步进 RequestContext。
+Server Component 可用 `getRequestContext()` 读取用户、租户等请求级信息。`onError`
+不要返回 `Response`，兜底策略由 engine 统一处理。
 
 ## Client Entry
 

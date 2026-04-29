@@ -15,7 +15,7 @@
 | `X-Cache-Key` | 缓存键（便于排错） |
 | `X-Render-Strategy` | `csr-shell`（仅当 server 崩溃兜底时出现） |
 
-`baseline.traceId` 自动贯穿整个请求生命周期（从 `X-Request-Id`/`X-Trace-Id` 读入，无则生成），所有 hook 都能拿到。
+engine request context 的 `traceId` 自动贯穿整个请求生命周期（从 `X-Request-Id`/`X-Trace-Id` 读入，无则生成），所有 hook 都能拿到。
 
 ## Sentry / Datadog / OTel —— 一行接入
 

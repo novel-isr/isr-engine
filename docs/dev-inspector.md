@@ -83,7 +83,7 @@ curl -sS -D - 'http://localhost:3000/?mode=isr' -o /dev/null
 
 Inspector 显示 `content-language · x-i18n-source`。
 
-- `admin`：本次请求字典来自 admin/API 远端下发
+- `remote`：本次请求字典来自 API 远端下发
 - `local-fallback`：远端不可用或未配置时，业务自己的本地 fallback 生效
 - `-`：项目未返回来源字段
 

@@ -1,9 +1,9 @@
 /**
  * defineSiteHooks —— 高阶 FaaS hooks 工厂（声明式配置 → 完整 ServerEntryHooks）
  *
- * 让用户的 src/entry.server.tsx 收紧到「一个 export default + 一个声明式对象」。
- * 部署/平台配置（api/site/redis/sentry/rateLimit/experiments）放 ssr.config.ts
- * 的 runtime 字段；entry.server.tsx 只保留请求期 hooks 和 loader。
+ * 让用户的 src/entry.server.tsx 收紧到「只写请求期 hooks」。
+ * 部署/平台配置（api/site/redis/sentry/rateLimit/experiments/i18n/seo）放
+ * ssr.config.ts 的 runtime 字段；entry.server.tsx 只保留 beforeRequest / onError。
  * 内部固化：
  *   - i18n 字典缓存（createCachedFetcher: TTL/SWR/dedup/fallback）
  *   - SEO 路由表 pattern → resolver
@@ -13,9 +13,10 @@
  *
  * 用户态写法（商业项目推荐）：
  *   import { defineAdminSiteHooks } from '@novel-isr/engine/site-hooks';
- *   import baseline from './config/site-baseline.json';
  *
- *   export default defineAdminSiteHooks({ baseline });
+ *   export default defineAdminSiteHooks({
+ *     beforeRequest: req => ({ tenantId: req.headers.get('x-tenant-id') ?? 'public' }),
+ *   });
  */
 import { createCachedFetcher } from './createCachedFetcher';
 import type { IntlPayload, PageSeoMeta } from './seo-runtime';
@@ -47,7 +48,7 @@ export interface CreateAdminIntlLoaderOptions {
   endpoint?: string;
   /** 显式覆盖远端 origin；不传时使用 ssr.config.ts runtime.services.i18n/api */
   baseUrl?: RuntimeServiceBase;
-  /** 本地兜底字典，通常来自业务自己的 site-baseline.json */
+  /** 本地兜底字典，通常来自 ssr.config.ts runtime.i18n.fallbackLocal */
   fallbackMessages?: IntlMessagesByLocale;
   /** 远端和本地都无法命中时使用的 locale */
   defaultLocale?: string;
@@ -69,33 +70,22 @@ export interface CreateAdminSeoLoaderOptions {
   endpoint?: string;
   /** 显式覆盖远端 origin；不传时使用 ssr.config.ts runtime.services.seo/api */
   baseUrl?: RuntimeServiceBase;
-  /** 本地兜底 SEO 条目，通常来自业务自己的 site-baseline.json */
+  /** 本地兜底 SEO 条目，通常来自 ssr.config.ts runtime.seo.fallbackLocal */
   fallbackEntries?: readonly AdminSeoFallbackEntry[];
   /** 远端请求超时，默认 1200ms */
   timeoutMs?: number;
 }
 
-export interface AdminSiteBaseline {
-  site: {
-    defaultLocale: string;
-    locales: readonly string[];
-  };
-  i18n?: {
-    strings?: IntlMessagesByLocale;
-  };
-  seo?: {
-    entries?: readonly Record<string, unknown>[];
-  };
-}
-
 export interface DefineAdminSiteHooksOptions {
-  baseline: AdminSiteBaseline;
-  intl?: {
+  i18n?: {
+    locales?: readonly string[];
+    defaultLocale?: string;
     endpoint?: string;
     ttl?: number;
     prefixDefault?: boolean;
     detect?: IntlConfig['detect'];
     baseUrl?: RuntimeServiceBase;
+    fallbackLocal?: IntlMessagesByLocale;
     timeoutMs?: number;
     remoteSource?: string;
     fallbackSource?: string;
@@ -104,6 +94,7 @@ export interface DefineAdminSiteHooksOptions {
     endpoint?: string;
     ttl?: number;
     baseUrl?: RuntimeServiceBase;
+    fallbackLocal?: readonly Record<string, unknown>[];
     timeoutMs?: number;
   };
   beforeRequest?: SiteHooksConfig['beforeRequest'];
@@ -166,7 +157,7 @@ export interface SiteHooksConfig {
   seo?: Record<string, SeoEntry | (() => Promise<PageSeoMeta | null> | PageSeoMeta | null)>;
   /** 错误回调（默认 console.error 或 sentry.captureException）；自定义时覆盖 */
   onError?: (err: unknown, req: Request, ctx: { traceId: string; locale?: string }) => void;
-  /** 请求级 ctx 扩展（除 baseline + locale 之外的业务字段） */
+  /** 请求级 ctx 扩展（除 engine 基线字段 + locale 之外的业务字段） */
   beforeRequest?: (req: Request) => Record<string, unknown> | Promise<Record<string, unknown>>;
 }
 
@@ -252,39 +243,67 @@ export function createAdminSeoLoader(
   };
 }
 
-export function defineAdminSiteHooks(options: DefineAdminSiteHooksOptions): ServerHooksOutput {
-  const { baseline, intl = {}, seo = {}, beforeRequest, onError } = options;
-  return defineSiteHooks({
-    beforeRequest,
-    onError,
-    intl: {
-      locales: baseline.site.locales,
-      defaultLocale: baseline.site.defaultLocale,
-      prefixDefault: intl.prefixDefault,
-      detect: intl.detect,
-      load: createAdminIntlLoader({
-        endpoint: intl.endpoint,
-        baseUrl: intl.baseUrl,
-        fallbackMessages: baseline.i18n?.strings ?? {},
-        defaultLocale: baseline.site.defaultLocale,
-        timeoutMs: intl.timeoutMs,
-        remoteSource: intl.remoteSource,
-        fallbackSource: intl.fallbackSource,
-      }),
-      ttl: intl.ttl ?? 60_000,
-    },
-    seo: {
-      '/*': {
-        load: createAdminSeoLoader({
-          endpoint: seo.endpoint,
-          baseUrl: seo.baseUrl,
-          fallbackEntries: normalizeAdminSeoFallbackEntries(baseline.seo?.entries),
-          timeoutMs: seo.timeoutMs,
+export function defineAdminSiteHooks(options: DefineAdminSiteHooksOptions = {}): ServerHooksOutput {
+  return createAdminSiteHooks(options, {});
+}
+
+function createAdminSiteHooks(
+  options: DefineAdminSiteHooksOptions,
+  runtime: SiteRuntimeConfig
+): ServerHooksOutput {
+  const runtimeI18n = runtime.i18n ?? {};
+  const runtimeSeo = runtime.seo ?? {};
+  const i18n = options.i18n ?? {};
+  const seo = options.seo ?? {};
+  const fallbackMessages = i18n.fallbackLocal ?? runtimeI18n.fallbackLocal ?? {};
+  const locales =
+    i18n.locales ??
+    runtimeI18n.locales ??
+    (Object.keys(fallbackMessages).length > 0 ? Object.keys(fallbackMessages) : ['en']);
+  const defaultLocale = i18n.defaultLocale ?? runtimeI18n.defaultLocale ?? locales[0] ?? 'en';
+
+  const output = createSiteHooks(
+    {
+      beforeRequest: options.beforeRequest,
+      onError: options.onError,
+      intl: {
+        locales,
+        defaultLocale,
+        prefixDefault: i18n.prefixDefault ?? runtimeI18n.prefixDefault,
+        detect: i18n.detect,
+        load: createAdminIntlLoader({
+          endpoint: i18n.endpoint ?? runtimeI18n.endpoint,
+          baseUrl: i18n.baseUrl,
+          fallbackMessages,
+          defaultLocale,
+          timeoutMs: i18n.timeoutMs ?? runtimeI18n.timeoutMs,
+          remoteSource: i18n.remoteSource ?? runtimeI18n.remoteSource,
+          fallbackSource: i18n.fallbackSource ?? runtimeI18n.fallbackSource,
         }),
-        ttl: seo.ttl ?? 60_000,
+        ttl: i18n.ttl ?? runtimeI18n.ttl ?? 60_000,
+      },
+      seo: {
+        '/*': {
+          load: createAdminSeoLoader({
+            endpoint: seo.endpoint ?? runtimeSeo.endpoint,
+            baseUrl: seo.baseUrl,
+            fallbackEntries: normalizeAdminSeoFallbackEntries(
+              seo.fallbackLocal ?? runtimeSeo.fallbackLocal
+            ),
+            timeoutMs: seo.timeoutMs ?? runtimeSeo.timeoutMs,
+          }),
+          ttl: seo.ttl ?? runtimeSeo.ttl ?? 60_000,
+        },
       },
     },
+    runtime
+  );
+  Object.defineProperty(output, '__configureRuntime', {
+    enumerable: false,
+    configurable: true,
+    value: (nextRuntime: SiteRuntimeConfig) => createAdminSiteHooks(options, nextRuntime),
   });
+  return output;
 }
 
 export interface ServerHooksOutput {
@@ -299,7 +318,7 @@ export interface ServerHooksOutput {
   intl?: IntlConfig;
   beforeRequest: (
     req: Request,
-    baseline: { traceId: string; startedAt: number }
+    engineCtx: { traceId: string; startedAt: number }
   ) => Promise<Record<string, unknown>>;
   loadIntl: (req: Request) => Promise<IntlPayload | null>;
   loadSeoMeta: (req: Request) => Promise<PageSeoMeta | null>;
@@ -324,12 +343,44 @@ export function applyRuntimeToServerHooks<T extends object>(
   const baseHooks = hooks as T & {
     siteBaseUrl?: string;
     apiBaseUrl?: string;
+    intl?: unknown;
+    loadIntl?: unknown;
+    loadSeoMeta?: unknown;
+    beforeRequest?: SiteHooksConfig['beforeRequest'];
+    onError?: SiteHooksConfig['onError'];
   };
   const services = resolveRuntimeServices(runtime);
+  const siteBaseUrl = baseHooks.siteBaseUrl ?? runtime.site;
+  const apiBaseUrl = baseHooks.apiBaseUrl ?? services.api;
+  const hasUserContentHooks =
+    !!baseHooks.intl ||
+    typeof baseHooks.loadIntl === 'function' ||
+    typeof baseHooks.loadSeoMeta === 'function';
+
+  if (!hasUserContentHooks && hasRuntimeContentConfig(runtime)) {
+    const runtimeHooks = createAdminSiteHooks(
+      {
+        beforeRequest: baseHooks.beforeRequest,
+        onError: baseHooks.onError,
+      },
+      runtime
+    );
+    return {
+      ...hooks,
+      siteBaseUrl,
+      apiBaseUrl,
+      intl: runtimeHooks.intl,
+      beforeRequest: runtimeHooks.beforeRequest,
+      loadIntl: runtimeHooks.loadIntl,
+      loadSeoMeta: runtimeHooks.loadSeoMeta,
+      onError: runtimeHooks.onError,
+    } as T;
+  }
+
   return {
     ...hooks,
-    siteBaseUrl: baseHooks.siteBaseUrl ?? runtime.site,
-    apiBaseUrl: baseHooks.apiBaseUrl ?? services.api,
+    siteBaseUrl,
+    apiBaseUrl,
   } as T;
 }
 
@@ -492,7 +543,7 @@ function createSiteHooks(config: SiteHooksConfig, runtime: SiteRuntimeConfig): S
     siteBaseUrl: site || undefined,
     apiBaseUrl: api || undefined,
     intl: config.intl,
-    async beforeRequest(req, _baseline) {
+    async beforeRequest(req, _engineCtx) {
       const locale = detectLocale(req);
       const userExt = config.beforeRequest ? await config.beforeRequest(req) : {};
       return { locale, ...userExt };
@@ -516,6 +567,7 @@ function createSiteHooks(config: SiteHooksConfig, runtime: SiteRuntimeConfig): S
   };
   Object.defineProperty(output, '__configureRuntime', {
     enumerable: false,
+    configurable: true,
     value: (nextRuntime: SiteRuntimeConfig) => createSiteHooks(config, nextRuntime),
   });
   return output;
@@ -648,6 +700,15 @@ function resolveRuntimeServices(runtime: SiteRuntimeConfig): RuntimeServices {
     i18n: services.i18n ?? api,
     seo: services.seo ?? api,
   };
+}
+
+function hasRuntimeContentConfig(runtime: SiteRuntimeConfig): boolean {
+  return !!(
+    runtime.i18n?.endpoint ||
+    runtime.i18n?.fallbackLocal ||
+    runtime.seo?.endpoint ||
+    runtime.seo?.fallbackLocal
+  );
 }
 
 function normalizePathname(pathname: string): string {

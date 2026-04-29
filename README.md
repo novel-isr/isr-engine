@@ -24,7 +24,7 @@ pnpm add @novel-isr/engine react react-dom react-server-dom-webpack rsc-html-str
 pnpm add -D vite typescript @types/react @types/react-dom
 ```
 
-生产推荐接入（含单 routes、admin/API i18n 与 SEO 下发）：
+生产推荐接入（含单 routes、API i18n 与 SEO 下发）：
 
 ```ts
 // vite.config.ts
@@ -79,6 +79,7 @@ export function App({ url }: { url: URL }) {
 ```ts
 // ssr.config.ts —— 启动期 / 部署期 / 平台级配置
 import type { ISRConfig } from '@novel-isr/engine';
+import fallbackLocal from './src/config/site-fallback-local.json';
 
 export const runtime = {
   site: process.env.SEO_BASE_URL ?? 'http://localhost:3000',
@@ -92,6 +93,18 @@ export const runtime = {
   rateLimit: { windowMs: 60_000, max: 200 },
   experiments: {
     'hero-style': { variants: ['classic', 'bold'], weights: [50, 50] },
+  },
+  i18n: {
+    locales: fallbackLocal.site.locales,
+    defaultLocale: fallbackLocal.site.defaultLocale,
+    endpoint: '/api/i18n/{locale}/manifest',
+    fallbackLocal: fallbackLocal.i18n.strings,
+    ttl: 60_000,
+  },
+  seo: {
+    endpoint: '/api/seo?path={pathname}',
+    fallbackLocal: fallbackLocal.seo.entries,
+    ttl: 60_000,
   },
 } satisfies NonNullable<ISRConfig['runtime']>;
 
@@ -111,14 +124,13 @@ export default {
 ```
 
 ```ts
-// src/entry.server.ts —— 请求期 hooks：如何加载 i18n / SEO / request ctx
+// src/entry.server.ts —— 请求期 hooks：用户、租户、灰度、错误上报
 import { defineAdminSiteHooks } from '@novel-isr/engine/site-hooks';
-import baseline from './config/site-baseline.json';
 
 export default defineAdminSiteHooks({
-  baseline,
-  intl: { ttl: 60_000 },
-  seo: { ttl: 60_000 },
+  beforeRequest: req => ({
+    tenantId: req.headers.get('x-tenant-id') ?? 'public',
+  }),
 });
 ```
 
@@ -157,7 +169,7 @@ export default {
 │    • ISR 缓存（LRU + SWR + 标签失效）                 │
 │    • SSG spider（构建期预生成）                       │
 │    • SEO sitemap / robots / OG image                  │
-│    • page-level SEO + admin/API SEO 下发              │
+│    • page-level SEO + API SEO 下发                    │
 │    • i18n URL 路由 + 字典缓存 + getI18n()              │
 │    • A/B 实验、限流                                    │
 │    • csr-shell fallback（server 崩溃自救）            │
@@ -266,7 +278,7 @@ export const { routes } = defineRoutes({
 });
 ```
 
-### Page SEO：页面声明默认值，admin/API 可覆盖
+### Page SEO：页面声明默认值，API 可覆盖
 
 页面模块可以导出静态 `seo` 或动态 `seo(ctx)` / `generateSeo(ctx)`。Engine 会在 server entry 里先加载 i18n，再解析 page SEO，因此页面 SEO 里可以直接调用 `getI18n()`。
 
@@ -289,53 +301,15 @@ export default async function BookDetailPage() {
 }
 ```
 
-`defineSiteHooks({ seo })` 用来接 admin / CMS / API 下发的 SEO。`site/services/redis/sentry/rateLimit/experiments`
-这类平台配置只放在 `ssr.config.ts` 的 `runtime`，engine 会把 `runtime.site/services`
-注入到默认 server entry；业务的 `entry.server.tsx` 只声明请求期 loader。推荐商业项目用
-`/*` 统一下发，按 `pathname` 决策：
-
-```ts
-import { createAdminSeoLoader, defineSiteHooks } from '@novel-isr/engine/site-hooks';
-import baseline from './config/site-baseline.json';
-
-export default defineSiteHooks({
-  seo: {
-    '/*': {
-      load: createAdminSeoLoader({
-        endpoint: '/api/seo?path={pathname}',
-        fallbackEntries: baseline.seo.entries,
-        // baseUrl: 'https://seo.example.com', // 可选；默认使用 runtime.services.seo/api
-      }),
-      ttl: 60_000,
-    },
-  },
-});
-```
+`runtime.seo` 用来接 API / CMS 下发的 SEO：`endpoint`、`ttl`、`fallbackLocal`
+都放在 `ssr.config.ts`。`entry.server.tsx` 不再承载 SEO 数据源配置。
 
 合并顺序：`page seo` 提供页面默认值，`SiteHooks seo` 提供远端覆盖值；最终 `<title>`、`meta`、canonical、Open Graph、JSON-LD 都由 engine 注入到 SSR HTML 的 `<head>`，业务组件里不需要手写 `<title>` / `<meta>`。
 
 ### i18n：服务端拉取一次，RSC payload 复用
 
-商业项目推荐由 admin/API 下发字典：
-
-```ts
-import { createAdminIntlLoader, defineSiteHooks } from '@novel-isr/engine/site-hooks';
-import baseline from './config/site-baseline.json';
-
-export default defineSiteHooks({
-  intl: {
-    locales: ['zh-CN', 'en'],
-    defaultLocale: 'zh-CN',
-    load: createAdminIntlLoader({
-      endpoint: '/api/i18n/{locale}/manifest',
-      fallbackMessages: baseline.i18n.strings,
-      defaultLocale: baseline.site.defaultLocale,
-      // baseUrl: 'https://i18n.example.com', // 可选；默认使用 runtime.services.i18n/api
-    }),
-    ttl: 60_000,
-  },
-});
-```
+商业项目推荐由 API 下发字典。`runtime.i18n` 统一声明 `locales`、`defaultLocale`、
+`endpoint`、`ttl`、`fallbackLocal`；engine 会生成请求期 loader，页面不需要写 Provider。
 
 业务侧统一用 `getI18n(key, params?, fallback?)`，不需要手写 Provider。
 

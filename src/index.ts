@@ -27,7 +27,7 @@ export { startAppServer, shutdownServer } from './server/manager';
 export { ManifestLoader } from './manifest/ManifestLoader';
 
 // ========== 请求上下文 ==========
-export { requestContext } from './context/RequestContext';
+export { requestContext, getRequestContext } from './context/RequestContext';
 
 // ========== 类型 ==========
 export * from './types/index';
@@ -102,7 +102,6 @@ export {
   defineSiteHooks,
 } from './defaults/runtime/defineSiteHooks';
 export type {
-  AdminSiteBaseline,
   AdminSeoFallbackEntry,
   CreateAdminIntlLoaderOptions,
   CreateAdminSeoLoaderOptions,

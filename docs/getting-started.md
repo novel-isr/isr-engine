@@ -61,6 +61,7 @@ export const { routes } = defineRoutes({
 
 ```ts
 import type { ISRConfig } from '@novel-isr/engine';
+import fallbackLocal from './src/config/site-fallback-local.json';
 
 export const runtime = {
   site: process.env.SEO_BASE_URL ?? 'http://localhost:3000',
@@ -72,6 +73,18 @@ export const runtime = {
   redis: process.env.REDIS_URL ? { url: process.env.REDIS_URL, keyPrefix: 'isr:' } : undefined,
   sentry: process.env.SENTRY_DSN ? { dsn: process.env.SENTRY_DSN } : undefined,
   rateLimit: { windowMs: 60_000, max: 200 },
+  i18n: {
+    locales: fallbackLocal.site.locales,
+    defaultLocale: fallbackLocal.site.defaultLocale,
+    endpoint: '/api/i18n/{locale}/manifest',
+    fallbackLocal: fallbackLocal.i18n.strings,
+    ttl: 60_000,
+  },
+  seo: {
+    endpoint: '/api/seo?path={pathname}',
+    fallbackLocal: fallbackLocal.seo.entries,
+    ttl: 60_000,
+  },
 } satisfies NonNullable<ISRConfig['runtime']>;
 
 export default {
@@ -95,17 +108,16 @@ export default {
 
 ```ts
 import { defineAdminSiteHooks } from '@novel-isr/engine/site-hooks';
-import baseline from './config/site-baseline.json';
 
 export default defineAdminSiteHooks({
-  baseline,
-  intl: { ttl: 60_000 },
-  seo: { ttl: 60_000 },
+  beforeRequest: req => ({
+    tenantId: req.headers.get('x-tenant-id') ?? 'public',
+  }),
 });
 ```
 
-`entry.server.ts` 只描述如何在请求期加载 i18n / SEO / request context。`site` 和
-`services` 只写在 `ssr.config.ts` 的 `runtime`，engine 会注入到默认 server entry，
+`runtime.i18n` / `runtime.seo` 描述如何加载 i18n / SEO。`entry.server.ts` 只保留
+request context 和错误处理。`site` 和 `services` 只写在 `ssr.config.ts` 的 `runtime`，engine 会注入到默认 server entry，
 避免同一项配置散落多处。i18n 字典和 SEO 都可以远程下发，engine 会做 TTL / SWR / 并发去重缓存。
 
 ## 7. `src/app.tsx` —— App shell
@@ -221,7 +233,7 @@ export const runtime = {
 完整字段说明：[site-hooks.md](./site-hooks.md)。Redis、Sentry、限流、A/B 只写在
 `ssr.config.ts runtime`，不要写进 `entry.server.ts`。
 
-页面模块可以声明默认 SEO，admin/API 下发值会覆盖：
+页面模块可以声明默认 SEO，API 下发值会覆盖：
 
 ```tsx
 import { getI18n } from '@novel-isr/engine/runtime';
