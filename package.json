@@ -26,6 +26,7 @@
     "src/defaults",
     "src/runtime",
     "src/types",
+    "src/utils",
     "README.md",
     "CHANGELOG.md"
   ],

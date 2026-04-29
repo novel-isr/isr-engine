@@ -3,7 +3,7 @@
 成熟项目建议把配置分成两层：
 
 - `ssr.config.ts`：启动期 / 部署期 / 平台级配置，例如 `runtime.site`、`runtime.services`、`runtime.i18n`、`runtime.seo`、Redis、Sentry、限流、A/B 实验、路由渲染模式。
-- `src/entry.server.tsx`：请求期 hooks，例如用户、租户、灰度上下文、`beforeRequest`、`onResponse`、`onError`。
+- `src/entry.server.tsx`：请求期 hooks，例如用户、租户、灰度上下文、`beforeRequest`、`onError`。
 
 第一性原则是：会影响整个运行时拓扑的东西放配置文件；会依赖本次请求的东西放 server entry。
 
@@ -58,12 +58,16 @@ export default {
 
 ```tsx
 // src/entry.server.tsx
-import { defineAdminSiteHooks } from '@novel-isr/engine/site-hooks';
+import { defineAdminSiteHooks, readCookie } from '@novel-isr/engine/site-hooks';
 
 export default defineAdminSiteHooks({
   beforeRequest: req => ({
+    userId: req.headers.get('x-user-id') ?? readCookie(req, 'uid') ?? undefined,
     tenantId: req.headers.get('x-tenant-id') ?? 'public',
   }),
+  onError: (err, req, ctx) => {
+    console.error('[render error]', { traceId: ctx.traceId, url: req.url, err });
+  },
 });
 ```
 
@@ -141,16 +145,13 @@ export async function seo({ params }: { params: { id: string } }) {
 
 合并顺序：页面 SEO 是代码默认值，SiteHooks SEO 是上游覆盖值。用户不需要在组件里写 `<title>` / `<meta>`。
 
-## `beforeRequest` / `onResponse` / `onError`
+## `beforeRequest` / `onError`
 
 ```ts
 beforeRequest: async req => ({
-  user: parseJwt(req.headers.get('authorization')),
+  userId: req.headers.get('x-user-id') ?? readCookie(req, 'uid') ?? undefined,
   tenantId: req.headers.get('x-tenant-id') ?? 'public',
 }),
-onResponse: async (res, ctx) => {
-  res.headers.set('x-trace-id', ctx.traceId);
-},
 onError: async (err, req, ctx) => {
   console.error('[render error]', { traceId: ctx.traceId, url: req.url, err });
 },
@@ -159,6 +160,10 @@ onError: async (err, req, ctx) => {
 `beforeRequest` 返回值会和 engine 基线 context 合并，并同步进 RequestContext。
 Server Component 可用 `getRequestContext()` 读取用户、租户等请求级信息。`onError`
 不要返回 `Response`，兜底策略由 engine 统一处理。
+
+`readCookie()` 由 engine 提供，兼容 Web `Request` 和 Node/Express header record。
+业务不要自己写正则解析 cookie，避免在 SSR、dev server、middleware 和测试环境之间
+出现不一致。
 
 ## Client Entry
 

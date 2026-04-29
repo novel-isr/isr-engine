@@ -124,13 +124,17 @@ export default {
 ```
 
 ```ts
-// src/entry.server.ts —— 请求期 hooks：用户、租户、灰度、错误上报
-import { defineAdminSiteHooks } from '@novel-isr/engine/site-hooks';
+// src/entry.server.ts —— 可选：只放请求期 hooks，例如用户、租户、分层、错误上报
+import { defineAdminSiteHooks, readCookie } from '@novel-isr/engine/site-hooks';
 
 export default defineAdminSiteHooks({
   beforeRequest: req => ({
+    userId: req.headers.get('x-user-id') ?? readCookie(req, 'uid') ?? undefined,
     tenantId: req.headers.get('x-tenant-id') ?? 'public',
   }),
+  onError: (err, req, ctx) => {
+    console.error('[render error]', { traceId: ctx.traceId, url: req.url, err });
+  },
 });
 ```
 
@@ -157,7 +161,7 @@ export default {
 │    src/app.tsx                ← App shell + routes 调用 │
 │    src/pages/, components/    ← 业务组件               │
 │    src/actions/               ← Server Actions         │
-│    src/entry.server.tsx       ← (可选) SiteHooks 配置   │
+│    src/entry.server.tsx       ← (可选) 请求期 hooks     │
 │    ssr.config.ts              ← (可选) 路由级渲染模式  │
 └──────────────────────┬───────────────────────────────┘
                        │
@@ -182,7 +186,7 @@ export default {
 **真正甩开 Next.js 的优势**：
 - Vite 8 dev HMR（不是 Webpack/Turbopack）
 - 单 Express 进程，可 hack 中间件链
-- SEO 在 page export + SiteHooks 里分层收口，不散落到组件渲染树
+- SEO 在 page export + runtime.seo 下发层分层收口，不散落到组件渲染树
 - L1+L2 hybrid cache（进程内 LRU + 可选 Redis 写穿）
 - A/B 变体、限流内建
 - 显式 `RenderModeType = 'ssg' | 'isr' | 'ssr'`，不靠隐式 segment config
@@ -302,7 +306,8 @@ export default async function BookDetailPage() {
 ```
 
 `runtime.seo` 用来接 API / CMS 下发的 SEO：`endpoint`、`ttl`、`fallbackLocal`
-都放在 `ssr.config.ts`。`entry.server.tsx` 不再承载 SEO 数据源配置。
+都放在 `ssr.config.ts`。`entry.server.tsx` 不承载 SEO 数据源配置，只负责本次请求的
+用户、租户、分层和错误上报。
 
 合并顺序：`page seo` 提供页面默认值，`SiteHooks seo` 提供远端覆盖值；最终 `<title>`、`meta`、canonical、Open Graph、JSON-LD 都由 engine 注入到 SSR HTML 的 `<head>`，业务组件里不需要手写 `<title>` / `<meta>`。
 
@@ -352,7 +357,7 @@ getI18n('book.count', { count: 12 }); // 字典里写 "共 {count} 本书"
 | 构建栈灵活度 | ❌ 绑死自家栈 | ✅ Vite | ❌ 绑死自家栈 | ✅ Vite |
 | 内置图片 / 字体优化 | ✅ | ❌ | ⚠️ | ✅ |
 | Edge runtime 支持 | ✅ | ⚠️ | ❌ | ✅（CF / Vercel adapter；Deno / Bun 走原生 `{fetch}`） |
-| 单元测试覆盖 | 数千用例 | ⚠️ | ✅ | 38 文件 / 551 tests / ~50% |
+| 单元测试覆盖 | 数千用例 | ⚠️ | ✅ | 44 文件 / 564 tests / ~50% |
 
 定位：**中等规模业务的 ISR / SSG / Fallback 编排层**，构建于 React 19 + `@vitejs/plugin-rsc` 官方流水线之上。
 
@@ -366,7 +371,7 @@ v2.3.1 收口了消费侧首跑 0 配置 + express 5 + 入口架构清理。但*
 ✅ **稳的部分**：
 - Flight 协议委托给官方 `@vitejs/plugin-rsc@^0.5.24`，不自维护
 - 依赖全是工业级（Express 5 / Helmet / Prometheus / sitemap / lru-cache / ioredis）
-- 551 tests / ~50% 覆盖；CI 任何分支 push 都跑 lint+typecheck+test
+- 564 tests / ~50% 覆盖；CI 任何分支 push 都跑 lint+typecheck+test
 - bench 退化追踪走 nightly `bench.yml`（信息性输出，不 gate release）
 - GitHub Packages 发布有 3 段 gate（lint+test+build），任一失败 → 不发布
 - 安全硬化覆盖了 Set-Cookie 跨用户回放、SSG 路径穿越、Redis Buffer 破损、

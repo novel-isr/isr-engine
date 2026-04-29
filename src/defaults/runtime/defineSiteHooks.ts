@@ -21,6 +21,9 @@
 import { createCachedFetcher } from './createCachedFetcher';
 import type { IntlPayload, PageSeoMeta } from './seo-runtime';
 import type { ISRConfig } from '../../types';
+import { readCookie } from '../../utils/cookie';
+
+export { getCookieHeader, parseCookieHeader, readCookie } from '../../utils/cookie';
 
 export type SiteRuntimeConfig = NonNullable<ISRConfig['runtime']>;
 
@@ -414,12 +417,11 @@ function createSiteHooks(config: SiteHooksConfig, runtime: SiteRuntimeConfig): S
   const detectLocale =
     intlCfg.detect ??
     ((req: Request): string => {
-      const cookie = req.headers.get('cookie')?.match(/(?:^|;\s*)locale=([^;]+)/)?.[1];
-      if (cookie) {
-        const decoded = decodeURIComponent(cookie);
+      const localeCookie = readCookie(req, 'locale');
+      if (localeCookie) {
         return supportedLocales
-          ? normalizeLocale(decoded, supportedLocales, fallbackLocale)
-          : decoded;
+          ? normalizeLocale(localeCookie, supportedLocales, fallbackLocale)
+          : localeCookie;
       }
       const accept = req.headers.get('accept-language') ?? '';
       return supportedLocales

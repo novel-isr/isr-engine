@@ -52,6 +52,7 @@ import { resolveAdminConfig, createAdminAuthMiddleware } from '@/server/adminCon
 import { stripRscClientReferenceCacheSuffix } from './devAssetRequestMiddleware';
 import { createAutoCacheStore } from '@/cache/createAutoCacheStore';
 import { RedisInvalidationBus } from '@/cache/RedisInvalidationBus';
+import { readCookie } from '@/utils/cookie';
 
 const logger = Logger.getInstance();
 
@@ -1180,12 +1181,8 @@ function normalizeQuery(query: string): string {
 }
 
 function extractVariantDigest(req: IncomingMessage, cookieName: string): string | null {
-  const cookieHeader = req.headers.cookie;
-  if (!cookieHeader) return null;
-  const escaped = cookieName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-  const match = cookieHeader.match(new RegExp(`(?:^|;\\s*)${escaped}=([^;]+)`));
-  if (!match) return null;
-  return fnv1a(decodeURIComponent(match[1]));
+  const value = readCookie(req, cookieName);
+  return value ? fnv1a(value) : null;
 }
 
 /** 32-bit FNV-1a hash；返回 base36 字符串。无 crypto 依赖，稳定、快速 */

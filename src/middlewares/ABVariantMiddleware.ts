@@ -38,6 +38,7 @@
  */
 import type { Request, Response, NextFunction } from 'express';
 import { getRequestContext } from '../context/RequestContext';
+import { readCookie } from '../utils/cookie';
 
 export { getVariant } from './abVariantContext';
 
@@ -92,9 +93,8 @@ export function createABVariantMiddleware(options: ABVariantOptions) {
   const { experiments, cookieName = 'ab', cookieMaxAge = 30 * 86400_000, assigner } = options;
 
   return function abMiddleware(req: Request, res: Response, next: NextFunction): void {
-    const cookieHeader = req.headers.cookie ?? '';
-    const cookieMatch = cookieHeader.match(new RegExp(`(?:^|;\\s*)${cookieName}=([^;]+)`));
-    const existing = cookieMatch ? parseCookie(decodeURIComponent(cookieMatch[1])) : {};
+    const existingRaw = readCookie(req, cookieName);
+    const existing = existingRaw ? parseCookie(existingRaw) : {};
     const assignments: Record<string, string> = { ...existing };
 
     let mutated = false;

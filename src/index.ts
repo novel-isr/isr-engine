@@ -149,6 +149,12 @@ export type {
 // ========== 工具 ==========
 export { Logger } from '@/logger/Logger';
 export { CacheCleanup } from '@/utils/CacheCleanup';
+export {
+  getCookieHeader,
+  parseCookieHeader,
+  readCookie,
+  type CookieHeaderSource,
+} from '@/utils/cookie';
 
 // ========== 项目发现（仅路由扫描 —— "use client"/"use server" 指令由 plugin-rsc 识别） ==========
 export {
