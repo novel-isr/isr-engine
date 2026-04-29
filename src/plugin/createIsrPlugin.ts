@@ -368,6 +368,9 @@ function createAppAliasPlugin(root: string): Plugin {
         // "does not provide an export named 'default'/'jsxDEV'"。
         // 显式声明这些依赖必须 pre-bundle，业务侧零配置。
         optimizeDeps: {
+          // RSC dev 没有传统 index.html 入口；显式扫描业务 src，避免首屏才发现
+          // client package proxy 依赖并触发动态 import 竞态。
+          entries: ['src/**/*.{js,jsx,ts,tsx}'],
           include: [
             'react',
             'react/jsx-runtime',
