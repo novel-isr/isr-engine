@@ -27,6 +27,7 @@
       "types": "./dist/index.d.ts"
     },
     "./rsc": {
+      "browser": "./dist/rsc/browser.js",
       "import": "./dist/rsc/index.js",
       "require": "./dist/rsc/index.cjs",
       "types": "./dist/rsc/index.d.ts"

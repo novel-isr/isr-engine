@@ -25,6 +25,7 @@ export default defineConfig({
         // 独立 rsc 子入口 —— 仅包含 RSC 环境安全的导出（revalidatePath/revalidateTag
         // / server action registry），不含 react-dom/server 等 Node-only 模块
         'rsc/index': resolve(__dirname, 'src/rsc/index.ts'),
+        'rsc/browser': resolve(__dirname, 'src/rsc/browser.ts'),
         // 可观测性 SDK 预制 adapter 子路径 —— 树摇友好（用户只引 Sentry 时不会拉 Datadog）
         'adapters/observability/index': resolve(__dirname, 'src/adapters/observability/index.ts'),
         // Edge runtime adapter（CF Workers / Vercel Edge；Deno / Bun 走原生 `{fetch}`）
