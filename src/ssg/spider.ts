@@ -416,12 +416,11 @@ function entryMode(entry: RouteEntry): string {
 
 /**
  * 从 ISRConfig 中提取 SSG 路由列表
- *   优先级：ssg.routes > routes/routeOverrides (mode=ssg)
+ *   优先级：ssg.routes > routes (mode=ssg)
  */
 export async function extractSsgRoutes(config: {
   ssg?: { routes?: SsgRoutesSource };
   routes?: Record<string, RouteEntry>;
-  routeOverrides?: Record<string, RouteEntry>;
 }): Promise<string[]> {
   const ssgConf = config.ssg?.routes;
   if (ssgConf) {
@@ -429,7 +428,7 @@ export async function extractSsgRoutes(config: {
     return Array.from(value);
   }
 
-  const source = config.routeOverrides ?? config.routes ?? {};
+  const source = config.routes ?? {};
   const ssgRoutes: string[] = [];
   for (const [pathValue, entry] of Object.entries(source)) {
     if (entryMode(entry) === 'ssg' && !pathValue.includes('*')) {

@@ -19,7 +19,7 @@ import { extractRoutesForSitemap, nodeToWebRequest, pipeWebResponse } from '../s
 describe('extractRoutesForSitemap —— 路由筛选', () => {
   it('返回静态路由 + 跳过通配符 / 动态参数 / 内部 / API', () => {
     const result = extractRoutesForSitemap({
-      routeOverrides: {
+      routes: {
         '/': 'isr',
         '/about': 'ssg',
         '/contact': 'ssg',
@@ -32,15 +32,7 @@ describe('extractRoutesForSitemap —— 路由筛选', () => {
     expect(result.sort()).toEqual(['/', '/about', '/contact']);
   });
 
-  it('routeOverrides 优先于 routes 别名', () => {
-    const result = extractRoutesForSitemap({
-      routeOverrides: { '/new': 'isr' },
-      routes: { '/old': 'isr' },
-    });
-    expect(result).toEqual(['/new']);
-  });
-
-  it('无 routeOverrides 时退到 routes 别名', () => {
+  it('读取 routes 字段', () => {
     const result = extractRoutesForSitemap({
       routes: { '/legacy': 'isr', '/about': 'ssg' },
     });
@@ -53,7 +45,7 @@ describe('extractRoutesForSitemap —— 路由筛选', () => {
 
   it('只有内部 / API / 通配 路由 → 空数组', () => {
     const result = extractRoutesForSitemap({
-      routeOverrides: {
+      routes: {
         '/api/x': 'ssr',
         '/__isr/clear': 'ssr',
         '/blog/*': 'isr',

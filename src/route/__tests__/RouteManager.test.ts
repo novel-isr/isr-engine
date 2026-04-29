@@ -27,7 +27,7 @@ describe('RouteManager —— 构造与默认值', () => {
   it('overrides 优先于 globalMode', () => {
     const rm = new RouteManager({
       renderMode: 'ssr',
-      routeOverrides: { '/about': 'ssg' },
+      routes: { '/about': 'ssg' },
     });
     expect(rm.getRenderMode('/about')).toBe('ssg');
     expect(rm.getRenderMode('/other')).toBe('ssr');
@@ -38,7 +38,7 @@ describe('RouteManager.getRenderMode —— 路径匹配', () => {
   it('精确匹配优先于通配', () => {
     const rm = new RouteManager({
       renderMode: 'isr',
-      routeOverrides: {
+      routes: {
         '/books/featured': 'ssg',
         '/books/*': 'ssr',
       },
@@ -50,7 +50,7 @@ describe('RouteManager.getRenderMode —— 路径匹配', () => {
   it('动态参数 :id 匹配', () => {
     const rm = new RouteManager({
       renderMode: 'isr',
-      routeOverrides: { '/users/:id': 'ssr' },
+      routes: { '/users/:id': 'ssr' },
     });
     expect(rm.getRenderMode('/users/42')).toBe('ssr');
     expect(rm.getRenderMode('/users')).toBe('isr'); // 段数不等不匹配
@@ -59,7 +59,7 @@ describe('RouteManager.getRenderMode —— 路径匹配', () => {
   it('未命中任何 override → 回 globalMode', () => {
     const rm = new RouteManager({
       renderMode: 'ssg',
-      routeOverrides: { '/admin/*': 'ssr' },
+      routes: { '/admin/*': 'ssr' },
     });
     expect(rm.getRenderMode('/contact')).toBe('ssg');
   });
@@ -67,7 +67,7 @@ describe('RouteManager.getRenderMode —— 路径匹配', () => {
   it('RouteRuleObject 形式（带 ttl/swr）也能拿到 mode', () => {
     const rm = new RouteManager({
       renderMode: 'ssr',
-      routeOverrides: {
+      routes: {
         '/cached/*': { mode: 'isr', ttl: 60, staleWhileRevalidate: 300 },
       },
     });
@@ -77,13 +77,13 @@ describe('RouteManager.getRenderMode —— 路径匹配', () => {
 
 describe('RouteManager.hasOverride', () => {
   it('精确匹配 → true', () => {
-    const rm = new RouteManager({ routeOverrides: { '/about': 'ssg' } });
+    const rm = new RouteManager({ routes: { '/about': 'ssg' } });
     expect(rm.hasOverride('/about')).toBe(true);
     expect(rm.hasOverride('/contact')).toBe(false);
   });
 
   it('通配符匹配 → true', () => {
-    const rm = new RouteManager({ routeOverrides: { '/api/*': 'ssr' } });
+    const rm = new RouteManager({ routes: { '/api/*': 'ssr' } });
     expect(rm.hasOverride('/api/health')).toBe(true);
     expect(rm.hasOverride('/api/v1/users')).toBe(true);
     expect(rm.hasOverride('/static')).toBe(false);
@@ -98,7 +98,7 @@ describe('RouteManager.hasOverride', () => {
 describe('RouteManager.getSSGRoutes', () => {
   it('只返回 mode=ssg 且无通配符 / 动态参数 的路由（适合预生成）', () => {
     const rm = new RouteManager({
-      routeOverrides: {
+      routes: {
         '/about': 'ssg', // ✓
         '/contact': 'ssg', // ✓
         '/blog/*': 'ssg', // ✗（通配符 spider 也无法解析）
@@ -112,14 +112,14 @@ describe('RouteManager.getSSGRoutes', () => {
 
   it('无 ssg 路由 → []', () => {
     const rm = new RouteManager({
-      routeOverrides: { '/api/*': 'ssr', '/x': 'isr' },
+      routes: { '/api/*': 'ssr', '/x': 'isr' },
     });
     expect(rm.getSSGRoutes()).toEqual([]);
   });
 
   it('RouteRuleObject 形态的 SSG 也识别', () => {
     const rm = new RouteManager({
-      routeOverrides: {
+      routes: {
         '/static/page': { mode: 'ssg' },
       },
     });
@@ -130,7 +130,7 @@ describe('RouteManager.getSSGRoutes', () => {
 describe('RouteManager.getISRRoutes', () => {
   it('只返回 mode=isr，附 revalidate (TTL) + priority', () => {
     const rm = new RouteManager({
-      routeOverrides: {
+      routes: {
         '/blog/*': { mode: 'isr', ttl: 600 },
         '/products/:id': { mode: 'isr', ttl: 1800 },
         '/static': 'ssg',
@@ -145,14 +145,14 @@ describe('RouteManager.getISRRoutes', () => {
 
   it('字符串 shorthand "isr" → 默认 ttl=3600', () => {
     const rm = new RouteManager({
-      routeOverrides: { '/blog': 'isr' },
+      routes: { '/blog': 'isr' },
     });
     expect(rm.getISRRoutes()['/blog']).toEqual({ revalidate: 3600, priority: 0.5 });
   });
 
   it('mode=isr 但 ttl 非 number → 默认 3600', () => {
     const rm = new RouteManager({
-      routeOverrides: {
+      routes: {
         '/x': { mode: 'isr' }, // 没传 ttl
       },
     });
@@ -163,14 +163,14 @@ describe('RouteManager.getISRRoutes', () => {
 describe('RouteManager.shouldCache', () => {
   it('isr / ssg → true', () => {
     const rm = new RouteManager({
-      routeOverrides: { '/cached': 'isr', '/static': 'ssg' },
+      routes: { '/cached': 'isr', '/static': 'ssg' },
     });
     expect(rm.shouldCache('/cached')).toBe(true);
     expect(rm.shouldCache('/static')).toBe(true);
   });
 
   it('ssr → false', () => {
-    const rm = new RouteManager({ routeOverrides: { '/login': 'ssr' } });
+    const rm = new RouteManager({ routes: { '/login': 'ssr' } });
     expect(rm.shouldCache('/login')).toBe(false);
   });
 
@@ -187,17 +187,17 @@ describe('RouteManager.getPriority —— sitemap.xml 用', () => {
   });
 
   it('SSG → 0.8（最稳定，可信赖）', () => {
-    const rm = new RouteManager({ routeOverrides: { '/about': 'ssg' } });
+    const rm = new RouteManager({ routes: { '/about': 'ssg' } });
     expect(rm.getPriority('/about')).toBe(0.8);
   });
 
   it('ISR → 0.6', () => {
-    const rm = new RouteManager({ routeOverrides: { '/blog': 'isr' } });
+    const rm = new RouteManager({ routes: { '/blog': 'isr' } });
     expect(rm.getPriority('/blog')).toBe(0.6);
   });
 
   it('SSR → 0.4（最低，频繁变化）', () => {
-    const rm = new RouteManager({ routeOverrides: { '/realtime': 'ssr' } });
+    const rm = new RouteManager({ routes: { '/realtime': 'ssr' } });
     expect(rm.getPriority('/realtime')).toBe(0.4);
   });
 });
@@ -205,7 +205,7 @@ describe('RouteManager.getPriority —— sitemap.xml 用', () => {
 describe('RouteManager.getChangeFreq —— sitemap changefreq 字段', () => {
   it('SSG → monthly / ISR → daily / SSR → hourly', () => {
     const rm = new RouteManager({
-      routeOverrides: {
+      routes: {
         '/static': 'ssg',
         '/blog': 'isr',
         '/live': 'ssr',
@@ -221,7 +221,7 @@ describe('RouteManager.getStats —— 监控用', () => {
   it('返回完整统计：globalMode + 各模式数量', () => {
     const rm = new RouteManager({
       renderMode: 'isr',
-      routeOverrides: {
+      routes: {
         '/about': 'ssg',
         '/contact': 'ssg',
         '/api/*': 'ssr',

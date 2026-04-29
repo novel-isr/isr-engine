@@ -143,12 +143,6 @@ export interface ISRConfig {
   renderMode: RenderModeType;
 
   /**
-   * 兼容别名：等同于 renderMode
-   * 消费端可使用 mode 代替 renderMode
-   */
-  mode?: RenderModeType;
-
-  /**
    * 路由级别覆盖配置（可选）
    * 仅当需要对特定路由使用不同于全局 renderMode 时才配置
    * 支持通配符匹配：'/posts/*' 匹配所有 /posts/ 开头的路由
@@ -156,17 +150,11 @@ export interface ISRConfig {
    *
    * @example
    * ```ts
-   * routeOverrides: {
+   * routes: {
    *   '/': 'ssg',           // 首页使用 SSG
    *   '/admin/*': 'ssr',    // 管理后台使用 SSR
    * }
    * ```
-   */
-  routeOverrides?: Record<string, RouteRule>;
-
-  /**
-   * 兼容别名：等同于 routeOverrides
-   * 消费端可使用 routes 代替 routeOverrides
    */
   routes?: Record<string, RouteRule>;
 

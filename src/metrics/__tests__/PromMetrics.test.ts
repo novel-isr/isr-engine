@@ -225,7 +225,7 @@ describe('createPrometheusMetricsMiddleware —— token 认证（v2.1 修复）
     };
   }
 
-  it('未配置 token → 匿名可访问（向后兼容旧行为）', async () => {
+  it('未配置 token → 匿名可访问（显式默认策略）', async () => {
     const mw = createPrometheusMetricsMiddleware('/metrics');
     const { req, res } = mockReqRes();
     await mw(req, res, () => {});

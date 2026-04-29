@@ -266,7 +266,6 @@ function createEngineDefaultEntriesPlugin(): Plugin {
                 let initPromise = null;
 
                 return {
-                  __engineConfig: userConfig?.__engineConfig,
                   async fetch(request) {
                     if (!realHandler) {
                       initPromise ??= (async () => {

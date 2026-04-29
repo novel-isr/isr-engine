@@ -101,7 +101,7 @@ export const runtime = {
 
 `revalidate.ts` 用 `Symbol.for(globalThis)` 注册本进程 invalidator；engine 在检测到
 `ssr.config.ts runtime.redis`、`REDIS_URL` 或 `REDIS_HOST` 时，会额外启用 Redis Pub/Sub
-失效广播。`defineSiteHooks({ redis })` 仍作为旧项目兼容入口：
+失效广播：
 
 - 当前 pod 先清本地 L1，再 publish `{ kind, value }`
 - 其他 pod 收到消息后只清自己的 L1，不会再次 publish，避免广播风暴

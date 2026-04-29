@@ -193,24 +193,14 @@ const BG_REVALIDATE_HEADER = 'x-isr-background-revalidate';
 /** 预热请求的 sentinel 头，避免 HIT → prefetch → HIT → prefetch 二次自激 */
 const PREFETCH_HEADER = 'x-isr-prefetch';
 
-/**
- * 从任意形式的 ISRConfig（或部分）提取路由规则
- * 同时识别 `mode`/`routes`（原始）和 `renderMode`/`routeOverrides`（归一化）
- */
+/** 从 ISRConfig 提取路由规则 */
 function extractRoutingRules(
   config: Partial<ISRConfig> | undefined,
   fallbackTtl: number
 ): RoutingRules {
   const cfg = (config ?? {}) as Record<string, unknown>;
-  const globalMode =
-    (cfg.renderMode as RenderModeType | undefined) ||
-    (cfg.mode as RenderModeType | undefined) ||
-    'isr';
-
-  const routes =
-    (cfg.routeOverrides as Record<string, RouteRule> | undefined) ||
-    (cfg.routes as Record<string, RouteRule> | undefined) ||
-    {};
+  const globalMode = (cfg.renderMode as RenderModeType | undefined) || 'isr';
+  const routes = (cfg.routes as Record<string, RouteRule> | undefined) || {};
 
   const isr = (cfg.isr ?? {}) as { revalidate?: number };
   const defaultTtlSeconds =

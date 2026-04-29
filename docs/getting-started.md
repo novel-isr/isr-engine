@@ -222,8 +222,8 @@ export const runtime = {
 };
 ```
 
-完整字段说明：[site-hooks.md](./site-hooks.md)。旧项目把这些写在 `defineSiteHooks`
-里仍然兼容；新项目不推荐。
+完整字段说明：[site-hooks.md](./site-hooks.md)。Redis、Sentry、限流、A/B 只写在
+`ssr.config.ts runtime`，不要写进 `entry.server.ts`。
 
 页面模块可以声明默认 SEO，admin/API 下发值会覆盖：
 
@@ -246,7 +246,7 @@ export async function seo({ params }: { params: { id: string } }) {
 import type { ISRConfig } from '@novel-isr/engine';
 
 export default {
-  mode: 'isr',
+  renderMode: 'isr',
   routes: {
     '/':         { mode: 'isr', ttl: 60, staleWhileRevalidate: 300 },
     '/about':    'ssg',
@@ -262,7 +262,7 @@ export default {
 | 层级 | 写什么 | 适合 |
 |---|---|---|
 | **L0 · 零配置** | 不写任何 entry 文件 | 99% 业务 |
-| **L1 · SiteHooks** | `defineSiteHooks({ ... })` | 接 Sentry / i18n / SEO / auth |
+| **L1 · SiteHooks** | `defineSiteHooks({ ... })` | 接 i18n / SEO / auth hooks |
 | **L2 · 完全接管** | `export default { fetch: async (req) => Response }` | 极少；想完全替换协议时 |
 
 Engine 按 default export 形状自动分派：含 `.fetch` → 用作 fetch handler；否则视为 hooks。

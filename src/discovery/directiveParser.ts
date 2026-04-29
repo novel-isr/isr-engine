@@ -291,7 +291,7 @@ export function analyzeDirectives(content: string): DirectiveAnalysisResult {
 }
 
 /**
- * 使用 AST 解析代码中的指令（便捷接口，兼容旧 API 签名）
+ * 使用 AST 解析代码中的指令（便捷接口）
  *
  * 规则：
  * 1. 指令必须是文件的第一个语句（import 之前）

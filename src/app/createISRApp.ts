@@ -1,20 +1,8 @@
-import type { ISRConfig, RenderModeType, RouteRule } from '@/types';
+import type { ISRConfig, RenderModeType } from '@/types';
 import ISREngine from '@/engine/ISREngine';
 
-/**
- * 配置归一化：消费端使用 `mode` / `routes` 别名时映射为标准字段
- */
 function normalizeAppConfig(raw: ISRConfig): ISRConfig {
-  const config = { ...raw };
-
-  if (config.mode && !config.renderMode) {
-    config.renderMode = config.mode as RenderModeType;
-  }
-  if ((config as { routes?: Record<string, RouteRule> }).routes && !config.routeOverrides) {
-    config.routeOverrides = (config as { routes: Record<string, RouteRule> }).routes;
-  }
-
-  return config;
+  return { ...raw };
 }
 
 /**

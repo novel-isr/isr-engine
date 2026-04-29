@@ -298,7 +298,7 @@ export default async function BookDetailPage() {
 ```
 
 `defineSiteHooks({ seo })` 用来接 admin / CMS / API 下发的 SEO。`api/site/redis/sentry/rateLimit/experiments`
-这类平台配置推荐放在 `ssr.config.ts` 的 `runtime`，`entry.server.tsx` 只从同一份
+这类平台配置只放在 `ssr.config.ts` 的 `runtime`，`entry.server.tsx` 只从同一份
 `runtime` 读取 `api/site` 并声明请求期 loader。推荐商业项目用 `/*` 统一下发，按
 `pathname` 决策：
 

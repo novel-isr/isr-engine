@@ -21,18 +21,18 @@ import type { Logger } from '@/logger/Logger';
 
 export class ISRRoutes {
   private readonly defaultMode: RenderModeType;
-  private readonly routeOverrides: Record<string, RouteRule>;
+  private readonly routes: Record<string, RouteRule>;
 
   constructor(
     private engine: ISREngine,
     private logger: Logger,
     config?: {
       renderMode?: RenderModeType;
-      routeOverrides?: Record<string, RouteRule>;
+      routes?: Record<string, RouteRule>;
     }
   ) {
     this.defaultMode = config?.renderMode || 'isr';
-    this.routeOverrides = config?.routeOverrides || {};
+    this.routes = config?.routes || {};
   }
 
   setup(requestHandler: Express): void {
@@ -43,7 +43,7 @@ export class ISRRoutes {
         version: '2.0.0',
         mode: 'plugin-rsc',
         defaultRenderMode: this.defaultMode,
-        routeOverrides: Object.keys(this.routeOverrides).length,
+        routes: Object.keys(this.routes).length,
         timestamp: new Date().toISOString(),
       });
     });

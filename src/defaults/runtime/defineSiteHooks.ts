@@ -2,8 +2,8 @@
  * defineSiteHooks —— 高阶 FaaS hooks 工厂（声明式配置 → 完整 ServerEntryHooks）
  *
  * 让用户的 src/entry.server.tsx 收紧到「一个 export default + 一个声明式对象」。
- * 成熟项目的部署/平台配置（api/site/redis/sentry/rateLimit/experiments）推荐放
- * ssr.config.ts 的 runtime 字段；entry.server.tsx 只保留请求期 hooks 和 loader。
+ * 部署/平台配置（api/site/redis/sentry/rateLimit/experiments）放 ssr.config.ts
+ * 的 runtime 字段；entry.server.tsx 只保留请求期 hooks 和 loader。
  * 内部固化：
  *   - i18n 字典缓存（createCachedFetcher: TTL/SWR/dedup/fallback）
  *   - SEO 路由表 pattern → resolver
@@ -30,7 +30,7 @@ export interface IntlConfig {
   // ─── URL 路由层（被 parseLocale / withLocale 等消费）───────────
   /** 支持的 locale 列表，如 ['zh', 'en']；用于 URL 前缀解析 */
   locales?: readonly string[];
-  /** 默认 locale —— 必须在 locales 内；同时作为 detect 失败的兜底（替代旧字段 `fallback`） */
+  /** 默认 locale —— 必须在 locales 内；同时作为 detect 失败的兜底 */
   defaultLocale?: string;
   /** 默认 locale 是否带 URL 前缀（默认 false：'/about'；true：'/zh/about'） */
   prefixDefault?: boolean;
@@ -72,31 +72,6 @@ export interface SeoLocalEntry {
 
 export type SeoEntry = SeoStaticEntry | SeoRemoteEntry | SeoLocalEntry;
 
-export interface RedisConfig {
-  /** 优先级最高：完整 URL（redis://[:pass@]host:port/db） */
-  url?: string;
-  host?: string;
-  port?: number;
-  password?: string;
-  /** 默认 'isr:' */
-  keyPrefix?: string;
-  /** 跨 pod revalidate 广播频道；默认 `${keyPrefix}invalidate` */
-  invalidationChannel?: string;
-}
-
-export interface SentryConfig {
-  /** Sentry DSN（同 Sentry.init 的 dsn）*/
-  dsn: string;
-  /** 采样率 0-1，默认 0.1 */
-  tracesSampleRate?: number;
-  environment?: string;
-}
-
-export interface ExperimentEntry {
-  variants: readonly string[];
-  weights?: readonly number[];
-}
-
 export interface SiteHooksConfig {
   /**
    * API 基地址（用于 intl + seo 远程 endpoint 的前缀）
@@ -108,31 +83,8 @@ export interface SiteHooksConfig {
   site?: string;
   /** i18n 配置 */
   intl?: IntlConfig;
-  /**
-   * A/B 实验定义（cookie-sticky；engine 自动挂中间件）
-   * Server Component 用 `import { getVariant } from '@novel-isr/engine'` 读取
-   * 新项目推荐配置在 ssr.config.ts runtime.experiments。
-   */
-  experiments?: Record<string, ExperimentEntry>;
-  /**
-   * 限流（per-IP token bucket）—— 不传则不限流。
-   * 新项目推荐配置在 ssr.config.ts runtime.rateLimit。
-   */
-  rateLimit?: { windowMs?: number; max?: number };
   /** SEO 路由表：path pattern（支持 `:param`）→ 静态 meta 或 remote loader */
   seo?: Record<string, SeoEntry | (() => Promise<PageSeoMeta | null> | PageSeoMeta | null)>;
-  /**
-   * Redis 配置 —— FaaS 层显式配置（兼容旧项目）
-   * 新项目推荐配置在 ssr.config.ts runtime.redis。
-   * 不传 → 看 env REDIS_URL/REDIS_HOST → 都没 → memory backend
-   */
-  redis?: RedisConfig;
-  /**
-   * Sentry 配置 —— FaaS 层显式配置（兼容旧项目）
-   * 新项目推荐配置在 ssr.config.ts runtime.sentry。
-   * 不传 → 看 env SENTRY_DSN → 都没 → 默认 console 上报
-   */
-  sentry?: SentryConfig;
   /** 错误回调（默认 console.error 或 sentry.captureException）；自定义时覆盖 */
   onError?: (err: unknown, req: Request, ctx: { traceId: string; locale?: string }) => void;
   /** 请求级 ctx 扩展（除 baseline + locale 之外的业务字段） */
@@ -179,24 +131,6 @@ export interface ServerHooksOutput {
   loadIntl: (req: Request) => Promise<IntlPayload | null>;
   loadSeoMeta: (req: Request) => Promise<PageSeoMeta | null>;
   onError: (err: unknown, req: Request, ctx: { traceId: string; locale?: string }) => void;
-  /**
-   * 引擎读取的「基础设施配置」—— 不是 hook，是声明
-   * cli/start.ts 起 server 时会读这两个字段：
-   *   - redis: 优先级高于 REDIS_URL 环境变量，传了就用 Hybrid (L1+L2) 后端
-   *   - sentry: 优先级高于 SENTRY_DSN，传了就 init Sentry 并自动接 onError
-   */
-  __engineConfig?: {
-    redis?: RedisConfig;
-    sentry?: SentryConfig;
-    /** API origin 用于 CSP connect-src 自动放行（FaaS api 字段派生） */
-    apiOrigin?: string;
-    /** site URL 用于 SEO 注入时解析相对路径（og:image / canonical 必须绝对） */
-    siteBaseUrl?: string;
-    /** A/B 实验 —— start.ts 据此挂 ABVariantMiddleware */
-    experiments?: Record<string, ExperimentEntry>;
-    /** 限流 —— start.ts 据此挂 RateLimiter */
-    rateLimit?: { windowMs?: number; max?: number };
-  };
 }
 
 export function defineSiteHooks(config: SiteHooksConfig): ServerHooksOutput {
@@ -366,23 +300,7 @@ export function defineSiteHooks(config: SiteHooksConfig): ServerHooksOutput {
       return null;
     },
     onError,
-    __engineConfig: {
-      redis: config.redis,
-      sentry: config.sentry,
-      apiOrigin: config.api ? safeOrigin(config.api) : undefined,
-      siteBaseUrl: site || undefined,
-      experiments: config.experiments,
-      rateLimit: config.rateLimit,
-    },
   };
-}
-
-function safeOrigin(url: string): string | undefined {
-  try {
-    return new URL(url).origin;
-  } catch {
-    return undefined;
-  }
 }
 
 function rtlOf(locale: string): 'ltr' | 'rtl' {

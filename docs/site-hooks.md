@@ -64,7 +64,8 @@ export default defineSiteHooks({
 });
 ```
 
-`redis`、`sentry`、`rateLimit`、`experiments` 仍然能写在 `defineSiteHooks` 里，这是为了兼容旧项目；新项目不要这样写。
+`defineSiteHooks` 不接收 Redis、Sentry、限流或 A/B 实验配置。这些能力只从
+`ssr.config.ts runtime` 读取。
 
 ## `runtime`
 

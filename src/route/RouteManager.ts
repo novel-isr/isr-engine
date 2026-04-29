@@ -17,7 +17,7 @@ export class RouteManager {
 
   constructor(config: Partial<ISRConfig>) {
     this.globalMode = config.renderMode || 'isr';
-    this.overrides = config.routeOverrides || {};
+    this.overrides = config.routes || {};
   }
 
   getRenderMode(path: string): RenderModeType {

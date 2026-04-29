@@ -28,11 +28,6 @@ import userConfig from '@app/_server-config';
 
 interface FetchHandlerLike {
   fetch: (request: Request) => Promise<Response>;
-  /**
-   * defineSiteHooks 注入的基础设施配置（兼容旧项目）。
-   * 新项目应把 redis / sentry / rateLimit / experiments 放在 ssr.config.ts runtime。
-   */
-  __engineConfig?: unknown;
 }
 
 function hasFetchHandler(x: unknown): x is FetchHandlerLike {
@@ -51,8 +46,6 @@ const resolved: FetchHandlerLike = hasFetchHandler(userConfig)
       let initPromise: Promise<FetchHandlerLike> | null = null;
 
       return {
-        // 把旧项目 defineSiteHooks 注入的 __engineConfig 透出，给 cli/start.ts 兼容读取
-        __engineConfig: (userConfig as { __engineConfig?: unknown } | undefined)?.__engineConfig,
         async fetch(request: Request): Promise<Response> {
           if (!realHandler) {
             initPromise ??= (async () => {

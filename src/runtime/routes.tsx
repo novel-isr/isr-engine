@@ -1,7 +1,7 @@
 /**
  * defineRoutes —— Next.js 风格路由表
  *
- * 第一性原理：一条路由 = (path, page Component)。Page 可以是：
+ * 第一性原理：一条路由 = (path, route module)。Page 可以是：
  *   - async Server Component（默认）—— 内部直接 cacheTag / await fetch / getVariant
  *   - 同步 Server Component
  *   - 'use client' Client Component（带 useState/useEffect 等 hooks）
@@ -70,34 +70,14 @@ export interface RouteModuleRef {
   export?: string;
 }
 
-export type RouteComponentRef = PageComponent | RouteModuleRef;
-
-export interface RouteEntry {
+export interface RouteEntry extends RouteModuleRef {
   path: string;
-  /**
-   * 推荐写法：route module default export 即唯一页面入口。
-   * SSR/ISR/SSG/CSR recovery 都由 engine 用同一份 RSC tree 执行。
-   */
-  load?: RouteModuleLoader;
-  /** 兼容旧写法；新业务优先使用 load */
-  page?: RouteComponentRef;
-  /**
-   * @deprecated CSR recovery is handled by the engine RSC shell. Keep this only
-   * for older apps that still call createSpaApp directly.
-   */
-  spa?: RouteComponentRef;
-}
-
-export interface DefineRoutesOptions {
-  /** 没匹配到时渲染的组件；不传 → 返回 null */
-  fallback?: RouteComponentRef;
 }
 
 export interface RouteManifest {
   routes: readonly RouteEntry[];
-  /** 推荐写法：404 route module。保留 fallback 仅做兼容。 */
-  notFound?: RouteComponentRef;
-  fallback?: RouteComponentRef;
+  /** 没匹配到时渲染的 route module；不传 → 返回 null */
+  notFound?: RouteModuleRef;
 }
 
 export interface DefinedRoutes {
@@ -120,7 +100,7 @@ export type PageSeoExport =
 interface CompiledRoute extends RouteEntry {
   re: RegExp;
   keys: string[];
-  page: PageComponent;
+  Component: PageComponent;
 }
 
 function compile(path: string): { re: RegExp; keys: string[] } {
@@ -143,17 +123,12 @@ export type ResolveRoute = (ctx: {
   searchParams: URLSearchParams;
 }) => React.ReactNode;
 
-function isRouteModuleRef(ref: RouteComponentRef | undefined): ref is RouteModuleRef {
-  return Boolean(ref && typeof ref === 'object' && 'load' in ref && typeof ref.load === 'function');
-}
-
 function resolveRouteComponent(
-  ref: RouteComponentRef,
+  ref: RouteModuleRef,
   label: string,
   exportName = 'default',
   fallbackExport?: string
 ): PageComponent {
-  if (!isRouteModuleRef(ref)) return ref;
   const requestedExport = ref.export ?? exportName;
   return React.lazy(async () => {
     const mod = await ref.load();
@@ -168,23 +143,19 @@ function resolveRouteComponent(
 }
 
 function resolvePageComponent(route: RouteEntry): PageComponent {
-  const ref = route.page ?? (route.load ? { load: route.load } : undefined);
-  if (!ref) throw new Error(`Route "${route.path}" must define "load" or "page"`);
-  return resolveRouteComponent(ref, route.path);
+  return resolveRouteComponent(route, route.path);
 }
 
 function createRouteResolver(
   routes: readonly RouteEntry[],
-  options: DefineRoutesOptions = {}
+  notFound?: RouteModuleRef
 ): ResolveRoute {
   const compiled: CompiledRoute[] = routes.map(r => ({
     ...r,
-    page: resolvePageComponent(r),
+    Component: resolvePageComponent(r),
     ...compile(r.path),
   }));
-  const Fallback = options.fallback
-    ? resolveRouteComponent(options.fallback, '__fallback__')
-    : undefined;
+  const NotFound = notFound ? resolveRouteComponent(notFound, '__not_found__') : undefined;
 
   return function resolveRoute({ pathname, searchParams }) {
     const clean = pathname.replace(/\/+$/, '') || '/';
@@ -195,11 +166,11 @@ function createRouteResolver(
       route.keys.forEach((k, i) => {
         params[k] = decodeURIComponent(m[i + 1] ?? '');
       });
-      const Page = route.page;
+      const Page = route.Component;
       return <Page pathname={clean} searchParams={searchParams} params={params} />;
     }
-    if (Fallback) {
-      return <Fallback pathname={clean} searchParams={searchParams} params={{}} />;
+    if (NotFound) {
+      return <NotFound pathname={clean} searchParams={searchParams} params={{}} />;
     }
     return null;
   };
@@ -207,28 +178,14 @@ function createRouteResolver(
 
 function createDefinedRoutes(config: RouteManifest): DefinedRoutes {
   registerRouteManifest(config);
-  const fallback = config.notFound ?? config.fallback;
   return {
-    routes: createRouteResolver(config.routes, {
-      fallback: fallback ? resolveRouteComponent(fallback, '__not_found__') : undefined,
-    }),
+    routes: createRouteResolver(config.routes, config.notFound),
   };
 }
 
 export function defineRoutes(config: RouteManifest): DefinedRoutes;
-export function defineRoutes(
-  routes: readonly RouteEntry[],
-  options?: DefineRoutesOptions
-): ResolveRoute;
-export function defineRoutes(
-  input: readonly RouteEntry[] | RouteManifest,
-  options: DefineRoutesOptions = {}
-): ResolveRoute | DefinedRoutes {
-  if (Array.isArray(input)) {
-    registerRouteManifest({ routes: input, fallback: options.fallback });
-    return createRouteResolver(input as readonly RouteEntry[], options);
-  }
-  return createDefinedRoutes(input as RouteManifest);
+export function defineRoutes(input: RouteManifest): DefinedRoutes {
+  return createDefinedRoutes(input);
 }
 
 function getRouteRegistry(): RouteManifest[] {
@@ -272,10 +229,7 @@ function matchRoute(
 }
 
 async function loadPageSeo(route: RouteEntry, ctx: PageSeoContext): Promise<PageSeoMeta | null> {
-  const loader = route.load ?? (isRouteModuleRef(route.page) ? route.page.load : undefined);
-  if (!loader) return null;
-
-  const mod = await loader();
+  const mod = await route.load();
   const exports = mod as Record<string, unknown>;
   const exported = exports.seo ?? exports.generateSeo;
   if (!exported) return null;
