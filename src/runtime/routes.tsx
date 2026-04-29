@@ -61,7 +61,7 @@ export interface PageProps {
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 export type PageComponent = React.ComponentType<any>;
 
-type RouteModule = Record<string, unknown>;
+type RouteModule = object;
 export type RouteModuleLoader = () => Promise<RouteModule>;
 
 export interface RouteModuleRef {
@@ -157,7 +157,9 @@ function resolveRouteComponent(
   const requestedExport = ref.export ?? exportName;
   return React.lazy(async () => {
     const mod = await ref.load();
-    const component = mod[requestedExport] ?? (fallbackExport ? mod[fallbackExport] : undefined);
+    const exports = mod as Record<string, unknown>;
+    const component =
+      exports[requestedExport] ?? (fallbackExport ? exports[fallbackExport] : undefined);
     if (!component) {
       throw new Error(`Route component "${label}" does not export "${requestedExport}"`);
     }
@@ -213,11 +215,11 @@ function createDefinedRoutes(config: RouteManifest): DefinedRoutes {
   };
 }
 
+export function defineRoutes(config: RouteManifest): DefinedRoutes;
 export function defineRoutes(
   routes: readonly RouteEntry[],
   options?: DefineRoutesOptions
 ): ResolveRoute;
-export function defineRoutes(config: RouteManifest): DefinedRoutes;
 export function defineRoutes(
   input: readonly RouteEntry[] | RouteManifest,
   options: DefineRoutesOptions = {}
@@ -274,7 +276,8 @@ async function loadPageSeo(route: RouteEntry, ctx: PageSeoContext): Promise<Page
   if (!loader) return null;
 
   const mod = await loader();
-  const exported = mod.seo ?? mod.generateSeo;
+  const exports = mod as Record<string, unknown>;
+  const exported = exports.seo ?? exports.generateSeo;
   if (!exported) return null;
   if (typeof exported === 'function') {
     return (
