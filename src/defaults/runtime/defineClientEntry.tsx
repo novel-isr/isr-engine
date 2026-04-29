@@ -32,6 +32,7 @@ import { rscStream } from 'rsc-html-stream/client';
 
 import { GlobalErrorBoundary } from './error-boundary';
 import { createRscRenderRequest } from './request';
+import { installDevRenderInspector } from './dev-render-inspector';
 import { setClientI18n } from '../../runtime/i18n-store';
 import type { IntlPayload } from './seo-runtime';
 
@@ -138,6 +139,11 @@ export interface ClientEntryHooks {
    * 不写 → 显示默认 "服务暂时不可用" 静态页
    */
   spaApp?: React.ComponentType<{ url: URL }>;
+  /**
+   * 开发态渲染检查器。默认启用；业务如需完全隐藏可在 src/entry.tsx 返回
+   * `{ devInspector: false }`。
+   */
+  devInspector?: boolean;
 }
 
 export function defineClientEntry(hooks: ClientEntryHooks = {}): void {
@@ -146,6 +152,10 @@ export function defineClientEntry(hooks: ClientEntryHooks = {}): void {
 
 async function main(hooks: ClientEntryHooks): Promise<void> {
   if (hooks.beforeHydrate) await hooks.beforeHydrate();
+
+  const installInspector = () => {
+    if (hooks.devInspector !== false) installDevRenderInspector();
+  };
 
   function mountSpaFallback(App: React.ComponentType<{ url: URL }>): void {
     document.body.classList.remove('csr-shell-body');
@@ -275,9 +285,11 @@ async function main(hooks: ClientEntryHooks): Promise<void> {
     const App = hooks.spaApp;
     if (App) {
       mountSpaFallback(App);
+      installInspector();
       return;
     }
     mountRscShellFallback();
+    installInspector();
     return;
   }
 
@@ -286,9 +298,11 @@ async function main(hooks: ClientEntryHooks): Promise<void> {
     const App = hooks.spaApp;
     if (App) {
       mountSpaFallback(App);
+      installInspector();
       return;
     }
     mountRscShellFallback();
+    installInspector();
     return;
   }
 
@@ -347,6 +361,7 @@ async function main(hooks: ClientEntryHooks): Promise<void> {
 
   // 注：csr-shell 路径已在 main 入口处早返回，这里只剩正常水合
   hydrateRoot(document, browserRoot, { formState: initialPayload.formState });
+  installInspector();
 
   if (import.meta.hot) {
     import.meta.hot.on('rsc:update', () => {
