@@ -79,15 +79,28 @@ export interface DataRouteEntry {
   tags?: (ctx: SpaRouteContext) => readonly string[];
 }
 
-/** 别名（向后兼容名）—— 同构路由就是 SPA 路由 */
-export type SpaRouteEntry = DataRouteEntry;
+export interface ComponentSpaRouteEntry {
+  /** 路径模式：'/' / '/books/:id'（同 defineRoutes） */
+  path: string;
+  /**
+   * CSR 页面组件。
+   *
+   * 用于 defineRoutes({ routes }) 自动派生的 spaRoutes。数据获取应内聚在该
+   * client 页面内部，避免把 loader 这类框架编排概念暴露给业务路由表。
+   */
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  Component: React.ComponentType<any>;
+}
+
+/** SPA 路由：兼容旧的 data-route，也支持新的一份 route manifest 派生结果 */
+export type SpaRouteEntry = DataRouteEntry | ComponentSpaRouteEntry;
 
 interface CompiledSpaRoute {
   path: string;
   re: RegExp;
   keys: string[];
-  loader: DataRouteEntry['loader'];
-  Component: DataRouteEntry['Component'];
+  loader?: DataRouteEntry['loader'];
+  Component: SpaRouteEntry['Component'];
   tags?: DataRouteEntry['tags'];
 }
 
@@ -156,17 +169,17 @@ export interface UseSpaRouterOptions {
  */
 export function useSpaRouter(
   url: URL,
-  routes: readonly DataRouteEntry[],
+  routes: readonly SpaRouteEntry[],
   options: UseSpaRouterOptions = {}
 ): React.ReactNode {
   const apiBase = options.apiBase ?? '';
   const compiled = getCompiled(routes);
-  const matched = matchRoute(url.pathname, compiled);
+  const matched = React.useMemo(() => matchRoute(url.pathname, compiled), [compiled, url.pathname]);
   const [data, setData] = React.useState<Record<string, unknown> | null>(null);
   const [error, setError] = React.useState<Error | null>(null);
 
   React.useEffect(() => {
-    if (!matched) return;
+    if (!matched || !matched.route.loader) return;
     let cancelled = false;
     setData(null);
     setError(null);
@@ -188,7 +201,7 @@ export function useSpaRouter(
       cancelled = true;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [url.pathname, url.search]);
+  }, [matched, url.pathname, url.search]);
 
   if (!matched) {
     return (
@@ -200,6 +213,12 @@ export function useSpaRouter(
       options.renderError(error)
     ) : (
       <p style={{ padding: 24, color: '#ffb4b4' }}>加载失败：{error.message}</p>
+    );
+  }
+  if (!matched.route.loader) {
+    const Component = matched.route.Component;
+    return (
+      <Component pathname={url.pathname} searchParams={url.searchParams} params={matched.params} />
     );
   }
   if (!data) {
@@ -243,7 +262,7 @@ export function SpaBanner({
 
 export interface CreateSpaAppOptions {
   /** 同构数据路由 —— 与 SSR 共用 */
-  routes: readonly DataRouteEntry[];
+  routes: readonly SpaRouteEntry[];
   /**
    * App 外壳（Header + main + Footer 的容器）—— 一般直接复用 SSR Layout 抽出的 AppShell
    * 不传 → 不渲染外壳，只渲染 banner + Page

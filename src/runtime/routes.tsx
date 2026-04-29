@@ -36,7 +36,7 @@
  */
 
 import React from 'react';
-import type { DataRouteEntry, SpaRouteContext } from './createSpaApp';
+import type { SpaRouteEntry } from './createSpaApp';
 
 /** 路由匹配后传给 page 的 props */
 export interface PageProps {
@@ -57,6 +57,13 @@ export type PageComponent = React.ComponentType<any>;
 export interface RouteEntry {
   path: string;
   page: PageComponent;
+  /**
+   * CSR shell 页面。
+   *
+   * 不传时该路由只参与 SSR/RSC；传入时 engine 自动生成 spaRoutes。
+   * 数据加载必须内聚在 client 页面内部，业务路由表不再暴露 loader。
+   */
+  spa?: PageComponent;
 }
 
 export interface DefineRoutesOptions {
@@ -64,39 +71,16 @@ export interface DefineRoutesOptions {
   fallback?: PageComponent;
 }
 
-type LazyModuleMap = Record<string, () => Promise<Record<string, unknown>>>;
-
-type LazyComponentRef = string | PageComponent;
-
-export interface UnifiedRouteEntry {
-  path: string;
-  /** SSR/RSC 页面组件；string 时从 ssrModules 里按 key lazy 加载 */
-  page?: LazyComponentRef;
-  /** CSR fallback 展示组件；string 时从 spaModules 里按 key lazy 加载 */
-  Component?: LazyComponentRef;
-  /** string Component 使用命名导出时填写；默认 'default' */
-  exportName?: string;
-  /** CSR fallback 数据加载器 */
-  loader?: (ctx: SpaRouteContext) => Promise<Record<string, unknown>>;
-  /** ISR 缓存标签 —— 仅 SSR 侧使用，SPA 侧忽略 */
-  tags?: (ctx: SpaRouteContext) => readonly string[];
+export interface RouteManifest {
+  routes: readonly RouteEntry[];
+  fallback?: PageComponent;
 }
 
-export interface UnifiedRoutesConfig {
-  routes: readonly UnifiedRouteEntry[];
-  /** SSR 404 页面；string 时从 ssrModules 里按 key lazy 加载 */
-  fallback?: LazyComponentRef;
-  /** Vite glob map，仅 SSR/RSC 构建传入 */
-  ssrModules?: LazyModuleMap;
-  /** Vite glob map，仅 client 构建传入 */
-  spaModules?: LazyModuleMap;
-}
-
-export interface UnifiedRoutesResult {
+export interface DefinedRoutes {
   /** SSR/RSC resolver */
   routes: ResolveRoute;
-  /** CSR fallback routes */
-  spaRoutes: DataRouteEntry[];
+  /** CSR shell routes，由 engine 从同一份 route manifest 派生 */
+  spaRoutes: SpaRouteEntry[];
 }
 
 interface CompiledRoute extends RouteEntry {
@@ -124,25 +108,6 @@ export type ResolveRoute = (ctx: {
   searchParams: URLSearchParams;
 }) => React.ReactNode;
 
-function resolveLazyComponent(
-  ref: LazyComponentRef | undefined,
-  modules: LazyModuleMap | undefined,
-  exportName = 'default'
-): PageComponent | undefined {
-  if (!ref) return undefined;
-  if (typeof ref !== 'string') return ref;
-  const load = modules?.[ref];
-  if (!load) return undefined;
-  return React.lazy(async () => {
-    const mod = await load();
-    const component = mod[exportName];
-    if (!component) {
-      throw new Error(`Route module "${ref}" does not export "${exportName}"`);
-    }
-    return { default: component as PageComponent };
-  });
-}
-
 function createRouteResolver(
   routes: readonly RouteEntry[],
   options: DefineRoutesOptions = {}
@@ -169,29 +134,12 @@ function createRouteResolver(
   };
 }
 
-function createUnifiedRoutes(config: UnifiedRoutesConfig): UnifiedRoutesResult {
-  const routeEntries: RouteEntry[] = [];
-  const spaRoutes: DataRouteEntry[] = [];
-
-  for (const route of config.routes) {
-    const page = resolveLazyComponent(route.page, config.ssrModules);
-    if (page) routeEntries.push({ path: route.path, page });
-
-    const Component = resolveLazyComponent(route.Component, config.spaModules, route.exportName);
-    if (Component && route.loader) {
-      spaRoutes.push({
-        path: route.path,
-        Component,
-        loader: route.loader,
-        tags: route.tags,
-      });
-    }
-  }
-
-  const fallback = resolveLazyComponent(config.fallback, config.ssrModules);
+function createDefinedRoutes(config: RouteManifest): DefinedRoutes {
   return {
-    routes: createRouteResolver(routeEntries, { fallback }),
-    spaRoutes,
+    routes: createRouteResolver(config.routes, { fallback: config.fallback }),
+    spaRoutes: config.routes
+      .filter((route): route is RouteEntry & { spa: PageComponent } => Boolean(route.spa))
+      .map(route => ({ path: route.path, Component: route.spa })),
   };
 }
 
@@ -199,13 +147,13 @@ export function defineRoutes(
   routes: readonly RouteEntry[],
   options?: DefineRoutesOptions
 ): ResolveRoute;
-export function defineRoutes(config: UnifiedRoutesConfig): UnifiedRoutesResult;
+export function defineRoutes(config: RouteManifest): DefinedRoutes;
 export function defineRoutes(
-  input: readonly RouteEntry[] | UnifiedRoutesConfig,
+  input: readonly RouteEntry[] | RouteManifest,
   options: DefineRoutesOptions = {}
-): ResolveRoute | UnifiedRoutesResult {
+): ResolveRoute | DefinedRoutes {
   if (Array.isArray(input)) {
     return createRouteResolver(input as readonly RouteEntry[], options);
   }
-  return createUnifiedRoutes(input as UnifiedRoutesConfig);
+  return createDefinedRoutes(input as RouteManifest);
 }

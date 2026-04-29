@@ -27,9 +27,8 @@ export {
   type PageComponent,
   type DefineRoutesOptions,
   type ResolveRoute,
-  type UnifiedRouteEntry,
-  type UnifiedRoutesConfig,
-  type UnifiedRoutesResult,
+  type RouteManifest,
+  type DefinedRoutes,
 } from './routes';
 
 // SPA fallback —— 浏览器侧降级渲染（独立运行模型，不与 SSR routes 共享）
@@ -40,6 +39,7 @@ export {
   type SpaRouteContext,
   type SpaRouteEntry,
   type DataRouteEntry,
+  type ComponentSpaRouteEntry,
   type UseSpaRouterOptions,
   type CreateSpaAppOptions,
 } from './createSpaApp';
