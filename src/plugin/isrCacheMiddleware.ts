@@ -704,6 +704,18 @@ function runMissPath(
         return;
       }
 
+      // CSR shell / fallback 响应是最后一道自救，不是页面内容的可共享快照。
+      // 一旦写进 ISR cache，后续正常请求可能 HIT 到降级壳，造成缓存污染。
+      if (
+        String(captured.headers['x-fallback-used'] || '').toLowerCase() === 'true' ||
+        String(captured.headers['x-render-strategy'] || '').toLowerCase() === 'csr-shell'
+      ) {
+        logger.info(
+          `⏭️  ISR cache skip ${cacheKey} —— 响应为 fallback/csr-shell（降级壳不可写入 ISR 缓存）`
+        );
+        return;
+      }
+
       // 渲染期 Server Component 调用了 markUncacheable() —— 比如上游接口失败、
       // 渲染了降级 UI —— 跳过入缓存，避免错误内容被反复 HIT 回放
       if (isUncacheable()) {
