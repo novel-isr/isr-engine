@@ -111,49 +111,53 @@ export function defineClientEntry(hooks: ClientEntryHooks = {}): void {
 async function main(hooks: ClientEntryHooks): Promise<void> {
   if (hooks.beforeHydrate) await hooks.beforeHydrate();
 
+  function mountSpaFallback(App: React.ComponentType<{ url: URL }>): void {
+    const SpaMount = (): React.ReactElement => {
+      const [url, setUrl] = React.useState(() => new URL(window.location.href));
+      React.useEffect(() => {
+        const fire = () => setUrl(new URL(window.location.href));
+        window.addEventListener('popstate', fire);
+        const oldPush = window.history.pushState;
+        window.history.pushState = function (...args) {
+          const r = oldPush.apply(this, args);
+          fire();
+          return r;
+        };
+        const onClick = (e: MouseEvent) => {
+          const target = e.target;
+          if (!(target instanceof Element)) return;
+          const link = target.closest('a');
+          if (
+            link instanceof HTMLAnchorElement &&
+            link.origin === location.origin &&
+            !e.metaKey &&
+            !e.ctrlKey &&
+            e.button === 0
+          ) {
+            e.preventDefault();
+            history.pushState(null, '', link.href);
+          }
+        };
+        document.addEventListener('click', onClick);
+        return () => {
+          window.removeEventListener('popstate', fire);
+          window.history.pushState = oldPush;
+          document.removeEventListener('click', onClick);
+        };
+      }, []);
+      return React.createElement(App, { url });
+    };
+
+    const mount = document.createElement('div');
+    document.body.replaceChildren(mount);
+    createRoot(mount).render(React.createElement(SpaMount));
+  }
+
   // SPA fallback：浏览器加载 dist/spa/index.html 触发，由部署层（Nginx/CDN）在 SSR 5xx 时切入
   if ((globalThis as { __SPA_MODE__?: boolean }).__SPA_MODE__) {
     const App = hooks.spaApp;
     if (App) {
-      const SpaMount = (): React.ReactElement => {
-        const [url, setUrl] = React.useState(() => new URL(window.location.href));
-        React.useEffect(() => {
-          const fire = () => setUrl(new URL(window.location.href));
-          window.addEventListener('popstate', fire);
-          const oldPush = window.history.pushState;
-          window.history.pushState = function (...args) {
-            const r = oldPush.apply(this, args);
-            fire();
-            return r;
-          };
-          const onClick = (e: MouseEvent) => {
-            const target = e.target;
-            if (!(target instanceof Element)) return;
-            const link = target.closest('a');
-            if (
-              link instanceof HTMLAnchorElement &&
-              link.origin === location.origin &&
-              !e.metaKey &&
-              !e.ctrlKey &&
-              e.button === 0
-            ) {
-              e.preventDefault();
-              history.pushState(null, '', link.href);
-            }
-          };
-          document.addEventListener('click', onClick);
-          return () => {
-            window.removeEventListener('popstate', fire);
-            window.history.pushState = oldPush;
-            document.removeEventListener('click', onClick);
-          };
-        }, []);
-        return React.createElement(App, { url });
-      };
-      // 挂到 body（dist/spa/index.html 的 <body> 是空壳）
-      const mount = document.createElement('div');
-      document.body.appendChild(mount);
-      createRoot(mount).render(React.createElement(SpaMount));
+      mountSpaFallback(App);
       return;
     }
     // 没配 spaApp → 走默认静态页
@@ -163,7 +167,12 @@ async function main(hooks: ClientEntryHooks): Promise<void> {
 
   // SSR 渲染抛异常的 csr-shell 兜底分支（与 __SPA_MODE__ 不同：这是 SSR 半死状态）
   if ('__NO_HYDRATE' in globalThis) {
-    createRoot(document).render(React.createElement(CsrShellFallback));
+    const App = hooks.spaApp;
+    if (App) {
+      mountSpaFallback(App);
+      return;
+    }
+    createRoot(document.body).render(React.createElement(CsrShellFallback));
     return;
   }
 
