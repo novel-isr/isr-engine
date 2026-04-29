@@ -4,7 +4,7 @@
  * 范围：通过真实 http.Server + createIsrCacheHandler 验证本次 v2.1 修复的 5 项行为：
  *   1) Set-Cookie 响应不入缓存（跨用户会话泄露防护）
  *   2) Query 归一化：`?a=1&b=2` 与 `?b=2&a=1` 共享同一 key（消除碎片化）
- *   3) Variant 隔离（opt-in）：不同 ab cookie → 不同缓存条目
+ *   3) Variant 隔离：配置 runtime.experiments 后，不同 ab cookie → 不同缓存条目
  *   4) L2 读超时：getAsync 卡住时走 MISS 路径，不阻塞 HIT/STALE
  *   5) 后台重验证 safety timer：上游不响应时 `revalidating` 仍被释放
  *
@@ -263,6 +263,39 @@ describe('isrCacheMiddleware —— A/B variant 隔离', () => {
       expect(r2.cacheStatus).toBe('HIT');
       expect(r2.body).toContain('call=1');
       expect(r2.cacheKey).toBe(r1.cacheKey);
+    } finally {
+      await teardown(fx);
+    }
+  });
+
+  it('配置 runtime.experiments 后默认启用 variant 隔离', async () => {
+    const fx = await startFixture(
+      {},
+      {
+        renderMode: 'isr',
+        isr: { revalidate: 3600 },
+        runtime: {
+          experiments: {
+            hero: { variants: ['v1', 'v2'], weights: [50, 50] },
+          },
+        },
+      }
+    );
+    try {
+      let callCount = 0;
+      fx.renderImpl.current = (_req, res) => {
+        callCount++;
+        res.setHeader('content-type', 'text/html');
+        res.statusCode = 200;
+        res.end(`<html>call=${callCount}</html>`);
+      };
+
+      const v1 = await httpGet(`${fx.baseUrl}/home`, { cookie: 'ab=hero=v1' });
+      const v2 = await httpGet(`${fx.baseUrl}/home`, { cookie: 'ab=hero=v2' });
+
+      expect(v1.cacheStatus).toBe('MISS');
+      expect(v2.cacheStatus).toBe('MISS');
+      expect(v2.cacheKey).not.toBe(v1.cacheKey);
     } finally {
       await teardown(fx);
     }

@@ -32,8 +32,9 @@
  *     return v === 'hero-v2' ? <HeroV2/> : <HeroClassic/>;
  *   }
  *
- * SEO：variant 信息**不**进 cache key（避免 ISR 缓存膨胀 N 倍）；
- *      若 variant 影响 SEO/canonical，请用单独的预渲染分流（rare）
+ * 缓存：配置 runtime.experiments 后，ISR cache 默认把 ab cookie 摘要纳入 key；
+ *      同一路径不同 variant 各自缓存，避免 A 组拿到 B 组 HTML。
+ *      若显式关闭 variantIsolation，必须保证实验不影响 HTML/SEO。
  */
 import type { Request, Response, NextFunction } from 'express';
 import { getRequestContext } from '../context/RequestContext';

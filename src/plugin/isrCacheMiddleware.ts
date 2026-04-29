@@ -100,7 +100,8 @@ export interface IsrCacheMiddlewareOptions {
    */
   backgroundRevalidateTimeoutMs?: number;
   /**
-   * A/B variant 隔离 —— 默认 false（ABVariantMiddleware 的约定：variant 不进 key，避免缓存膨胀 N 倍）。
+   * A/B variant 隔离。
+   * 默认值：配置 runtime.experiments 时自动启用；否则关闭。
    * 启用后：cacheKey 追加 `|v=<fnv1a(cookie)>` 摘要，同一路径的不同 variant 用户各自独立缓存。
    * 适用：variant 影响 HTML 结构且数量 ≤ 4；不适用：按 user 细粒度分桶。
    */
@@ -323,7 +324,9 @@ export function createIsrCacheHandler(
   const rules: RoutingRules = extractRoutingRules(config, fallbackTtl);
   const l2ReadTimeoutMs = options.l2ReadTimeoutMs ?? 100;
   const bgTimeoutMs = options.backgroundRevalidateTimeoutMs ?? 30_000;
-  const variantIsolation = options.variantIsolation === true;
+  const hasExperiments =
+    !!config?.runtime?.experiments && Object.keys(config.runtime.experiments).length > 0;
+  const variantIsolation = options.variantIsolation ?? hasExperiments;
   const variantCookieName = options.variantCookieName ?? 'ab';
   const cacheNamespace = options.cacheNamespace ?? process.env.ISR_CACHE_NAMESPACE ?? 'default';
   const cacheKeyPrefix = `${ENGINE_CACHE_KEY_VERSION}:${cacheNamespace}:`;
@@ -1137,7 +1140,7 @@ function setHeaderOnce(res: ServerResponse, name: string, value: string): void {
  * 构造 cache key —— 以下三项决定同一响应能否被 HIT：
  *   1) method + pathname（基础）
  *   2) query 参数按字母序归一（`?b=2&a=1` 与 `?a=1&b=2` 命中同一条目，消除碎片化）
- *   3) 可选 variant hash（A/B 隔离，opt-in）
+ *   3) 可选 variant hash（配置 runtime.experiments 后自动启用，也可显式覆盖）
  *
  * 不进 key 的字段（故意）：
  *   - Accept-Language：由站点层 `/zh/x` vs `/x` URL 路由处理
