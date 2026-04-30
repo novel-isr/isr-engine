@@ -1,3 +1,5 @@
+/// <reference types="vite/client" />
+
 interface InspectorState {
   mode: string;
   modeSource: string;
@@ -50,8 +52,7 @@ const MODE_LINKS = [
 ] as const;
 
 export function installDevRenderInspector(): void {
-  const meta = import.meta as ImportMeta & { env?: { DEV?: boolean } };
-  if (!meta.env?.DEV) return;
+  if (!isDevRenderInspectorRuntimeEnabled(import.meta.env, import.meta.hot)) return;
   if (typeof document === 'undefined') return;
   if (document.getElementById(INSPECTOR_ID)) return;
   if (shouldDeferDevRenderInspectorMount(document)) {
@@ -149,6 +150,13 @@ export function installDevRenderInspector(): void {
     state = next;
     render();
   });
+}
+
+export function isDevRenderInspectorRuntimeEnabled(
+  env: { DEV?: boolean } | undefined,
+  hot: unknown
+): boolean {
+  return env?.DEV === true || Boolean(hot);
 }
 
 export function shouldDeferDevRenderInspectorMount(doc: Pick<Document, 'body'>): boolean {

@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import {
+  isDevRenderInspectorRuntimeEnabled,
   resolveDevRenderInspectorView,
   shouldDeferDevRenderInspectorMount,
 } from '../dev-render-inspector';
@@ -67,5 +68,12 @@ describe('dev render inspector view model', () => {
   it('defers mounting until document.body is available', () => {
     expect(shouldDeferDevRenderInspectorMount({ body: null })).toBe(true);
     expect(shouldDeferDevRenderInspectorMount({ body: {} as HTMLElement })).toBe(false);
+  });
+
+  it('enables inspector only in Vite dev runtime', () => {
+    expect(isDevRenderInspectorRuntimeEnabled({ DEV: true }, undefined)).toBe(true);
+    expect(isDevRenderInspectorRuntimeEnabled({ DEV: false }, {})).toBe(true);
+    expect(isDevRenderInspectorRuntimeEnabled({ DEV: false }, undefined)).toBe(false);
+    expect(isDevRenderInspectorRuntimeEnabled(undefined, undefined)).toBe(false);
   });
 });
