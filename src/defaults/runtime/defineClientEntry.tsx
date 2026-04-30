@@ -147,9 +147,20 @@ export function defineClientEntry(hooks: ClientEntryHooks = {}): void {
 async function main(hooks: ClientEntryHooks): Promise<void> {
   if (hooks.beforeStart) await hooks.beforeStart();
 
+  let inspectorInstalled = false;
   const installInspector = () => {
-    if (hooks.devInspector !== false) installDevRenderInspector();
+    if (inspectorInstalled || hooks.devInspector === false) return;
+    inspectorInstalled = true;
+    try {
+      installDevRenderInspector();
+    } catch {
+      /* dev inspector 不能阻断业务客户端启动 */
+    }
   };
+
+  // Inspector 必须先于 RSC 反序列化和 hydrateRoot 安装：
+  // 首屏 RSC / hydration / dynamic import 任一环节失败时，开发者仍能看到真实渲染模式。
+  installInspector();
 
   function mountRscShellFallback(): void {
     document.body.classList.remove('csr-shell-body');

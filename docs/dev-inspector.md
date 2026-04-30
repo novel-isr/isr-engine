@@ -21,8 +21,10 @@
 
 `pnpm dev` 时默认启用。生产构建不会显示。
 
-浮层使用 Shadow DOM 隔离样式，不污染业务 CSS；它在 client runtime 挂载，不进入业务
-RSC 树，也不会影响页面的 Server Component import Client Component 边界。
+浮层使用 Shadow DOM 隔离样式，不污染业务 CSS；它在 client runtime 启动早期挂载，
+先于 RSC payload 反序列化和 `hydrateRoot`。因此即使首屏水合、RSC 请求或动态 import
+先失败，开发者仍然能看到本次请求的真实渲染模式和缓存状态。它不进入业务 RSC 树，
+也不会影响页面的 Server Component import Client Component 边界。
 
 ## 关闭方式
 
