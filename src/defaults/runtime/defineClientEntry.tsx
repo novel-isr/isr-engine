@@ -240,8 +240,8 @@ async function main(hooks: ClientEntryHooks): Promise<void> {
       React.createElement(
         React.StrictMode,
         null,
-        React.createElement(DevInspectorEffect),
-        React.createElement(GlobalErrorBoundary, null, React.createElement(RscShellRoot))
+        React.createElement(GlobalErrorBoundary, null, React.createElement(RscShellRoot)),
+        React.createElement(DevInspectorEffect)
       )
     );
   }
@@ -307,10 +307,10 @@ async function main(hooks: ClientEntryHooks): Promise<void> {
 
   const browserRoot = (
     <React.StrictMode>
-      <DevInspectorEffect />
       <GlobalErrorBoundary>
         <BrowserRoot />
       </GlobalErrorBoundary>
+      <DevInspectorEffect />
     </React.StrictMode>
   );
 
