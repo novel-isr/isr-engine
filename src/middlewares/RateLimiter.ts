@@ -189,19 +189,50 @@ function envRedisPort(): number | undefined {
   return Number.isFinite(parsed) ? parsed : undefined;
 }
 
+const VALID_STORE_MODES = ['memory', 'redis', 'auto'] as const;
+type StoreMode = (typeof VALID_STORE_MODES)[number];
+
+/**
+ * 边界校验：把 `runtime.rateLimit.store` 的任意输入归一化为合法 StoreMode。
+ *
+ * 第一性：engine 拥有 `'memory' | 'redis' | 'auto'` 这个类型，校验就该在 engine 这层做，
+ * 不应让每个消费方各写一遍 env-var sanitizer（重复劳动 + 错误信息不一致 + 静默吞坏值）。
+ *
+ * 行为：
+ *   - undefined → 'auto'（开箱即用：有 Redis 自动用，没 Redis 落 memory）
+ *   - 合法值 → 原样返回
+ *   - 非法值（拼错 / 类型错）→ warn 一次 + 退到 'auto'，让运维知道而不是静默吞
+ */
+function resolveStoreMode(raw: unknown): StoreMode {
+  if (raw === undefined || raw === null) return 'auto';
+  if (typeof raw === 'string' && (VALID_STORE_MODES as readonly string[]).includes(raw)) {
+    return raw as StoreMode;
+  }
+  logger.warn(
+    '[rate-limit]',
+    `runtime.rateLimit.store=${JSON.stringify(raw)} 不是合法值（期望 ${VALID_STORE_MODES.join(' | ')}），回退到 'auto'`
+  );
+  return 'auto';
+}
+
 /**
  * 从 ssr.config.ts runtime.rateLimit/runtime.redis 解析限流 store。
  *
- * 默认保持 memory，避免用户只配置 Redis 页面缓存时，限流语义被隐式改变。
- * 需要分布式限流时显式配置：
- *   rateLimit: { store: 'redis', ... }
- *   redis: { url: 'redis://...' }
+ * 默认 'auto'：如果消费方已经配过 runtime.redis（或通过 REDIS_URL/REDIS_HOST env
+ * 提供），engine 自动切到 redis backend；没有 Redis 则回落 memory。这样消费方
+ * **不需要重复写 store 字段** —— Redis 配置已是 engine 的统一真值源。
+ *
+ * 显式覆盖语义：
+ *   - store: 'memory'  → 强制 memory，即使 runtime.redis 已配置（用于本地 burn-in）
+ *   - store: 'redis'   → 强制 redis；缺 Redis 配置时 warn + 回落 memory（fail-open）
+ *   - store: 'auto'    → 与不传等价
+ *   - store: <脏值>    → warn 一次 + 当 'auto' 处理
  */
 export async function createRateLimitStoreFromRuntime(
   rateLimit: RuntimeRateLimitConfig = {},
   redis?: RuntimeRedisConfig
 ): Promise<ResolvedRateLimitStore> {
-  const mode = rateLimit.store ?? 'memory';
+  const mode = resolveStoreMode(rateLimit.store);
   const shouldUseRedis = mode === 'redis' || (mode === 'auto' && hasRedisRuntimeConfig(redis));
 
   if (!shouldUseRedis) {

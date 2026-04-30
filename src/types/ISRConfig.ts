@@ -72,10 +72,15 @@ export interface RuntimeExperimentConfig {
 
 export interface RuntimeRateLimitConfig {
   /**
-   * 限流状态存储。
-   * - memory：进程内 LRU，默认值；重启清空，不跨 pod 共享。
-   * - redis：使用 runtime.redis / REDIS_URL / REDIS_HOST 创建 Redis store；缺配置时回退 memory 并告警。
-   * - auto：检测到 Redis 配置就用 redis，否则 memory。
+   * 限流状态存储。**默认 'auto'：开箱即用**——
+   * 已配置 runtime.redis（或 REDIS_URL / REDIS_HOST 环境变量）就自动用 Redis，
+   * 否则进程内 memory。消费方一般无需显式设置 store。
+   *
+   * - 'auto'（默认）：检测到 Redis 配置 → redis backend；否则 memory backend。
+   * - 'memory'：强制进程内 LRU。重启清空，不跨 pod 共享。本地 burn-in / 单实例适用。
+   * - 'redis'：强制使用 runtime.redis 配置的 Redis；缺配置时 warn + 回落 memory（fail-open）。
+   *
+   * 非法值（拼错 / 类型错）engine 会 warn 一次并按 'auto' 处理，不静默吞。
    */
   store?: 'memory' | 'redis' | 'auto';
   /** 固定窗口长度（毫秒）；默认 60_000 */
@@ -160,8 +165,8 @@ export interface RuntimeConfig {
   /**
    * 站点入口限流。
    *
-   * 当前 runtime.rateLimit 默认接入 engine memory store。需要分布式限流时显式
-   * 设置 rateLimit.store='redis' 或 'auto'，并配置 runtime.redis / REDIS_URL。
+   * 默认 store='auto'：已配置 runtime.redis 时自动用 Redis 做分布式限流，
+   * 否则用进程内 memory。消费方一般无需显式设置 store。
    * 多实例生产环境仍应优先使用 CDN/WAF/API Gateway 做第一层限流。
    */
   rateLimit?: RuntimeRateLimitConfig;

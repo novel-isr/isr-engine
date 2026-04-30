@@ -6,6 +6,27 @@
 
 ## [Unreleased]
 
+### Changed — 行为收口（轻量 BREAKING / 默认值变更）
+
+- **`runtime.rateLimit.store` 默认从 `'memory'` 改为 `'auto'`**。已配置 `runtime.redis`
+  （或 `REDIS_URL` / `REDIS_HOST` 环境变量）时，限流自动切到 Redis backend；否则
+  仍用 memory。**消费方一般不再需要显式声明 `store`** —— Redis 配置即统一真值源。
+  > 旧行为「不因 redis 存在而隐式切换」是为了避免惊喜，但实际上让每个消费方都得
+  > 重复写 `store: 'redis'`。新行为更符合 engine 「开箱即用」的第一性原则。
+  > 如果你确实希望即使 Redis 已配置仍用 memory（罕见，例如本地 burn-in），显式
+  > 写 `rateLimit: { store: 'memory' }` 即可。
+
+### Fixed — 配置边界校验
+
+- **`runtime.rateLimit.store` 接到非法值（拼错 / 类型错）时不再静默吞**。engine
+  现在在边界做校验：合法值 (`'memory'` / `'redis'` / `'auto'`) 直通；非法值
+  warn 一次并按 `'auto'` 处理。
+  > 原来 `store: 'mem'` 这类拼写错误会被 `mode === 'redis' || mode === 'auto'`
+  > 这两个布尔判断同时落空，最终静默回落到 memory，运维永远不知道环境变量打错。
+  > 新行为遵循「校验在边界，类型拥有方负责」原则：engine 拥有 `RateLimitStore`
+  > 这个 union type，校验就在 engine 这层。消费方不再需要写本地的
+  > `resolveRateLimitStore()` 之类 sanitizer 函数。
+
 ---
 
 ## [2.3.1] - 2026-04-29
