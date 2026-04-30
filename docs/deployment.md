@@ -122,7 +122,7 @@ Vercel Edge 部署可用 `toVercelMiddleware` 包出平台原生 `middleware.ts`
 
 - [ ] `SEO_BASE_URL` 设到真实域名
 - [ ] `REDIS_URL` 设到生产 Redis（多 pod 必需）
-- [ ] 需要分布式限流时，把 `runtime.rateLimit.store` 设为 `'redis'`，确认 429 响应带 `RateLimit-*` / `Retry-After`
+- [ ] 需要分布式限流时，配置 `runtime.redis` 或把 `runtime.rateLimit.store` 设为 `'redis'`，确认 429 响应带 `RateLimit-*` / `Retry-After`，并确认静态资源、健康检查和 dev 资源不会消耗应用入口配额
 - [ ] `SENTRY_DSN` 接入（一行 `createSentryServerHooks`）
 - [ ] `ISR_ADMIN_TOKEN` 设到强 secret（如果开了 `/__isr/*` 或 `/metrics`）
 - [ ] 跑一周以上 staging 压测，监控内存增长（L1 LRU 默认 1000 条够不够你的业务）

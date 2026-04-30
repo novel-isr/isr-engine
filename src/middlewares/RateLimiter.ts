@@ -40,6 +40,12 @@ export interface RateLimitOptions {
   keyGenerator?: (req: Request) => string;
   /** 返回 true 则跳过限流（如 /health） */
   skip?: (req: Request) => boolean;
+  /** 精确跳过的 path；默认已跳过 /health、/metrics */
+  skipPaths?: readonly string[];
+  /** 按 path 前缀跳过；适合业务自己的静态资源或内部探针 */
+  skipPathPrefixes?: readonly string[];
+  /** 按文件扩展名跳过；默认跳过静态资源扩展名 */
+  skipExtensions?: readonly string[];
   /** 限流响应状态码；默认 429 */
   statusCode?: number;
   /** 限流响应体；默认 '{"error":"Too Many Requests"}' */
@@ -192,6 +198,72 @@ function envRedisPort(): number | undefined {
 const VALID_STORE_MODES = ['memory', 'redis', 'auto'] as const;
 type StoreMode = (typeof VALID_STORE_MODES)[number];
 
+const DEFAULT_SKIP_PATHS = new Set(['/health', '/metrics']);
+const DEFAULT_SKIP_EXTENSIONS = new Set([
+  '.avif',
+  '.css',
+  '.gif',
+  '.ico',
+  '.jpeg',
+  '.jpg',
+  '.js',
+  '.json',
+  '.map',
+  '.mjs',
+  '.png',
+  '.svg',
+  '.txt',
+  '.webmanifest',
+  '.webp',
+  '.woff',
+  '.woff2',
+]);
+const DEV_ASSET_PREFIXES = [
+  '/@fs/',
+  '/@id/',
+  '/@react-refresh',
+  '/@vite/',
+  '/node_modules/',
+  '/src/',
+];
+
+function isDevRuntime(): boolean {
+  return process.env.NODE_ENV !== 'production';
+}
+
+function normalizePath(path: string): string {
+  return path.split('?')[0] || '/';
+}
+
+function hasSkippedExtension(path: string, extensions: ReadonlySet<string>): boolean {
+  const lower = path.toLowerCase();
+  for (const ext of extensions) {
+    if (lower.endsWith(ext)) return true;
+  }
+  return false;
+}
+
+export function shouldSkipRateLimitRequest(
+  req: Pick<Request, 'method' | 'path'>,
+  options: Pick<RateLimitOptions, 'skipExtensions' | 'skipPathPrefixes' | 'skipPaths'> = {}
+): boolean {
+  const path = normalizePath(req.path || '/');
+  const method = (req.method ?? 'GET').toUpperCase();
+  if (method === 'OPTIONS') return true;
+  if (DEFAULT_SKIP_PATHS.has(path)) return true;
+
+  const extensions = new Set([...DEFAULT_SKIP_EXTENSIONS, ...(options.skipExtensions ?? [])]);
+  if (hasSkippedExtension(path, extensions)) return true;
+
+  const prefixes = [
+    ...(isDevRuntime() ? DEV_ASSET_PREFIXES : []),
+    ...(options.skipPathPrefixes ?? []),
+  ];
+  if (prefixes.some(prefix => path === prefix || path.startsWith(prefix))) return true;
+
+  return Boolean(options.skipPaths?.includes(path));
+}
+
 /**
  * 边界校验：把 `runtime.rateLimit.store` 的任意输入归一化为合法 StoreMode。
  *
@@ -336,6 +408,7 @@ export function createRateLimiter(options: RateLimitOptions = {}) {
   ): Promise<void> {
     // bench 模式逃生（仅当 BENCH_DISABLE_RATE_LIMIT=1）—— 优先级高于 skip
     if (isBenchBypassActive()) return next();
+    if (shouldSkipRateLimitRequest(req, options)) return next();
     if (skip?.(req)) return next();
 
     const key = keyGenerator(req);

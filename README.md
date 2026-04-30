@@ -381,6 +381,7 @@ runtime: {
 - `max`：同一个 key 在一个窗口内允许的最大请求数。默认 key 是客户端 IP。
 - `trustProxy`：只在可信 CDN/LB/Nginx 后面开启，否则客户端可伪造代理头。
 - `sendHeaders`：返回 `RateLimit-*` 和 `Retry-After` 标准头。
+- 默认跳过 `/health`、`/metrics`、`OPTIONS`、静态资源扩展名，以及 dev 下的 Vite/module 请求；业务可用 `skipPaths` / `skipPathPrefixes` / `skipExtensions` 补充内部探针或自定义资源路径。
 - Redis store 使用 Lua 原子递增 + TTL；Redis 故障时 fail-open 放行，不拖垮业务入口。
 - CSR recovery：engine 默认 RSC shell fallback 会先 fetch 当前页面 `_.rsc`，拿到 `intl` 后再渲染页面；业务不再需要维护第二套路由或自定义 CSR App。
 - 服务端完全不可用且 `_.rsc` 也失败时，只会显示最终不可用壳；这时没有远程 i18n，因为数据源本身不可达。

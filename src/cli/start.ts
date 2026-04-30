@@ -155,6 +155,9 @@ export async function startProductionServer(options: StartOptions): Promise<void
         lruMax: runtime.rateLimit.lruMax,
         trustProxy: runtime.rateLimit.trustProxy,
         sendHeaders: runtime.rateLimit.sendHeaders,
+        skipPaths: runtime.rateLimit.skipPaths,
+        skipPathPrefixes: runtime.rateLimit.skipPathPrefixes,
+        skipExtensions: runtime.rateLimit.skipExtensions,
         skip: req => req.path === '/health' || req.path === '/metrics',
       })
     );

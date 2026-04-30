@@ -125,6 +125,7 @@ runtime: {
 - `trustProxy`：只在可信 CDN/LB/Nginx 后面开启，用 `CF-Connecting-IP`、`X-Real-IP`、`X-Forwarded-For` 识别真实客户端 IP。
 - `sendHeaders`：是否返回 `RateLimit-Limit`、`RateLimit-Remaining`、`RateLimit-Reset`、`Retry-After`。
 - `keyPrefix`：Redis store 的 key 前缀；避免和页面缓存或业务 Redis key 冲突。
+- `skipPaths` / `skipPathPrefixes` / `skipExtensions`：补充业务自己的跳过规则。engine 默认已经跳过 `/health`、`/metrics`、`OPTIONS`、静态资源扩展名，以及 dev 下的 Vite/module 请求，避免 CSS/JS/HMR 把应用入口配额耗光。
 
 Redis store 使用 Lua 原子完成计数和 TTL 设置；Redis 报错时 engine fail-open 放行请求并记录 warning，避免限流组件故障拖垮站点。强配额、计费 API、登录和支付风控仍应在业务 API 或网关层单独做。
 

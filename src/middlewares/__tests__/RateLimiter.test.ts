@@ -86,6 +86,50 @@ describe('RateLimiter', () => {
     expect(nextCalled).toBe(5);
   });
 
+  it('默认跳过静态资源和开发态模块请求，不消耗页面限流配额', async () => {
+    const mw = createRateLimiter({ windowMs: 10_000, max: 1 });
+    let nextCalled = 0;
+    const next = () => void nextCalled++;
+
+    await mw(mockReq('1.1.1.1', '/assets/index.js'), mockRes(), next);
+    await mw(mockReq('1.1.1.1', '/src/components/Header/index.tsx'), mockRes(), next);
+    await mw(mockReq('1.1.1.1', '/@vite/client'), mockRes(), next);
+
+    const page1 = mockRes();
+    await mw(mockReq('1.1.1.1', '/books'), page1, next);
+    expect(page1.statusCode).toBe(200);
+
+    const page2 = mockRes();
+    await mw(mockReq('1.1.1.1', '/books'), page2, next);
+    expect(page2.statusCode).toBe(429);
+    expect(nextCalled).toBe(4);
+  });
+
+  it('支持 runtime 传入自定义跳过 path / prefix / extension', async () => {
+    const mw = createRateLimiter({
+      windowMs: 10_000,
+      max: 1,
+      skipPaths: ['/internal/ping'],
+      skipPathPrefixes: ['/internal/static/'],
+      skipExtensions: ['.wasm'],
+    });
+    let nextCalled = 0;
+    const next = () => void nextCalled++;
+
+    await mw(mockReq('2.2.2.2', '/internal/ping'), mockRes(), next);
+    await mw(mockReq('2.2.2.2', '/internal/static/runtime.bin'), mockRes(), next);
+    await mw(mockReq('2.2.2.2', '/worker.wasm'), mockRes(), next);
+
+    const page1 = mockRes();
+    await mw(mockReq('2.2.2.2', '/reviews'), page1, next);
+    expect(page1.statusCode).toBe(200);
+
+    const page2 = mockRes();
+    await mw(mockReq('2.2.2.2', '/reviews'), page2, next);
+    expect(page2.statusCode).toBe(429);
+    expect(nextCalled).toBe(4);
+  });
+
   it('keyGenerator 区分 key', async () => {
     const mw = createRateLimiter({ windowMs: 10_000, max: 1 });
     const next = () => {};

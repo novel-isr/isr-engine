@@ -151,6 +151,9 @@ async function initServerContext(config?: ISRConfig): Promise<ServerContext> {
         lruMax: config.runtime.rateLimit.lruMax,
         trustProxy: config.runtime.rateLimit.trustProxy,
         sendHeaders: config.runtime.rateLimit.sendHeaders,
+        skipPaths: config.runtime.rateLimit.skipPaths,
+        skipPathPrefixes: config.runtime.rateLimit.skipPathPrefixes,
+        skipExtensions: config.runtime.rateLimit.skipExtensions,
         skip: req => req.path === '/health' || req.path === '/metrics',
       })
     );

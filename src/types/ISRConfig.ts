@@ -98,6 +98,15 @@ export interface RuntimeRateLimitConfig {
   sendHeaders?: boolean;
   /** Redis rate-limit key 前缀；默认 `${runtime.redis.keyPrefix ?? 'isr:'}rate-limit:` */
   keyPrefix?: string;
+  /**
+   * 精确跳过的请求 path。engine 默认已跳过 /health、/metrics、OPTIONS、静态资源扩展名；
+   * 业务只在确有内部探针或自定义资源路径时补充。
+   */
+  skipPaths?: readonly string[];
+  /** 按 path 前缀跳过限流，例如 ['/internal/static/'] */
+  skipPathPrefixes?: readonly string[];
+  /** 额外静态资源扩展名，例如 ['.wasm']；默认已覆盖 js/css/image/font/map 等常见资源 */
+  skipExtensions?: readonly string[];
 }
 
 export interface RuntimeI18nConfig {

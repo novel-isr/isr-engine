@@ -382,10 +382,16 @@ function listenNavigation(
   // ─── 链接预取（hover / viewport intersect 触发预取 _.rsc）─────────
   // 复用浏览器的 RSC fetch 缓存，导航时立即命中而不是再发请求
   // 减少 50–150ms 客户端导航延迟，对应 next/link 的 prefetch 默认行为
+  // 视口预取有硬上限：列表页/首页可能一次渲染几十个链接，不能把低优先级预取消耗成
+  // 大量真实 RSC 请求，进而挤占用户交互和应用层限流配额。
+  const maxViewportPrefetches = 12;
+  let viewportPrefetches = 0;
   const prefetched = new Set<string>();
 
-  function prefetch(href: string): void {
+  function prefetch(href: string, reason: 'intent' | 'viewport' = 'intent'): void {
+    if (reason === 'viewport' && viewportPrefetches >= maxViewportPrefetches) return;
     if (prefetched.has(href)) return;
+    if (reason === 'viewport') viewportPrefetches += 1;
     prefetched.add(href);
     try {
       const url = new URL(href);
@@ -414,7 +420,7 @@ function listenNavigation(
       entries => {
         for (const entry of entries) {
           if (entry.isIntersecting && entry.target instanceof HTMLAnchorElement) {
-            if (isInternalLink(entry.target)) prefetch(entry.target.href);
+            if (isInternalLink(entry.target)) prefetch(entry.target.href, 'viewport');
             observer!.unobserve(entry.target);
           }
         }
