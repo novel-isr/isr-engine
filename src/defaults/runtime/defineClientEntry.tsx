@@ -147,10 +147,8 @@ export function defineClientEntry(hooks: ClientEntryHooks = {}): void {
 async function main(hooks: ClientEntryHooks): Promise<void> {
   if (hooks.beforeStart) await hooks.beforeStart();
 
-  let inspectorInstalled = false;
   const installInspector = () => {
-    if (inspectorInstalled || hooks.devInspector === false) return;
-    inspectorInstalled = true;
+    if (hooks.devInspector === false) return;
     try {
       installDevRenderInspector();
     } catch {

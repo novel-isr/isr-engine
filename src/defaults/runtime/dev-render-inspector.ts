@@ -14,6 +14,8 @@ interface InspectorState {
 
 const INSPECTOR_ID = 'novel-isr-render-inspector';
 let deferredInstallScheduled = false;
+let watchdogStarted = false;
+let watchdogInstallScheduled = false;
 
 type InspectorMode = (typeof MODE_LINKS)[number]['key'] | 'unknown';
 
@@ -59,6 +61,7 @@ export function installDevRenderInspector(): void {
     scheduleDeferredInstall();
     return;
   }
+  startInspectorWatchdog();
 
   const host = document.createElement('div');
   host.id = INSPECTOR_ID;
@@ -163,6 +166,12 @@ export function shouldDeferDevRenderInspectorMount(doc: Pick<Document, 'body'>):
   return !doc.body;
 }
 
+export function shouldMountDevRenderInspector(
+  doc: Pick<Document, 'body' | 'getElementById'>
+): boolean {
+  return Boolean(doc.body) && !doc.getElementById(INSPECTOR_ID);
+}
+
 function scheduleDeferredInstall(): void {
   if (deferredInstallScheduled) return;
   deferredInstallScheduled = true;
@@ -175,6 +184,31 @@ function scheduleDeferredInstall(): void {
     return;
   }
   window.setTimeout(retry, 0);
+}
+
+function startInspectorWatchdog(): void {
+  if (watchdogStarted) return;
+  if (typeof MutationObserver === 'undefined') return;
+  if (!document.documentElement) return;
+  watchdogStarted = true;
+
+  const scheduleEnsureMounted = () => {
+    if (watchdogInstallScheduled) return;
+    watchdogInstallScheduled = true;
+    window.setTimeout(() => {
+      watchdogInstallScheduled = false;
+      if (shouldMountDevRenderInspector(document)) {
+        installDevRenderInspector();
+      }
+    }, 0);
+  };
+
+  const observer = new MutationObserver(() => {
+    if (!shouldMountDevRenderInspector(document)) return;
+    scheduleEnsureMounted();
+  });
+
+  observer.observe(document.documentElement, { childList: true, subtree: true });
 }
 
 async function inspectCurrentPage(): Promise<InspectorState> {

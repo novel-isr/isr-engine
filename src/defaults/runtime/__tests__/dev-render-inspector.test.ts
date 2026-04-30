@@ -4,6 +4,7 @@ import {
   isDevRenderInspectorRuntimeEnabled,
   resolveDevRenderInspectorView,
   shouldDeferDevRenderInspectorMount,
+  shouldMountDevRenderInspector,
 } from '../dev-render-inspector';
 
 describe('dev render inspector view model', () => {
@@ -68,6 +69,27 @@ describe('dev render inspector view model', () => {
   it('defers mounting until document.body is available', () => {
     expect(shouldDeferDevRenderInspectorMount({ body: null })).toBe(true);
     expect(shouldDeferDevRenderInspectorMount({ body: {} as HTMLElement })).toBe(false);
+  });
+
+  it('remounts when full-document CSR rendering removes the inspector host', () => {
+    expect(
+      shouldMountDevRenderInspector({
+        body: null,
+        getElementById: () => null,
+      })
+    ).toBe(false);
+    expect(
+      shouldMountDevRenderInspector({
+        body: {} as HTMLElement,
+        getElementById: () => ({}) as HTMLElement,
+      })
+    ).toBe(false);
+    expect(
+      shouldMountDevRenderInspector({
+        body: {} as HTMLElement,
+        getElementById: () => null,
+      })
+    ).toBe(true);
   });
 
   it('enables inspector only in Vite dev runtime', () => {
