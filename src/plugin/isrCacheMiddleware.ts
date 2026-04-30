@@ -472,7 +472,7 @@ export function createIsrCacheMiddleware(
       const adminConfig = resolveAdminConfig(resolvedConfig, 'development');
 
       // dev 也暴露 admin 端点 —— 与生产 cli/start.ts 行为对齐，
-      // 便于 /dev/observability 等观测页面在开发期就能拉到统计数据
+      // 便于 engine dev inspector / 外部控制台在开发期拉取统计数据。
       server.middlewares.use((req, res, next) => {
         const activeHandler = handler;
         if (!activeHandler) {
