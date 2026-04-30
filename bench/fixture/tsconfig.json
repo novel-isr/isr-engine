@@ -19,5 +19,5 @@
     "sourceMap": true,
     "types": ["@types/node", "vite/client", "@vitejs/plugin-rsc/types"]
   },
-  "include": ["src"]
+  "include": ["src", "ssr.config.ts", "vite.config.ts"]
 }

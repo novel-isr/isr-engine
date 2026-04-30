@@ -18,7 +18,7 @@ const config: ISRConfig = {
     strategy: 'memory',
     ttl: 3600,
   },
-  routeOverrides: {
+  routes: {
     '/': { mode: 'isr', ttl: 60, staleWhileRevalidate: 300 },
     '/about': { mode: 'ssg' },
     '/books/:id': { mode: 'isr', ttl: 120, staleWhileRevalidate: 600 },

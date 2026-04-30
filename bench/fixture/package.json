@@ -7,6 +7,7 @@
   "scripts": {
     "build": "vite build",
     "start": "novel-isr start",
+    "type-check": "tsc --noEmit",
     "clean": "rimraf dist node_modules"
   },
   "dependencies": {

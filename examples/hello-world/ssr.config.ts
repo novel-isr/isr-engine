@@ -5,7 +5,7 @@
  *
  * 字段分组:
  *   1. 必填:        renderMode, cache
- *   2. 路由级覆盖:  routeOverrides
+ *   2. 路由级覆盖:  routes
  *   3. ISR / SSG:   isr, ssg
  *   4. SEO:         seo
  *   5. Server:      server (端口 / 协议 / 超时 / 管理端点 / 压缩)
@@ -38,7 +38,7 @@ export default {
    * 支持 glob (`/posts/*`) 和动态参数 (`/post/:id`)
    * 值可以是 mode 字符串 shorthand，或对象 `{ mode, ttl, staleWhileRevalidate }`
    */
-  routeOverrides: {
+  routes: {
     '/about': 'ssg', // build-time 静态 HTML
     '/health': 'ssr', // 永不缓存
     // '/posts/*': { mode: 'isr', ttl: 60, staleWhileRevalidate: 300 },
@@ -47,12 +47,12 @@ export default {
 
   // ─── 3. ISR / SSG ────────────────────────────────────────────────
   isr: {
-    /** 默认 TTL（秒）。routeOverrides 里如果路由对象没设 ttl，用这个 */
+    /** 默认 TTL（秒）。routes 里如果路由对象没设 ttl，用这个 */
     revalidate: 60,
   },
 
   ssg: {
-    // 显式 SSG 路由清单（可选，优先级高于 routeOverrides 中 mode=ssg 的条目）
+    // 显式 SSG 路由清单（可选，优先级高于 routes 中 mode=ssg 的条目）
     // routes: ['/about', '/terms', '/privacy'],
 
     /** spider 并发，默认 CPU-aware（min(8, max(2, cpus/2)）。也可用 ISR_SSG_CONCURRENCY env 覆盖 */

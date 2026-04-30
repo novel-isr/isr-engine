@@ -12,9 +12,6 @@
 import { defineSiteHooks } from '@novel-isr/engine/site-hooks';
 
 export default defineSiteHooks({
-  api: '', // 不远端取数据
-  site: process.env.SEO_BASE_URL ?? 'http://localhost:3000',
-
   // SEO 全静态，无 endpoint —— 主测时不会触发任何 fetch
   seo: {
     '/': { title: 'Bench Home', description: 'fixture root' },
