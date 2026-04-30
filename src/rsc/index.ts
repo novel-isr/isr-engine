@@ -46,7 +46,7 @@ export {
 export { getI18n, getI18nLocale, getCurrentI18n, runWithI18n } from './i18n';
 export type { I18nParams, Translate } from './i18n';
 
-// A/B 实验：在 Server Component 里读 variant（轻量；不引入 express 类型）
+// A/B testing：在 Server Component 里读 variant（轻量；不引入 express 类型）
 // ABVariantMiddleware 在 Node express 层挂；本 helper 只读 RequestContext.flags
 export { getVariant } from '../middlewares/abVariantContext';
 export { getRequestContext } from '../context/RequestContext';

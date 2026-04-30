@@ -90,7 +90,10 @@ export const runtime = {
   },
   redis: process.env.REDIS_URL ? { url: process.env.REDIS_URL, keyPrefix: 'isr:' } : undefined,
   sentry: process.env.SENTRY_DSN ? { dsn: process.env.SENTRY_DSN } : undefined,
+  // 默认 runtime 接入使用进程内 memory fixed-window counter；
+  // 多实例强配额仍应放在 CDN/WAF/API Gateway 或显式 Redis store。
   rateLimit: { windowMs: 60_000, max: 200 },
+  // 字段名沿用 experimentation platform 术语；业务侧可理解为 A/B testing。
   experiments: {
     'hero-style': { variants: ['classic', 'bold'], weights: [50, 50] },
   },
@@ -181,7 +184,7 @@ export default {
 │    • SEO sitemap / robots / OG image                  │
 │    • page-level SEO + API SEO 下发                    │
 │    • i18n URL 路由 + 字典缓存 + getI18n()              │
-│    • A/B 实验、限流                                    │
+│    • A/B testing、限流                                 │
 │    • csr-shell fallback（server 崩溃自救）            │
 │    • dev render inspector（开发态渲染模式浮层）        │
 │    • Sentry / Datadog / OTel adapter（一行接入）       │

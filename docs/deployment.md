@@ -108,8 +108,8 @@ export default toVercelEdge(handler);
 i18n / A/B / rate-limit 是平台级横切能力，生产配置写在 `ssr.config.ts runtime`：
 
 - `runtime.i18n`：locale、远端字典 endpoint、TTL、本地 fallback。
-- `runtime.experiments`：A/B 实验定义；页面用 `getVariant()`。
-- `runtime.rateLimit`：站点级限流。
+- `runtime.experiments`：A/B testing / experimentation 定义；页面用 `getVariant()`。
+- `runtime.rateLimit`：站点入口限流；默认是当前进程内 memory fixed-window counter。
 
 `entry.server.tsx beforeRequest` 只补充本次请求的业务上下文字段，例如
 `userId`、`tenantId`、`requestSegment`。不要在 `beforeRequest` 里重新实现 i18n、

@@ -158,7 +158,7 @@ export async function startProductionServer(options: StartOptions): Promise<void
   if (runtime?.experiments && Object.keys(runtime.experiments).length > 0) {
     const { createABVariantMiddleware } = await import('@/middlewares/ABVariantMiddleware');
     app.use(createABVariantMiddleware({ experiments: runtime.experiments }));
-    logger.info(`🧪 A/B 实验已启用：${Object.keys(runtime.experiments).join(', ')}`);
+    logger.info(`🧪 A/B testing 已启用：${Object.keys(runtime.experiments).join(', ')}`);
   }
 
   // admin 路由：先于 ISR 缓存 + 静态 + 动态 handler

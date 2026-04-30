@@ -4,6 +4,7 @@
  * 让用户的 src/entry.server.tsx 收紧到「只写请求期 hooks」。
  * 部署/平台配置（api/site/redis/sentry/rateLimit/experiments/i18n/seo）放
  * ssr.config.ts 的 runtime 字段；entry.server.tsx 只保留 beforeRequest / onError。
+ * 注：experiments 是 experimentation platform 的通用字段名，业务侧可理解为 A/B testing。
  * 内部固化：
  *   - i18n 字典缓存（createCachedFetcher: TTL/SWR/dedup/fallback）
  *   - SEO 路由表 pattern → resolver

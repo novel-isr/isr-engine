@@ -71,7 +71,9 @@ export interface RuntimeExperimentConfig {
 }
 
 export interface RuntimeRateLimitConfig {
+  /** 固定窗口长度（毫秒）；默认 60_000 */
   windowMs?: number;
+  /** 每个 key 在窗口内允许的最大请求数；默认 100 */
   max?: number;
 }
 
@@ -137,9 +139,15 @@ export interface RuntimeConfig {
   redis?: RuntimeRedisConfig;
   /** 服务端错误监控 */
   sentry?: RuntimeSentryConfig;
-  /** 站点级限流 */
+  /**
+   * 站点入口限流。
+   *
+   * 当前 runtime.rateLimit 默认接入 engine memory store：单进程 LRU、重启清空、
+   * 不跨 pod 共享。底层 createRateLimiter 支持 Redis store，但需要显式传入 store。
+   * 多实例生产环境仍应优先使用 CDN/WAF/API Gateway 做第一层限流。
+   */
   rateLimit?: RuntimeRateLimitConfig;
-  /** A/B 实验定义，供 getVariant() 在 Server Component 中读取 */
+  /** A/B testing / experimentation 定义，供 getVariant() 在 Server Component 中读取 */
   experiments?: Record<string, RuntimeExperimentConfig>;
   /** i18n 字典源配置；请求期加载由 engine 默认 SiteHooks 消费 */
   i18n?: RuntimeI18nConfig;

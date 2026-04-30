@@ -1,12 +1,18 @@
 /**
- * Rate Limiter —— 生产级 per-IP/per-key 限流
+ * Rate Limiter —— 站点入口 per-IP/per-key 限流
  *
  * 特性：
- *   - Token bucket 算法（比 fixed window 平滑，OKX/Cloudflare 同款）
- *   - 内存 LRU 默认（单 pod 够用）；可选 Redis 后端（多 pod 一致）
+ *   - Fixed-window counter：每个 key 在 windowMs 内最多 max 次请求
+ *   - 内存 LRU 默认：单进程、单 pod、重启清空，适合 dev / 单实例 / 基础入口保护
+ *   - Redis store 可选：用 Lua 原子 INCR + PEXPIRE，适合多 pod 共享限流状态
  *   - 标准 429 响应 + RateLimit-* 头（RFC IETF draft-ietf-httpapi-ratelimit-headers）
  *   - Whitelist/Blacklist hook（如 /health 永远放行）
  *   - 响应头可关（后端 API 场景 ok，浏览器直连可能不想暴露）
+ *
+ * 边界：
+ *   - 这是应用层 L7 限流，不替代 CDN/WAF/API Gateway/DDoS 防护。
+ *   - 对强配额、秒级突发控制或计费级 API quota，应在网关或专门配额服务使用
+ *     sliding-window / token-bucket / leaky-bucket。
  *
  * 用法（Express middleware）：
  *
@@ -18,7 +24,7 @@
  *     skip: req => req.path === '/health',     // 探活不限流
  *   }));
  *
- * 压测参考：单核 2.5GHz 处理 100k req/s 限流判定耗时 < 1ms（LRU lookup）
+ * 压测参考：内存 store 是 O(1) LRU lookup；Redis store 是 1 次 Lua RTT。
  */
 import type { Request, Response, NextFunction } from 'express';
 import { LRUCache } from 'lru-cache';
@@ -38,8 +44,9 @@ export interface RateLimitOptions {
   /** 限流响应体；默认 '{"error":"Too Many Requests"}' */
   message?: string | object;
   /**
-   * 后端类型；默认 'memory'。
-   * Redis 场景需传入 ioredis 实例（engine 不在此处创建连接 —— 复用项目已有的）
+   * 限流状态后端；默认 memory。
+   * Redis 场景需传入 createRedisRateLimitStore(redis)。
+   * 注意：runtime.rateLimit 这条默认接入目前只传 windowMs/max，未传 store 时就是 memory。
    */
   store?: RateLimitStore;
   /** 是否发 RateLimit-* 响应头（默认 true） */

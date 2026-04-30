@@ -143,8 +143,8 @@ Client Component 不能直接读 `getRequestContext()`。需要在 Server Compon
 读取后作为 props 传下去。不要为了“用上 tenantId”只打一个 cacheTag；如果页面
 数据和 UI 都不随 tenant 变化，那就不要读取它。
 
-A/B 实验不写在 `beforeRequest`。在 `ssr.config.ts runtime.experiments` 声明后，
-页面使用 `getVariant('experiment-name')`；engine 负责 sticky cookie 和 ISR variant
+A/B testing 不写在 `beforeRequest`。在 `ssr.config.ts runtime.experiments` 声明后，
+页面使用 `getVariant('test-name')`；engine 负责 sticky cookie 和 ISR variant
 缓存隔离。完整说明见 [site-hooks.md](./site-hooks.md#beforerequest--onerror)。
 
 ## 7. `src/app.tsx` —— App shell

@@ -155,7 +155,7 @@ async function initServerContext(config?: ISRConfig): Promise<ServerContext> {
     serverContext.requestHandler.use(
       createABVariantMiddleware({ experiments: config.runtime.experiments })
     );
-    logger.info(`🧪 A/B 实验已启用：${Object.keys(config.runtime.experiments).join(', ')}`);
+    logger.info(`🧪 A/B testing 已启用：${Object.keys(config.runtime.experiments).join(', ')}`);
   }
 
   logger.info(`✅ 服务器上下文已初始化 (${isDev() ? '开发' : '生产'}模式)`);

@@ -50,7 +50,7 @@ export interface ExperimentConfig {
 }
 
 export interface ABVariantOptions {
-  /** 实验定义：experimentName → { variants, weights } */
+  /** A/B testing 定义：testName → { variants, weights } */
   experiments: Record<string, ExperimentConfig>;
   /** cookie 名；默认 'ab' */
   cookieName?: string;
