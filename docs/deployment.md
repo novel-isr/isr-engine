@@ -105,9 +105,18 @@ export default toVercelEdge(handler);
 
 ## Middleware（i18n / A/B / rate-limit）
 
-i18n / A/B / rate-limit 这类横切逻辑通过 SiteHooks 的 `beforeRequest` 实现，详见
-[site-hooks.md](./site-hooks.md)。Vercel Edge 部署可用 `toVercelMiddleware` 包出
-平台原生 `middleware.ts`，详见 `src/adapters/runtime/vercel-edge.ts`。
+i18n / A/B / rate-limit 是平台级横切能力，生产配置写在 `ssr.config.ts runtime`：
+
+- `runtime.i18n`：locale、远端字典 endpoint、TTL、本地 fallback。
+- `runtime.experiments`：A/B 实验定义；页面用 `getVariant()`。
+- `runtime.rateLimit`：站点级限流。
+
+`entry.server.tsx beforeRequest` 只补充本次请求的业务上下文字段，例如
+`userId`、`tenantId`、`requestSegment`。不要在 `beforeRequest` 里重新实现 i18n、
+A/B 或限流。详见 [site-hooks.md](./site-hooks.md)。
+
+Vercel Edge 部署可用 `toVercelMiddleware` 包出平台原生 `middleware.ts`，详见
+`src/adapters/runtime/vercel-edge.ts`。
 
 ## 上生产前 checklist
 

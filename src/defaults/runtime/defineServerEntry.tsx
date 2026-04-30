@@ -69,10 +69,17 @@ export interface ServerEntryHooks<C extends ServerCtx = ServerCtx> {
    */
   apiBaseUrl?: string;
   /**
-   * 请求进入时调用 —— 返回的对象**与 engine 请求上下文合并**作为后续 hook 的 ctx
-   * 适用：auth 解析、自定义业务 ctx 字段
+   * 请求进入时调用 —— 返回的对象**与 engine 请求上下文合并**作为后续 hook 的 ctx，
+   * 同时同步到 RequestContext，Server Component 可用 getRequestContext() 读取。
+   *
+   * 适用：
+   *   - 从 header / cookie 解析 userId。
+   *   - 从域名 / header / 路径解析 tenantId。
+   *   - 注入 requestSegment、渠道、风控或审计字段。
    *
    * 注意：trace-id 和 startedAt 由 engine 自动维护，**不需要**在这里手动设
+   * 注意：A/B variant 由 runtime.experiments + middleware 注入，页面用 getVariant()。
+   * 不要在这里解析 ab cookie 或做慢 API / 数据库查询。
    */
   beforeRequest?: (
     request: Request,

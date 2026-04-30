@@ -11,11 +11,22 @@
  *   - api/i18n/seo 远端 origin 从 ssr.config.ts runtime.services 注入
  *   - 错误打印 / Sentry adapter 透传
  *
+ * beforeRequest 的边界：
+ *   - 它在每次 HTTP/RSC 请求进入渲染前执行。
+ *   - 返回值会合并进 RequestContext，Server Component 用 getRequestContext() 读取。
+ *   - 适合放 userId / tenantId / requestSegment 这类请求现场字段。
+ *   - 不适合放 Redis、SEO、i18n、A/B 定义、慢 API 或数据库查询。
+ *   - A/B variant 由 runtime.experiments + engine middleware 注入，页面用 getVariant()。
+ *
  * 用户态写法（商业项目推荐）：
  *   import { defineAdminSiteHooks } from '@novel-isr/engine/site-hooks';
  *
  *   export default defineAdminSiteHooks({
- *     beforeRequest: req => ({ tenantId: req.headers.get('x-tenant-id') ?? 'public' }),
+ *     beforeRequest: req => ({
+ *       userId: req.headers.get('x-user-id') ?? undefined,
+ *       tenantId: req.headers.get('x-tenant-id') ?? 'public',
+ *       requestSegment: req.headers.get('x-segment') ?? 'default',
+ *     }),
  *   });
  */
 import { createCachedFetcher } from './createCachedFetcher';
@@ -160,7 +171,19 @@ export interface SiteHooksConfig {
   seo?: Record<string, SeoEntry | (() => Promise<PageSeoMeta | null> | PageSeoMeta | null)>;
   /** 错误回调（默认 console.error 或 sentry.captureException）；自定义时覆盖 */
   onError?: (err: unknown, req: Request, ctx: { traceId: string; locale?: string }) => void;
-  /** 请求级 ctx 扩展（除 engine 基线字段 + locale 之外的业务字段） */
+  /**
+   * 请求级 ctx 扩展（除 engine 基线字段 + locale 之外的业务字段）。
+   *
+   * 典型用途：userId、tenantId、requestSegment、审计字段。
+   * 返回值会合并进 RequestContext；Server Component 使用
+   * `getRequestContext()` 读取，Client Component 需要由 Server Component
+   * 作为 props 传入。
+   *
+   * 注意：
+   *   - 这里处在首屏关键路径上，应只做 header/cookie 解析。
+   *   - 不要在这里查数据库或慢 API。
+   *   - 不要在这里解析 A/B cookie；页面用 `getVariant()`。
+   */
   beforeRequest?: (req: Request) => Record<string, unknown> | Promise<Record<string, unknown>>;
 }
 

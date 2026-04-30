@@ -138,6 +138,12 @@ export default defineAdminSiteHooks({
 });
 ```
 
+`beforeRequest` 返回值会进入当前请求的 `RequestContext`。Server Component 里用
+`getRequestContext()` 读取用户、租户、分群等请求级字段；Client Component 需要由
+Server Component 读取后作为 props 传入。A/B variant 不在 `beforeRequest` 里手写解析，
+页面用 `getVariant()` 读取，engine 负责 sticky cookie 和 ISR variant 缓存隔离。
+完整用法见 [docs/site-hooks.md](./docs/site-hooks.md#beforerequest--onerror)。
+
 `pnpm dev` → http://localhost:3000。开发模式会自动注入 **Novel ISR Inspector** 浮层，
 可直接切换/验证 ISR、SSR、SSG、CSR fallback。业务不需要 import 调试组件。
 如需隐藏浮层，新建 `src/entry.tsx`：
@@ -218,7 +224,7 @@ release）。详细：[docs/performance.md](./docs/performance.md)。
 | 渲染模式（ISR / SSR / SSG / csr-shell） | [render-modes.md](./docs/render-modes.md) |
 | 开发态渲染检查器（Novel ISR Inspector） | [dev-inspector.md](./docs/dev-inspector.md) |
 | 缓存与失效（cacheTag / revalidate / Redis 双层） | [caching.md](./docs/caching.md) |
-| SiteHooks 配置（i18n / SEO / Sentry / 限流） | [site-hooks.md](./docs/site-hooks.md) |
+| SiteHooks 配置（beforeRequest / i18n / SEO / A/B） | [site-hooks.md](./docs/site-hooks.md) |
 | i18n URL 路由 + 语言协商 | [i18n.md](./docs/i18n.md) |
 | 可观测性（Sentry / Datadog / OTel / Prometheus） | [observability.md](./docs/observability.md) |
 | 生产部署（环境变量 / Docker / Edge runtime / Middleware） | [deployment.md](./docs/deployment.md) |

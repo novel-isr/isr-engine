@@ -107,11 +107,13 @@ export default {
 ## 6. `src/entry.server.ts` —— 请求期 SiteHooks
 
 ```ts
-import { defineAdminSiteHooks } from '@novel-isr/engine/site-hooks';
+import { defineAdminSiteHooks, readCookie } from '@novel-isr/engine/site-hooks';
 
 export default defineAdminSiteHooks({
   beforeRequest: req => ({
+    userId: req.headers.get('x-user-id') ?? readCookie(req, 'uid') ?? undefined,
     tenantId: req.headers.get('x-tenant-id') ?? 'public',
+    requestSegment: req.headers.get('x-segment') ?? 'default',
   }),
 });
 ```
@@ -119,6 +121,31 @@ export default defineAdminSiteHooks({
 `runtime.i18n` / `runtime.seo` 描述如何加载 i18n / SEO。`entry.server.ts` 只保留
 request context 和错误处理。`site` 和 `services` 只写在 `ssr.config.ts` 的 `runtime`，engine 会注入到默认 server entry，
 避免同一项配置散落多处。i18n 字典和 SEO 都可以远程下发，engine 会做 TTL / SWR / 并发去重缓存。
+
+`beforeRequest` 的返回值会进入当前请求的 `RequestContext`。页面里只在
+Server Component / server-side helper 读取：
+
+```tsx
+import { getRequestContext } from '@novel-isr/engine/rsc';
+
+export default async function HomePage() {
+  const ctx = getRequestContext();
+  const tenantId =
+    typeof ctx?.tenantId === 'string' ? ctx.tenantId : 'public';
+
+  // 有真实业务差异时才使用：租户级书库、运营位、主题、缓存隔离。
+  const books = await fetch(`/api/books?tenant=${tenantId}`).then(r => r.json());
+  return <BookGrid books={books.data} />;
+}
+```
+
+Client Component 不能直接读 `getRequestContext()`。需要在 Server Component 中
+读取后作为 props 传下去。不要为了“用上 tenantId”只打一个 cacheTag；如果页面
+数据和 UI 都不随 tenant 变化，那就不要读取它。
+
+A/B 实验不写在 `beforeRequest`。在 `ssr.config.ts runtime.experiments` 声明后，
+页面使用 `getVariant('experiment-name')`；engine 负责 sticky cookie 和 ISR variant
+缓存隔离。完整说明见 [site-hooks.md](./site-hooks.md#beforerequest--onerror)。
 
 ## 7. `src/app.tsx` —— App shell
 
