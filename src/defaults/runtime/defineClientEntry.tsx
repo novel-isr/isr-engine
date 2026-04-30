@@ -160,11 +160,20 @@ async function main(hooks: ClientEntryHooks): Promise<void> {
   // 首屏 RSC / hydration / dynamic import 任一环节失败时，开发者仍能看到真实渲染模式。
   installInspector();
 
-  function DevInspectorEffect(): null {
-    React.useEffect(() => {
+  function schedulePostCommitInspectorInstall(): void {
+    if (hooks.devInspector === false) return;
+    const installAfterCommit = () => {
       installInspector();
-    });
-    return null;
+      window.setTimeout(installInspector, 0);
+      window.setTimeout(installInspector, 50);
+    };
+
+    if (typeof window.requestAnimationFrame === 'function') {
+      window.requestAnimationFrame(installAfterCommit);
+      return;
+    }
+
+    window.setTimeout(installAfterCommit, 0);
   }
 
   function mountRscShellFallback(): void {
@@ -240,10 +249,10 @@ async function main(hooks: ClientEntryHooks): Promise<void> {
       React.createElement(
         React.StrictMode,
         null,
-        React.createElement(GlobalErrorBoundary, null, React.createElement(RscShellRoot)),
-        React.createElement(DevInspectorEffect)
+        React.createElement(GlobalErrorBoundary, null, React.createElement(RscShellRoot))
       )
     );
+    schedulePostCommitInspectorInstall();
   }
 
   // SPA fallback：浏览器加载 dist/spa/index.html 触发，由部署层（Nginx/CDN）在 SSR 5xx 时切入
@@ -310,13 +319,13 @@ async function main(hooks: ClientEntryHooks): Promise<void> {
       <GlobalErrorBoundary>
         <BrowserRoot />
       </GlobalErrorBoundary>
-      <DevInspectorEffect />
     </React.StrictMode>
   );
 
   // 注：csr-shell 路径已在 main 入口处早返回，这里只剩正常水合
   hydrateRoot(document, browserRoot, { formState: initialPayload.formState });
   installInspector();
+  schedulePostCommitInspectorInstall();
 
   if (import.meta.hot) {
     import.meta.hot.on('rsc:update', () => {
