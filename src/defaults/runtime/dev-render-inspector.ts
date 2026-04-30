@@ -11,6 +11,7 @@ interface InspectorState {
 }
 
 const INSPECTOR_ID = 'novel-isr-render-inspector';
+let deferredInstallScheduled = false;
 
 type InspectorMode = (typeof MODE_LINKS)[number]['key'] | 'unknown';
 
@@ -53,6 +54,10 @@ export function installDevRenderInspector(): void {
   if (!meta.env?.DEV) return;
   if (typeof document === 'undefined') return;
   if (document.getElementById(INSPECTOR_ID)) return;
+  if (shouldDeferDevRenderInspectorMount(document)) {
+    scheduleDeferredInstall();
+    return;
+  }
 
   const host = document.createElement('div');
   host.id = INSPECTOR_ID;
@@ -144,6 +149,24 @@ export function installDevRenderInspector(): void {
     state = next;
     render();
   });
+}
+
+export function shouldDeferDevRenderInspectorMount(doc: Pick<Document, 'body'>): boolean {
+  return !doc.body;
+}
+
+function scheduleDeferredInstall(): void {
+  if (deferredInstallScheduled) return;
+  deferredInstallScheduled = true;
+  const retry = () => {
+    deferredInstallScheduled = false;
+    installDevRenderInspector();
+  };
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', retry, { once: true });
+    return;
+  }
+  window.setTimeout(retry, 0);
 }
 
 async function inspectCurrentPage(): Promise<InspectorState> {

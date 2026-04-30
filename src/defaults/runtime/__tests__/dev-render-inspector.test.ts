@@ -1,6 +1,9 @@
 import { describe, expect, it } from 'vitest';
 
-import { resolveDevRenderInspectorView } from '../dev-render-inspector';
+import {
+  resolveDevRenderInspectorView,
+  shouldDeferDevRenderInspectorMount,
+} from '../dev-render-inspector';
 
 describe('dev render inspector view model', () => {
   it('shows explicit render mode from response headers', () => {
@@ -59,5 +62,10 @@ describe('dev render inspector view model', () => {
       cacheLabel: 'BYPASS · 降级',
       fallbackActive: true,
     });
+  });
+
+  it('defers mounting until document.body is available', () => {
+    expect(shouldDeferDevRenderInspectorMount({ body: null })).toBe(true);
+    expect(shouldDeferDevRenderInspectorMount({ body: {} as HTMLElement })).toBe(false);
   });
 });
