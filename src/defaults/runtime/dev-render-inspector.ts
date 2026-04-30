@@ -1,5 +1,6 @@
 interface InspectorState {
   mode: string;
+  modeSource: string;
   strategy: string;
   cache: string;
   fallback: string;
@@ -10,6 +11,19 @@ interface InspectorState {
 }
 
 const INSPECTOR_ID = 'novel-isr-render-inspector';
+
+type InspectorMode = (typeof MODE_LINKS)[number]['key'] | 'unknown';
+
+interface InspectorViewModel {
+  resolvedMode: InspectorMode;
+  modeCode: string;
+  modeLabel: string;
+  modeSource: string;
+  strategy: string;
+  cacheTone: string;
+  cacheLabel: string;
+  fallbackActive: boolean;
+}
 
 const MODE_LINKS = [
   {
@@ -49,21 +63,18 @@ export function installDevRenderInspector(): void {
   let state: InspectorState | null = null;
 
   const render = () => {
-    const fallbackActive = state?.fallback === 'true';
-    const resolvedMode = fallbackActive ? 'csr' : (state?.mode.toLowerCase() ?? 'unknown');
-    const modeLabel =
-      MODE_LINKS.find(item => item.key === resolvedMode)?.label ?? resolvedMode.toUpperCase();
-    const cacheState = state?.cache.toLowerCase() ?? 'loading';
-    const cacheTone = fallbackActive ? 'bypass' : cacheState;
-    const cacheLabel = state ? displayCache(resolvedMode, cacheState) : '检测中';
+    const view = resolveDevRenderInspectorView({
+      state,
+      href: window.location.href,
+    });
 
     shadow.innerHTML = `
       <style>${STYLE}</style>
       <aside class="inspector" aria-label="Novel ISR 开发模式渲染检查器">
         <button type="button" class="summary" data-action="toggle" aria-expanded="${expanded}">
-          <span class="mode" data-mode="${escapeAttr(resolvedMode)}">${escapeHtml(modeLabel)}</span>
-          <span class="strategy">${escapeHtml(state?.strategy ?? '-')}</span>
-          <span class="cache" data-cache="${escapeAttr(cacheTone)}">${escapeHtml(cacheLabel)}</span>
+          ${summaryPill('Mode', view.modeCode, 'mode', view.resolvedMode)}
+          ${summaryPill('Strategy', view.strategy, 'strategy')}
+          ${summaryPill('Cache', view.cacheLabel, 'cache', view.cacheTone)}
         </button>
         ${
           expanded
@@ -72,16 +83,19 @@ export function installDevRenderInspector(): void {
                 <div class="panel-head">
                   <div>
                     <p class="eyebrow">Novel ISR Inspector</p>
-                    <strong>${escapeHtml(modeLabel)}</strong>
+                    <strong>Render mode · ${escapeHtml(view.modeCode)}</strong>
+                    <span class="mode-desc">${escapeHtml(view.modeLabel)}</span>
                   </div>
                   <span class="status">${escapeHtml(String(state?.status ?? 'ERR'))}</span>
                 </div>
                 <dl class="details">
                   ${detailRow('Page', state?.url ?? '-')}
-                  ${detailRow('Strategy', state?.strategy ?? '-')}
-                  ${detailRow('Cache', cacheLabel)}
+                  ${detailRow('Mode', `${view.modeCode} · ${view.modeLabel}`)}
+                  ${detailRow('Mode Source', view.modeSource)}
+                  ${detailRow('Strategy', view.strategy)}
+                  ${detailRow('Cache', view.cacheLabel)}
                   ${detailRow('I18n', `${state?.language ?? '-'} · ${state?.i18nSource ?? '-'}`)}
-                  ${detailRow('Fallback', fallbackActive ? 'CSR shell' : 'false', fallbackActive)}
+                  ${detailRow('Fallback', view.fallbackActive ? 'CSR shell' : 'false', view.fallbackActive)}
                 </dl>
                 <div class="mode-grid" aria-label="渲染模式测试入口">
                   ${MODE_LINKS.map(
@@ -90,7 +104,7 @@ export function installDevRenderInspector(): void {
                         type="button"
                         class="mode-link"
                         data-mode-switch="${item.key}"
-                        data-active="${resolvedMode === item.key ? 'true' : 'false'}"
+                        data-active="${view.resolvedMode === item.key ? 'true' : 'false'}"
                       >
                         <span>${escapeHtml(item.label)}</span>
                         <small>${escapeHtml(item.desc)}</small>
@@ -151,6 +165,7 @@ async function inspectCurrentPage(): Promise<InspectorState> {
       fallback: readHeader(response.headers, 'x-fallback-used'),
       i18nSource: readHeader(response.headers, 'x-i18n-source'),
       language: readHeader(response.headers, 'content-language'),
+      modeSource: readHeader(response.headers, 'x-mode-source'),
       status: response.status,
       url: `${url.pathname}${url.search}`,
     };
@@ -162,10 +177,63 @@ async function inspectCurrentPage(): Promise<InspectorState> {
       fallback: 'unknown',
       i18nSource: 'unknown',
       language: 'unknown',
+      modeSource: 'unknown',
       status: null,
       url: `${url.pathname}${url.search}`,
     };
   }
+}
+
+export function resolveDevRenderInspectorView({
+  state,
+  href,
+}: {
+  state: Pick<InspectorState, 'mode' | 'modeSource' | 'cache' | 'fallback' | 'strategy'> | null;
+  href: string;
+}): InspectorViewModel {
+  const url = new URL(href);
+  const fallbackActive = state?.fallback === 'true' || url.searchParams.has('__csr-shell');
+  const headerMode = normalizeMode(state?.mode);
+  const inferredMode = inferModeFromUrl(url);
+  const resolvedMode = fallbackActive
+    ? 'csr'
+    : headerMode === 'unknown'
+      ? inferredMode
+      : headerMode;
+  const cacheState = normalizeToken(state?.cache, state ? 'unknown' : 'loading');
+  const cacheTone = fallbackActive ? 'bypass' : cacheState;
+  const modeMeta = MODE_LINKS.find(item => item.key === resolvedMode);
+
+  return {
+    resolvedMode,
+    modeCode: resolvedMode === 'unknown' ? 'UNKNOWN' : resolvedMode.toUpperCase(),
+    modeLabel: modeMeta?.label ?? '未知模式',
+    modeSource:
+      normalizeToken(state?.modeSource, '') ||
+      (inferredMode !== 'unknown' ? 'url-inferred' : 'pending'),
+    strategy: normalizeToken(state?.strategy, state ? 'unknown' : 'loading'),
+    cacheTone,
+    cacheLabel: state ? displayCache(resolvedMode, cacheState) : '检测中',
+    fallbackActive,
+  };
+}
+
+function normalizeMode(value: string | undefined): InspectorMode {
+  const token = normalizeToken(value, 'unknown');
+  return token === 'isr' || token === 'ssr' || token === 'ssg' || token === 'csr'
+    ? token
+    : 'unknown';
+}
+
+function inferModeFromUrl(url: URL): InspectorMode {
+  if (url.searchParams.has('__csr-shell')) return 'csr';
+  return normalizeMode(url.searchParams.get('mode') ?? undefined);
+}
+
+function normalizeToken(value: string | undefined, fallback: string): string {
+  const token = value?.trim();
+  if (!token || token === '-') return fallback;
+  return token.toLowerCase();
 }
 
 function readHeader(headers: Headers, name: string, fallback = '-'): string {
@@ -201,6 +269,16 @@ function detailRow(label: string, value: string, danger = false): string {
       <dt>${escapeHtml(label)}</dt>
       <dd ${danger ? 'data-danger="true"' : ''}>${escapeHtml(value)}</dd>
     </div>
+  `;
+}
+
+function summaryPill(label: string, value: string, kind: string, tone?: string): string {
+  const attr = tone ? ` data-${kind}="${escapeAttr(tone)}"` : '';
+  return `
+    <span class="pill ${escapeAttr(kind)}"${attr}>
+      <small>${escapeHtml(label)}</small>
+      <strong>${escapeHtml(value)}</strong>
+    </span>
   `;
 }
 
@@ -253,13 +331,27 @@ const STYLE = `
     backdrop-filter: blur(16px);
     cursor: pointer;
   }
-  .summary span {
+  .summary .pill {
     display: inline-flex;
     align-items: center;
+    gap: 5px;
     min-height: 24px;
     padding: 0 9px;
     border-radius: 999px;
     white-space: nowrap;
+  }
+  .summary small {
+    color: currentColor;
+    font-size: 9px;
+    font-weight: 700;
+    letter-spacing: 0;
+    opacity: 0.62;
+    text-transform: uppercase;
+  }
+  .summary strong {
+    font-size: 11px;
+    font-weight: 800;
+    letter-spacing: 0;
   }
   .mode {
     background: #111827;
@@ -310,6 +402,13 @@ const STYLE = `
     margin-top: 4px;
     font-size: 16px;
     letter-spacing: 0;
+  }
+  .mode-desc {
+    display: block;
+    margin-top: 5px;
+    color: #6b7280;
+    font-size: 12px;
+    line-height: 1.4;
   }
   .eyebrow {
     margin: 0;
@@ -415,6 +514,7 @@ const STYLE = `
       background: rgba(255, 255, 255, 0.06);
     }
     .details dd { color: #e5e7eb; }
+    .mode-desc { color: #9ca3af; }
     .mode-link {
       border-color: rgba(255, 255, 255, 0.12);
     }
