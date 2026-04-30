@@ -55,10 +55,23 @@ jobs:
       - uses: actions/setup-node@v5
         with:
           node-version-file: '.nvmrc'
-          cache: 'pnpm'
 
       - name: Enable corepack (pnpm via packageManager)
-        run: corepack enable pnpm
+        run: |
+          corepack enable
+          corepack prepare "$(node -p "require('./package.json').packageManager")" --activate
+
+      - name: Resolve pnpm store path
+        id: pnpm-store
+        run: echo "path=$(pnpm store path --silent)" >> "$GITHUB_OUTPUT"
+
+      - name: Restore pnpm store cache
+        uses: actions/cache@v4
+        with:
+          path: ${{ steps.pnpm-store.outputs.path }}
+          key: ${{ runner.os }}-node-${{ hashFiles('.nvmrc') }}-pnpm-${{ hashFiles('pnpm-lock.yaml', 'bench/fixture/pnpm-lock.yaml') }}
+          restore-keys: |
+            ${{ runner.os }}-node-${{ hashFiles('.nvmrc') }}-pnpm-
 
       - name: Diagnostics
         run: |

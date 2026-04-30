@@ -29,7 +29,9 @@ jobs:
           node-version-file: '.nvmrc'
 
       - name: Enable corepack (pnpm via packageManager)
-        run: corepack enable pnpm
+        run: |
+          corepack enable
+          corepack prepare "$(node -p "require('./package.json').packageManager")" --activate
 
       - name: Diagnostics
         run: |
@@ -63,7 +65,9 @@ jobs:
           node-version-file: '.nvmrc'
 
       - name: Enable corepack (pnpm via packageManager)
-        run: corepack enable pnpm
+        run: |
+          corepack enable
+          corepack prepare "$(node -p "require('./package.json').packageManager")" --activate
 
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
