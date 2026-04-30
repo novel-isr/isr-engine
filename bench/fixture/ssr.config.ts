@@ -35,6 +35,12 @@ const config: ISRConfig = {
   },
   server: {
     port: 3000,
+    timeouts: {
+      // Bench reuses a small number of hot keep-alive sockets. Keep the
+      // engine's production default, but prevent fixture runs from measuring
+      // Node's max-requests-per-socket guard instead of ISR/SSG/SSR throughput.
+      maxRequestsPerSocket: 1_000_000,
+    },
   },
 };
 
