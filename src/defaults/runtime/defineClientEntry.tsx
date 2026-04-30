@@ -160,6 +160,13 @@ async function main(hooks: ClientEntryHooks): Promise<void> {
   // 首屏 RSC / hydration / dynamic import 任一环节失败时，开发者仍能看到真实渲染模式。
   installInspector();
 
+  function DevInspectorEffect(): null {
+    React.useEffect(() => {
+      installInspector();
+    });
+    return null;
+  }
+
   function mountRscShellFallback(): void {
     document.body.classList.remove('csr-shell-body');
     document.body.removeAttribute('style');
@@ -233,6 +240,7 @@ async function main(hooks: ClientEntryHooks): Promise<void> {
       React.createElement(
         React.StrictMode,
         null,
+        React.createElement(DevInspectorEffect),
         React.createElement(GlobalErrorBoundary, null, React.createElement(RscShellRoot))
       )
     );
@@ -299,6 +307,7 @@ async function main(hooks: ClientEntryHooks): Promise<void> {
 
   const browserRoot = (
     <React.StrictMode>
+      <DevInspectorEffect />
       <GlobalErrorBoundary>
         <BrowserRoot />
       </GlobalErrorBoundary>
