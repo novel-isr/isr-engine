@@ -30,7 +30,7 @@ import type { ReactFormState } from 'react-dom/client';
 
 // @ts-expect-error - @app 别名在 createIsrPlugin 注入；指向用户的 src/app.tsx
 import { App } from '@app/_entry';
-// @ts-expect-error - @app 别名在 createIsrPlugin 注入；评估用户 src/routes.tsx 以注册 page-level SEO
+// @app 别名在 createIsrPlugin 注入；评估用户 src/routes.tsx 以注册 page-level SEO
 import '@app/_routes';
 
 import { parseRenderRequest } from './request';

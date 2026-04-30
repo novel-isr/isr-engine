@@ -26,10 +26,19 @@ async function tryImport(name: string): Promise<unknown> {
   return await dynamicImport(name);
 }
 
+export interface AutoServerCtx {
+  traceId: string;
+  startedAt: number;
+  [key: string]: unknown;
+}
+
 export interface AutoServerHooks {
-  beforeRequest?: (req: Request, baseline: { traceId: string; startedAt: number }) => unknown;
-  onResponse?: (res: Response, ctx: Record<string, unknown>) => void;
-  onError?: (err: unknown, req: Request, ctx: Record<string, unknown>) => void;
+  beforeRequest?: (
+    req: Request,
+    baseline: { traceId: string; startedAt: number }
+  ) => Record<string, unknown> | Promise<Record<string, unknown>>;
+  onResponse?: (res: Response, ctx: AutoServerCtx) => void;
+  onError?: (err: unknown, req: Request, ctx: AutoServerCtx) => void;
 }
 
 /**

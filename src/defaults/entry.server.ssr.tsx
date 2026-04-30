@@ -18,6 +18,7 @@ import { renderToReadableStream } from 'react-dom/server.edge';
 import { injectRSCPayload } from 'rsc-html-stream/server';
 import type { IntlPayload } from './runtime/seo-runtime';
 import { setClientI18n } from '../runtime/i18n-store';
+import { HydrationShell } from './runtime/hydration-shell';
 // @ts-expect-error - 虚拟模块由 plugin-rsc 注入
 import assetsManifest from 'virtual:vite-rsc/assets-manifest';
 
@@ -197,11 +198,16 @@ export async function renderHTML(
 
   try {
     if (options.forceCsrShell) throw new Error('forceCsrShell debug flag');
-    htmlStream = await renderToReadableStream(<SsrRoot />, {
-      bootstrapScriptContent: options.debugNojs ? undefined : bootstrapScriptContent,
-      nonce: options.nonce,
-      formState: options.formState,
-    });
+    htmlStream = await renderToReadableStream(
+      <HydrationShell>
+        <SsrRoot />
+      </HydrationShell>,
+      {
+        bootstrapScriptContent: options.debugNojs ? undefined : bootstrapScriptContent,
+        nonce: options.nonce,
+        formState: options.formState,
+      }
+    );
   } catch (err) {
     // FallbackChain 末端 csr-shell：SSR 渲染抛异常 → 不出 5xx 白屏，
     // 改返回最小壳 HTML + self.__NO_HYDRATE=1，让浏览器走 createRoot 自救

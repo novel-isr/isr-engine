@@ -162,13 +162,19 @@ export function isDevRenderInspectorRuntimeEnabled(
   return env?.DEV === true || Boolean(hot);
 }
 
-export function shouldDeferDevRenderInspectorMount(doc: Pick<Document, 'body'>): boolean {
+interface InspectorDocumentTarget {
+  body: HTMLElement | null;
+}
+
+interface InspectorMountTarget extends InspectorDocumentTarget {
+  getElementById: (elementId: string) => HTMLElement | null;
+}
+
+export function shouldDeferDevRenderInspectorMount(doc: InspectorDocumentTarget): boolean {
   return !doc.body;
 }
 
-export function shouldMountDevRenderInspector(
-  doc: Pick<Document, 'body' | 'getElementById'>
-): boolean {
+export function shouldMountDevRenderInspector(doc: InspectorMountTarget): boolean {
   return Boolean(doc.body) && !doc.getElementById(INSPECTOR_ID);
 }
 

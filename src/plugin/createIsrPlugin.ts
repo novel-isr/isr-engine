@@ -23,6 +23,7 @@
  */
 
 import fs from 'node:fs';
+import { createRequire } from 'node:module';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
@@ -44,6 +45,8 @@ const VIRTUAL_ENTRY_IDS = {
 } as const;
 
 const RESOLVED_VIRTUAL_PREFIX = '\0';
+const USE_CLIENT_DIRECTIVE_RE =
+  /^\uFEFF?\s*(?:(?:\/\/[^\n]*|\/\*[\s\S]*?\*\/)\s*)*['"]use client['"];?/;
 
 export interface CreateIsrPluginOptions {
   /** 显式传入 ssr.config —— 未传则缓存中间件内异步自动 loadConfig() */
@@ -209,6 +212,49 @@ function createReactVirtualModuleInteropPlugin(): Plugin {
   };
 }
 
+function readPackageDependencies(root: string): string[] {
+  const packageJsonPath = path.resolve(root, 'package.json');
+  if (!fs.existsSync(packageJsonPath)) return [];
+
+  try {
+    const pkg = JSON.parse(fs.readFileSync(packageJsonPath, 'utf8')) as {
+      dependencies?: Record<string, string>;
+      devDependencies?: Record<string, string>;
+    };
+    return Array.from(
+      new Set([...Object.keys(pkg.dependencies ?? {}), ...Object.keys(pkg.devDependencies ?? {})])
+    );
+  } catch {
+    return [];
+  }
+}
+
+function hasUseClientDirective(filePath: string): boolean {
+  try {
+    const source = fs.readFileSync(filePath, 'utf8').slice(0, 2048);
+    return USE_CLIENT_DIRECTIVE_RE.test(source);
+  } catch {
+    return false;
+  }
+}
+
+export function detectClientReferenceDependencies(root: string): string[] {
+  const packageJsonPath = path.resolve(root, 'package.json');
+  const requireFromRoot = createRequire(packageJsonPath);
+  const result: string[] = [];
+
+  for (const dep of readPackageDependencies(root)) {
+    try {
+      const entry = requireFromRoot.resolve(dep);
+      if (hasUseClientDirective(entry)) result.push(dep);
+    } catch {
+      /* optional / platform-specific dependency; leave it to Vite resolution */
+    }
+  }
+
+  return result;
+}
+
 function createEngineDefaultEntriesPlugin(root: string): Plugin {
   const virtualEntryIds = new Set<string>(Object.values(VIRTUAL_ENTRY_IDS));
   const resolvedVirtualEntryIds = new Set<string>(
@@ -362,6 +408,7 @@ function createAppAliasPlugin(root: string): Plugin {
     name: 'isr:app-alias',
     enforce: 'pre',
     config() {
+      const clientReferenceDeps = detectClientReferenceDependencies(root);
       // 精确匹配优先于通用 @app/* 模式
       const aliases: Array<{ find: string | RegExp; replacement: string }> = [
         { find: '@app/_entry', replacement: appEntry },
@@ -394,6 +441,7 @@ function createAppAliasPlugin(root: string): Plugin {
             'react-dom/client',
           ],
           exclude: [
+            ...clientReferenceDeps,
             '@novel-isr/engine',
             '@novel-isr/engine/runtime',
             '@app/_entry',

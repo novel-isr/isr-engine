@@ -31,6 +31,7 @@ import { createRoot, hydrateRoot } from 'react-dom/client';
 import { rscStream } from 'rsc-html-stream/client';
 
 import { GlobalErrorBoundary } from './error-boundary';
+import { HydrationShell } from './hydration-shell';
 import { createRscRenderRequest } from './request';
 import { installDevRenderInspector } from './dev-render-inspector';
 import { setClientI18n } from '../../runtime/i18n-store';
@@ -315,11 +316,9 @@ async function main(hooks: ClientEntryHooks): Promise<void> {
   });
 
   const browserRoot = (
-    <React.StrictMode>
-      <GlobalErrorBoundary>
-        <BrowserRoot />
-      </GlobalErrorBoundary>
-    </React.StrictMode>
+    <HydrationShell>
+      <BrowserRoot />
+    </HydrationShell>
   );
 
   // 注：csr-shell 路径已在 main 入口处早返回，这里只剩正常水合
