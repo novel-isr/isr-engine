@@ -141,16 +141,25 @@ export async function startProductionServer(options: StartOptions): Promise<void
 
   // Rate limiting —— ssr.config.ts runtime.rateLimit
   if (runtime?.rateLimit) {
-    const { createRateLimiter } = await import('@/middlewares/RateLimiter');
+    const { createRateLimiter, createRateLimitStoreFromRuntime } =
+      await import('@/middlewares/RateLimiter');
+    const resolvedRateLimitStore = await createRateLimitStoreFromRuntime(
+      runtime.rateLimit,
+      runtime.redis
+    );
     app.use(
       createRateLimiter({
         windowMs: runtime.rateLimit.windowMs ?? 60_000,
         max: runtime.rateLimit.max ?? 100,
+        store: resolvedRateLimitStore.store,
+        lruMax: runtime.rateLimit.lruMax,
+        trustProxy: runtime.rateLimit.trustProxy,
+        sendHeaders: runtime.rateLimit.sendHeaders,
         skip: req => req.path === '/health' || req.path === '/metrics',
       })
     );
     logger.info(
-      `🚦 限流已启用：${runtime.rateLimit.max ?? 100} req / ${(runtime.rateLimit.windowMs ?? 60_000) / 1000}s per IP`
+      `🚦 限流已启用：${runtime.rateLimit.max ?? 100} req / ${(runtime.rateLimit.windowMs ?? 60_000) / 1000}s per IP (store=${resolvedRateLimitStore.backend})`
     );
   }
 

@@ -1,6 +1,7 @@
 import { describe, it, expect, vi } from 'vitest';
 import {
   createRateLimiter,
+  createRateLimitStoreFromRuntime,
   createMemoryRateLimitStore,
   createRedisRateLimitStore,
   extractClientIp,
@@ -347,5 +348,92 @@ describe('RateLimiter —— Redis Lua 原子脚本', () => {
     expect(redis.incr).toHaveBeenCalled();
     expect(redis.pexpire).not.toHaveBeenCalled();
     expect(redis.pttl).toHaveBeenCalled();
+  });
+});
+
+describe('RateLimiter —— runtime store 解析', () => {
+  const withoutRedisEnv = async <T>(fn: () => Promise<T>): Promise<T> => {
+    const originalUrl = process.env.REDIS_URL;
+    const originalHost = process.env.REDIS_HOST;
+    const originalPort = process.env.REDIS_PORT;
+    const originalPassword = process.env.REDIS_PASSWORD;
+    delete process.env.REDIS_URL;
+    delete process.env.REDIS_HOST;
+    delete process.env.REDIS_PORT;
+    delete process.env.REDIS_PASSWORD;
+    try {
+      return await fn();
+    } finally {
+      if (originalUrl === undefined) delete process.env.REDIS_URL;
+      else process.env.REDIS_URL = originalUrl;
+      if (originalHost === undefined) delete process.env.REDIS_HOST;
+      else process.env.REDIS_HOST = originalHost;
+      if (originalPort === undefined) delete process.env.REDIS_PORT;
+      else process.env.REDIS_PORT = originalPort;
+      if (originalPassword === undefined) delete process.env.REDIS_PASSWORD;
+      else process.env.REDIS_PASSWORD = originalPassword;
+    }
+  };
+
+  it('默认使用 memory store，不因 runtime.redis 存在而隐式切换语义', async () => {
+    await withoutRedisEnv(async () => {
+      const resolved = await createRateLimitStoreFromRuntime({}, { url: 'redis://127.0.0.1:6379' });
+      expect(resolved.backend).toBe('memory');
+
+      const first = await resolved.store.incr('ip:1', 60_000);
+      const second = await resolved.store.incr('ip:1', 60_000);
+      expect(first.count).toBe(1);
+      expect(second.count).toBe(2);
+    });
+  });
+
+  it("store='redis' 缺少 Redis 配置时回退 memory，而不是启动失败", async () => {
+    await withoutRedisEnv(async () => {
+      const resolved = await createRateLimitStoreFromRuntime({ store: 'redis' });
+      expect(resolved.backend).toBe('memory');
+    });
+  });
+
+  it("store='auto' 只有检测到 Redis 配置才切换 Redis", async () => {
+    await withoutRedisEnv(async () => {
+      const resolved = await createRateLimitStoreFromRuntime({ store: 'auto' });
+      expect(resolved.backend).toBe('memory');
+    });
+  });
+
+  it("store='redis' + runtime.redis 时创建 Redis backend 并透传 keyPrefix", async () => {
+    const clients: unknown[][] = [];
+    class MockRedis {
+      isrRateLimitIncr?: (key: string, windowMs: number) => Promise<[number, number]>;
+
+      constructor(...args: unknown[]) {
+        clients.push(args);
+      }
+
+      on = vi.fn();
+      incr = vi.fn();
+      pexpire = vi.fn();
+      pttl = vi.fn();
+      defineCommand = vi.fn(() => {
+        this.isrRateLimitIncr = vi.fn(async () => [1, 60_000] as [number, number]);
+      });
+    }
+
+    vi.doMock('ioredis', () => ({ default: MockRedis }));
+    try {
+      const resolved = await createRateLimitStoreFromRuntime(
+        { store: 'redis', keyPrefix: 'novel:rl:' },
+        { url: 'redis://127.0.0.1:6379', keyPrefix: 'novel:' }
+      );
+      expect(resolved.backend).toBe('redis');
+      expect(clients[0]?.[0]).toBe('redis://127.0.0.1:6379');
+      expect(clients[0]?.[1]).toMatchObject({ keyPrefix: 'novel:rl:' });
+      await expect(resolved.store.incr('ip:1', 60_000)).resolves.toEqual({
+        count: 1,
+        resetMs: 60_000,
+      });
+    } finally {
+      vi.doUnmock('ioredis');
+    }
   });
 });

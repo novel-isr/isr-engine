@@ -90,9 +90,15 @@ export const runtime = {
   },
   redis: process.env.REDIS_URL ? { url: process.env.REDIS_URL, keyPrefix: 'isr:' } : undefined,
   sentry: process.env.SENTRY_DSN ? { dsn: process.env.SENTRY_DSN } : undefined,
-  // 默认 runtime 接入使用进程内 memory fixed-window counter；
-  // 多实例强配额仍应放在 CDN/WAF/API Gateway 或显式 Redis store。
-  rateLimit: { windowMs: 60_000, max: 200 },
+  // 默认是进程内 memory LRU；分布式限流需显式 store='redis' 并配置 runtime.redis/REDIS_URL。
+  rateLimit: {
+    store: process.env.RATE_LIMIT_STORE === 'redis' ? 'redis' : 'memory',
+    windowMs: 60_000, // 固定窗口长度：1 分钟
+    max: 200, // 每个客户端 IP 在窗口内最多 200 次请求
+    lruMax: 10_000,
+    trustProxy: process.env.TRUST_PROXY === '1',
+    sendHeaders: true,
+  },
   // 字段名沿用 experimentation platform 术语；业务侧可理解为 A/B testing。
   experiments: {
     'hero-style': { variants: ['classic', 'bold'], weights: [50, 50] },
@@ -348,6 +354,34 @@ getI18n('book.count', { count: 12 }); // 字典里写 "共 {count} 本书"
 性能路径：
 - SSR / ISR / SSG：server 端按 cookie `locale` → `Accept-Language` → `defaultLocale` 协商 locale，远程字典走 TTL + SWR + 并发去重缓存；同一份 `intl` 进入 RSC payload，客户端水合不二次拉取。
 - 客户端导航：浏览器拉 `_.rsc`，payload 带最新 `intl`，engine 自动更新 `getI18n()` 的客户端存储。
+
+### rateLimit：默认 memory，显式 Redis 才分布式
+
+`runtime.rateLimit` 是站点入口的应用层保护。默认 `store: 'memory'`，状态在当前
+Node 进程的 LRU 中，重启清空，多 pod 不共享；不会因为配置了 `runtime.redis` 就隐式改成
+Redis 限流。
+
+要开启分布式限流：
+
+```ts
+runtime: {
+  redis: { url: process.env.REDIS_URL, keyPrefix: 'novel:' },
+  rateLimit: {
+    store: 'redis',
+    windowMs: 60_000,
+    max: 200,
+    trustProxy: true,
+    sendHeaders: true,
+    keyPrefix: 'novel:rate-limit:',
+  },
+}
+```
+
+- `windowMs`：固定窗口长度，单位毫秒。`60_000` 表示 1 分钟。
+- `max`：同一个 key 在一个窗口内允许的最大请求数。默认 key 是客户端 IP。
+- `trustProxy`：只在可信 CDN/LB/Nginx 后面开启，否则客户端可伪造代理头。
+- `sendHeaders`：返回 `RateLimit-*` 和 `Retry-After` 标准头。
+- Redis store 使用 Lua 原子递增 + TTL；Redis 故障时 fail-open 放行，不拖垮业务入口。
 - CSR recovery：engine 默认 RSC shell fallback 会先 fetch 当前页面 `_.rsc`，拿到 `intl` 后再渲染页面；业务不再需要维护第二套路由或自定义 CSR App。
 - 服务端完全不可用且 `_.rsc` 也失败时，只会显示最终不可用壳；这时没有远程 i18n，因为数据源本身不可达。
 - 诊断：响应头 `x-i18n-source` 会显示字典来源，例如 `admin` / `local-fallback`。

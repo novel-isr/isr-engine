@@ -29,6 +29,7 @@
 import type { Request, Response, NextFunction } from 'express';
 import { LRUCache } from 'lru-cache';
 import { logger } from '../logger';
+import type { RuntimeRateLimitConfig, RuntimeRedisConfig } from '../types/ISRConfig';
 
 export interface RateLimitOptions {
   /** 窗口毫秒；默认 60_000（1 分钟） */
@@ -45,8 +46,8 @@ export interface RateLimitOptions {
   message?: string | object;
   /**
    * 限流状态后端；默认 memory。
-   * Redis 场景需传入 createRedisRateLimitStore(redis)。
-   * 注意：runtime.rateLimit 这条默认接入目前只传 windowMs/max，未传 store 时就是 memory。
+   * 手动接入时可传 createRedisRateLimitStore(redis)；ssr.config.ts 接入走
+   * createRateLimitStoreFromRuntime(runtime.rateLimit, runtime.redis)。
    */
   store?: RateLimitStore;
   /** 是否发 RateLimit-* 响应头（默认 true） */
@@ -60,6 +61,11 @@ export interface RateLimitOptions {
    * Express 同时应设 `app.set('trust proxy', <hops>)`。
    */
   trustProxy?: boolean;
+}
+
+export interface ResolvedRateLimitStore {
+  store: RateLimitStore;
+  backend: 'memory' | 'redis';
 }
 
 /**
@@ -170,6 +176,90 @@ export function createRedisRateLimitStore(redis: RedisLikeClient): RateLimitStor
       return { count, resetMs: ttl > 0 ? ttl : windowMs };
     },
   };
+}
+
+function hasRedisRuntimeConfig(redis?: RuntimeRedisConfig): boolean {
+  return Boolean(redis?.url || redis?.host || process.env.REDIS_URL || process.env.REDIS_HOST);
+}
+
+function envRedisPort(): number | undefined {
+  const raw = process.env.REDIS_PORT;
+  if (!raw) return undefined;
+  const parsed = parseInt(raw, 10);
+  return Number.isFinite(parsed) ? parsed : undefined;
+}
+
+/**
+ * 从 ssr.config.ts runtime.rateLimit/runtime.redis 解析限流 store。
+ *
+ * 默认保持 memory，避免用户只配置 Redis 页面缓存时，限流语义被隐式改变。
+ * 需要分布式限流时显式配置：
+ *   rateLimit: { store: 'redis', ... }
+ *   redis: { url: 'redis://...' }
+ */
+export async function createRateLimitStoreFromRuntime(
+  rateLimit: RuntimeRateLimitConfig = {},
+  redis?: RuntimeRedisConfig
+): Promise<ResolvedRateLimitStore> {
+  const mode = rateLimit.store ?? 'memory';
+  const shouldUseRedis = mode === 'redis' || (mode === 'auto' && hasRedisRuntimeConfig(redis));
+
+  if (!shouldUseRedis) {
+    return {
+      store: createMemoryRateLimitStore(rateLimit.lruMax),
+      backend: 'memory',
+    };
+  }
+
+  if (!hasRedisRuntimeConfig(redis)) {
+    logger.warn(
+      '[rate-limit]',
+      "runtime.rateLimit.store='redis' 但未检测到 runtime.redis / REDIS_URL / REDIS_HOST，回退到 memory"
+    );
+    return {
+      store: createMemoryRateLimitStore(rateLimit.lruMax),
+      backend: 'memory',
+    };
+  }
+
+  try {
+    const mod = await import('ioredis');
+    const Redis = mod.default;
+    const url = redis?.url ?? process.env.REDIS_URL;
+    const host = redis?.host ?? process.env.REDIS_HOST ?? '127.0.0.1';
+    const port = redis?.port ?? envRedisPort() ?? 6379;
+    const password = redis?.password ?? process.env.REDIS_PASSWORD;
+    const keyPrefix = rateLimit.keyPrefix ?? `${redis?.keyPrefix ?? 'isr:'}rate-limit:`;
+    const options: import('ioredis').RedisOptions = {
+      host,
+      port,
+      password,
+      keyPrefix,
+      enableOfflineQueue: false,
+      maxRetriesPerRequest: 1,
+      connectTimeout: 800,
+      lazyConnect: false,
+    };
+
+    const client = url ? new Redis(url, options) : new Redis(options);
+    let warned = false;
+    client.on('error', err => {
+      if (warned) return;
+      warned = true;
+      logger.warn('[rate-limit]', `Redis store error，限流将 fail-open：${err.message}`);
+    });
+
+    return {
+      store: createRedisRateLimitStore(client),
+      backend: 'redis',
+    };
+  } catch (err) {
+    logger.warn('[rate-limit]', 'Redis store 初始化失败，回退到 memory', err);
+    return {
+      store: createMemoryRateLimitStore(rateLimit.lruMax),
+      backend: 'memory',
+    };
+  }
 }
 
 /**

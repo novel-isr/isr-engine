@@ -16,7 +16,7 @@ import { createViteDevServer, closeViteDevServer } from './viteDevServer';
 import { applyBaseMiddlewaresWithOptions, mountViteOrStatic } from './middleware';
 import { startServer, closeServer } from './httpServer';
 import { requestContext } from '@/context/RequestContext';
-import { createRateLimiter } from '@/middlewares/RateLimiter';
+import { createRateLimiter, createRateLimitStoreFromRuntime } from '@/middlewares/RateLimiter';
 import { createABVariantMiddleware } from '@/middlewares/ABVariantMiddleware';
 
 const logger = Logger.getInstance();
@@ -139,15 +139,23 @@ async function initServerContext(config?: ISRConfig): Promise<ServerContext> {
   });
 
   if (config?.runtime?.rateLimit) {
+    const resolvedRateLimitStore = await createRateLimitStoreFromRuntime(
+      config.runtime.rateLimit,
+      config.runtime.redis
+    );
     serverContext.requestHandler.use(
       createRateLimiter({
         windowMs: config.runtime.rateLimit.windowMs ?? 60_000,
         max: config.runtime.rateLimit.max ?? 100,
+        store: resolvedRateLimitStore.store,
+        lruMax: config.runtime.rateLimit.lruMax,
+        trustProxy: config.runtime.rateLimit.trustProxy,
+        sendHeaders: config.runtime.rateLimit.sendHeaders,
         skip: req => req.path === '/health' || req.path === '/metrics',
       })
     );
     logger.info(
-      `🚦 限流已启用：${config.runtime.rateLimit.max ?? 100} req / ${(config.runtime.rateLimit.windowMs ?? 60_000) / 1000}s per IP`
+      `🚦 限流已启用：${config.runtime.rateLimit.max ?? 100} req / ${(config.runtime.rateLimit.windowMs ?? 60_000) / 1000}s per IP (store=${resolvedRateLimitStore.backend})`
     );
   }
 

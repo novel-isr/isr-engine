@@ -71,10 +71,28 @@ export interface RuntimeExperimentConfig {
 }
 
 export interface RuntimeRateLimitConfig {
+  /**
+   * 限流状态存储。
+   * - memory：进程内 LRU，默认值；重启清空，不跨 pod 共享。
+   * - redis：使用 runtime.redis / REDIS_URL / REDIS_HOST 创建 Redis store；缺配置时回退 memory 并告警。
+   * - auto：检测到 Redis 配置就用 redis，否则 memory。
+   */
+  store?: 'memory' | 'redis' | 'auto';
   /** 固定窗口长度（毫秒）；默认 60_000 */
   windowMs?: number;
   /** 每个 key 在窗口内允许的最大请求数；默认 100 */
   max?: number;
+  /** memory store 最大 key 数；默认 10_000 */
+  lruMax?: number;
+  /**
+   * 是否信任上游代理头来提取真实客户端 IP。
+   * 只有部署在可信 CDN/LB/Nginx 后面时才开启，否则客户端可伪造 X-Forwarded-For。
+   */
+  trustProxy?: boolean;
+  /** 是否发送 RateLimit-* / Retry-After 响应头；默认 true */
+  sendHeaders?: boolean;
+  /** Redis rate-limit key 前缀；默认 `${runtime.redis.keyPrefix ?? 'isr:'}rate-limit:` */
+  keyPrefix?: string;
 }
 
 export interface RuntimeI18nConfig {
@@ -142,8 +160,8 @@ export interface RuntimeConfig {
   /**
    * 站点入口限流。
    *
-   * 当前 runtime.rateLimit 默认接入 engine memory store：单进程 LRU、重启清空、
-   * 不跨 pod 共享。底层 createRateLimiter 支持 Redis store，但需要显式传入 store。
+   * 当前 runtime.rateLimit 默认接入 engine memory store。需要分布式限流时显式
+   * 设置 rateLimit.store='redis' 或 'auto'，并配置 runtime.redis / REDIS_URL。
    * 多实例生产环境仍应优先使用 CDN/WAF/API Gateway 做第一层限流。
    */
   rateLimit?: RuntimeRateLimitConfig;

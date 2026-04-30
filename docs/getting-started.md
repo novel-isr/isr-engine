@@ -72,7 +72,13 @@ export const runtime = {
   },
   redis: process.env.REDIS_URL ? { url: process.env.REDIS_URL, keyPrefix: 'isr:' } : undefined,
   sentry: process.env.SENTRY_DSN ? { dsn: process.env.SENTRY_DSN } : undefined,
-  rateLimit: { windowMs: 60_000, max: 200 },
+  rateLimit: {
+    store: 'memory',
+    windowMs: 60_000,
+    max: 200,
+    trustProxy: false,
+    sendHeaders: true,
+  },
   i18n: {
     locales: fallbackLocal.site.locales,
     defaultLocale: fallbackLocal.site.defaultLocale,
@@ -250,7 +256,13 @@ export const runtime = {
 
   redis: process.env.REDIS_URL ? { url: process.env.REDIS_URL, keyPrefix: 'isr:' } : undefined,
   sentry: process.env.SENTRY_DSN ? { dsn: process.env.SENTRY_DSN } : undefined,
-  rateLimit: { windowMs: 60_000, max: 200 },
+  rateLimit: {
+    store: 'memory',
+    windowMs: 60_000,
+    max: 200,
+    trustProxy: false,
+    sendHeaders: true,
+  },
   experiments: {
     'hero-style': { variants: ['classic', 'bold'], weights: [50, 50] },
   },

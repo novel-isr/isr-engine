@@ -197,12 +197,14 @@ export {
   type IsrInvalidationTarget,
 } from './plugin';
 
-// ========== 限流（per-IP / per-key token bucket）==========
+// ========== 限流（per-IP / per-key fixed-window）==========
 export {
   createRateLimiter,
+  createRateLimitStoreFromRuntime,
   createMemoryRateLimitStore,
   createRedisRateLimitStore,
   type RateLimitOptions,
+  type ResolvedRateLimitStore,
   type RateLimitStore,
 } from './middlewares/RateLimiter';
 
