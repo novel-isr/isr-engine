@@ -36,6 +36,11 @@ import { createRscRenderRequest } from './request';
 import { installDevRenderInspector } from './dev-render-inspector';
 import { setClientI18n } from '../../runtime/i18n-store';
 import type { IntlPayload } from './seo-runtime';
+import {
+  installBrowserObservability,
+  type BrowserObservabilityHandle,
+  type BrowserObservabilityOptions,
+} from './browserObservability';
 
 interface DefaultRscPayload {
   root: React.ReactNode;
@@ -135,6 +140,11 @@ export interface ClientEntryHooks {
   /** Server Action 调用失败时调用 —— 适合错误上报 */
   onActionError?: (error: unknown, actionId: string) => void;
   /**
+   * 浏览器可观测性。engine 接管启动、导航和 Server Action 失败这些生命周期点；
+   * 具体上报由可选 SDK `@novel-isr/analytics` / `@novel-isr/error-reporting` 完成。
+   */
+  observability?: false | BrowserObservabilityOptions;
+  /**
    * 开发态渲染检查器。默认启用；业务如需完全隐藏可在 src/entry.tsx 返回
    * `{ devInspector: false }`。
    */
@@ -146,6 +156,11 @@ export function defineClientEntry(hooks: ClientEntryHooks = {}): void {
 }
 
 async function main(hooks: ClientEntryHooks): Promise<void> {
+  const observability =
+    hooks.observability && hooks.observability !== false
+      ? await installBrowserObservability(hooks.observability)
+      : null;
+
   if (hooks.beforeStart) await hooks.beforeStart();
 
   const installInspector = () => {
@@ -200,10 +215,14 @@ async function main(hooks: ClientEntryHooks): Promise<void> {
 
       React.useEffect(() => {
         fetchRscPayload().catch(() => setFailed(true));
-        return listenNavigation(() => {
-          setFailed(false);
-          fetchRscPayload().catch(() => setFailed(true));
-        }, hooks.onNavigate);
+        return listenNavigation(
+          () => {
+            setFailed(false);
+            fetchRscPayload().catch(() => setFailed(true));
+          },
+          hooks.onNavigate,
+          observability
+        );
       }, []);
 
       if (failed) return React.createElement(CsrShellFallback);
@@ -234,6 +253,7 @@ async function main(hooks: ClientEntryHooks): Promise<void> {
       setPayload(payload);
       const { ok, data } = payload.returnValue!;
       if (!ok) {
+        captureActionError(observability, data, id);
         if (hooks.onActionError) {
           try {
             hooks.onActionError(data, id);
@@ -279,7 +299,7 @@ async function main(hooks: ClientEntryHooks): Promise<void> {
     React.useEffect(() => {
       setPayload = v => React.startTransition(() => setPayload_(v));
     }, [setPayload_]);
-    React.useEffect(() => listenNavigation(fetchRscPayload, hooks.onNavigate), []);
+    React.useEffect(() => listenNavigation(fetchRscPayload, hooks.onNavigate, observability), []);
     return payload.root;
   }
 
@@ -303,6 +323,7 @@ async function main(hooks: ClientEntryHooks): Promise<void> {
     setPayload(payload);
     const { ok, data } = payload.returnValue!;
     if (!ok) {
+      captureActionError(observability, data, id);
       if (hooks.onActionError) {
         try {
           hooks.onActionError(data, id);
@@ -333,15 +354,34 @@ async function main(hooks: ClientEntryHooks): Promise<void> {
   }
 }
 
+function captureActionError(
+  observability: BrowserObservabilityHandle | null,
+  error: unknown,
+  actionId: string
+): void {
+  try {
+    observability?.captureActionError(error, actionId);
+  } catch {
+    /* observability hook 抛错不影响 Server Action 语义 */
+  }
+}
+
 function listenNavigation(
   onNavigation: () => void,
-  onNavigateHook?: (url: URL) => void
+  onNavigateHook?: (url: URL) => void,
+  observability?: BrowserObservabilityHandle | null
 ): () => void {
   const fire = () => {
     onNavigation();
+    const url = new URL(window.location.href);
+    try {
+      observability?.page(url);
+    } catch {
+      /* observability hook 抛错不影响导航 */
+    }
     if (onNavigateHook) {
       try {
-        onNavigateHook(new URL(window.location.href));
+        onNavigateHook(url);
       } catch {
         /* hook 抛错不影响主流程 */
       }

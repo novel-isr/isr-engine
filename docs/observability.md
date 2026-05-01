@@ -21,6 +21,58 @@ engine request context 的 `traceId` 自动贯穿整个请求生命周期（从 
 
 Engine 不绑定任何 SDK，但提供**预制 hook 工厂**，避免每个项目重复写 span 模板。
 
+## 前端埋点与错误上报
+
+浏览器侧建议使用两个独立 SDK：
+
+- `@novel-isr/analytics`：PV、业务事件、Web Vitals、采样、批量上报。
+- `@novel-isr/error-reporting`：`error`、`unhandledrejection`、资源加载失败、Server Action 错误。
+
+engine 不把这些 SDK 做成硬依赖，而是通过 `src/entry.tsx` 的 `observability` 配置动态加载。
+原因很简单：渲染引擎只拥有生命周期，真实上报端可能是 admin-server、Sentry、Datadog 或企业内部采集服务。
+SDK 不存在时会 no-op，不影响水合、导航和 Server Action。
+
+```ts
+// src/entry.tsx
+export default {
+  devInspector: true,
+  observability: {
+    app: 'novel-rating',
+    environment: import.meta.env.MODE,
+    release: import.meta.env.VITE_APP_VERSION,
+    includeQueryString: false,
+    analytics: {
+      endpoint: import.meta.env.VITE_ANALYTICS_ENDPOINT,
+      webVitals: true,
+      sampleRate: 1,
+      batchSize: 20,
+      flushIntervalMs: 3000,
+    },
+    errorReporting: {
+      endpoint: import.meta.env.VITE_ERROR_REPORT_ENDPOINT,
+      captureResourceErrors: true,
+      sampleRate: 1,
+      batchSize: 10,
+      flushIntervalMs: 3000,
+    },
+  },
+};
+```
+
+自动接入点：
+
+- 首屏：`analytics.page()` 上报一次初始 PV。
+- 客户端导航：engine 拦截 `pushState` / `replaceState` / `popstate` 后调用 `analytics.page(url)`。
+- Web Vitals：开启 `analytics.webVitals` 后采集 FCP、LCP、INP、CLS、TTFB。
+- 全局错误：`error-reporting` 注册 `window.error` / `unhandledrejection`。
+- Server Action：action 返回 `{ ok:false }` 时上报 `source=server-action` 和 `actionId`。
+
+生产约束：
+
+- endpoint 为空时 SDK 是 no-op transport，不刷 console，不阻塞页面。
+- 默认不会上报完整 query/hash；涉及搜索词、token、email 的项目必须显式脱敏。
+- beforeStart 仍可接 Sentry 等第三方 SDK；`observability` 是平台默认收口，不是锁定供应商。
+
 ### Sentry
 
 ```tsx

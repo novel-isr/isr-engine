@@ -163,6 +163,31 @@ export default {
 };
 ```
 
+浏览器埋点和错误上报也在 `src/entry.tsx` 收口，业务不用重写导航监听或全局错误监听：
+
+```ts
+export default {
+  devInspector: true,
+  observability: {
+    app: 'novel-rating',
+    environment: import.meta.env.MODE,
+    release: import.meta.env.VITE_APP_VERSION,
+    analytics: {
+      endpoint: import.meta.env.VITE_ANALYTICS_ENDPOINT,
+      webVitals: true,
+    },
+    errorReporting: {
+      endpoint: import.meta.env.VITE_ERROR_REPORT_ENDPOINT,
+      captureResourceErrors: true,
+    },
+  },
+};
+```
+
+这里的 SDK 是可选 peer：推荐安装 `@novel-isr/analytics` 和
+`@novel-isr/error-reporting`；未安装时 engine 会 no-op，不影响渲染。
+完整说明见 [docs/observability.md](./docs/observability.md#前端埋点与错误上报)。
+
 完事。
 
 完整的「getting started」（含 i18n / SEO / Server Actions）请看 **[docs/getting-started.md](./docs/getting-started.md)**。
@@ -193,6 +218,7 @@ export default {
 │    • A/B testing、限流                                 │
 │    • csr-shell fallback（server 崩溃自救）            │
 │    • dev render inspector（开发态渲染模式浮层）        │
+│    • browser analytics / error-reporting 生命周期桥接 │
 │    • Sentry / Datadog / OTel adapter（一行接入）       │
 │    • Image / Font 优化插件（next-style）              │
 └──────────────────────────────────────────────────────┘
