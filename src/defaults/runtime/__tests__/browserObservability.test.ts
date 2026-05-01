@@ -1,10 +1,14 @@
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   installBrowserObservability,
   type BrowserObservabilityModuleLoader,
 } from '../browserObservability';
 
 describe('installBrowserObservability', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
   it('wires analytics page tracking, Web Vitals and action errors through optional SDKs', async () => {
     const page = vi.fn();
     const installWebVitals = vi.fn(() => vi.fn());
@@ -73,5 +77,56 @@ describe('installBrowserObservability', () => {
     expect(onSetupError).toHaveBeenCalledTimes(2);
     expect(() => handle.page('/')).not.toThrow();
     expect(() => handle.captureActionError(new Error('x'), 'a')).not.toThrow();
+  });
+
+  it('uses built-in HTTP fallback when optional SDKs are missing but endpoints are configured', async () => {
+    const fetchMock = vi.fn(async () => new Response('{}', { status: 202 }));
+    vi.stubGlobal('fetch', fetchMock);
+
+    const handle = await installBrowserObservability({
+      app: 'novel-rating',
+      analytics: { endpoint: 'https://admin.local/api/observability/analytics', batchSize: 1 },
+      errorReporting: { endpoint: 'https://admin.local/api/observability/errors', batchSize: 1 },
+      moduleLoader: async () => {
+        throw new Error('missing module');
+      },
+    });
+
+    await vi.waitFor(() => {
+      expect(fetchMock).toHaveBeenCalledWith(
+        'https://admin.local/api/observability/analytics',
+        expect.objectContaining({
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+        })
+      );
+    });
+
+    handle.captureActionError(new Error('action failed'), 'create-review');
+
+    await vi.waitFor(() => {
+      expect(fetchMock).toHaveBeenCalledWith(
+        'https://admin.local/api/observability/errors',
+        expect.objectContaining({
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+        })
+      );
+    });
+
+    const analyticsBody = JSON.parse(fetchMock.mock.calls[0]?.[1]?.body as string);
+    expect(analyticsBody.events[0]).toMatchObject({
+      app: 'novel-rating',
+      name: 'page_view',
+      properties: { path: '/' },
+    });
+
+    const errorBody = JSON.parse(fetchMock.mock.calls[1]?.[1]?.body as string);
+    expect(errorBody.reports[0]).toMatchObject({
+      app: 'novel-rating',
+      message: 'action failed',
+      source: 'server-action',
+      tags: { actionId: 'create-review' },
+    });
   });
 });
