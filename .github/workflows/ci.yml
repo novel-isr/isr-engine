@@ -24,14 +24,14 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Set up pnpm
+        uses: pnpm/action-setup@v5
+        with:
+          run_install: false
+
       - uses: actions/setup-node@v4
         with:
           node-version-file: '.nvmrc'
-
-      - name: Enable corepack (pnpm via packageManager)
-        run: |
-          corepack enable
-          corepack prepare "$(node -p "require('./package.json').packageManager")" --activate
 
       - name: Diagnostics
         run: |
@@ -60,14 +60,14 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Set up pnpm
+        uses: pnpm/action-setup@v5
+        with:
+          run_install: false
+
       - uses: actions/setup-node@v4
         with:
           node-version-file: '.nvmrc'
-
-      - name: Enable corepack (pnpm via packageManager)
-        run: |
-          corepack enable
-          corepack prepare "$(node -p "require('./package.json').packageManager")" --activate
 
       - name: Install dependencies
         run: pnpm install --frozen-lockfile

@@ -52,14 +52,14 @@ jobs:
     steps:
       - uses: actions/checkout@v5
 
+      - name: Set up pnpm
+        uses: pnpm/action-setup@v5
+        with:
+          run_install: false
+
       - uses: actions/setup-node@v5
         with:
           node-version-file: '.nvmrc'
-
-      - name: Enable corepack (pnpm via packageManager)
-        run: |
-          corepack enable
-          corepack prepare "$(node -p "require('./package.json').packageManager")" --activate
 
       - name: Resolve pnpm store path
         id: pnpm-store
