@@ -148,6 +148,46 @@ export interface RuntimeServicesConfig {
   i18n?: string;
   /** SEO 配置下发 origin；不配置时回退到 api */
   seo?: string;
+  /** 浏览器埋点和错误上报 origin；不配置时回退到 api，同源部署可留空 */
+  observability?: string;
+}
+
+export interface RuntimeObservabilityEndpointOptions {
+  /** 远端上报地址；相对路径会拼到 services.observability/api 上 */
+  endpoint?: string;
+  /** 采样率，0..1；默认 1 */
+  sampleRate?: number;
+  /** 批量上报条数；analytics 默认 20，error-reporting 默认 10 */
+  batchSize?: number;
+  /** 定时 flush 间隔，毫秒；默认 3000 */
+  flushIntervalMs?: number;
+}
+
+export interface RuntimeObservabilityAnalyticsConfig extends RuntimeObservabilityEndpointOptions {
+  /** 是否自动采集 Web Vitals；默认 true */
+  webVitals?: boolean;
+  /** 是否自动上报首屏 page_view；默认 true */
+  trackInitialPage?: boolean;
+}
+
+export interface RuntimeObservabilityErrorReportingConfig extends RuntimeObservabilityEndpointOptions {
+  /** 是否采集 script/link/img 等资源加载失败；默认 true */
+  captureResourceErrors?: boolean;
+}
+
+export interface RuntimeObservabilityConfig {
+  /** 应用名；不配置时读取 package.json name */
+  app?: string;
+  /** 发布版本，用于错误归因和发布影响分析 */
+  release?: string;
+  /** 当前环境：development/staging/production */
+  environment?: string;
+  /** 是否把 query string 纳入 URL；默认 false，避免采集敏感参数 */
+  includeQueryString?: boolean;
+  /** 前端埋点配置；false 表示关闭 analytics */
+  analytics?: false | RuntimeObservabilityAnalyticsConfig;
+  /** 前端错误上报配置；false 表示关闭 error reporting */
+  errorReporting?: false | RuntimeObservabilityErrorReportingConfig;
 }
 
 /**
@@ -185,6 +225,11 @@ export interface RuntimeConfig {
   i18n?: RuntimeI18nConfig;
   /** 页面 SEO 元数据源配置；不要和 ISRConfig 顶层 seo.baseUrl 混淆 */
   seo?: RuntimeSeoConfig;
+  /**
+   * 浏览器侧观测配置。engine 会把这部分安全序列化到 client entry，
+   * 自动接入 page_view、Web Vitals、全局错误、资源加载失败和 Server Action 错误。
+   */
+  observability?: false | RuntimeObservabilityConfig;
 }
 
 export const RenderModes = {

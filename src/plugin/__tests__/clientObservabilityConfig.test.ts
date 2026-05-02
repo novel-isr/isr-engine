@@ -1,0 +1,92 @@
+import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import path from 'node:path';
+
+import { afterEach, describe, expect, it } from 'vitest';
+
+import { resolveClientObservabilityOptions } from '../clientObservabilityConfig';
+
+const roots: string[] = [];
+
+describe('resolveClientObservabilityOptions', () => {
+  afterEach(async () => {
+    await Promise.all(roots.splice(0).map(root => rm(root, { recursive: true, force: true })));
+  });
+
+  it('returns null when runtime.observability is not configured', () => {
+    expect(resolveClientObservabilityOptions({ runtime: {} })).toBeNull();
+  });
+
+  it('returns false when browser observability is explicitly disabled', () => {
+    expect(resolveClientObservabilityOptions({ runtime: { observability: false } })).toBe(false);
+  });
+
+  it('serializes only browser-safe observability options and joins service origin', async () => {
+    const root = await createRoot('novel-rating');
+    const options = resolveClientObservabilityOptions({
+      root,
+      env: {
+        NODE_ENV: 'production',
+        VITE_APP_VERSION: '1.2.3',
+      } as NodeJS.ProcessEnv,
+      runtime: {
+        redis: { url: 'redis://secret@localhost:6379/0' },
+        sentry: { dsn: 'https://private@sentry.example/1' },
+        services: {
+          api: 'https://admin.example.com',
+          observability: 'https://rum.example.com',
+        },
+        observability: {
+          includeQueryString: false,
+          analytics: { endpoint: '/ingest/events', batchSize: 12 },
+          errorReporting: { endpoint: '/ingest/errors', sampleRate: 0.5 },
+        },
+      },
+    });
+
+    expect(options).toEqual({
+      app: 'novel-rating',
+      release: '1.2.3',
+      environment: 'production',
+      includeQueryString: false,
+      analytics: {
+        endpoint: 'https://rum.example.com/ingest/events',
+        sampleRate: undefined,
+        batchSize: 12,
+        flushIntervalMs: undefined,
+        webVitals: true,
+        trackInitialPage: undefined,
+      },
+      errorReporting: {
+        endpoint: 'https://rum.example.com/ingest/errors',
+        sampleRate: 0.5,
+        batchSize: undefined,
+        flushIntervalMs: undefined,
+        captureResourceErrors: true,
+      },
+    });
+    expect(JSON.stringify(options)).not.toContain('redis://');
+    expect(JSON.stringify(options)).not.toContain('sentry.example');
+  });
+
+  it('uses same-origin default endpoints when service origin is empty', () => {
+    const options = resolveClientObservabilityOptions({
+      runtime: { observability: { app: 'app' } },
+    });
+
+    if (!options) throw new Error('expected browser observability options');
+
+    expect(options.analytics).toMatchObject({
+      endpoint: '/api/observability/analytics',
+    });
+    expect(options.errorReporting).toMatchObject({
+      endpoint: '/api/observability/errors',
+    });
+  });
+});
+
+async function createRoot(name: string): Promise<string> {
+  const root = await mkdtemp(path.join(process.cwd(), '.tmp-client-observability-'));
+  roots.push(root);
+  await writeFile(path.join(root, 'package.json'), JSON.stringify({ name }, null, 2));
+  return root;
+}

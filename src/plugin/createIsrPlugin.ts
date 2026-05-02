@@ -33,6 +33,8 @@ import vitePluginRsc from '@vitejs/plugin-rsc';
 import { createDevAssetRequestMiddleware } from './devAssetRequestMiddleware';
 import { createIsrCacheMiddleware } from './isrCacheMiddleware';
 import { createSsgPostBuildPlugin } from './createSsgPostBuildPlugin';
+import { resolveClientObservabilityOptions } from './clientObservabilityConfig';
+import { loadConfig } from '../config/loadConfig';
 import { Logger } from '../logger/Logger';
 import type { ISRConfig } from '../types';
 
@@ -42,6 +44,7 @@ const VIRTUAL_ENTRY_IDS = {
   client: 'virtual:novel-isr/client-entry',
   rsc: 'virtual:novel-isr/rsc-entry',
   runtime: 'virtual:novel-isr/runtime-config',
+  clientRuntime: 'virtual:novel-isr/client-runtime-config',
 } as const;
 
 const RESOLVED_VIRTUAL_PREFIX = '\0';
@@ -255,7 +258,7 @@ export function detectClientReferenceDependencies(root: string): string[] {
   return result;
 }
 
-function createEngineDefaultEntriesPlugin(root: string): Plugin {
+function createEngineDefaultEntriesPlugin(root: string, inlineConfig: Partial<ISRConfig>): Plugin {
   const virtualEntryIds = new Set<string>(Object.values(VIRTUAL_ENTRY_IDS));
   const resolvedVirtualEntryIds = new Set<string>(
     Object.values(VIRTUAL_ENTRY_IDS).map(id => `${RESOLVED_VIRTUAL_PREFIX}${id}`)
@@ -286,8 +289,24 @@ function createEngineDefaultEntriesPlugin(root: string): Plugin {
         return `
           import { defineClientEntry } from ${fileImport('runtime/defineClientEntry.tsx')};
           import userConfig from '@app/_client-config';
+          import runtimeClientConfig from '${VIRTUAL_ENTRY_IDS.clientRuntime}';
 
-          defineClientEntry((userConfig ?? {}));
+          defineClientEntry(mergeClientConfig(runtimeClientConfig ?? {}, userConfig ?? {}));
+
+          function mergeClientConfig(runtimeConfig, userConfig) {
+            return {
+              ...runtimeConfig,
+              ...userConfig,
+              observability:
+                Object.prototype.hasOwnProperty.call(userConfig, 'observability')
+                  ? userConfig.observability
+                  : runtimeConfig.observability,
+              devInspector:
+                Object.prototype.hasOwnProperty.call(userConfig, 'devInspector')
+                  ? userConfig.devInspector
+                  : runtimeConfig.devInspector,
+            };
+          }
         `;
       }
 
@@ -385,9 +404,29 @@ function createEngineDefaultEntriesPlugin(root: string): Plugin {
         `;
       }
 
+      if (id === `${RESOLVED_VIRTUAL_PREFIX}${VIRTUAL_ENTRY_IDS.clientRuntime}`) {
+        return resolveClientRuntimeConfigModule(root, inlineConfig);
+      }
+
       return null;
     },
   };
+}
+
+async function resolveClientRuntimeConfigModule(
+  root: string,
+  inlineConfig: Partial<ISRConfig>
+): Promise<string> {
+  const config =
+    Object.keys(inlineConfig).length > 0 ? inlineConfig : await loadConfig({ cwd: root });
+  const observability = resolveClientObservabilityOptions({
+    runtime: config.runtime,
+    root,
+  });
+
+  return `export default ${JSON.stringify({
+    ...(observability === null ? {} : { observability }),
+  })};`;
 }
 
 function createAppAliasPlugin(root: string): Plugin {
@@ -484,7 +523,7 @@ export function createIsrPlugin(options: CreateIsrPluginOptions = {}): PluginOpt
   logger.info(`   ssr    = ${fmt('ssr')}`);
 
   const plugins: PluginOption[] = [
-    createEngineDefaultEntriesPlugin(root),
+    createEngineDefaultEntriesPlugin(root, userConfig),
     createAppAliasPlugin(root),
     createDevAssetRequestMiddleware(root),
     createBrowserShimPlugin(),
