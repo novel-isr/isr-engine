@@ -1,0 +1,84 @@
+import { mkdtempSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import path from 'node:path';
+import { execFileSync, spawnSync } from 'node:child_process';
+import { describe, expect, it } from 'vitest';
+
+const comparePath = path.resolve(import.meta.dirname, '../compare.mjs');
+
+describe('bench/compare.mjs', () => {
+  it('skips regression comparison when the committed baseline is unhealthy', () => {
+    const dir = mkdtempSync(path.join(tmpdir(), 'bench-compare-'));
+    const baselinePath = writeBench(dir, 'baseline.json', [
+      row({ path: '/', connections: 10, qps: 20_000, p95: 1, non2xxRate: 90 }),
+    ]);
+    const currentPath = writeBench(dir, 'current.json', [
+      row({ path: '/', connections: 10, qps: 2_000, p95: 4 }),
+    ]);
+
+    const output = execFileSync(process.execPath, [comparePath, baselinePath, currentPath], {
+      encoding: 'utf8',
+    });
+
+    expect(output).toContain('baseline is unhealthy');
+    expect(output).toContain('current result is healthy');
+  });
+
+  it('fails immediately when the current result has non-2xx responses', () => {
+    const dir = mkdtempSync(path.join(tmpdir(), 'bench-compare-'));
+    const baselinePath = writeBench(dir, 'baseline.json', [
+      row({ path: '/', connections: 10, qps: 2_000, p95: 4 }),
+    ]);
+    const currentPath = writeBench(dir, 'current.json', [
+      row({ path: '/', connections: 10, qps: 20_000, p95: 1, non2xxRate: 20 }),
+    ]);
+
+    const result = spawnSync(process.execPath, [comparePath, baselinePath, currentPath], {
+      encoding: 'utf8',
+    });
+
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain('current bench result is unhealthy');
+  });
+
+  it('does not produce Infinity when baseline p95 is zero', () => {
+    const dir = mkdtempSync(path.join(tmpdir(), 'bench-compare-'));
+    const baselinePath = writeBench(dir, 'baseline.json', [
+      row({ path: '/about', connections: 10, qps: 2_000, p95: 0 }),
+    ]);
+    const currentPath = writeBench(dir, 'current.json', [
+      row({ path: '/about', connections: 10, qps: 2_100, p95: 2 }),
+    ]);
+
+    const output = execFileSync(process.execPath, [comparePath, baselinePath, currentPath], {
+      encoding: 'utf8',
+    });
+
+    expect(output).toContain('n/a');
+    expect(output).not.toContain('Infinity');
+  });
+});
+
+function writeBench(dir, filename, results) {
+  const file = path.join(dir, filename);
+  writeFileSync(
+    file,
+    JSON.stringify({
+      meta: { timestamp: '2026-05-04T00:00:00.000Z' },
+      results,
+    })
+  );
+  return file;
+}
+
+function row({ path, connections, qps, p95, non2xxRate = 0, errors = 0, timeouts = 0 }) {
+  return {
+    path,
+    connections,
+    requests_per_sec: qps,
+    latency_p95_ms: p95,
+    non_2xx_rate: non2xxRate,
+    errors,
+    timeouts,
+  };
+}

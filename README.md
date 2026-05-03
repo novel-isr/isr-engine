@@ -163,29 +163,37 @@ export default {
 };
 ```
 
-浏览器埋点和错误上报也在 `src/entry.tsx` 收口，业务不用重写导航监听或全局错误监听：
+浏览器埋点和错误上报由 engine 内置收口，业务不用重写导航监听或全局错误监听。
+部署期只在 `ssr.config.ts` 配 endpoint、采样和批量策略：
 
 ```ts
+// ssr.config.ts
 export default {
-  devInspector: true,
-  observability: {
-    app: 'novel-rating',
-    environment: import.meta.env.MODE,
-    release: import.meta.env.VITE_APP_VERSION,
-    analytics: {
-      endpoint: import.meta.env.VITE_ANALYTICS_ENDPOINT,
-      webVitals: true,
+  runtime: {
+    services: {
+      observability: process.env.OBSERVABILITY_API_URL ?? 'https://admin.example.com',
     },
-    errorReporting: {
-      endpoint: import.meta.env.VITE_ERROR_REPORT_ENDPOINT,
-      captureResourceErrors: true,
+    observability: {
+      app: 'novel-rating',
+      release: process.env.APP_VERSION,
+      environment: process.env.NODE_ENV,
+      includeQueryString: false,
+      analytics: {
+        endpoint: '/api/observability/analytics',
+        webVitals: true,
+      },
+      errorReporting: {
+        endpoint: '/api/observability/errors',
+        captureResourceErrors: true,
+      },
     },
   },
 };
 ```
 
-这里的 SDK 是可选 peer：推荐安装 `@novel-isr/analytics` 和
-`@novel-isr/error-reporting`；未安装时 engine 会 no-op，不影响渲染。
+设计边界：`isr-engine` 不 import 业务 SDK，也不绑定 Sentry/Datadog/自研采集端；
+它只根据 endpoint 使用内置 HTTP uploader。`@novel-isr/analytics` 和
+`@novel-isr/error-reporting` 是独立 SDK，给非 engine 应用或自定义集成使用。
 完整说明见 [docs/observability.md](./docs/observability.md#前端埋点与错误上报)。
 
 完事。

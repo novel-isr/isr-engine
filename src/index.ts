@@ -93,13 +93,12 @@ export type { IntlPayload } from './engine/i18n/types';
 export { createCachedFetcher } from './defaults/runtime/createCachedFetcher';
 export type { CachedFetcher, CachedFetcherOptions } from './defaults/runtime/createCachedFetcher';
 
-// ========== 浏览器观测（可选 peer SDK：analytics / error-reporting）==========
+// ========== 浏览器观测（endpoint-driven HTTP uploader）==========
 export { installBrowserObservability } from './defaults/runtime/browserObservability';
 export type {
   BrowserAnalyticsOptions,
   BrowserErrorReportingOptions,
   BrowserObservabilityHandle,
-  BrowserObservabilityModuleLoader,
   BrowserObservabilityOptions,
   BrowserObservabilityUser,
 } from './defaults/runtime/browserObservability';

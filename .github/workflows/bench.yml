@@ -126,12 +126,15 @@ jobs:
           BENCH_OUTPUT: bench-current.json
           BENCH_WARMUP_SECONDS: '3'
           BENCH_COOLDOWN_MS: '2000'
+          BENCH_FAIL_ON_NON_2XX: '1'
         run: pnpm run bench
 
       - name: Compare against baseline (fail on regression)
         env:
           BENCH_P95_REGRESSION_PCT: '20'
           BENCH_QPS_REGRESSION_PCT: '15'
+          BENCH_MAX_NON_2XX_RATE: '0'
+          BENCH_MAX_ERRORS: '0'
         run: |
           if [ -f bench/baseline.json ]; then
             node bench/compare.mjs bench/baseline.json bench-current.json

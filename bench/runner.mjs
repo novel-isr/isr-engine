@@ -21,7 +21,7 @@
  *   # CI 门槛
  *   BENCH_P95_BUDGET_MS=500 pnpm bench   # 任一档 P95 超 → exit 1
  *   BENCH_QPS_FLOOR=100 pnpm bench       # 任一档 QPS 低于此值 → exit 1
- *   BENCH_FAIL_ON_NON_2XX=1 pnpm bench   # 任一档 non-2xx 比例 > 5% → exit 1
+ *   BENCH_FAIL_ON_NON_2XX=0 pnpm bench   # 关闭非 2xx fail-fast（只建议本地临时诊断）
  *
  * 退出码：
  *   0 全部 P95 / QPS / non-2xx 在阈值内（或未开门槛）
@@ -44,7 +44,7 @@ const P95_BUDGET = process.env.BENCH_P95_BUDGET_MS
   ? parseInt(process.env.BENCH_P95_BUDGET_MS, 10)
   : null;
 const QPS_FLOOR = process.env.BENCH_QPS_FLOOR ? parseInt(process.env.BENCH_QPS_FLOOR, 10) : null;
-const FAIL_ON_NON_2XX = process.env.BENCH_FAIL_ON_NON_2XX === '1';
+const FAIL_ON_NON_2XX = process.env.BENCH_FAIL_ON_NON_2XX !== '0';
 const PIPELINING = parseInt(process.env.BENCH_PIPELINING ?? '1', 10);
 // Per-path warmup duration（每条 path 单独跑一遍 autocannon 预热；让首次 MISS
 // 不污染主测，并把 ISR cache 全部填上 HIT）。默认 3s，设 0 关闭。

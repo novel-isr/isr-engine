@@ -1,94 +1,28 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import {
-  installBrowserObservability,
-  type BrowserObservabilityModuleLoader,
-} from '../browserObservability';
+import { installBrowserObservability } from '../browserObservability';
 
 describe('installBrowserObservability', () => {
   afterEach(() => {
     vi.unstubAllGlobals();
   });
 
-  it('wires analytics page tracking, Web Vitals and action errors through optional SDKs', async () => {
-    const page = vi.fn();
-    const installWebVitals = vi.fn(() => vi.fn());
-    const captureException = vi.fn();
-    const installGlobalErrorHandlers = vi.fn(() => vi.fn());
-
-    const loader: BrowserObservabilityModuleLoader = async moduleName => {
-      if (moduleName === '@novel-isr/analytics') {
-        return {
-          initAnalytics: vi.fn(() => ({
-            page,
-            installWebVitals,
-            shutdown: vi.fn(),
-          })),
-        };
-      }
-      return {
-        initErrorReporter: vi.fn(() => ({
-          captureException,
-          shutdown: vi.fn(),
-        })),
-        installGlobalErrorHandlers,
-      };
-    };
-
-    const handle = await installBrowserObservability({
-      app: 'novel-rating',
-      release: '1.0.0',
-      environment: 'test',
-      analytics: { endpoint: '/analytics', webVitals: true },
-      errorReporting: { endpoint: '/errors', captureResourceErrors: false },
-      moduleLoader: loader,
-    });
-
-    expect(page).toHaveBeenCalledTimes(1);
-    expect(installWebVitals).toHaveBeenCalledTimes(1);
-    expect(installGlobalErrorHandlers).toHaveBeenCalledWith(
-      expect.anything(),
-      expect.objectContaining({ captureResourceErrors: false })
-    );
-
-    handle.page(new URL('https://example.com/books?q=secret'));
-    expect(page).toHaveBeenLastCalledWith('/books?q=secret');
-
-    const err = new Error('action failed');
-    handle.captureActionError(err, 'create-review');
-    expect(captureException).toHaveBeenCalledWith(
-      err,
-      expect.objectContaining({
-        source: 'server-action',
-        tags: { actionId: 'create-review' },
-      })
-    );
-  });
-
-  it('degrades to no-op when optional SDKs are not installed', async () => {
-    const onSetupError = vi.fn();
-    const handle = await installBrowserObservability({
-      app: 'novel-rating',
-      moduleLoader: async () => {
-        throw new Error('missing module');
-      },
-      onSetupError,
-    });
-
-    expect(onSetupError).toHaveBeenCalledTimes(2);
-    expect(() => handle.page('/')).not.toThrow();
-    expect(() => handle.captureActionError(new Error('x'), 'a')).not.toThrow();
-  });
-
-  it('uses built-in HTTP fallback when optional SDKs are missing but endpoints are configured', async () => {
+  it('uploads page views and Server Action errors through configured endpoints', async () => {
     const fetchMock = vi.fn(async () => new Response('{}', { status: 202 }));
     vi.stubGlobal('fetch', fetchMock);
 
     const handle = await installBrowserObservability({
       app: 'novel-rating',
-      analytics: { endpoint: 'https://admin.local/api/observability/analytics', batchSize: 1 },
-      errorReporting: { endpoint: 'https://admin.local/api/observability/errors', batchSize: 1 },
-      moduleLoader: async () => {
-        throw new Error('missing module');
+      release: '1.0.0',
+      environment: 'test',
+      analytics: {
+        endpoint: 'https://admin.local/api/observability/analytics',
+        batchSize: 1,
+        webVitals: false,
+      },
+      errorReporting: {
+        endpoint: 'https://admin.local/api/observability/errors',
+        batchSize: 1,
+        captureResourceErrors: false,
       },
     });
 
@@ -117,6 +51,8 @@ describe('installBrowserObservability', () => {
     const analyticsBody = JSON.parse(fetchMock.mock.calls[0]?.[1]?.body as string);
     expect(analyticsBody.events[0]).toMatchObject({
       app: 'novel-rating',
+      release: '1.0.0',
+      environment: 'test',
       name: 'page_view',
       properties: { path: '/' },
     });
@@ -128,5 +64,72 @@ describe('installBrowserObservability', () => {
       source: 'server-action',
       tags: { actionId: 'create-review' },
     });
+  });
+
+  it('is a no-op when endpoints are not configured', async () => {
+    const fetchMock = vi.fn(async () => new Response('{}', { status: 202 }));
+    vi.stubGlobal('fetch', fetchMock);
+
+    const handle = await installBrowserObservability({
+      app: 'novel-rating',
+      analytics: {},
+      errorReporting: {},
+    });
+
+    expect(() => handle.page('/books?q=secret')).not.toThrow();
+    expect(() => handle.captureActionError(new Error('x'), 'a')).not.toThrow();
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it('strips query strings by default before reporting navigation paths', async () => {
+    const fetchMock = vi.fn(async () => new Response('{}', { status: 202 }));
+    vi.stubGlobal('fetch', fetchMock);
+
+    const handle = await installBrowserObservability({
+      app: 'novel-rating',
+      includeQueryString: false,
+      analytics: {
+        endpoint: '/analytics',
+        batchSize: 1,
+        webVitals: false,
+        trackInitialPage: false,
+      },
+      errorReporting: false,
+    });
+
+    handle.page(new URL('https://example.com/books?q=secret#chapter'));
+
+    await vi.waitFor(() => {
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+    });
+
+    const body = JSON.parse(fetchMock.mock.calls[0]?.[1]?.body as string);
+    expect(body.events[0].properties.path).toBe('/books');
+  });
+
+  it('can include query strings when explicitly enabled', async () => {
+    const fetchMock = vi.fn(async () => new Response('{}', { status: 202 }));
+    vi.stubGlobal('fetch', fetchMock);
+
+    const handle = await installBrowserObservability({
+      app: 'novel-rating',
+      includeQueryString: true,
+      analytics: {
+        endpoint: '/analytics',
+        batchSize: 1,
+        webVitals: false,
+        trackInitialPage: false,
+      },
+      errorReporting: false,
+    });
+
+    handle.page(new URL('https://example.com/books?q=allowed#chapter'));
+
+    await vi.waitFor(() => {
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+    });
+
+    const body = JSON.parse(fetchMock.mock.calls[0]?.[1]?.body as string);
+    expect(body.events[0].properties.path).toBe('/books?q=allowed');
   });
 });

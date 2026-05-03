@@ -1,16 +1,11 @@
 /**
  * Browser observability bridge.
  *
- * isr-engine must not hard-code a vendor or a backend. It only owns the browser
- * lifecycle points: app boot, page navigation and Server Action failures.
- *
- * The concrete SDKs are optional peer libraries:
- *   - @novel-isr/analytics
- *   - @novel-isr/error-reporting
- *
- * If an app has not installed them yet but endpoints are configured, the bridge
- * uses the built-in HTTP fallback. Rendering, hydration and navigation must
- * never depend on observability.
+ * isr-engine owns the browser lifecycle points: app boot, page navigation,
+ * Web Vitals, global browser errors and Server Action failures. It deliberately
+ * does not import a vendor SDK or a project-specific SDK. The only integration
+ * contract is HTTP endpoints resolved from ssr.config.ts runtime.observability.
+ * Rendering, hydration and navigation must never depend on observability.
  */
 
 export interface BrowserObservabilityUser {
@@ -45,12 +40,6 @@ export interface BrowserObservabilityOptions {
   includeQueryString?: boolean;
   analytics?: false | BrowserAnalyticsOptions;
   errorReporting?: false | BrowserErrorReportingOptions;
-  /**
-   * Tests can inject module loaders. Production uses dynamic import so the
-   * optional SDKs are not bundled unless the app installs and configures them.
-   */
-  moduleLoader?: BrowserObservabilityModuleLoader;
-  onSetupError?: (error: unknown, moduleName: string) => void;
 }
 
 export interface BrowserObservabilityHandle {
@@ -59,27 +48,11 @@ export interface BrowserObservabilityHandle {
   shutdown(): void;
 }
 
-export type BrowserObservabilityModuleLoader = (
-  moduleName: '@novel-isr/analytics' | '@novel-isr/error-reporting'
-) => Promise<unknown>;
-
-interface AnalyticsModule {
-  initAnalytics(options: Record<string, unknown>): AnalyticsClientLike;
-}
-
 interface AnalyticsClientLike {
   page(path?: string, options?: Record<string, unknown>): void;
   installWebVitals?(): () => void;
   flush?(): Promise<void> | void;
   shutdown?(): void;
-}
-
-interface ErrorReportingModule {
-  initErrorReporter(options: Record<string, unknown>): ErrorReporterLike;
-  installGlobalErrorHandlers?(
-    reporter?: ErrorReporterLike | null,
-    options?: Record<string, unknown>
-  ): () => void;
 }
 
 interface ErrorReporterLike {
@@ -92,90 +65,42 @@ interface ErrorReporterLike {
 export async function installBrowserObservability(
   options: BrowserObservabilityOptions
 ): Promise<BrowserObservabilityHandle> {
-  const loader = options.moduleLoader ?? dynamicImportOptional;
   const cleanups: Array<() => void> = [];
-  let analytics: AnalyticsClientLike | null = null;
-  let errorReporter: ErrorReporterLike | null = null;
+  const analytics = options.analytics === false ? null : createEndpointAnalyticsClient(options);
+  const errorReporter =
+    options.errorReporting === false ? null : createEndpointErrorReporter(options);
 
-  if (options.analytics !== false) {
-    try {
-      const analyticsModule = (await loader('@novel-isr/analytics')) as Partial<AnalyticsModule>;
-      if (typeof analyticsModule.initAnalytics === 'function') {
-        analytics = analyticsModule.initAnalytics({
-          app: options.app,
-          endpoint: options.analytics?.endpoint,
-          release: options.release,
-          environment: options.environment,
-          user: options.user,
-          includeQueryString: options.includeQueryString,
-          sampleRate: options.analytics?.sampleRate,
-          batchSize: options.analytics?.batchSize,
-          flushIntervalMs: options.analytics?.flushIntervalMs,
-        });
-        if (options.analytics?.webVitals && typeof analytics.installWebVitals === 'function') {
-          cleanups.push(analytics.installWebVitals());
-        }
-        if (options.analytics?.trackInitialPage !== false) {
-          analytics.page();
-        }
-      }
-    } catch (err) {
-      options.onSetupError?.(err, '@novel-isr/analytics');
-      analytics = createFallbackAnalytics(options);
-      if (
-        analytics &&
-        options.analytics?.webVitals &&
-        typeof analytics.installWebVitals === 'function'
-      ) {
-        cleanups.push(analytics.installWebVitals());
-      }
-      if (analytics && options.analytics?.trackInitialPage !== false) {
-        analytics.page();
-      }
-    }
+  if (
+    analytics &&
+    options.analytics !== false &&
+    options.analytics?.webVitals &&
+    typeof analytics.installWebVitals === 'function'
+  ) {
+    cleanups.push(analytics.installWebVitals());
   }
 
-  if (options.errorReporting !== false) {
-    try {
-      const errorModule = (await loader(
-        '@novel-isr/error-reporting'
-      )) as Partial<ErrorReportingModule>;
-      if (typeof errorModule.initErrorReporter === 'function') {
-        errorReporter = errorModule.initErrorReporter({
-          app: options.app,
-          endpoint: options.errorReporting?.endpoint,
-          release: options.release,
-          environment: options.environment,
-          user: options.user,
-          includeQueryString: options.includeQueryString,
-          sampleRate: options.errorReporting?.sampleRate,
-          batchSize: options.errorReporting?.batchSize,
-          flushIntervalMs: options.errorReporting?.flushIntervalMs,
-        });
-        const globalCleanup =
-          typeof errorModule.installGlobalErrorHandlers === 'function'
-            ? errorModule.installGlobalErrorHandlers(errorReporter, {
-                captureResourceErrors: options.errorReporting?.captureResourceErrors,
-              })
-            : errorReporter.installGlobalHandlers?.({
-                captureResourceErrors: options.errorReporting?.captureResourceErrors,
-              });
-        if (globalCleanup) cleanups.push(globalCleanup);
-      }
-    } catch (err) {
-      options.onSetupError?.(err, '@novel-isr/error-reporting');
-      errorReporter = createFallbackErrorReporter(options);
-      const globalCleanup = errorReporter?.installGlobalHandlers?.({
-        captureResourceErrors: options.errorReporting?.captureResourceErrors,
-      });
-      if (globalCleanup) cleanups.push(globalCleanup);
-    }
+  if (analytics && options.analytics !== false && options.analytics?.trackInitialPage !== false) {
+    analytics.page();
+  }
+
+  const globalCleanup = errorReporter?.installGlobalHandlers?.({
+    captureResourceErrors:
+      options.errorReporting !== false ? options.errorReporting?.captureResourceErrors : undefined,
+  });
+  if (globalCleanup) {
+    cleanups.push(globalCleanup);
   }
 
   return {
     page(url) {
       if (!analytics) return;
-      analytics.page(typeof url === 'string' ? url : url ? toPagePath(url) : undefined);
+      analytics.page(
+        typeof url === 'string'
+          ? sanitizeUrl(url, options.includeQueryString)
+          : url
+            ? toPagePath(url, options.includeQueryString)
+            : undefined
+      );
     },
     captureActionError(error, actionId) {
       errorReporter?.captureException(error, {
@@ -193,21 +118,18 @@ export async function installBrowserObservability(
   };
 }
 
-function toPagePath(url: URL): string {
-  return `${url.pathname}${url.search}`;
+function toPagePath(url: URL, includeQueryString?: boolean): string {
+  return includeQueryString ? `${url.pathname}${url.search}` : url.pathname;
 }
 
-async function dynamicImportOptional(moduleName: string): Promise<unknown> {
-  const dynamicImport = new Function('m', 'return import(m)') as (m: string) => Promise<unknown>;
-  return dynamicImport(moduleName);
-}
-
-function createFallbackAnalytics(options: BrowserObservabilityOptions): AnalyticsClientLike | null {
+function createEndpointAnalyticsClient(
+  options: BrowserObservabilityOptions
+): AnalyticsClientLike | null {
   const analyticsOptions = options.analytics === false ? undefined : options.analytics;
   const endpoint = analyticsOptions?.endpoint;
   if (!endpoint) return null;
 
-  const base = createFallbackBase(options, {
+  const base = createEndpointQueue(options, {
     endpoint,
     batchSize: analyticsOptions?.batchSize ?? 20,
     flushIntervalMs: analyticsOptions?.flushIntervalMs ?? 3000,
@@ -239,14 +161,14 @@ function createFallbackAnalytics(options: BrowserObservabilityOptions): Analytic
   };
 }
 
-function createFallbackErrorReporter(
+function createEndpointErrorReporter(
   options: BrowserObservabilityOptions
 ): ErrorReporterLike | null {
   const errorOptions = options.errorReporting === false ? undefined : options.errorReporting;
   const endpoint = errorOptions?.endpoint;
   if (!endpoint) return null;
 
-  const base = createFallbackBase(options, {
+  const base = createEndpointQueue(options, {
     endpoint,
     batchSize: errorOptions?.batchSize ?? 10,
     flushIntervalMs: errorOptions?.flushIntervalMs ?? 3000,
@@ -293,7 +215,7 @@ function createFallbackErrorReporter(
           captureException('Resource load failed', {
             level: 'warning',
             source: target.tagName.toLowerCase(),
-            extra: { url },
+            extra: { url: sanitizeUrl(url, options.includeQueryString) },
           });
         }
       };
@@ -330,7 +252,7 @@ interface FallbackPayload {
   [key: string]: unknown;
 }
 
-function createFallbackBase(
+function createEndpointQueue(
   options: BrowserObservabilityOptions,
   baseOptions: FallbackBaseOptions
 ) {
@@ -338,6 +260,7 @@ function createFallbackBase(
   const sessionId = readOrCreateBrowserId(`${baseOptions.key}_session`);
   const anonymousId = readOrCreateBrowserId(`${baseOptions.key}_anonymous`);
   let timer: number | null = null;
+  let disposeLifecycleListeners: (() => void) | null = null;
 
   const flush = async (flushOptions: { beacon?: boolean } = {}) => {
     if (queue.length === 0) return;
@@ -380,6 +303,8 @@ function createFallbackBase(
       clearInterval(timer);
       timer = null;
     }
+    disposeLifecycleListeners?.();
+    disposeLifecycleListeners = null;
     void flush({ beacon: true });
   };
 
@@ -392,12 +317,16 @@ function createFallbackBase(
     };
     window.addEventListener('pagehide', shutdown);
     document.addEventListener('visibilitychange', onHidden);
+    disposeLifecycleListeners = () => {
+      window.removeEventListener('pagehide', shutdown);
+      document.removeEventListener('visibilitychange', onHidden);
+    };
   }
 
   return { enqueue, flush, shutdown };
 }
 
-function installFallbackWebVitals(base: ReturnType<typeof createFallbackBase>): () => void {
+function installFallbackWebVitals(base: ReturnType<typeof createEndpointQueue>): () => void {
   if (!isBrowser() || typeof PerformanceObserver === 'undefined') return () => {};
   const cleanups: Array<() => void> = [];
   let cls = 0;
@@ -475,6 +404,19 @@ function currentPath(includeQueryString?: boolean): string {
   if (!isBrowser()) return '/';
   const { pathname, search } = window.location;
   return includeQueryString ? `${pathname}${search}` : pathname;
+}
+
+function sanitizeUrl(url: string | undefined, includeQueryString?: boolean): string | undefined {
+  if (!url) return undefined;
+  if (includeQueryString) return url;
+  try {
+    const parsed = new URL(url, isBrowser() ? window.location.origin : 'http://localhost');
+    return parsed.origin === 'http://localhost' && !/^https?:\/\//i.test(url)
+      ? parsed.pathname
+      : `${parsed.origin}${parsed.pathname}`;
+  } catch {
+    return url.split('?')[0]?.split('#')[0];
+  }
 }
 
 function isBrowser(): boolean {
