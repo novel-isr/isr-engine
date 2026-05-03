@@ -34,7 +34,7 @@ const config: ISRConfig = {
     enabled: false, // bench 不需要 sitemap
   },
   server: {
-    port: 3000,
+    port: Number(process.env.PORT ?? 3000),
     timeouts: {
       // Bench reuses a small number of hot keep-alive sockets. Keep the
       // engine's production default, but prevent fixture runs from measuring
