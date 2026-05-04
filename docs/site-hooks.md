@@ -2,7 +2,7 @@
 
 成熟项目建议把配置分成两层：
 
-- `ssr.config.ts`：启动期 / 部署期 / 平台级配置，例如 `runtime.site`、`runtime.services`、`runtime.i18n`、`runtime.seo`、Redis、Sentry、限流、A/B testing、路由渲染模式。
+- `ssr.config.ts`：启动期 / 部署期 / 平台级配置，例如 `runtime.site`、`runtime.services`、`runtime.i18n`、`runtime.seo`、Redis、endpoint observability、限流、A/B testing、路由渲染模式。
 - `src/entry.server.tsx`：请求期 hooks，例如用户、租户、灰度上下文、`beforeRequest`、`onError`。
 
 第一性原则是：会影响整个运行时拓扑的东西放配置文件；会依赖本次请求的东西放 server entry。
@@ -20,9 +20,13 @@ export const runtime = {
     api: process.env.API_URL ?? 'http://localhost:8080',
     i18n: process.env.I18N_API_URL ?? process.env.API_URL ?? 'http://localhost:8080',
     seo: process.env.SEO_API_URL ?? process.env.API_URL ?? 'http://localhost:8080',
+    observability: process.env.OBSERVABILITY_API_URL ?? process.env.API_URL ?? 'http://localhost:8080',
   },
   redis: process.env.REDIS_URL ? { url: process.env.REDIS_URL, keyPrefix: 'isr:' } : undefined,
-  sentry: process.env.SENTRY_DSN ? { dsn: process.env.SENTRY_DSN } : undefined,
+  observability: {
+    app: 'novel-rating',
+    errorReporting: { endpoint: '/api/observability/errors' },
+  },
   rateLimit: {
     store: process.env.RATE_LIMIT_STORE === 'redis' ? 'redis' : 'memory',
     windowMs: 60_000,
@@ -230,6 +234,11 @@ onError: async (err, req, ctx) => {
 `beforeRequest` 返回值会和 engine 基线 context 合并，并同步进 RequestContext。
 Server Component 可用 `getRequestContext()` 读取用户、租户等请求级信息。`onError`
 不要返回 `Response`，兜底策略由 engine 统一处理。
+
+`onError` 是追加回调，不会关闭平台默认上报：当 `ssr.config.ts`
+配置了 `runtime.observability.errorReporting` 时，engine 会先把服务端渲染异常
+fire-and-forget 上报到 endpoint，再执行业务自定义 `onError`。业务 `onError`
+适合补充结构化日志、审计字段或自建告警，不要再重复做同一份 endpoint 上传。
 
 `readCookie()` 由 engine 提供，兼容 Web `Request` 和 Node/Express header record。
 业务不要自己写正则解析 cookie，避免在 SSR、dev server、middleware 和测试环境之间

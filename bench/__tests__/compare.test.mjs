@@ -7,6 +7,30 @@ import { describe, expect, it } from 'vitest';
 const comparePath = path.resolve(import.meta.dirname, '../compare.mjs');
 
 describe('bench/compare.mjs', () => {
+  it('skips regression comparison when the committed baseline uses a different bench protocol', () => {
+    const dir = mkdtempSync(path.join(tmpdir(), 'bench-compare-'));
+    const baselinePath = writeBench(
+      dir,
+      'baseline.json',
+      [row({ path: '/', connections: 10, qps: 20_000, p95: 1 })],
+      { duration_s: 8, tiers: [10, 100, 1000, 10000] }
+    );
+    const currentPath = writeBench(
+      dir,
+      'current.json',
+      [row({ path: '/', connections: 10, qps: 2_000, p95: 4 })],
+      { duration_s: 15, tiers: [10, 100, 1000] }
+    );
+
+    const output = execFileSync(process.execPath, [comparePath, baselinePath, currentPath], {
+      encoding: 'utf8',
+    });
+
+    expect(output).toContain('baseline protocol is incompatible');
+    expect(output).toContain('duration_s: baseline=8 current=15');
+    expect(output).toContain('tiers: baseline=[10,100,1000,10000] current=[10,100,1000]');
+  });
+
   it('skips regression comparison when the committed baseline is unhealthy', () => {
     const dir = mkdtempSync(path.join(tmpdir(), 'bench-compare-'));
     const baselinePath = writeBench(dir, 'baseline.json', [
@@ -59,12 +83,22 @@ describe('bench/compare.mjs', () => {
   });
 });
 
-function writeBench(dir, filename, results) {
+function writeBench(dir, filename, results, meta = {}) {
   const file = path.join(dir, filename);
   writeFileSync(
     file,
     JSON.stringify({
-      meta: { timestamp: '2026-05-04T00:00:00.000Z' },
+      meta: {
+        timestamp: '2026-05-04T00:00:00.000Z',
+        duration_s: 15,
+        tiers: [10, 100, 1000],
+        paths: ['/', '/about', '/books/1'],
+        pipelining: 1,
+        warmup_s: 3,
+        cooldown_ms: 2000,
+        node: 'v22.21.1',
+        ...meta,
+      },
       results,
     })
   );

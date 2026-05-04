@@ -2,7 +2,7 @@
  * defineSiteHooks —— 高阶 FaaS hooks 工厂（声明式配置 → 完整 ServerEntryHooks）
  *
  * 让用户的 src/entry.server.tsx 收紧到「只写请求期 hooks」。
- * 部署/平台配置（api/site/redis/sentry/rateLimit/experiments/i18n/seo）放
+ * 部署/平台配置（api/site/redis/sentry/rateLimit/experiments/i18n/seo/observability）放
  * ssr.config.ts 的 runtime 字段；entry.server.tsx 只保留 beforeRequest / onError。
  * 注：experiments 是 experimentation platform 的通用字段名，业务侧可理解为 A/B testing。
  * 内部固化：
@@ -10,7 +10,7 @@
  *   - SEO 路由表 pattern → resolver
  *   - locale 检测（cookie → Accept-Language → 默认）
  *   - api/i18n/seo 远端 origin 从 ssr.config.ts runtime.services 注入
- *   - 错误打印 / Sentry adapter 透传
+ *   - 服务端渲染错误打印 + runtime.observability endpoint 上报
  *
  * beforeRequest 的边界：
  *   - 它在每次 HTTP/RSC 请求进入渲染前执行。
@@ -45,6 +45,7 @@ export interface SiteRuntimeContext {
   api?: string;
   i18n?: string;
   seo?: string;
+  observability?: string;
   site?: string;
 }
 
@@ -52,6 +53,7 @@ export interface RuntimeServices {
   api?: string;
   i18n?: string;
   seo?: string;
+  observability?: string;
 }
 
 export type RuntimeServiceBase = string | ((ctx: SiteRuntimeContext) => string | null | undefined);
@@ -170,8 +172,15 @@ export interface SiteHooksConfig {
   intl?: IntlConfig;
   /** SEO 路由表：path pattern（支持 `:param`）→ 静态 meta 或 remote loader */
   seo?: Record<string, SeoEntry | (() => Promise<PageSeoMeta | null> | PageSeoMeta | null)>;
-  /** 错误回调（默认 console.error 或 sentry.captureException）；自定义时覆盖 */
-  onError?: (err: unknown, req: Request, ctx: { traceId: string; locale?: string }) => void;
+  /**
+   * 错误回调。平台默认会先执行 console + runtime.observability endpoint 上报；
+   * 自定义 onError 作为业务补充回调追加执行，不会关闭平台默认上报。
+   */
+  onError?: (
+    err: unknown,
+    req: Request,
+    ctx: { traceId: string; locale?: string }
+  ) => void | Promise<void>;
   /**
    * 请求级 ctx 扩展（除 engine 基线字段 + locale 之外的业务字段）。
    *
@@ -349,7 +358,11 @@ export interface ServerHooksOutput {
   ) => Promise<Record<string, unknown>>;
   loadIntl: (req: Request) => Promise<IntlPayload | null>;
   loadSeoMeta: (req: Request) => Promise<PageSeoMeta | null>;
-  onError: (err: unknown, req: Request, ctx: { traceId: string; locale?: string }) => void;
+  onError: (
+    err: unknown,
+    req: Request,
+    ctx: { traceId: string; locale?: string }
+  ) => void | Promise<void>;
   __configureRuntime?: (runtime: SiteRuntimeConfig) => ServerHooksOutput;
 }
 
@@ -421,6 +434,7 @@ function createSiteHooks(config: SiteHooksConfig, runtime: SiteRuntimeConfig): S
     api: api || undefined,
     i18n: services.i18n,
     seo: services.seo,
+    observability: services.observability,
     site: site || undefined,
   };
   const fetchJson = async (path: string, baseUrl?: string): Promise<unknown> => {
@@ -555,15 +569,13 @@ function createSiteHooks(config: SiteHooksConfig, runtime: SiteRuntimeConfig): S
   }
 
   // ─── onError ─────
-  const onError =
-    config.onError ??
-    ((err: unknown, req: Request, ctx: { traceId: string }) => {
-      console.error('[onError]', {
-        traceId: ctx.traceId,
-        url: req.url,
-        msg: err instanceof Error ? err.message : String(err),
-      });
-    });
+  const platformOnError = createPlatformOnError(runtime, runtimeCtx);
+  const onError: ServerHooksOutput['onError'] = async (err, req, ctx) => {
+    platformOnError(err, req, ctx);
+    if (config.onError) {
+      await config.onError(err, req, ctx);
+    }
+  };
 
   const output: ServerHooksOutput = {
     siteBaseUrl: site || undefined,
@@ -679,6 +691,128 @@ function normalizeAdminSeoFallbackEntries(
   ) as unknown as readonly AdminSeoFallbackEntry[];
 }
 
+function createPlatformOnError(
+  runtime: SiteRuntimeConfig,
+  ctx: SiteRuntimeContext
+): NonNullable<ServerHooksOutput['onError']> {
+  const reportServerError = createServerErrorEndpointReporter(runtime, ctx);
+
+  return (err, req, errorCtx) => {
+    console.error('[onError]', {
+      traceId: errorCtx.traceId,
+      locale: errorCtx.locale,
+      url: req.url,
+      msg: err instanceof Error ? err.message : String(err),
+    });
+    reportServerError?.(err, req, errorCtx);
+  };
+}
+
+function createServerErrorEndpointReporter(
+  runtime: SiteRuntimeConfig,
+  ctx: SiteRuntimeContext
+): ((err: unknown, req: Request, errorCtx: { traceId: string; locale?: string }) => void) | null {
+  const config = runtime.observability;
+  if (config === false || !config || config.errorReporting === false) return null;
+
+  const errorReporting = config.errorReporting ?? {};
+  const endpoint = resolveAdminUrl(
+    errorReporting.endpoint ?? '/api/observability/errors',
+    {},
+    ctx,
+    {
+      baseUrl: runtimeCtx =>
+        runtimeCtx.services.observability ?? runtimeCtx.services.api ?? runtimeCtx.api,
+    },
+    'observability'
+  );
+  if (!endpoint) return null;
+
+  const app = config.app ?? 'novel-isr-app';
+  const release = config.release;
+  const environment = config.environment;
+  const includeQueryString = config.includeQueryString === true;
+
+  return (err, req, errorCtx) => {
+    const report = normalizeServerErrorReport(err, req, errorCtx, {
+      release,
+      environment,
+      includeQueryString,
+    });
+
+    void fetch(endpoint, {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        accept: 'application/json',
+      },
+      body: JSON.stringify({
+        app,
+        sentAt: Date.now(),
+        reports: [report],
+      }),
+      signal: typeof AbortSignal !== 'undefined' ? AbortSignal.timeout(1000) : undefined,
+    }).catch(() => {
+      /* 服务端错误上报不能阻断渲染兜底；失败交给进程日志和外层 adapter */
+    });
+  };
+}
+
+function normalizeServerErrorReport(
+  err: unknown,
+  req: Request,
+  ctx: { traceId: string; locale?: string },
+  options: {
+    release?: string;
+    environment?: string;
+    includeQueryString?: boolean;
+  }
+): Record<string, unknown> {
+  const error = err instanceof Error ? err : null;
+  const message = error?.message || String(err);
+  const name = error?.name || 'Error';
+  const url = safeRequestPath(req.url, options.includeQueryString);
+
+  return {
+    id: createServerReportId(),
+    ts: Date.now(),
+    level: 'error',
+    message,
+    name,
+    stack: error?.stack,
+    release: options.release,
+    environment: options.environment,
+    url,
+    source: 'server-render',
+    tags: {
+      traceId: ctx.traceId,
+      locale: ctx.locale,
+    },
+    extra: {
+      method: req.method,
+      pathname: url.split('?')[0] || '/',
+    },
+    fingerprint: ['server-render', name, message.slice(0, 160)],
+  };
+}
+
+function safeRequestPath(rawUrl: string, includeQueryString?: boolean): string {
+  try {
+    const url = new URL(rawUrl);
+    return includeQueryString ? `${url.pathname}${url.search}` : url.pathname;
+  } catch {
+    return includeQueryString ? rawUrl : '/';
+  }
+}
+
+function createServerReportId(): string {
+  const random =
+    typeof crypto !== 'undefined' && 'randomUUID' in crypto
+      ? crypto.randomUUID()
+      : Math.random().toString(36).slice(2);
+  return `srv_${Date.now().toString(36)}_${random}`;
+}
+
 async function fetchJsonWithTimeout<T>(url: string, timeoutMs = 1200): Promise<T | null> {
   try {
     const response = await fetch(url, {
@@ -725,6 +859,7 @@ function resolveRuntimeServices(runtime: SiteRuntimeConfig): RuntimeServices {
     api,
     i18n: services.i18n ?? api,
     seo: services.seo ?? api,
+    observability: services.observability ?? api,
   };
 }
 
@@ -733,7 +868,8 @@ function hasRuntimeContentConfig(runtime: SiteRuntimeConfig): boolean {
     runtime.i18n?.endpoint ||
     runtime.i18n?.fallbackLocal ||
     runtime.seo?.endpoint ||
-    runtime.seo?.fallbackLocal
+    runtime.seo?.fallbackLocal ||
+    runtime.observability
   );
 }
 

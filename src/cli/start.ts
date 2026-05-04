@@ -251,7 +251,8 @@ export async function startProductionServer(options: StartOptions): Promise<void
   });
   app.use(cache);
 
-  // Sentry：ssr.config.ts runtime.sentry → 暴露给 SDK init（auto.ts 已读 SENTRY_DSN env）
+  // Sentry：可选第三方服务端 vendor。runtime.sentry 仅用于把 DSN 映射给 auto adapter；
+  // 默认 endpoint 观测走 runtime.observability，不依赖 Sentry SDK。
   if (runtime?.sentry?.dsn) {
     process.env.SENTRY_DSN = runtime.sentry.dsn;
     if (runtime.sentry.tracesSampleRate !== undefined) {

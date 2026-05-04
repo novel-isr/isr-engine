@@ -1,7 +1,7 @@
 /**
  * 环境变量驱动的 SDK 自动装配
  *
- * 用户态：什么都不做。设了 env 就生效，没设走默认（console.error）。
+ * 用户态：什么都不做。设了 env 就生效，没设则不开第三方 vendor。
  *
  *   .env
  *     SENTRY_DSN=https://xxx@sentry.io/123       → 自动接 Sentry 服务端
@@ -55,7 +55,7 @@ export async function createAutoServerHooks(): Promise<AutoServerHooks> {
   if (otelEndpoint) return await loadOtel(otelEndpoint);
 
   logger.info(
-    '🛰️  observability: 未检测到 SENTRY_DSN/DD_SERVICE/OTEL_EXPORTER_OTLP_ENDPOINT，使用默认 console 上报'
+    '🛰️  observability: 未检测到 SENTRY_DSN/DD_SERVICE/OTEL_EXPORTER_OTLP_ENDPOINT，跳过第三方服务端 adapter'
   );
   return {};
 }

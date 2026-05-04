@@ -354,11 +354,62 @@ describe('defineSiteHooks: onError', () => {
     );
   });
 
-  it('自定义 onError 完全覆盖', () => {
+  it('自定义 onError 作为业务补充回调追加执行', async () => {
+    vi.spyOn(console, 'error').mockImplementation(() => {});
     const cb = vi.fn();
     const hooks = defineSiteHooks({ onError: cb });
     const err = new Error('boom');
-    hooks.onError(err, new Request('http://x.com'), { traceId: 't' });
+    await hooks.onError(err, new Request('http://x.com'), { traceId: 't' });
     expect(cb).toHaveBeenCalledWith(err, expect.any(Request), { traceId: 't' });
+  });
+
+  it('runtime.observability.errorReporting 上报服务端渲染错误且默认不带 query', () => {
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    const fetchSpy = vi
+      .spyOn(globalThis, 'fetch')
+      .mockResolvedValue(new Response(JSON.stringify({ ok: true }), { status: 202 }));
+    const hooks = applyRuntimeToServerHooks(defineAdminSiteHooks(), {
+      services: { observability: 'https://admin.example.com' },
+      observability: {
+        app: 'novel-rating',
+        release: '1.2.3',
+        environment: 'test',
+        includeQueryString: false,
+        errorReporting: {
+          endpoint: '/api/observability/errors',
+        },
+      },
+    });
+
+    hooks.onError(new Error('render boom'), new Request('http://site.test/books?token=secret'), {
+      traceId: 'trace-1',
+      locale: 'zh',
+    });
+
+    expect(fetchSpy).toHaveBeenCalledWith(
+      'https://admin.example.com/api/observability/errors',
+      expect.objectContaining({
+        method: 'POST',
+        headers: expect.objectContaining({
+          'content-type': 'application/json',
+        }),
+      })
+    );
+    const body = JSON.parse(String(fetchSpy.mock.calls[0]?.[1]?.body));
+    expect(body).toMatchObject({
+      app: 'novel-rating',
+      reports: [
+        expect.objectContaining({
+          level: 'error',
+          message: 'render boom',
+          release: '1.2.3',
+          environment: 'test',
+          url: '/books',
+          source: 'server-render',
+          tags: { traceId: 'trace-1', locale: 'zh' },
+        }),
+      ],
+    });
+    expect(JSON.stringify(body)).not.toContain('token=secret');
   });
 });

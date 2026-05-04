@@ -69,9 +69,14 @@ export const runtime = {
     api: process.env.API_URL ?? 'http://localhost:8080',
     i18n: process.env.I18N_API_URL ?? process.env.API_URL ?? 'http://localhost:8080',
     seo: process.env.SEO_API_URL ?? process.env.API_URL ?? 'http://localhost:8080',
+    observability: process.env.OBSERVABILITY_API_URL ?? process.env.API_URL ?? 'http://localhost:8080',
   },
   redis: process.env.REDIS_URL ? { url: process.env.REDIS_URL, keyPrefix: 'isr:' } : undefined,
-  sentry: process.env.SENTRY_DSN ? { dsn: process.env.SENTRY_DSN } : undefined,
+  observability: {
+    app: 'novel-rating',
+    analytics: { endpoint: '/api/observability/analytics', webVitals: true },
+    errorReporting: { endpoint: '/api/observability/errors' },
+  },
   rateLimit: {
     store: 'memory',
     windowMs: 60_000,
@@ -252,10 +257,15 @@ export const runtime = {
     api: process.env.API_URL ?? 'http://localhost:8080',
     i18n: process.env.I18N_API_URL ?? process.env.API_URL ?? 'http://localhost:8080',
     seo: process.env.SEO_API_URL ?? process.env.API_URL ?? 'http://localhost:8080',
+    observability: process.env.OBSERVABILITY_API_URL ?? process.env.API_URL ?? 'http://localhost:8080',
   },
 
   redis: process.env.REDIS_URL ? { url: process.env.REDIS_URL, keyPrefix: 'isr:' } : undefined,
-  sentry: process.env.SENTRY_DSN ? { dsn: process.env.SENTRY_DSN } : undefined,
+  observability: {
+    app: 'novel-rating',
+    analytics: { endpoint: '/api/observability/analytics', webVitals: true },
+    errorReporting: { endpoint: '/api/observability/errors' },
+  },
   rateLimit: {
     store: 'memory',
     windowMs: 60_000,

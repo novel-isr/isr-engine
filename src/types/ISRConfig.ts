@@ -215,7 +215,10 @@ export interface RuntimeConfig {
   services?: RuntimeServicesConfig;
   /** 分布式 ISR 缓存与跨实例失效广播 */
   redis?: RuntimeRedisConfig;
-  /** 服务端错误监控 */
+  /**
+   * 第三方服务端错误监控 vendor（Sentry adapter）。
+   * 一般项目优先使用 runtime.observability endpoint；需要 Sentry 平台能力时再配置。
+   */
   sentry?: RuntimeSentryConfig;
   /**
    * 站点入口限流。
@@ -232,8 +235,9 @@ export interface RuntimeConfig {
   /** 页面 SEO 元数据源配置；不要和 ISRConfig 顶层 seo.baseUrl 混淆 */
   seo?: RuntimeSeoConfig;
   /**
-   * 浏览器侧观测配置。engine 会把这部分安全序列化到 client entry，
-   * 自动接入 page_view、Web Vitals、全局错误、资源加载失败和 Server Action 错误。
+   * endpoint 观测配置。engine 会把浏览器安全子集序列化到 client entry，
+   * 自动接入 page_view、Web Vitals、全局错误、资源加载失败、Server Action 错误；
+   * 服务端渲染异常会通过同一个 errorReporting endpoint 非阻塞上报。
    */
   observability?: false | RuntimeObservabilityConfig;
 }

@@ -21,9 +21,9 @@ engine request context 的 `traceId` 自动贯穿整个请求生命周期（从 
 
 Engine 不绑定任何 SDK，但提供**预制 hook 工厂**，避免每个项目重复写 span 模板。
 
-## 前端埋点与错误上报
+## Endpoint 埋点与错误上报
 
-浏览器侧由 engine 内置 HTTP uploader 接管，不需要业务安装或 import SDK。第一性原则：
+默认链路由 engine 内置 HTTP uploader 接管，不需要业务安装或 import SDK。第一性原则：
 渲染引擎只拥有生命周期和协议边界，真实上报端可以是 admin-server、Sentry 网关、Datadog
 网关或企业内部采集服务，因此配置只暴露 endpoint、采样、批量和隐私选项。
 
@@ -74,16 +74,27 @@ export default {
 - Web Vitals：开启 `analytics.webVitals` 后采集 FCP、LCP、INP、CLS、TTFB。
 - 全局错误：engine endpoint uploader 注册 `window.error` / `unhandledrejection`。
 - Server Action：action 返回 `{ ok:false }` 时上报 `source=server-action` 和 `actionId`。
+- 服务端渲染异常：`runtime.observability.errorReporting` 配置存在时，`onError`
+  会 fire-and-forget 上报 `source=server-render`，同时保留业务自定义 `onError`。
 
 生产约束：
 
 - endpoint 为空时是 no-op transport，不刷 console，不阻塞页面。
 - 默认不会上报完整 query/hash；只有显式 `includeQueryString: true` 才上报 query。
-- 上报失败会回填有界队列，并用指数退避 + online 恢复重试，不影响水合、导航和用户交互。
+- 浏览器上报失败会回填有界队列，并用指数退避 + online 恢复重试，不影响水合、导航和用户交互。
+- 服务端错误上报是非阻塞 fire-and-forget；失败不会改变 SSR/ISR/RSC 的异常语义。
 - `src/entry.tsx beforeStart` 仍可接 Sentry 等第三方 SDK；`runtime.observability`
   是平台默认收口，不是锁定供应商。
 
 ### Sentry
+
+Sentry 是第三方错误监控 / APM 平台 adapter，不是 endpoint 默认链路。生产中可以二选一：
+
+- 只用 `runtime.observability`：打到 admin-server 或公司内部采集服务。
+- 同时接 Sentry：把 Sentry 当外部 vendor，用于 issue grouping、source map、告警和 trace。
+
+不要在 `src/entry.tsx` 同时手写同一类 PV / error 上报；默认生命周期已经由
+`runtime.observability` 接管。
 
 ```tsx
 // src/entry.server.tsx

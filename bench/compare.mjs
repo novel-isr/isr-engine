@@ -54,6 +54,17 @@ if (currentHealthIssues.length > 0) {
   process.exit(1);
 }
 
+const compatibilityIssues = collectCompatibilityIssues(baseline.meta, current.meta);
+if (compatibilityIssues.length > 0) {
+  console.log(`baseline protocol is incompatible with current bench run; skipping comparison.`);
+  console.log(`incompatible fields:`);
+  for (const issue of compatibilityIssues) console.log(`  ${issue}`);
+  console.log(
+    `\ncurrent result is healthy. Replace ${baselinePath} with ${currentPath} after one stable run.`
+  );
+  process.exit(0);
+}
+
 const baselineHealthIssues = collectHealthIssues(baseline.results, {
   maxNon2xxRate: MAX_NON_2XX_RATE,
   maxErrors: MAX_ERRORS,
@@ -139,6 +150,45 @@ function collectHealthIssues(results, options) {
     }
   }
   return issues;
+}
+
+function collectCompatibilityIssues(baselineMeta = {}, currentMeta = {}) {
+  const issues = [];
+  compareScalar(issues, 'duration_s', baselineMeta.duration_s, currentMeta.duration_s);
+  compareScalar(issues, 'pipelining', baselineMeta.pipelining, currentMeta.pipelining);
+  compareScalar(issues, 'warmup_s', baselineMeta.warmup_s, currentMeta.warmup_s);
+  compareScalar(issues, 'cooldown_ms', baselineMeta.cooldown_ms, currentMeta.cooldown_ms);
+  compareList(issues, 'tiers', baselineMeta.tiers, currentMeta.tiers);
+  compareList(issues, 'paths', baselineMeta.paths, currentMeta.paths);
+  compareScalar(
+    issues,
+    'node_major',
+    majorVersion(baselineMeta.node),
+    majorVersion(currentMeta.node)
+  );
+  return issues;
+}
+
+function compareScalar(issues, field, baselineValue, currentValue) {
+  if (typeof baselineValue === 'undefined' || typeof currentValue === 'undefined') return;
+  if (String(baselineValue) !== String(currentValue)) {
+    issues.push(`${field}: baseline=${baselineValue} current=${currentValue}`);
+  }
+}
+
+function compareList(issues, field, baselineValue, currentValue) {
+  if (!Array.isArray(baselineValue) || !Array.isArray(currentValue)) return;
+  const baselineText = baselineValue.join(',');
+  const currentText = currentValue.join(',');
+  if (baselineText !== currentText) {
+    issues.push(`${field}: baseline=[${baselineText}] current=[${currentText}]`);
+  }
+}
+
+function majorVersion(value) {
+  if (typeof value !== 'string') return undefined;
+  const match = value.match(/^v?(\d+)/);
+  return match?.[1];
 }
 
 function percentDelta(currentValue, baselineValue) {
