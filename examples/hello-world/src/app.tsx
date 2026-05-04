@@ -27,10 +27,10 @@ export function App({ url }: AppProps) {
         <p>Generated at: {new Date().toISOString()}</p>
         <ul>
           <li>
-            <a href="/about">About (SSG)</a>
+            <a href='/about'>About (SSG)</a>
           </li>
           <li>
-            <a href="/health">Health (SSR)</a>
+            <a href='/health'>Health (SSR)</a>
           </li>
         </ul>
       </main>
@@ -42,7 +42,7 @@ export function App({ url }: AppProps) {
       <main>
         <h1>About</h1>
         <p>This page is built once at build time (SSG).</p>
-        <a href="/">Back home</a>
+        <a href='/'>Back home</a>
       </main>
     );
   }
@@ -59,7 +59,7 @@ export function App({ url }: AppProps) {
   return (
     <main>
       <h1>404</h1>
-      <a href="/">Home</a>
+      <a href='/'>Home</a>
     </main>
   );
 }

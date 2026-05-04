@@ -3,6 +3,7 @@ import { installBrowserObservability } from '../browserObservability';
 
 describe('installBrowserObservability', () => {
   afterEach(() => {
+    vi.useRealTimers();
     vi.unstubAllGlobals();
   });
 
@@ -132,4 +133,78 @@ describe('installBrowserObservability', () => {
     const body = JSON.parse(fetchMock.mock.calls[0]?.[1]?.body as string);
     expect(body.events[0].properties.path).toBe('/books?q=allowed');
   });
+
+  it('retries failed endpoint uploads with backoff without blocking the page', async () => {
+    vi.useFakeTimers();
+    const listeners = installBrowserGlobals();
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(new Response('{}', { status: 503 }))
+      .mockResolvedValueOnce(new Response('{}', { status: 202 }));
+    vi.stubGlobal('fetch', fetchMock);
+
+    const handle = await installBrowserObservability({
+      app: 'novel-rating',
+      analytics: {
+        endpoint: '/analytics',
+        batchSize: 1,
+        webVitals: false,
+        trackInitialPage: false,
+        retryBaseDelayMs: 100,
+        retryMaxDelayMs: 100,
+      },
+      errorReporting: false,
+    });
+
+    handle.page('/retry');
+
+    await vi.waitFor(() => {
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+    });
+
+    await vi.advanceTimersByTimeAsync(200);
+
+    await vi.waitFor(() => {
+      expect(fetchMock).toHaveBeenCalledTimes(2);
+    });
+    expect(listeners.online).toBeTypeOf('function');
+    handle.shutdown();
+  });
 });
+
+function installBrowserGlobals(): Record<string, EventListener> {
+  const listeners: Record<string, EventListener> = {};
+  const storage = new Map<string, string>();
+
+  vi.stubGlobal('window', {
+    location: {
+      pathname: '/',
+      search: '',
+      origin: 'https://example.com',
+      href: 'https://example.com/',
+    },
+    setInterval,
+    clearInterval,
+    setTimeout,
+    clearTimeout,
+    addEventListener: vi.fn((type: string, listener: EventListener) => {
+      listeners[type] = listener;
+    }),
+    removeEventListener: vi.fn(),
+    localStorage: {
+      getItem: (key: string) => storage.get(key) ?? null,
+      setItem: (key: string, value: string) => storage.set(key, value),
+    },
+  });
+  vi.stubGlobal('document', {
+    title: 'Novel Rating',
+    referrer: '',
+    visibilityState: 'visible',
+    addEventListener: vi.fn((type: string, listener: EventListener) => {
+      listeners[type] = listener;
+    }),
+    removeEventListener: vi.fn(),
+  });
+
+  return listeners;
+}

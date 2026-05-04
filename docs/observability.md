@@ -63,17 +63,17 @@ export default {
 
 自动接入点：
 
-- 首屏：`analytics.page()` 上报一次初始 PV。
-- 客户端导航：engine 拦截 `pushState` / `replaceState` / `popstate` 后调用 `analytics.page(url)`。
+- 首屏：engine endpoint uploader 上报一次初始 `page_view`。
+- 客户端导航：engine 拦截 `pushState` / `replaceState` / `popstate` 后上报 `page_view`。
 - Web Vitals：开启 `analytics.webVitals` 后采集 FCP、LCP、INP、CLS、TTFB。
-- 全局错误：`error-reporting` 注册 `window.error` / `unhandledrejection`。
+- 全局错误：engine endpoint uploader 注册 `window.error` / `unhandledrejection`。
 - Server Action：action 返回 `{ ok:false }` 时上报 `source=server-action` 和 `actionId`。
 
 生产约束：
 
 - endpoint 为空时是 no-op transport，不刷 console，不阻塞页面。
 - 默认不会上报完整 query/hash；只有显式 `includeQueryString: true` 才上报 query。
-- 上报失败只回填有界队列，不影响水合、导航和用户交互。
+- 上报失败会回填有界队列，并用指数退避 + online 恢复重试，不影响水合、导航和用户交互。
 - `src/entry.tsx beforeStart` 仍可接 Sentry 等第三方 SDK；`runtime.observability`
   是平台默认收口，不是锁定供应商。
 

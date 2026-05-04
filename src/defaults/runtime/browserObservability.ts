@@ -20,6 +20,9 @@ export interface BrowserAnalyticsOptions {
   sampleRate?: number;
   batchSize?: number;
   flushIntervalMs?: number;
+  maxQueueSize?: number;
+  retryBaseDelayMs?: number;
+  retryMaxDelayMs?: number;
   webVitals?: boolean;
   trackInitialPage?: boolean;
 }
@@ -29,6 +32,9 @@ export interface BrowserErrorReportingOptions {
   sampleRate?: number;
   batchSize?: number;
   flushIntervalMs?: number;
+  maxQueueSize?: number;
+  retryBaseDelayMs?: number;
+  retryMaxDelayMs?: number;
   captureResourceErrors?: boolean;
 }
 
@@ -133,6 +139,9 @@ function createEndpointAnalyticsClient(
     endpoint,
     batchSize: analyticsOptions?.batchSize ?? 20,
     flushIntervalMs: analyticsOptions?.flushIntervalMs ?? 3000,
+    maxQueueSize: analyticsOptions?.maxQueueSize ?? 500,
+    retryBaseDelayMs: analyticsOptions?.retryBaseDelayMs ?? 1000,
+    retryMaxDelayMs: analyticsOptions?.retryMaxDelayMs ?? 30000,
     sampleRate: analyticsOptions?.sampleRate ?? 1,
     key: 'novel_isr_builtin_analytics',
   });
@@ -172,6 +181,9 @@ function createEndpointErrorReporter(
     endpoint,
     batchSize: errorOptions?.batchSize ?? 10,
     flushIntervalMs: errorOptions?.flushIntervalMs ?? 3000,
+    maxQueueSize: errorOptions?.maxQueueSize ?? 200,
+    retryBaseDelayMs: errorOptions?.retryBaseDelayMs ?? 1000,
+    retryMaxDelayMs: errorOptions?.retryMaxDelayMs ?? 30000,
     sampleRate: errorOptions?.sampleRate ?? 1,
     key: 'novel_isr_builtin_errors',
   });
@@ -242,6 +254,9 @@ interface FallbackBaseOptions {
   endpoint: string;
   batchSize: number;
   flushIntervalMs: number;
+  maxQueueSize: number;
+  retryBaseDelayMs: number;
+  retryMaxDelayMs: number;
   sampleRate: number;
   key: string;
 }
@@ -260,6 +275,8 @@ function createEndpointQueue(
   const sessionId = readOrCreateBrowserId(`${baseOptions.key}_session`);
   const anonymousId = readOrCreateBrowserId(`${baseOptions.key}_anonymous`);
   let timer: number | null = null;
+  let retryTimer: number | null = null;
+  let consecutiveFailures = 0;
   let disposeLifecycleListeners: (() => void) | null = null;
 
   const flush = async (flushOptions: { beacon?: boolean } = {}) => {
@@ -273,9 +290,15 @@ function createEndpointQueue(
     });
     try {
       await postJson(baseOptions.endpoint, body, flushOptions.beacon);
+      consecutiveFailures = 0;
+      if (queue.length === 0) {
+        clearRetryTimer();
+      }
     } catch {
       queue.unshift(...payloads);
-      queue.splice(200);
+      queue.splice(baseOptions.maxQueueSize);
+      consecutiveFailures += 1;
+      scheduleRetry();
     }
   };
 
@@ -295,6 +318,9 @@ function createEndpointQueue(
       url: currentPath(options.includeQueryString),
       ...payload,
     });
+    if (queue.length > baseOptions.maxQueueSize) {
+      queue.splice(0, queue.length - baseOptions.maxQueueSize);
+    }
     if (queue.length >= baseOptions.batchSize) void flush();
   };
 
@@ -303,22 +329,46 @@ function createEndpointQueue(
       clearInterval(timer);
       timer = null;
     }
+    clearRetryTimer();
     disposeLifecycleListeners?.();
     disposeLifecycleListeners = null;
     void flush({ beacon: true });
+  };
+
+  const scheduleRetry = () => {
+    if (!isBrowser() || retryTimer !== null || queue.length === 0) return;
+    const base = Math.max(100, baseOptions.retryBaseDelayMs);
+    const max = Math.max(base, baseOptions.retryMaxDelayMs);
+    const backoff = Math.min(max, base * 2 ** Math.max(0, consecutiveFailures - 1));
+    const jitter = Math.floor(backoff * 0.2 * Math.random());
+    retryTimer = window.setTimeout(() => {
+      retryTimer = null;
+      void flush();
+    }, backoff + jitter);
+  };
+
+  const clearRetryTimer = () => {
+    if (retryTimer !== null && isBrowser()) {
+      window.clearTimeout(retryTimer);
+    }
+    retryTimer = null;
   };
 
   if (isBrowser()) {
     if (baseOptions.flushIntervalMs > 0) {
       timer = window.setInterval(() => void flush(), baseOptions.flushIntervalMs);
     }
+    const flushOnPageHide = () => void flush({ beacon: true });
     const onHidden = () => {
       if (document.visibilityState === 'hidden') void flush({ beacon: true });
     };
-    window.addEventListener('pagehide', shutdown);
+    const onOnline = () => void flush();
+    window.addEventListener('pagehide', flushOnPageHide);
+    window.addEventListener('online', onOnline);
     document.addEventListener('visibilitychange', onHidden);
     disposeLifecycleListeners = () => {
-      window.removeEventListener('pagehide', shutdown);
+      window.removeEventListener('pagehide', flushOnPageHide);
+      window.removeEventListener('online', onOnline);
       document.removeEventListener('visibilitychange', onHidden);
     };
   }

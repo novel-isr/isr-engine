@@ -141,7 +141,9 @@ export interface ClientEntryHooks {
   onActionError?: (error: unknown, actionId: string) => void;
   /**
    * 浏览器可观测性。engine 接管启动、导航和 Server Action 失败这些生命周期点；
-   * 具体上报由可选 SDK `@novel-isr/analytics` / `@novel-isr/error-reporting` 完成。
+   * 具体上报只通过 ssr.config.ts runtime.observability 里的 endpoint。
+   * engine 不 import `@novel-isr/analytics` / `@novel-isr/error-reporting`；
+   * 这两个独立 SDK 只给非 engine 应用或业务自定义接入使用。
    */
   observability?: false | BrowserObservabilityOptions;
   /**

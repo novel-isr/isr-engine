@@ -161,6 +161,12 @@ export interface RuntimeObservabilityEndpointOptions {
   batchSize?: number;
   /** 定时 flush 间隔，毫秒；默认 3000 */
   flushIntervalMs?: number;
+  /** 失败后内存队列上限；analytics 默认 500，error-reporting 默认 200 */
+  maxQueueSize?: number;
+  /** 失败重试初始退避，毫秒；默认 1000 */
+  retryBaseDelayMs?: number;
+  /** 失败重试最大退避，毫秒；默认 30000 */
+  retryMaxDelayMs?: number;
 }
 
 export interface RuntimeObservabilityAnalyticsConfig extends RuntimeObservabilityEndpointOptions {

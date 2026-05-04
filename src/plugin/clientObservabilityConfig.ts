@@ -58,6 +58,9 @@ function resolveAnalyticsConfig(
     sampleRate: analytics.sampleRate,
     batchSize: analytics.batchSize,
     flushIntervalMs: analytics.flushIntervalMs,
+    maxQueueSize: analytics.maxQueueSize,
+    retryBaseDelayMs: analytics.retryBaseDelayMs,
+    retryMaxDelayMs: analytics.retryMaxDelayMs,
     webVitals: analytics.webVitals ?? true,
     trackInitialPage: analytics.trackInitialPage,
   };
@@ -74,6 +77,9 @@ function resolveErrorReportingConfig(
     sampleRate: errorReporting.sampleRate,
     batchSize: errorReporting.batchSize,
     flushIntervalMs: errorReporting.flushIntervalMs,
+    maxQueueSize: errorReporting.maxQueueSize,
+    retryBaseDelayMs: errorReporting.retryBaseDelayMs,
+    retryMaxDelayMs: errorReporting.retryMaxDelayMs,
     captureResourceErrors: errorReporting.captureResourceErrors ?? true,
   };
 }

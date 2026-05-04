@@ -37,8 +37,20 @@ describe('resolveClientObservabilityOptions', () => {
         },
         observability: {
           includeQueryString: false,
-          analytics: { endpoint: '/ingest/events', batchSize: 12 },
-          errorReporting: { endpoint: '/ingest/errors', sampleRate: 0.5 },
+          analytics: {
+            endpoint: '/ingest/events',
+            batchSize: 12,
+            maxQueueSize: 120,
+            retryBaseDelayMs: 500,
+            retryMaxDelayMs: 5000,
+          },
+          errorReporting: {
+            endpoint: '/ingest/errors',
+            sampleRate: 0.5,
+            maxQueueSize: 80,
+            retryBaseDelayMs: 1000,
+            retryMaxDelayMs: 10000,
+          },
         },
       },
     });
@@ -53,6 +65,9 @@ describe('resolveClientObservabilityOptions', () => {
         sampleRate: undefined,
         batchSize: 12,
         flushIntervalMs: undefined,
+        maxQueueSize: 120,
+        retryBaseDelayMs: 500,
+        retryMaxDelayMs: 5000,
         webVitals: true,
         trackInitialPage: undefined,
       },
@@ -61,6 +76,9 @@ describe('resolveClientObservabilityOptions', () => {
         sampleRate: 0.5,
         batchSize: undefined,
         flushIntervalMs: undefined,
+        maxQueueSize: 80,
+        retryBaseDelayMs: 1000,
+        retryMaxDelayMs: 10000,
         captureResourceErrors: true,
       },
     });
