@@ -173,6 +173,13 @@ export default {
     services: {
       observability: process.env.OBSERVABILITY_API_URL ?? 'https://admin.example.com',
     },
+    sentry: process.env.SENTRY_DSN
+      ? {
+          dsn: process.env.SENTRY_DSN,
+          tracesSampleRate: 0.1,
+          environment: process.env.NODE_ENV,
+        }
+      : undefined,
     observability: {
       app: 'novel-rating',
       release: process.env.APP_VERSION,
@@ -192,8 +199,10 @@ export default {
 ```
 
 设计边界：`isr-engine` 不 import 业务 SDK，也不绑定 Sentry/Datadog/自研采集端；
-它只根据 endpoint 使用内置 HTTP uploader。`@novel-isr/analytics` 和
-`@novel-isr/error-reporting` 是独立 SDK，给非 engine 应用或自定义集成使用。
+第一方链路只根据 endpoint 使用内置 HTTP uploader。Sentry / Datadog / OTel 是
+可选第三方 vendor adapter，可和 endpoint 同时 fan-out 使用，任意 vendor 失败不会
+影响渲染或其它上报。`@novel-isr/analytics` 和 `@novel-isr/error-reporting`
+是独立 SDK，给非 engine 应用或自定义集成使用。
 完整说明见 [docs/observability.md](./docs/observability.md#前端埋点与错误上报)。
 
 完事。

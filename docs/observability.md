@@ -17,9 +17,42 @@
 
 engine request context 的 `traceId` 自动贯穿整个请求生命周期（从 `X-Request-Id`/`X-Trace-Id` 读入，无则生成），所有 hook 都能拿到。
 
-## Sentry / Datadog / OTel —— 一行接入
+## Sentry / Datadog / OTel —— 多 vendor fan-out
 
 Engine 不绑定任何 SDK，但提供**预制 hook 工厂**，避免每个项目重复写 span 模板。
+第三方 vendor 和第一方 endpoint 是两个层级：
+
+- `runtime.observability`：第一方 endpoint，负责 browser analytics / browser error /
+  Server Action error / server-render error 的默认上报。
+- Sentry / Datadog / OTel：第三方 vendor，负责 issue grouping、source map、APM、
+  trace、告警等平台能力。
+
+多个 vendor 可以同时开启。engine 会 fan-out 调用，每个 vendor hook 都被隔离；
+某个 vendor 抛错不会阻断其它 vendor、第一方 endpoint 或业务 `entry.server.tsx`
+hooks。服务端最少配置如下：
+
+```ts
+// ssr.config.ts
+export default {
+  runtime: {
+    sentry: process.env.SENTRY_DSN
+      ? {
+          dsn: process.env.SENTRY_DSN,
+          tracesSampleRate: 0.1,
+          environment: process.env.NODE_ENV,
+        }
+      : undefined,
+  },
+};
+```
+
+也可以直接使用环境变量：
+
+```bash
+SENTRY_DSN=https://xxx@sentry.io/123
+DD_SERVICE=novel-rating
+OTEL_EXPORTER_OTLP_ENDPOINT=https://otel.example.com/v1/traces
+```
 
 ## Endpoint 埋点与错误上报
 
@@ -88,13 +121,14 @@ export default {
 
 ### Sentry
 
-Sentry 是第三方错误监控 / APM 平台 adapter，不是 endpoint 默认链路。生产中可以二选一：
+Sentry 是第三方错误监控 / APM 平台 adapter，不是 endpoint 默认链路。生产中可以：
 
 - 只用 `runtime.observability`：打到 admin-server 或公司内部采集服务。
 - 同时接 Sentry：把 Sentry 当外部 vendor，用于 issue grouping、source map、告警和 trace。
 
-不要在 `src/entry.tsx` 同时手写同一类 PV / error 上报；默认生命周期已经由
-`runtime.observability` 接管。
+不要在 `src/entry.tsx` 重复手写同一份第一方 PV / error endpoint 上传；默认生命周期已经由
+`runtime.observability` 接管。浏览器侧如果要接 Sentry，应在 `entry.tsx` 初始化 Sentry
+并把 `onNavigate` / `onActionError` 作为第三方 breadcrumb / captureException 的补充链路。
 
 ```tsx
 // src/entry.server.tsx

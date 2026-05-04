@@ -9,7 +9,8 @@
  *     OTEL_EXPORTER_OTLP_ENDPOINT=http://...     → 自动接 OTel（要求 @opentelemetry/* 已安装）
  *
  * 设计：SDK 都是 dynamic import；用户没装就静默跳过（不阻塞启动）。
- * 三个 SDK 同时配置则按 Sentry > Datadog > OTel 优先级生效（互斥，避免重复 span）。
+ * 多个 vendor 同时配置时采用 fan-out：Sentry / Datadog / OTel 都会执行，
+ * 任意一个 vendor 抛错都不能阻断其它 vendor、endpoint 上报或业务 hooks。
  */
 // 不引 Logger（它的 alias 在用户 RSC 上下文不解析）；用 console.* 直出
 const logger = {
@@ -50,14 +51,62 @@ export async function createAutoServerHooks(): Promise<AutoServerHooks> {
   const ddService = process.env.DD_SERVICE;
   const otelEndpoint = process.env.OTEL_EXPORTER_OTLP_ENDPOINT;
 
-  if (sentryDsn) return await loadSentry(sentryDsn);
-  if (ddService) return await loadDatadog(ddService);
-  if (otelEndpoint) return await loadOtel(otelEndpoint);
+  const hooks: AutoServerHooks[] = [];
+  if (sentryDsn) hooks.push(await loadSentry(sentryDsn));
+  if (ddService) hooks.push(await loadDatadog(ddService));
+  if (otelEndpoint) hooks.push(await loadOtel(otelEndpoint));
+
+  const activeHooks = hooks.filter(hasAnyHook);
+  if (activeHooks.length > 0) return composeAutoServerHooks(activeHooks);
 
   logger.info(
     '🛰️  observability: 未检测到 SENTRY_DSN/DD_SERVICE/OTEL_EXPORTER_OTLP_ENDPOINT，跳过第三方服务端 adapter'
   );
   return {};
+}
+
+export function composeAutoServerHooks(hooks: readonly AutoServerHooks[]): AutoServerHooks {
+  const activeHooks = hooks.filter(hasAnyHook);
+  if (activeHooks.length === 0) return {};
+
+  return {
+    async beforeRequest(req, baseline) {
+      const merged: Record<string, unknown> = {};
+      for (const hook of activeHooks) {
+        if (!hook.beforeRequest) continue;
+        try {
+          Object.assign(merged, (await hook.beforeRequest(req, baseline)) ?? {});
+        } catch (err) {
+          logger.warn('🛰️  observability beforeRequest vendor hook failed', err);
+        }
+      }
+      return merged;
+    },
+    onResponse(res, ctx) {
+      for (const hook of activeHooks) {
+        if (!hook.onResponse) continue;
+        try {
+          hook.onResponse(res, ctx);
+        } catch (err) {
+          logger.warn('🛰️  observability onResponse vendor hook failed', err);
+        }
+      }
+    },
+    onError(err, req, ctx) {
+      for (const hook of activeHooks) {
+        if (!hook.onError) continue;
+        try {
+          hook.onError(err, req, ctx);
+        } catch (vendorErr) {
+          logger.warn('🛰️  observability onError vendor hook failed', vendorErr);
+        }
+      }
+    },
+  };
+}
+
+function hasAnyHook(hook: AutoServerHooks): boolean {
+  return !!(hook.beforeRequest || hook.onResponse || hook.onError);
 }
 
 /**
