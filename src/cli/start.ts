@@ -21,6 +21,7 @@ import { DEFAULT_PORT } from '@/config/defaults';
 import { createIsrCacheHandler } from '@/plugin/isrCacheMiddleware';
 import { startServer, closeServer } from '@/server/httpServer';
 import { resolveAdminConfig, createAdminAuthMiddleware } from '@/server/adminConfig';
+import type { RuntimeConfig } from '@/types';
 
 interface StartOptions {
   port: string;
@@ -49,6 +50,27 @@ export function extractRoutesForSitemap(config: { routes?: Record<string, unknow
     out.push(path);
   }
   return out;
+}
+
+/**
+ * 把 ssr.config.ts 的第三方 telemetry integration 映射到可选 adapter 使用的 env。
+ * 这一步必须发生在 import dist/rsc/index.js 之前，因为内置 entry.server 会在模块加载时
+ * 初始化 auto hooks。
+ */
+export function applyTelemetryIntegrationEnv(runtime: RuntimeConfig | undefined): void {
+  const sentryIntegration = runtime?.telemetry ? runtime.telemetry.integrations?.sentry : undefined;
+  if (!sentryIntegration) return;
+
+  process.env.SENTRY_ENABLED = sentryIntegration.enabled ? 'true' : 'false';
+  if (!sentryIntegration.enabled) return;
+
+  if (sentryIntegration.dsn) process.env.SENTRY_DSN = sentryIntegration.dsn;
+  if (sentryIntegration.tracesSampleRate !== undefined) {
+    process.env.SENTRY_TRACES_SAMPLE_RATE = String(sentryIntegration.tracesSampleRate);
+  }
+  if (sentryIntegration.environment) {
+    process.env.NODE_ENV = sentryIntegration.environment;
+  }
 }
 
 /** 带 fetch 方法的 Web 标准 RSC handler 签名 */
@@ -81,14 +103,22 @@ export async function startProductionServer(options: StartOptions): Promise<void
   if (port) config.server.port = parseInt(port, 10);
   if (host) config.server.host = host;
 
+  // 平台运行时配置只从 ssr.config.ts runtime 读取。
+  const runtime = config.runtime;
+  applyTelemetryIntegrationEnv(runtime);
+  const sentryIntegration = runtime?.telemetry ? runtime.telemetry.integrations?.sentry : undefined;
+  if (sentryIntegration?.enabled && process.env.SENTRY_DSN) {
+    logger.info(`🛰️  Sentry integration 来自 ssr.config.ts runtime.telemetry.integrations`);
+  } else if (sentryIntegration?.enabled) {
+    logger.warn(`🛰️  Sentry integration 已启用但缺少 SENTRY_DSN，跳过 Sentry adapter`);
+  }
+
   const mod = (await import(/* @vite-ignore */ rscDistEntry)) as RscHandlerModule;
   const rscHandler = mod.default?.fetch || mod.fetch;
   if (!rscHandler) {
     throw new Error('dist/rsc/index.js 未导出 { fetch } 或 default.fetch，无法启动生产服务器');
   }
 
-  // 平台运行时配置只从 ssr.config.ts runtime 读取。
-  const runtime = config.runtime;
   const extraConnectSrc = Array.from(
     new Set(
       [runtime?.services?.api ?? runtime?.api, runtime?.services?.i18n, runtime?.services?.seo]
@@ -250,23 +280,6 @@ export async function startProductionServer(options: StartOptions): Promise<void
       : undefined,
   });
   app.use(cache);
-
-  // Telemetry integrations：Sentry 是完整平台集成，不是普通 HTTP exporter。
-  // engine core 不静态依赖 @sentry/node，只把配置映射给 auto adapter 做 optional import。
-  const sentryIntegration =
-    runtime?.telemetry && runtime.telemetry.integrations?.sentry !== false
-      ? runtime.telemetry.integrations?.sentry
-      : undefined;
-  if (sentryIntegration?.dsn) {
-    process.env.SENTRY_DSN = sentryIntegration.dsn;
-    if (sentryIntegration.tracesSampleRate !== undefined) {
-      process.env.SENTRY_TRACES_SAMPLE_RATE = String(sentryIntegration.tracesSampleRate);
-    }
-    if (sentryIntegration.environment) {
-      process.env.NODE_ENV = sentryIntegration.environment;
-    }
-    logger.info(`🛰️  Sentry integration 来自 ssr.config.ts runtime.telemetry.integrations`);
-  }
 
   // 缓存观测端点
   if (adminConfig.stats.enabled) {

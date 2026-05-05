@@ -51,7 +51,7 @@ describe('resolveClientObservabilityOptions', () => {
             retryMaxDelayMs: 10000,
           },
           integrations: {
-            sentry: { dsn: 'https://private@sentry.example/1' },
+            sentry: { enabled: true, dsn: 'https://private@sentry.example/1' },
           },
         },
       },

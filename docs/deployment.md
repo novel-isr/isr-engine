@@ -42,7 +42,8 @@ helmet → security headers → gzip/deflate(streaming-safe) → static (SSG 路
 | `BASE_URL` | 同上备选 | 同上 |
 | `API_URL` | 上游 API 基址 | `https://api.internal/v1` |
 | `REDIS_URL` | Redis L2 缓存（可选） | `redis://...:6379/0` |
-| `SENTRY_DSN` | Sentry（可选） | `https://...@sentry.io/...` |
+| `SENTRY_ENABLED` | 是否启用 Sentry integration | `true` |
+| `SENTRY_DSN` | Sentry DSN；仅在启用 integration 后使用 | `https://...@sentry.io/...` |
 | `ISR_ADMIN_TOKEN` | `/__isr/*` / `/metrics` 鉴权（如果开启） | 任意 secret |
 
 ## Docker
@@ -123,7 +124,7 @@ Vercel Edge 部署可用 `toVercelMiddleware` 包出平台原生 `middleware.ts`
 - [ ] `SEO_BASE_URL` 设到真实域名
 - [ ] `REDIS_URL` 设到生产 Redis（多 pod 必需）
 - [ ] 需要分布式限流时，配置 `runtime.redis` 或把 `runtime.rateLimit.store` 设为 `'redis'`，确认 429 响应带 `RateLimit-*` / `Retry-After`，并确认静态资源、健康检查和 dev 资源不会消耗应用入口配额
-- [ ] `SENTRY_DSN` 接入（一行 `createSentryServerHooks`）
+- [ ] 如需 Sentry，配置 `runtime.telemetry.integrations.sentry.enabled=true` 并注入 `SENTRY_DSN`
 - [ ] `ISR_ADMIN_TOKEN` 设到强 secret（如果开了 `/__isr/*` 或 `/metrics`）
 - [ ] 跑一周以上 staging 压测，监控内存增长（L1 LRU 默认 1000 条够不够你的业务）
 - [ ] 跑全量 SSG spider 验证（`pnpm vite build`），确认 `ssg.routes` 列表里没有失败 URL

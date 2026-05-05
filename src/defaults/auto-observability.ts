@@ -1,9 +1,10 @@
 /**
  * 环境变量驱动的 SDK 自动装配
  *
- * 用户态：什么都不做。设了 env 就生效，没设则不开第三方 vendor。
+ * 用户态：什么都不做。明确开启后才接第三方 vendor，没开则跳过。
  *
  *   .env
+ *     SENTRY_ENABLED=true
  *     SENTRY_DSN=https://xxx@sentry.io/123       → 自动接 Sentry 服务端
  *     DD_SERVICE=my-app                          → 自动接 Datadog（要求 dd-trace 已安装）
  *     OTEL_EXPORTER_OTLP_ENDPOINT=http://...     → 自动接 OTel（要求 @opentelemetry/* 已安装）
@@ -47,7 +48,7 @@ export interface AutoServerHooks {
  * 调用顺序：在 entry.server 加载前后都行；推荐启动时调一次返回的 hooks 用作默认 hooks
  */
 export async function createAutoServerHooks(): Promise<AutoServerHooks> {
-  const sentryDsn = process.env.SENTRY_DSN;
+  const sentryDsn = resolveSentryDsnFromEnv(process.env);
   const ddService = process.env.DD_SERVICE;
   const otelEndpoint = process.env.OTEL_EXPORTER_OTLP_ENDPOINT;
 
@@ -60,9 +61,22 @@ export async function createAutoServerHooks(): Promise<AutoServerHooks> {
   if (activeHooks.length > 0) return composeAutoServerHooks(activeHooks);
 
   logger.info(
-    '🛰️  telemetry: 未检测到 SENTRY_DSN/DD_SERVICE/OTEL_EXPORTER_OTLP_ENDPOINT，跳过第三方服务端 adapter'
+    '🛰️  telemetry: 未检测到启用的 Sentry/DD_SERVICE/OTEL_EXPORTER_OTLP_ENDPOINT，跳过第三方服务端 adapter'
   );
   return {};
+}
+
+export function resolveSentryDsnFromEnv(
+  env: Record<string, string | undefined>
+): string | undefined {
+  if (!isTruthyEnv(env.SENTRY_ENABLED)) return undefined;
+  const dsn = env.SENTRY_DSN?.trim();
+  return dsn || undefined;
+}
+
+function isTruthyEnv(value: string | undefined): boolean {
+  if (!value) return false;
+  return value === '1' || value.toLowerCase() === 'true';
 }
 
 export function composeAutoServerHooks(hooks: readonly AutoServerHooks[]): AutoServerHooks {

@@ -92,7 +92,10 @@ export const runtime = {
   redis: process.env.REDIS_URL ? { url: process.env.REDIS_URL, keyPrefix: 'isr:' } : undefined,
   telemetry: {
     integrations: {
-      sentry: process.env.SENTRY_DSN ? { dsn: process.env.SENTRY_DSN } : false,
+      sentry: {
+        enabled: process.env.SENTRY_ENABLED === 'true',
+        dsn: process.env.SENTRY_DSN,
+      },
     },
   },
   // 默认是进程内 memory LRU；分布式限流需显式 store='redis' 并配置 runtime.redis/REDIS_URL。
@@ -203,13 +206,12 @@ export default {
         },
       ],
       integrations: {
-        sentry: process.env.SENTRY_DSN
-          ? {
-              dsn: process.env.SENTRY_DSN,
-              tracesSampleRate: 0.1,
-              environment: process.env.NODE_ENV,
-            }
-          : false,
+        sentry: {
+          enabled: process.env.SENTRY_ENABLED === 'true',
+          dsn: process.env.SENTRY_DSN,
+          tracesSampleRate: 0.1,
+          environment: process.env.NODE_ENV,
+        },
       },
     },
   },
@@ -219,7 +221,8 @@ export default {
 设计边界：`isr-engine` 不 import 业务 SDK，也不绑定 Sentry/Datadog/自研采集端；
 第一方链路只根据 endpoint 使用内置 HTTP uploader。Sentry 是
 `runtime.telemetry.integrations.sentry` 里的完整第三方平台集成，不降级成普通 HTTP exporter；
-它可和第一方 endpoint 同时 fan-out 使用，失败不会影响渲染或其它上报。
+它可和第一方 endpoint 同时 fan-out 使用，也可通过关闭 http exporter 做二选一。
+engine 不做隐式替换，失败不会影响渲染或其它上报。
 `@novel-isr/analytics` 和 `@novel-isr/error-reporting`
 是独立 SDK，给非 engine 应用或自定义集成使用。
 完整说明见 [docs/observability.md](./docs/observability.md#前端埋点与错误上报)。

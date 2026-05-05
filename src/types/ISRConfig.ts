@@ -191,10 +191,10 @@ export interface RuntimeTelemetryHttpExporterConfig {
 }
 
 export interface RuntimeTelemetrySentryIntegrationConfig {
-  /** false 表示关闭 Sentry integration */
+  /** 是否启用 Sentry integration；默认 false，避免仅配置环境变量就隐式接入第三方平台 */
   enabled?: boolean;
-  /** Sentry DSN；不配置时不会初始化 Sentry adapter */
-  dsn: string;
+  /** Sentry DSN；enabled=true 但不配置时 engine 会跳过 adapter 并记录 warn */
+  dsn?: string;
   tracesSampleRate?: number;
   environment?: string;
   release?: string;
@@ -222,10 +222,15 @@ export type RuntimeTelemetryExporterConfig =
 
 export interface RuntimeTelemetryIntegrationsConfig {
   /**
-   * Sentry 是完整第三方监控平台 integration，不是普通 HTTP endpoint：
+   * Sentry 是完整第三方监控平台 integration，不是普通 HTTP endpoint。
+   *
+   * 语义：
+   * - integration 和 exporters 可同时启用，用于迁移、双写或第一方数据仓库 + Sentry 排障并存。
+   * - 如果只想二选一，显式关闭不需要的 exporter 或 integration；engine 不做隐式替换。
+   *
    * SDK / issue grouping / source map / release health / performance 都在这一层。
    */
-  sentry?: false | RuntimeTelemetrySentryIntegrationConfig;
+  sentry?: RuntimeTelemetrySentryIntegrationConfig;
 }
 
 export interface RuntimeTelemetryConfig {

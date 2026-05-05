@@ -1,5 +1,9 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { composeAutoServerHooks, type AutoServerHooks } from '../auto-observability';
+import {
+  composeAutoServerHooks,
+  resolveSentryDsnFromEnv,
+  type AutoServerHooks,
+} from '../auto-observability';
 
 describe('auto-observability fan-out', () => {
   afterEach(() => {
@@ -76,5 +80,21 @@ describe('auto-observability fan-out', () => {
 
     expect(goodResponse).toHaveBeenCalledTimes(1);
     expect(goodError).toHaveBeenCalledTimes(1);
+  });
+
+  it('Sentry 需要显式 enabled，dsn 只是凭证来源', () => {
+    expect(resolveSentryDsnFromEnv({ SENTRY_DSN: 'https://key@sentry.example/1' })).toBeUndefined();
+    expect(
+      resolveSentryDsnFromEnv({
+        SENTRY_ENABLED: 'false',
+        SENTRY_DSN: 'https://key@sentry.example/1',
+      })
+    ).toBeUndefined();
+    expect(
+      resolveSentryDsnFromEnv({
+        SENTRY_ENABLED: 'true',
+        SENTRY_DSN: 'https://key@sentry.example/1',
+      })
+    ).toBe('https://key@sentry.example/1');
   });
 });

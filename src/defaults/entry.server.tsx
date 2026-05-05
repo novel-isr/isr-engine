@@ -37,7 +37,7 @@ function hasFetchHandler(x: unknown): x is FetchHandlerLike {
   return !!x && typeof (x as FetchHandlerLike).fetch === 'function';
 }
 
-// env 自动装配 SDK（SENTRY_DSN / DD_SERVICE / OTEL_EXPORTER_OTLP_ENDPOINT）
+// env 自动装配 SDK（SENTRY_ENABLED=true + SENTRY_DSN / DD_SERVICE / OTEL_EXPORTER_OTLP_ENDPOINT）
 // 在第一次请求前完成；后续请求零开销
 const autoHooksPromise = createAutoServerHooks();
 

@@ -30,7 +30,9 @@ Sentry 这种包含 SDK、issue grouping、source map、release health、perform
 - engine 不绑定 vendor SDK，也不 import 业务 SDK；它只根据 endpoint 和 exporter 配置工作。
 - endpoint 是具体上报地址，可以是相对路径或完整 URL；`services.telemetry` 是这些相对路径的 base URL。
 - Sentry 是 integration，用于 SDK 接入、issue grouping、source map、APM、trace 和告警。
-- 多个 exporter 可以同时开启；非 required exporter 失败不会阻断 required endpoint、渲染或业务 hooks。
+- exporter 和 integration 可以同时开启，用于迁移、双写或第一方数仓 + Sentry 排障并存。
+  如果只想二选一，显式关闭不需要的 exporter 或 integration；engine 不做隐式替换。
+- 非 required exporter / integration 失败不会阻断 required endpoint、渲染或业务 hooks。
 
 `@novel-isr/analytics` 与 `@novel-isr/error-reporting` 是独立 SDK，给非 engine 应用或
 自定义前端使用；engine 自身不会动态 import 这些包，也不会把它们变成隐式依赖。
@@ -79,13 +81,12 @@ export default {
         },
       ],
       integrations: {
-        sentry: process.env.SENTRY_DSN
-          ? {
-              dsn: process.env.SENTRY_DSN,
-              tracesSampleRate: 0.1,
-              environment: process.env.NODE_ENV,
-            }
-          : false,
+        sentry: {
+          enabled: process.env.SENTRY_ENABLED === 'true',
+          dsn: process.env.SENTRY_DSN,
+          tracesSampleRate: 0.1,
+          environment: process.env.NODE_ENV,
+        },
       },
     },
   },
@@ -116,7 +117,8 @@ export default {
 Sentry 是第三方错误监控 / APM 平台 integration，不是单独的顶层配置入口，也不是普通 HTTP exporter。生产中可以：
 
 - 只用 `runtime.telemetry.exporters[{ type: 'http' }]`：打到 admin-server 或公司内部采集服务。
-- 同时接 Sentry：配置 `runtime.telemetry.integrations.sentry`，让 engine 把服务端错误/trace 映射给 Sentry adapter。
+- 同时接 Sentry：配置 `runtime.telemetry.integrations.sentry.enabled=true` 和 `dsn`，让 engine 把服务端错误/trace 映射给 Sentry adapter。
+- 只接 Sentry：关闭 `runtime.telemetry.errors` 或移除 http exporter 的 errors endpoint；这是显式选择，不是 engine 隐式替换。
 
 不要在 `src/entry.tsx` 重复手写同一份第一方 PV / error endpoint 上传；默认生命周期已经由
 `runtime.telemetry` 接管。

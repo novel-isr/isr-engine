@@ -6,15 +6,21 @@
  * 纯函数 / 适配器 helper —— 它们每条请求都跑，错一行整个生产路径就崩：
  *
  *   1. extractRoutesForSitemap —— ssr.config 路由表过滤逻辑
- *   2. nodeToWebRequest        —— Express req → Web Request 协议转换
- *   3. pipeWebResponse         —— Web Response → Express res 流式回写
+ *   2. applyTelemetryIntegrationEnv —— 第三方 telemetry integration 启动前映射
+ *   3. nodeToWebRequest        —— Express req → Web Request 协议转换
+ *   4. pipeWebResponse         —— Web Response → Express res 流式回写
  *
  * 这三个一旦出 bug，bench 测出来的 QPS 全是错的（请求/响应都失真）。
  */
 import { describe, it, expect, vi } from 'vitest';
 import { Readable } from 'node:stream';
 import type { Request as ExpressReq, Response as ExpressRes } from 'express';
-import { extractRoutesForSitemap, nodeToWebRequest, pipeWebResponse } from '../start';
+import {
+  applyTelemetryIntegrationEnv,
+  extractRoutesForSitemap,
+  nodeToWebRequest,
+  pipeWebResponse,
+} from '../start';
 
 describe('extractRoutesForSitemap —— 路由筛选', () => {
   it('返回静态路由 + 跳过通配符 / 动态参数 / 内部 / API', () => {
@@ -55,6 +61,61 @@ describe('extractRoutesForSitemap —— 路由筛选', () => {
     expect(result).toEqual([]);
   });
 });
+
+describe('applyTelemetryIntegrationEnv —— Sentry integration 显式开关', () => {
+  it('只映射 enabled=true 的 Sentry 配置，dsn 只是凭证来源', () => {
+    const previous = {
+      SENTRY_ENABLED: process.env.SENTRY_ENABLED,
+      SENTRY_DSN: process.env.SENTRY_DSN,
+      SENTRY_TRACES_SAMPLE_RATE: process.env.SENTRY_TRACES_SAMPLE_RATE,
+    };
+    delete process.env.SENTRY_ENABLED;
+    delete process.env.SENTRY_DSN;
+    delete process.env.SENTRY_TRACES_SAMPLE_RATE;
+
+    try {
+      applyTelemetryIntegrationEnv({
+        telemetry: {
+          integrations: {
+            sentry: {
+              enabled: false,
+              dsn: 'https://key@sentry.example/1',
+            },
+          },
+        },
+      });
+      expect(process.env.SENTRY_ENABLED).toBe('false');
+      expect(process.env.SENTRY_DSN).toBeUndefined();
+
+      applyTelemetryIntegrationEnv({
+        telemetry: {
+          integrations: {
+            sentry: {
+              enabled: true,
+              dsn: 'https://key@sentry.example/1',
+              tracesSampleRate: 0.25,
+            },
+          },
+        },
+      });
+      expect(process.env.SENTRY_ENABLED).toBe('true');
+      expect(process.env.SENTRY_DSN).toBe('https://key@sentry.example/1');
+      expect(process.env.SENTRY_TRACES_SAMPLE_RATE).toBe('0.25');
+    } finally {
+      restoreEnv('SENTRY_ENABLED', previous.SENTRY_ENABLED);
+      restoreEnv('SENTRY_DSN', previous.SENTRY_DSN);
+      restoreEnv('SENTRY_TRACES_SAMPLE_RATE', previous.SENTRY_TRACES_SAMPLE_RATE);
+    }
+  });
+});
+
+function restoreEnv(key: string, value: string | undefined): void {
+  if (value === undefined) {
+    delete process.env[key];
+    return;
+  }
+  process.env[key] = value;
+}
 
 /** 构造最小 Express req mock —— 仅包含 nodeToWebRequest 用到的字段 */
 function mockReq(opts: {
