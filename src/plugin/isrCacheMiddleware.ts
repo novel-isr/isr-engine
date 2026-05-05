@@ -478,13 +478,6 @@ export function createIsrCacheMiddleware(
           next();
           return;
         }
-        if (opsConfig.stats.enabled && req.url === '/__isr/stats' && req.method === 'GET') {
-          createOpsAuthMiddleware('stats', opsConfig)(req as never, res as never, () => {
-            res.setHeader('content-type', 'application/json; charset=utf-8');
-            res.end(JSON.stringify(activeHandler.stats()));
-          });
-          return;
-        }
         // Prometheus exposition：scrape 端点
         if (opsConfig.metrics.enabled && req.url === '/metrics' && req.method === 'GET') {
           createOpsAuthMiddleware('metrics', opsConfig)(req as never, res as never, () => {

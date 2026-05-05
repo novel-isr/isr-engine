@@ -99,8 +99,8 @@ export const runtime = defineRuntimeConfig({
 ### Cross-pod invalidation
 
 `revalidate.ts` 用 `Symbol.for(globalThis)` 注册本进程 invalidator；engine 在检测到
-`ssr.config.ts runtime.redis.url/host`、非空 `REDIS_URL` 或 `REDIS_HOST` 时，会额外启用 Redis Pub/Sub
-失效广播：
+`ssr.config.ts runtime.redis.url/host` 时，会额外启用 Redis Pub/Sub 失效广播。
+环境变量必须在 `ssr.config.ts` 显式接入，engine 不暗读 `REDIS_URL`：
 
 - 当前 pod 先清本地 L1，再 publish `{ kind, value }`
 - 其他 pod 收到消息后只清自己的 L1，不会再次 publish，避免广播风暴
@@ -174,8 +174,7 @@ export async function publishBook() {
 
 | 端点 | 内容 |
 |---|---|
-| `/__isr/stats` | dev-only JSON `{ size, max, revalidating }` |
 | `/metrics` | Prometheus：`isr_cache_entries{backend}` / `isr_cache_hits_total{status}` 等 |
 
-`/__isr/stats` 是开发和 bench 观测端点，不作为生产公开配置面。生产缓存失效使用
+缓存 debug JSON 不作为公开配置面。生产观测使用 `/metrics`；生产缓存失效使用
 `revalidatePath` / `revalidateTag`，跨实例广播由 `runtime.redis` 接管。

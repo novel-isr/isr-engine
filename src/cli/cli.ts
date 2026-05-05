@@ -11,7 +11,6 @@ import pkg from '../../package.json';
 
 import { startDevServer } from './dev';
 import { startProductionServer } from './start';
-import { showStats } from './stats';
 import { startFallbackProxy } from './fallback';
 import { logger } from '@/logger';
 import { DEFAULT_PORT } from '@/config/defaults';
@@ -58,26 +57,6 @@ program
       await startProductionServer(options);
     } catch (error) {
       logger.error('[CLI]', '生产服务器启动失败', error);
-      process.exit(1);
-    }
-  });
-
-/**
- * stats 命令 - 性能统计
- */
-program
-  .command('stats')
-  .description('显示项目性能统计')
-  .option('-p, --port <port>', '端口号')
-  .option('-h, --host <host>', '主机地址')
-  .option('-w, --watch', '实时监控', false)
-  .option('-d, --detailed', '详细信息', false)
-  .option('-f, --format <format>', '输出格式', 'console')
-  .action(async options => {
-    try {
-      await showStats(options);
-    } catch (error) {
-      logger.error('[CLI]', '统计信息获取失败', error);
       process.exit(1);
     }
   });

@@ -67,7 +67,7 @@ export interface RuntimeExperimentConfig {
 export interface RuntimeRateLimitConfig {
   /**
    * 限流状态存储。**默认 'auto'：开箱即用**——
-   * 已配置 runtime.redis.url/host（或 REDIS_URL / REDIS_HOST 环境变量）就自动用 Redis，
+   * 已配置 runtime.redis.url/host 就自动用 Redis，
    * 否则进程内 memory。消费方一般无需显式设置 store。
    *
    * - 'auto'（默认）：检测到 Redis 配置 → redis backend；否则 memory backend。
@@ -110,7 +110,7 @@ export interface RuntimeI18nConfig {
   defaultLocale?: string;
   /** 默认 locale 是否带 URL 前缀 */
   prefixDefault?: boolean;
-  /** 远端字典端点；相对路径会拼到 services.i18n/api 上 */
+  /** 远端字典端点；相对路径会拼到 services.api 上 */
   endpoint?: string;
   /** 本地兜底字典；配置 API 不可用时使用 */
   fallbackLocal?: Record<string, Record<string, unknown>>;
@@ -136,12 +136,8 @@ export interface RuntimeSeoConfig {
 }
 
 export interface RuntimeServicesConfig {
-  /** 默认后端 API origin；业务数据、admin 配置、mock fixture 未拆服务时都走这里 */
+  /** 默认后端 API origin；业务数据、配置中心、mock fixture 都走这里 */
   api?: string;
-  /** i18n 字典下发 origin；不配置时由 engine 回退到 api */
-  i18n?: string;
-  /** SEO 配置下发 origin；不配置时由 engine 回退到 api */
-  seo?: string;
   /** telemetry 上报 origin；不配置时回退到 api，同源部署可留空 */
   telemetry?: string;
 }
@@ -254,11 +250,6 @@ export interface RuntimeTelemetryConfig {
  *   - 请求期业务逻辑仍放 entry.server.tsx hooks
  */
 export interface RuntimeConfig {
-  /**
-   * 旧的单 API base。新项目优先使用 services.api；
-   * 保留该字段只作为低层 fallback。
-   */
-  api?: string;
   /** 站点公网 base URL，用于 SEO canonical / sitemap / robots */
   site?: string;
   /** 按职责拆开的后端服务 origin */
@@ -359,8 +350,8 @@ export interface ISRConfig {
   /*
    * No public `cache` field by design.
    *
-   * Page cache backend selection is engine-owned:
-   *   - runtime.redis.url/host or REDIS_URL/REDIS_HOST => L1 memory + L2 Redis
+   * Page cache backend selection is derived from explicit runtime.redis:
+   *   - runtime.redis.url/host => L1 memory + L2 Redis
    *   - no Redis connection => in-process memory
    *
    * Page TTL belongs to routes[*].ttl or top-level revalidate. Keeping backend and TTL
@@ -371,10 +362,10 @@ export interface ISRConfig {
   /**
    * 全局默认页面缓存 TTL（秒）。
    *
-   * routes[*].ttl 优先；未声明路由级 TTL 时使用这里。缺省为 3600。
+   * routes[*].ttl 优先；未声明路由级 TTL 时使用这里。
    * 这是产品层缓存新鲜度，不是 Redis/memory 后端配置。
    */
-  revalidate?: number;
+  revalidate: number;
 
   server?: {
     /** Node origin 监听端口；缺省 3000。 */
@@ -388,7 +379,7 @@ export interface ISRConfig {
      *   - /health：健康检查，默认启用且公开
      *   - /metrics：Prometheus 文本指标，默认关闭；生产开启时建议配置 authToken
      *
-     * dev-only cache stats 属于 engine 内部调试能力，不作为业务配置面暴露。
+     * Cache debug JSON 不作为产品配置面；生产观测使用 Prometheus /metrics。
      */
     ops?: {
       /** 共享运维口令；接受 `Authorization: Bearer <token>` 或 tokenHeader 指定 header */

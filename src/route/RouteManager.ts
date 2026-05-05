@@ -16,10 +16,10 @@ export class RouteManager {
   private overrides: Record<string, RouteRule>;
   private defaultRevalidate: number;
 
-  constructor(config: Partial<ISRConfig>) {
-    this.globalMode = config.renderMode || 'isr';
+  constructor(config: ISRConfig) {
+    this.globalMode = config.renderMode;
     this.overrides = config.routes || {};
-    this.defaultRevalidate = config.revalidate ?? 3600;
+    this.defaultRevalidate = config.revalidate;
   }
 
   getRenderMode(path: string): RenderModeType {

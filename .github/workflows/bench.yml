@@ -102,7 +102,7 @@ jobs:
           BENCH_DISABLE_RATE_LIMIT: '1'
           PORT: '3000'
           NODE_ENV: 'production'
-          SEO_BASE_URL: 'http://localhost:3000'
+          SITE_URL: 'http://localhost:3000'
         run: |
           pnpm run start > /tmp/fixture.log 2>&1 &
           echo $! > /tmp/fixture.pid
@@ -121,7 +121,7 @@ jobs:
       - name: Run bench
         env:
           BENCH_TIERS: ${{ github.event.inputs.tiers || '10,100,1000' }}
-          BENCH_DURATION: ${{ github.event.inputs.duration || '15' }}
+          BENCH_DURATION: ${{ github.event.inputs.duration || '8' }}
           BENCH_PATHS: '/,/about,/books/1'
           BENCH_OUTPUT: bench-current.json
           BENCH_WARMUP_SECONDS: '3'

@@ -1,20 +1,16 @@
 /**
  * 服务端 entry —— defineSiteHooks 是 isr-engine 唯一必填的 server 配置点.
  *
- * 这里你可以挂:
- *   - i18n endpoint     (从远端 / admin-server 拉文案)
- *   - SEO endpoint      (运营改 meta 不发版)
- *   - Sentry / Datadog  (createSentryServerHooks 等 adapter)
- *   - rateLimit         (per-IP token bucket)
- *   - experiments       (A/B variant, cookie-sticky)
+ * 这里你可以挂请求期逻辑:
+ *   - beforeRequest：解析 userId / tenantId / requestSegment
+ *   - onError：补充业务日志或审计
+ *   - seo/intl：只有在不使用 ssr.config.ts runtime 默认 loader 时才自定义
  *
- * 这个 hello-world 只配静态 SEO + site URL, 极简.
+ * 部署地址、Redis、限流、telemetry、A/B 定义都放 ssr.config.ts runtime。
  */
 import { defineSiteHooks } from '@novel-isr/engine/site-hooks';
 
 export default defineSiteHooks({
-  api: '', // 不远端取数据
-  site: process.env.SEO_BASE_URL ?? 'http://localhost:3000',
   seo: {
     '/': { title: 'Hello, isr-engine', description: 'Minimal example' },
     '/about': { title: 'About', description: 'Static page' },

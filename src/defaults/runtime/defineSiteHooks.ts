@@ -9,7 +9,7 @@
  *   - i18n 字典缓存（createCachedFetcher: TTL/SWR/dedup/fallback）
  *   - SEO 路由表 pattern → resolver
  *   - locale 检测（cookie → Accept-Language → 默认）
- *   - api/i18n/seo 远端 origin 从 ssr.config.ts runtime.services 注入
+ *   - i18n/seo 远端相对 endpoint 统一使用 runtime.services.api
  *   - 服务端渲染错误打印 + runtime.telemetry errors endpoint 上报
  *
  * beforeRequest 的边界：
@@ -42,17 +42,12 @@ export type SiteRuntimeConfig = NonNullable<ISRConfig['runtime']>;
 export interface SiteRuntimeContext {
   runtime: SiteRuntimeConfig;
   services: RuntimeServices;
-  api?: string;
-  i18n?: string;
-  seo?: string;
   telemetry?: string;
   site?: string;
 }
 
 export interface RuntimeServices {
   api?: string;
-  i18n?: string;
-  seo?: string;
   telemetry?: string;
 }
 
@@ -61,10 +56,8 @@ export type RuntimeServiceBase = string | ((ctx: SiteRuntimeContext) => string |
 export type IntlMessagesByLocale = Record<string, Record<string, unknown>>;
 
 export interface CreateAdminIntlLoaderOptions {
-  /** 远端字典端点；相对路径会用 runtime.services.i18n/api 拼接 */
+  /** 远端字典端点；相对路径会用 runtime.services.api 拼接 */
   endpoint?: string;
-  /** 显式覆盖远端 origin；不传时使用 ssr.config.ts runtime.services.i18n/api */
-  baseUrl?: RuntimeServiceBase;
   /** 本地兜底字典，通常来自 ssr.config.ts runtime.i18n.fallbackLocal */
   fallbackMessages?: IntlMessagesByLocale;
   /** 远端和本地都无法命中时使用的 locale */
@@ -85,8 +78,6 @@ export interface AdminSeoFallbackEntry extends PageSeoMeta {
 export interface CreateAdminSeoLoaderOptions {
   /** 远端 SEO 端点；支持 {pathname} 和路由 params 占位符 */
   endpoint?: string;
-  /** 显式覆盖远端 origin；不传时使用 ssr.config.ts runtime.services.seo/api */
-  baseUrl?: RuntimeServiceBase;
   /** 本地兜底 SEO 条目，通常来自 ssr.config.ts runtime.seo.fallbackLocal */
   fallbackEntries?: readonly AdminSeoFallbackEntry[];
   /** 远端请求超时，默认 1200ms */
@@ -101,7 +92,6 @@ export interface DefineAdminSiteHooksOptions {
     ttl?: number;
     prefixDefault?: boolean;
     detect?: IntlConfig['detect'];
-    baseUrl?: RuntimeServiceBase;
     fallbackLocal?: IntlMessagesByLocale;
     timeoutMs?: number;
     remoteSource?: string;
@@ -110,7 +100,6 @@ export interface DefineAdminSiteHooksOptions {
   seo?: {
     endpoint?: string;
     ttl?: number;
-    baseUrl?: RuntimeServiceBase;
     fallbackLocal?: readonly Record<string, unknown>[];
     timeoutMs?: number;
   };
@@ -233,7 +222,7 @@ export function createAdminIntlLoader(
       supportedLocales.length && defaultLocale
         ? normalizeLocale(locale, supportedLocales, defaultLocale)
         : locale;
-    const remoteUrl = resolveAdminUrl(endpoint, { locale: normalizedLocale }, ctx, options, 'i18n');
+    const remoteUrl = resolveAdminUrl(endpoint, { locale: normalizedLocale }, ctx);
     const remote = remoteUrl
       ? await fetchJsonWithTimeout<unknown>(remoteUrl, options.timeoutMs)
       : null;
@@ -263,7 +252,7 @@ export function createAdminSeoLoader(
 
   return async (params, ctx) => {
     const pathname = normalizePathname(params.pathname || '/');
-    const remoteUrl = resolveAdminUrl(endpoint, { ...params, pathname }, ctx, options, 'seo');
+    const remoteUrl = resolveAdminUrl(endpoint, { ...params, pathname }, ctx);
     const remote = remoteUrl
       ? await fetchJsonWithTimeout<unknown>(remoteUrl, options.timeoutMs)
       : null;
@@ -309,7 +298,6 @@ function createAdminSiteHooks(
         detect: i18n.detect,
         load: createAdminIntlLoader({
           endpoint: i18n.endpoint ?? runtimeI18n.endpoint,
-          baseUrl: i18n.baseUrl,
           fallbackMessages,
           defaultLocale,
           timeoutMs: i18n.timeoutMs ?? runtimeI18n.timeoutMs,
@@ -322,7 +310,6 @@ function createAdminSiteHooks(
         '/*': {
           load: createAdminSeoLoader({
             endpoint: seo.endpoint ?? runtimeSeo.endpoint,
-            baseUrl: seo.baseUrl,
             fallbackEntries: normalizeAdminSeoFallbackEntries(
               seo.fallbackLocal ?? runtimeSeo.fallbackLocal
             ),
@@ -431,9 +418,6 @@ function createSiteHooks(config: SiteHooksConfig, runtime: SiteRuntimeConfig): S
   const runtimeCtx: SiteRuntimeContext = {
     runtime,
     services,
-    api: api || undefined,
-    i18n: services.i18n,
-    seo: services.seo,
     telemetry: services.telemetry,
     site: site || undefined,
   };
@@ -478,7 +462,7 @@ function createSiteHooks(config: SiteHooksConfig, runtime: SiteRuntimeConfig): S
       }
       if (intlCfg.endpoint) {
         const url = fillTemplate(intlCfg.endpoint, { locale });
-        const json = await fetchJson(url, services.i18n ?? services.api);
+        const json = await fetchJson(url, services.api);
         if (json !== null && intlCfg.transform) {
           const transformed = await intlCfg.transform(json, locale);
           if (transformed) {
@@ -521,10 +505,7 @@ function createSiteHooks(config: SiteHooksConfig, runtime: SiteRuntimeConfig): S
         ttl: remote.ttl ?? 300_000,
         fetch: async paramKey => {
           const params = JSON.parse(paramKey) as Record<string, string>;
-          const data = await fetchJson(
-            fillTemplate(remote.endpoint, params),
-            services.seo ?? services.api
-          );
+          const data = await fetchJson(fillTemplate(remote.endpoint, params), services.api);
           if (data === null) return null;
           return remote.transform(data, params);
         },
@@ -716,16 +697,9 @@ function createServerErrorEndpointReporter(
   if (config === false || !config || config.errors === false) return null;
 
   const errors = config.errors ?? {};
-  const endpoint = resolveAdminUrl(
-    errors.endpoint ?? '/api/observability/errors',
-    {},
-    ctx,
-    {
-      baseUrl: runtimeCtx =>
-        runtimeCtx.services.telemetry ?? runtimeCtx.services.api ?? runtimeCtx.api,
-    },
-    'telemetry'
-  );
+  const endpoint = resolveAdminUrl(errors.endpoint ?? '/api/observability/errors', {}, ctx, {
+    baseUrl: runtimeCtx => runtimeCtx.services.telemetry ?? runtimeCtx.services.api,
+  });
   if (!endpoint) return null;
 
   const app = config.app ?? 'novel-isr-app';
@@ -830,35 +804,31 @@ function resolveAdminUrl(
   endpoint: string,
   vars: Record<string, string>,
   ctx: SiteRuntimeContext,
-  options: { baseUrl?: RuntimeServiceBase },
-  service: keyof RuntimeServices
+  options: { baseUrl?: RuntimeServiceBase } = {}
 ): string | null {
   const filled = fillTemplate(endpoint, vars);
   if (/^(https?:)?\/\//i.test(filled)) return filled;
-  const base = resolveRuntimeServiceBase(ctx, service, options.baseUrl);
+  const base = resolveRuntimeServiceBase(ctx, options.baseUrl);
   if (!base) return null;
   return `${base.replace(/\/+$/, '')}/${filled.replace(/^\/+/, '')}`;
 }
 
 function resolveRuntimeServiceBase(
   ctx: SiteRuntimeContext,
-  service: keyof RuntimeServices,
   baseUrl?: RuntimeServiceBase
 ): string | null {
   if (typeof baseUrl === 'function') {
     return baseUrl(ctx) ?? null;
   }
   if (baseUrl) return baseUrl;
-  return ctx.services[service] ?? ctx.services.api ?? null;
+  return ctx.services.api ?? null;
 }
 
 function resolveRuntimeServices(runtime: SiteRuntimeConfig): RuntimeServices {
   const services = runtime.services ?? {};
-  const api = services.api ?? runtime.api;
+  const api = services.api;
   return {
     api,
-    i18n: services.i18n ?? api,
-    seo: services.seo ?? api,
     telemetry: services.telemetry ?? api,
   };
 }

@@ -3,7 +3,7 @@
  *
  * 职责范围：
  *   - 配置归一化（补齐 defaults，收口 cache / routes / renderMode）
- *   - 项目扫描（路由发现，供 virtual:isr-routes 或 CLI stats 使用）
+ *   - 项目扫描（路由发现，供 virtual:isr-routes 和 sitemap 使用）
  *   - SEO 引擎初始化（sitemap / robots 生成）
  *   - 启动 Express 服务器 + 挂载 ops 路由（/health / sitemap.xml / robots.txt）
  *   - ISR 缓存失效 invalidator 的注册（来自 revalidatePath / revalidateTag 调用）
@@ -51,7 +51,7 @@ export default class ISREngine {
     this.middlewareComposer = MiddlewareComposer.getInstance();
     this.middlewareComposer.use([traceMiddleware, performanceMiddleware]);
 
-    // 唯一的 SEO 配置入口 —— 用户配置 + env 兜底链 + dev 默认全部由 resolveSeoConfig 收口
+    // 唯一的 SEO baseUrl 入口 —— runtime.site + dev 默认由 resolveSeoConfig 收口
     this.resolvedSeo = resolveSeoConfig(this.config);
 
     this.seoEngine = SEOEngine.getInstance({
@@ -70,7 +70,7 @@ export default class ISREngine {
       await CacheCleanup.cleanupOnDevStart();
     }
 
-    // 2. 项目扫描（路由/组件发现）—— CLI stats 和 virtual:isr-routes 依赖
+    // 2. 项目扫描（路由/组件发现）—— virtual:isr-routes 和 sitemap 依赖
     this.logger.info('🔍 开始项目扫描...');
     const scanResult = await scanProject(process.cwd());
     this.logger.info(

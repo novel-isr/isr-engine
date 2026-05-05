@@ -66,7 +66,7 @@ import fallbackLocal from './src/config/site-fallback-local.json';
 export default defineIsrConfig({
   renderMode: 'isr',
   runtime: {
-    site: process.env.SEO_BASE_URL ?? 'http://localhost:3000',
+    site: process.env.SITE_URL ?? 'http://localhost:3000',
     services: {
       api: process.env.API_URL ?? 'http://localhost:8080',
       telemetry: process.env.TELEMETRY_API_URL ?? process.env.API_URL ?? 'http://localhost:8080',
@@ -251,7 +251,7 @@ export default function PublishBookForm() {
 ```ts
 // ssr.config.ts
 export const runtime = {
-  site: process.env.SEO_BASE_URL ?? 'http://localhost:3000',
+  site: process.env.SITE_URL ?? 'http://localhost:3000',
   services: {
     api: process.env.API_URL ?? 'http://localhost:8080',
     telemetry: process.env.TELEMETRY_API_URL ?? process.env.API_URL ?? 'http://localhost:8080',

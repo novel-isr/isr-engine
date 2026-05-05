@@ -5,28 +5,20 @@ function nonEmpty(value: string | undefined): string | undefined {
   return trimmed ? trimmed : undefined;
 }
 
-function parsePort(value: string | undefined): number | undefined {
-  const normalized = nonEmpty(value);
-  if (!normalized) return undefined;
-  const parsed = Number.parseInt(normalized, 10);
-  return Number.isFinite(parsed) ? parsed : undefined;
-}
-
 /**
- * Resolve Redis connection from runtime config first, then process env.
+ * Resolve Redis connection from runtime config only.
  *
- * This keeps apps from writing `process.env.REDIS_URL ? ... : undefined` in every
- * ssr.config.ts. A non-empty URL/host enables Redis; missing connection data means the
- * engine stays on memory-backed defaults.
+ * A non-empty runtime.redis.url/host enables Redis; missing connection data means the
+ * engine stays on memory-backed defaults. Environment variables must be wired explicitly
+ * in ssr.config.ts so the config file remains the single source of truth.
  */
 export function resolveRuntimeRedisConfig(
-  redis?: RuntimeRedisConfig,
-  env: NodeJS.ProcessEnv = process.env
+  redis?: RuntimeRedisConfig
 ): RuntimeRedisConfig | undefined {
-  const url = nonEmpty(redis?.url) ?? nonEmpty(env.REDIS_URL);
-  const host = nonEmpty(redis?.host) ?? nonEmpty(env.REDIS_HOST);
-  const port = redis?.port ?? parsePort(env.REDIS_PORT);
-  const password = redis?.password ?? nonEmpty(env.REDIS_PASSWORD);
+  const url = nonEmpty(redis?.url);
+  const host = nonEmpty(redis?.host);
+  const port = redis?.port;
+  const password = redis?.password;
   const keyPrefix = redis?.keyPrefix;
   const invalidationChannel = redis?.invalidationChannel;
 
@@ -47,10 +39,7 @@ export function resolveRuntimeRedisConfig(
   };
 }
 
-export function hasRuntimeRedisConnection(
-  redis?: RuntimeRedisConfig,
-  env: NodeJS.ProcessEnv = process.env
-): boolean {
-  const resolved = resolveRuntimeRedisConfig(redis, env);
+export function hasRuntimeRedisConnection(redis?: RuntimeRedisConfig): boolean {
+  const resolved = resolveRuntimeRedisConfig(redis);
   return Boolean(resolved?.url || resolved?.host);
 }

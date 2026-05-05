@@ -193,13 +193,11 @@ const orderCounter = new Counter({
 });
 ```
 
-## ISR 缓存观测端点
+## ISR 缓存观测
 
-| 端点 | 内容 |
-|---|---|
-| `/__isr/stats` | dev-only JSON `{ size, max, revalidating }` |
-
-生产缓存失效不再暴露“清空全部缓存”端点。请在 Server Action 或后台任务里调用
+缓存 debug JSON 不作为公开端点。生产使用 `/metrics` 暴露 Prometheus 指标，例如
+`isr_cache_entries{backend}`、`isr_cache_hits_total{status}` 和请求耗时直方图。
+生产缓存失效不暴露“清空全部缓存”端点。请在 Server Action 或后台任务里调用
 `revalidatePath` / `revalidateTag`，多实例广播由 `runtime.redis` 接管。
 
 生产启用 `/metrics` 时建议配 `server.ops.authToken`：

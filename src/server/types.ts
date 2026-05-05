@@ -13,8 +13,8 @@ export type RouteSetupFn = (requestHandler: Express) => void;
 export interface ServerConfig {
   port: number;
   host?: string;
-  /** Internal dev-only convenience. Production stays strict and fails on EADDRINUSE. */
-  allowPortFallback?: boolean;
+  /** Internal only. false lets dev try the next port; production keeps this true. */
+  strictPort?: boolean;
 }
 
 /** Node origin HTTP/1.1 服务器实例 */

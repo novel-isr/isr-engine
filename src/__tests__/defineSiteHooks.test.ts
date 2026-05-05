@@ -107,7 +107,7 @@ describe('defineSiteHooks: SEO 路由表', () => {
           },
         },
       }),
-      { api: 'http://api.x' }
+      { services: { api: 'http://api.x' } }
     );
     const meta = await hooks.loadSeoMeta(new Request('http://x.com/books/42'));
     expect(meta?.title).toBe('诡秘之主 · 42');
@@ -131,7 +131,7 @@ describe('defineSiteHooks: SEO 路由表', () => {
           },
         },
       }),
-      { api: 'http://api.x' }
+      { services: { api: 'http://api.x' } }
     );
     const meta = await hooks.loadSeoMeta(new Request('http://x.com/books/1'));
     expect(meta).toBeNull();
@@ -157,7 +157,7 @@ describe('defineSiteHooks: i18n loader', () => {
       defineSiteHooks({
         intl: { endpoint: '/api/i18n?locale={locale}' },
       }),
-      { api: 'http://api.x' }
+      { services: { api: 'http://api.x' } }
     );
     const intl = await hooks.loadIntl(
       new Request('http://x.com', { headers: { cookie: 'locale=zh-CN' } })
@@ -171,7 +171,7 @@ describe('defineSiteHooks: i18n loader', () => {
     vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response('null', { status: 200 }));
     const hooks = applyRuntimeToServerHooks(
       defineSiteHooks({ intl: { endpoint: '/x?l={locale}' } }),
-      { api: 'http://api.x' }
+      { services: { api: 'http://api.x' } }
     );
     const intl = await hooks.loadIntl(
       new Request('http://x.com', { headers: { cookie: 'locale=ar' } })
@@ -195,7 +195,7 @@ describe('defineSiteHooks: i18n loader', () => {
 });
 
 describe('admin loaders', () => {
-  it('createAdminIntlLoader 使用 runtime.services.i18n 拉远端并展开 dotted keys', async () => {
+  it('createAdminIntlLoader 使用 runtime.services.api 拉远端并展开 dotted keys', async () => {
     const fetchSpy = vi
       .spyOn(globalThis, 'fetch')
       .mockResolvedValue(
@@ -213,12 +213,12 @@ describe('admin loaders', () => {
           }),
         },
       }),
-      { services: { api: 'http://api.x', i18n: 'http://i18n.x' } }
+      { services: { api: 'http://api.x' } }
     );
     const intl = await hooks.loadIntl(
       new Request('http://x.com', { headers: { cookie: 'locale=zh' } })
     );
-    expect(fetchSpy).toHaveBeenCalledWith('http://i18n.x/api/i18n/zh/manifest', expect.any(Object));
+    expect(fetchSpy).toHaveBeenCalledWith('http://api.x/api/i18n/zh/manifest', expect.any(Object));
     expect(intl?.messages).toEqual({ home: { title: '首页' } });
     expect(intl?.source).toBe('remote');
   });
@@ -236,7 +236,7 @@ describe('admin loaders', () => {
           }),
         },
       }),
-      { services: { i18n: 'http://i18n.x' } }
+      { services: { api: 'http://api.x' } }
     );
     const intl = await hooks.loadIntl(
       new Request('http://x.com', { headers: { cookie: 'locale=fr' } })
@@ -246,7 +246,7 @@ describe('admin loaders', () => {
     expect(intl?.source).toBe('local-fallback');
   });
 
-  it('createAdminSeoLoader 支持显式 baseUrl 覆盖 runtime.services.seo', async () => {
+  it('createAdminSeoLoader 使用 runtime.services.api 拉远端 SEO', async () => {
     const fetchSpy = vi
       .spyOn(globalThis, 'fetch')
       .mockResolvedValue(
@@ -258,16 +258,15 @@ describe('admin loaders', () => {
           '/*': {
             load: createAdminSeoLoader({
               endpoint: '/api/seo?path={pathname}',
-              baseUrl: 'http://admin.x',
               fallbackEntries: [{ path: '/', title: '本地 SEO', group: 'marketing' }],
             }),
           },
         },
       }),
-      { services: { seo: 'http://seo.x' } }
+      { services: { api: 'http://api.x' } }
     );
     const meta = await hooks.loadSeoMeta(new Request('http://x.com/'));
-    expect(fetchSpy).toHaveBeenCalledWith('http://admin.x/api/seo?path=%2F', expect.any(Object));
+    expect(fetchSpy).toHaveBeenCalledWith('http://api.x/api/seo?path=%2F', expect.any(Object));
     expect(meta?.title).toBe('远端 SEO');
   });
 
@@ -283,7 +282,7 @@ describe('admin loaders', () => {
           },
         },
       }),
-      { services: { seo: 'http://seo.x' } }
+      { services: { api: 'http://api.x' } }
     );
     const meta = await hooks.loadSeoMeta(new Request('http://x.com/about'));
     expect(meta).toEqual({ title: '关于' });

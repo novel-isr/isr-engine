@@ -280,9 +280,9 @@ function resolveStoreMode(raw: unknown): StoreMode {
 /**
  * 从 ssr.config.ts runtime.rateLimit/runtime.redis 解析限流 store。
  *
- * 默认 'auto'：如果消费方已经配过 runtime.redis（或通过 REDIS_URL/REDIS_HOST env
- * 提供），engine 自动切到 redis backend；没有 Redis 则回落 memory。这样消费方
- * **不需要重复写 store 字段** —— Redis 配置已是 engine 的统一真值源。
+ * 默认 'auto'：如果消费方已经显式配置 runtime.redis.url/host，engine 自动切到
+ * redis backend；没有 Redis 则回落 memory。这样消费方 **不需要重复写 store 字段**
+ * —— runtime.redis 是 engine 的统一真值源。
  *
  * 显式覆盖语义：
  *   - store: 'memory'  → 强制 memory，即使 runtime.redis 已配置（用于本地 burn-in）
@@ -309,7 +309,7 @@ export async function createRateLimitStoreFromRuntime(
   if (!hasRedis) {
     logger.warn(
       '[rate-limit]',
-      "runtime.rateLimit.store='redis' 但未检测到 runtime.redis / REDIS_URL / REDIS_HOST，回退到 memory"
+      "runtime.rateLimit.store='redis' 但未检测到 runtime.redis.url/host，回退到 memory"
     );
     return {
       store: createMemoryRateLimitStore(rateLimit.lruMax),

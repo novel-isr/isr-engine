@@ -15,7 +15,7 @@ import type { ISRConfig } from '@novel-isr/engine';
 const config: ISRConfig = {
   renderMode: 'isr',
   runtime: {
-    site: process.env.SEO_BASE_URL ?? 'http://localhost:3000',
+    site: process.env.SITE_URL ?? 'http://localhost:3000',
   },
   routes: {
     '/': { mode: 'isr', ttl: 60, staleWhileRevalidate: 300 },

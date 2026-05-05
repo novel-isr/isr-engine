@@ -3,6 +3,7 @@ import type { ISRConfig, RuntimeConfig } from '../types';
 type ExactTopLevel<T, Shape> = T & Record<Exclude<keyof T, keyof Shape>, never>;
 type IsrServerConfig = NonNullable<ISRConfig['server']>;
 type IsrOpsConfig = NonNullable<IsrServerConfig['ops']>;
+type RuntimeServicesConfig = NonNullable<RuntimeConfig['services']>;
 type ExactOps<T> = T extends { ops?: infer Ops }
   ? {
       ops?: ExactTopLevel<NonNullable<Ops>, IsrOpsConfig>;
@@ -13,7 +14,21 @@ type ExactServer<T> = T extends { server?: infer Server }
       server?: ExactTopLevel<NonNullable<Server>, IsrServerConfig> & ExactOps<NonNullable<Server>>;
     }
   : unknown;
-type ExactIsrConfig<T extends ISRConfig> = ExactTopLevel<T, ISRConfig> & ExactServer<T>;
+type ExactRuntimeServices<T> = T extends { services?: infer Services }
+  ? {
+      services?: ExactTopLevel<NonNullable<Services>, RuntimeServicesConfig>;
+    }
+  : unknown;
+type ExactRuntime<T extends RuntimeConfig> = ExactTopLevel<T, RuntimeConfig> &
+  ExactRuntimeServices<T>;
+type ExactIsrRuntime<T> = T extends { runtime?: infer Runtime }
+  ? {
+      runtime?: ExactRuntime<NonNullable<Runtime> & RuntimeConfig>;
+    }
+  : unknown;
+type ExactIsrConfig<T extends ISRConfig> = ExactTopLevel<T, ISRConfig> &
+  ExactServer<T> &
+  ExactIsrRuntime<T>;
 
 /**
  * ssr.config.ts 的类型收口入口。
@@ -32,8 +47,6 @@ export function defineIsrConfig<const T extends ISRConfig>(config: ExactIsrConfi
   return config;
 }
 
-export function defineRuntimeConfig<const T extends RuntimeConfig>(
-  runtime: ExactTopLevel<T, RuntimeConfig>
-): T {
+export function defineRuntimeConfig<const T extends RuntimeConfig>(runtime: ExactRuntime<T>): T {
   return runtime;
 }

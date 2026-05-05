@@ -51,7 +51,7 @@ P95 +20% 或 QPS -15% 任意一档触发即 fail-fast。详见 [`.github/workflo
 ### 内存涨停
 
 - L1 LRU 默认 `max: 1000`。如果业务路由组合（含 query string）多于这个，会频繁 evict
-- 看 `/__isr/stats` 的 `size`，长期接近 `max` 就该调大或上 Redis L2
+- 看 Prometheus `isr_cache_entries{backend}`，长期接近 L1 容量就该调大或上 Redis L2
 - Prometheus `isr_process_*` 看 RSS 走势
 
 ## 性能调优手段

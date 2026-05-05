@@ -9,6 +9,7 @@ describe('defineConfig helpers', () => {
   it('defineIsrConfig 返回原对象并保留 ISRConfig 类型约束', () => {
     const config = {
       renderMode: 'isr',
+      revalidate: 3600,
       runtime: {
         telemetry: {
           events: { endpoint: '/events' },
@@ -43,21 +44,26 @@ describe('defineConfig helpers', () => {
   });
 
   it('defineIsrConfig 不再暴露业务级 cache 配置', () => {
-    // @ts-expect-error cache backend belongs to engine normalization; page TTL uses routes[*].ttl/revalidate.
-    defineIsrConfig({ renderMode: 'isr', cache: { strategy: 'memory', ttl: 3600 } });
+    defineIsrConfig({
+      renderMode: 'isr',
+      revalidate: 3600,
+      // @ts-expect-error cache backend belongs to engine normalization; page TTL uses routes[*].ttl/revalidate.
+      cache: { strategy: 'memory', ttl: 3600 },
+    });
   });
 
   it('defineIsrConfig 不再暴露顶层 SEO 开关和旧 isr.revalidate', () => {
     // @ts-expect-error SEO sitemap/robots are core engine capabilities, not business toggles.
-    defineIsrConfig({ renderMode: 'isr', seo: { enabled: false } });
+    defineIsrConfig({ renderMode: 'isr', revalidate: 3600, seo: { enabled: false } });
 
     // @ts-expect-error default page TTL is now top-level revalidate.
-    defineIsrConfig({ renderMode: 'isr', isr: { revalidate: 3600 } });
+    defineIsrConfig({ renderMode: 'isr', revalidate: 3600, isr: { revalidate: 3600 } });
   });
 
   it('defineIsrConfig 只暴露最小 Node origin server 配置', () => {
     defineIsrConfig({
       renderMode: 'isr',
+      revalidate: 3600,
       server: {
         port: 3000,
         host: '127.0.0.1',
@@ -69,20 +75,62 @@ describe('defineConfig helpers', () => {
       },
     });
 
-    // @ts-expect-error protocol/TLS belongs to CDN or reverse proxy, not app config.
-    defineIsrConfig({ renderMode: 'isr', server: { port: 3000, protocol: 'https' } });
+    defineIsrConfig({
+      renderMode: 'isr',
+      revalidate: 3600,
+      server: {
+        port: 3000,
+        // @ts-expect-error protocol/TLS belongs to CDN or reverse proxy, not app config.
+        protocol: 'https',
+      },
+    });
 
-    // @ts-expect-error strict port is an internal engine default.
-    defineIsrConfig({ renderMode: 'isr', server: { port: 3000, strictPort: true } });
+    defineIsrConfig({
+      renderMode: 'isr',
+      revalidate: 3600,
+      server: {
+        port: 3000,
+        // @ts-expect-error strict port is an internal engine default.
+        strictPort: true,
+      },
+    });
 
     // @ts-expect-error HTTP timeouts are engine-owned hardening defaults.
-    defineIsrConfig({ renderMode: 'isr', server: { port: 3000, timeouts: {} } });
+    defineIsrConfig({ renderMode: 'isr', revalidate: 3600, server: { port: 3000, timeouts: {} } });
 
-    // @ts-expect-error compression is an internal origin fallback, not business config.
-    defineIsrConfig({ renderMode: 'isr', server: { port: 3000, compression: {} } });
+    defineIsrConfig({
+      renderMode: 'isr',
+      revalidate: 3600,
+      server: {
+        port: 3000,
+        // @ts-expect-error compression is an internal origin fallback, not business config.
+        compression: {},
+      },
+    });
 
     // @ts-expect-error admin/clear/stats were removed from the public API; use server.ops.
-    defineIsrConfig({ renderMode: 'isr', server: { port: 3000, admin: {} } });
+    defineIsrConfig({ renderMode: 'isr', revalidate: 3600, server: { port: 3000, admin: {} } });
+  });
+
+  it('defineIsrConfig 不再暴露 i18n/seo 独立服务源', () => {
+    // @ts-expect-error runtime.api legacy fallback was removed; use runtime.services.api.
+    defineRuntimeConfig({ api: 'https://api.example.com' });
+
+    defineRuntimeConfig({
+      services: {
+        api: 'https://api.example.com',
+        // @ts-expect-error i18n/seo 配置下发统一复用 runtime.services.api。
+        i18n: 'https://i18n.example.com',
+      },
+    });
+
+    defineRuntimeConfig({
+      services: {
+        api: 'https://api.example.com',
+        // @ts-expect-error i18n/seo 配置下发统一复用 runtime.services.api。
+        seo: 'https://seo.example.com',
+      },
+    });
   });
 
   it('package exposes a lightweight config subpath for ssr.config.ts', () => {

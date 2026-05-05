@@ -2,7 +2,6 @@
  * Discovery 模块入口（精简版）
  *
  * plugin-rsc 模式下引擎只需要"扫描磁盘统计文件"这个能力：
- *   - CLI stats 命令打印路由/组件数量
  *   - ISREngine 启动日志
  *   - SEO 引擎生成 sitemap 时的路由枚举
  *

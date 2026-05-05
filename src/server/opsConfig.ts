@@ -2,7 +2,7 @@ import { timingSafeEqual } from 'node:crypto';
 import type { RequestHandler } from 'express';
 import type { ISRConfig } from '@/types';
 
-type OpsEndpointName = 'health' | 'stats' | 'metrics';
+type OpsEndpointName = 'health' | 'metrics';
 
 export interface ResolvedOpsEndpointConfig {
   enabled: boolean;
@@ -13,15 +13,12 @@ export interface ResolvedOpsConfig {
   authToken?: string;
   tokenHeader: string;
   health: ResolvedOpsEndpointConfig;
-  /** Dev-only cache debug endpoint. Not exposed through public ssr.config.ts. */
-  stats: ResolvedOpsEndpointConfig;
   metrics: ResolvedOpsEndpointConfig;
   warnings: string[];
 }
 
 const OPS_ENDPOINT_PATHS: Record<OpsEndpointName, string> = {
   health: '/health',
-  stats: '/__isr/stats',
   metrics: '/metrics',
 };
 
@@ -29,13 +26,11 @@ const DEFAULT_TOKEN_HEADER = 'x-isr-admin-token';
 
 const DEV_DEFAULTS: Record<OpsEndpointName, ResolvedOpsEndpointConfig> = {
   health: { enabled: true, public: true },
-  stats: { enabled: true, public: true },
   metrics: { enabled: true, public: true },
 };
 
 const PROD_DEFAULTS: Record<OpsEndpointName, ResolvedOpsEndpointConfig> = {
   health: { enabled: true, public: true },
-  stats: { enabled: false, public: false },
   metrics: { enabled: false, public: false },
 };
 
@@ -85,7 +80,6 @@ export function resolveOpsConfig(
     authToken,
     tokenHeader: trimToUndefined(ops?.tokenHeader) ?? DEFAULT_TOKEN_HEADER,
     health: resolveEndpointConfig('health', ops?.health, defaults.health, env, authToken, warnings),
-    stats: resolveEndpointConfig('stats', undefined, defaults.stats, env, authToken, warnings),
     metrics: resolveEndpointConfig(
       'metrics',
       ops?.metrics,
@@ -152,7 +146,7 @@ function readOpsToken(
 }
 
 export function createOpsAuthMiddleware(
-  endpoint: Exclude<OpsEndpointName, 'health'>,
+  endpoint: 'metrics',
   resolved: ResolvedOpsConfig
 ): RequestHandler {
   const policy = resolved[endpoint];

@@ -33,8 +33,7 @@ export function resolveClientObservabilityOptions({
   if (config === false) return false;
   if (!config) return null;
 
-  const serviceOrigin =
-    runtime?.services?.telemetry ?? runtime?.services?.api ?? runtime?.api ?? '';
+  const serviceOrigin = runtime?.services?.telemetry ?? runtime?.services?.api ?? '';
   const app = config.app ?? readPackageName(root) ?? 'novel-isr-app';
 
   return {

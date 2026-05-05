@@ -2,8 +2,8 @@
  * normalizeEngineConfig —— ISREngine 启动前的配置归一化
  *
  * 职责：
- *   1) 兜底默认：缺 `renderMode` 时设 'isr'，缺 `routes` 时设 {}
- *   2) 内部 cache 默认由 engine 归一化，TTL 来自 revalidate/3600
+ *   1) fail-fast：renderMode/revalidate 必须显式声明
+ *   2) 内部 cache 默认由 engine 归一化，TTL 来自 revalidate
  *   3) 不破坏其他字段（server/runtime/ssg 等透传）
  */
 import { describe, it, expect } from 'vitest';
@@ -14,16 +14,49 @@ import type { ISRConfig } from '../../types';
 function base(extra: Partial<ISRConfig> = {}): ISRConfig {
   return {
     renderMode: 'isr',
+    revalidate: 3600,
     ...extra,
   };
 }
 
-describe('normalizeEngineConfig —— 兜底默认值', () => {
-  it('未传 renderMode → 默认 "isr"', () => {
-    const r = normalizeEngineConfig({
+describe('normalizeEngineConfig —— 显式产品配置', () => {
+  it('未传 renderMode → fail fast', () => {
+    expect(() =>
+      normalizeEngineConfig({
+        renderMode: undefined as unknown as ISRConfig['renderMode'],
+        revalidate: 3600,
+      })
+    ).toThrow('renderMode');
+  });
+
+  it('未传 revalidate → fail fast', () => {
+    expect(() =>
+      normalizeEngineConfig({
+        renderMode: 'isr',
+        revalidate: undefined as unknown as number,
+      })
+    ).toThrow('revalidate');
+  });
+
+  it('非法 revalidate → fail fast', () => {
+    expect(() =>
+      normalizeEngineConfig({
+        renderMode: 'isr',
+        revalidate: 0,
+      })
+    ).toThrow('revalidate');
+  });
+
+  it('返回新对象，不修改入参（引用不等 + 入参关键字段无变异）', () => {
+    const config = {
       renderMode: undefined as unknown as ISRConfig['renderMode'],
-    });
-    expect(r.renderMode).toBe('isr');
+      revalidate: 3600,
+    } as ISRConfig;
+
+    expect(() => normalizeEngineConfig(config)).toThrow('renderMode');
+    expect(config.renderMode).toBeUndefined();
+    expect(config.routes).toBeUndefined();
+    expect('cache' in config).toBe(false);
   });
 
   it('未传 routes → 默认 {}', () => {
@@ -39,11 +72,6 @@ describe('normalizeEngineConfig —— 兜底默认值', () => {
   it('内部 cache 默认 memory，并优先使用 revalidate 作为 ttl', () => {
     const r = normalizeEngineConfig(base({ revalidate: 120 }));
     expect(r.cache).toEqual({ strategy: 'memory', ttl: 120 });
-  });
-
-  it('没有 revalidate → 内部 cache ttl 默认 3600 秒', () => {
-    const r = normalizeEngineConfig(base());
-    expect(r.cache).toEqual({ strategy: 'memory', ttl: 3600 });
   });
 });
 
@@ -80,16 +108,13 @@ describe('normalizeEngineConfig —— 不破坏其他字段', () => {
     expect('seo' in normalized).toBe(false);
   });
 
-  it('返回新对象，不修改入参（引用不等 + 入参关键字段无变异）', () => {
-    const config = {
-      renderMode: undefined as unknown as ISRConfig['renderMode'],
-    } as ISRConfig;
+  it('返回新对象，不修改合法入参（引用不等 + 入参关键字段无变异）', () => {
+    const config = base();
 
     const r = normalizeEngineConfig(config);
     expect(r).not.toBe(config);
     expect(r.renderMode).toBe('isr');
     expect(r.routes).toEqual({});
-    expect(config.renderMode).toBeUndefined();
     expect(config.routes).toBeUndefined();
     expect('cache' in config).toBe(false);
   });
@@ -111,6 +136,7 @@ describe('normalizeEngineConfig —— 组合场景', () => {
   it('renderMode + routes 直接透传', () => {
     const r = normalizeEngineConfig({
       renderMode: 'ssg',
+      revalidate: 3600,
       routes: { '/api/*': 'ssr' },
     });
     expect(r.renderMode).toBe('ssg');

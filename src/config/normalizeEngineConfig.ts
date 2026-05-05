@@ -1,7 +1,6 @@
 import type { CacheStrategyType, ISRConfig, ResolvedISRConfig, RouteRule } from '@/types';
 
 const DEFAULT_CACHE_STRATEGY: CacheStrategyType = 'memory';
-const DEFAULT_CACHE_TTL_SECONDS = 3600;
 
 /**
  * Engine-owned config normalization.
@@ -20,9 +19,16 @@ export function normalizeEngineConfig(config: ISRConfig): ResolvedISRConfig {
   delete publicConfig.cache;
   delete publicConfig.isr;
   delete publicConfig.seo;
-  const renderMode = config.renderMode ?? 'isr';
+  if (!isRenderMode(config.renderMode)) {
+    throw new Error("ssr.config.ts 必须显式声明 renderMode: 'isr' | 'ssr' | 'ssg'");
+  }
+  if (!Number.isFinite(config.revalidate) || config.revalidate <= 0) {
+    throw new Error('ssr.config.ts 必须显式声明正数 revalidate（秒）');
+  }
+
+  const renderMode = config.renderMode;
   const routes: Record<string, RouteRule> = config.routes ?? {};
-  const revalidate = config.revalidate ?? DEFAULT_CACHE_TTL_SECONDS;
+  const revalidate = config.revalidate;
   const cache = {
     strategy: DEFAULT_CACHE_STRATEGY,
     ttl: revalidate,
@@ -35,4 +41,8 @@ export function normalizeEngineConfig(config: ISRConfig): ResolvedISRConfig {
     routes,
     cache,
   };
+}
+
+function isRenderMode(value: unknown): value is ISRConfig['renderMode'] {
+  return value === 'isr' || value === 'ssr' || value === 'ssg';
 }

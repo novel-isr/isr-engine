@@ -84,7 +84,7 @@ import fallbackLocal from './src/config/site-fallback-local.json';
 export default defineIsrConfig({
   renderMode: 'isr',
   runtime: {
-    site: process.env.SEO_BASE_URL ?? 'http://localhost:3000',
+    site: process.env.SITE_URL ?? 'http://localhost:3000',
     services: {
       api: process.env.API_URL ?? 'http://localhost:8080',
       telemetry: process.env.TELEMETRY_API_URL ?? process.env.API_URL ?? 'http://localhost:8080',
@@ -133,7 +133,7 @@ export default defineIsrConfig({
     '/*': 'isr',
   },
   ssg: { routes: ['/about'] },
-  revalidate: 3600
+  revalidate: 3600,
 });
 ```
 
@@ -168,8 +168,9 @@ export default {
 };
 ```
 
-浏览器埋点和错误上报由 engine 内置收口，业务不用重写导航监听或全局错误监听。
-部署期只在 `ssr.config.ts` 配 telemetry endpoint、采样、批量策略和 integration：
+浏览器埋点和错误上报由 engine 按 endpoint 配置注入轻量 runtime，业务不用重写导航监听或全局错误监听，
+也不需要把第三方 SDK import 到 engine。部署期只在 `ssr.config.ts` 配 telemetry endpoint、
+采样、批量策略和 integration：
 
 ```ts
 // ssr.config.ts
@@ -410,8 +411,9 @@ getI18n('book.count', { count: 12 }); // 字典里写 "共 {count} 本书"
 ### rateLimit：默认 auto，有 Redis 连接才分布式
 
 `runtime.rateLimit` 是站点入口的应用层保护。默认 `store: 'auto'`：engine 检测到
-`runtime.redis.url/host` 或非空 `REDIS_URL/REDIS_HOST` 就使用 Redis；否则使用进程内
-memory LRU。业务只需要声明窗口和阈值，不需要重复写存储后端判断。
+`runtime.redis.url/host` 就使用 Redis；否则使用进程内 memory LRU。业务只需要声明窗口和阈值，
+不需要重复写存储后端判断。环境变量必须在 `ssr.config.ts` 显式接入，例如
+`url: process.env.REDIS_URL`，engine 不暗读环境变量。
 
 页面缓存同样不暴露 `cache` 配置。engine 自动选择本机 memory 或 Redis L2；
 业务只在 `routes[*].ttl` 和 `revalidate` 配置页面 TTL。

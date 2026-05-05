@@ -6,9 +6,6 @@
  *   GET  /health            健康检查（JSON）
  *   GET  /sitemap.xml       站点地图（SEO 引擎生成）
  *   GET  /robots.txt        爬虫规则
- *
- * dev-only 缓存统计端点（/__isr/stats）由缓存中间件内部挂载，
- * 因为它需要访问 createIsrCacheHandler 返回的 handler.stats()。
  */
 
 import type { Express, Request, Response } from 'express';
@@ -26,13 +23,13 @@ export class ISRRoutes {
   constructor(
     private engine: ISREngine,
     private logger: Logger,
-    config?: {
-      renderMode?: RenderModeType;
+    config: {
+      renderMode: RenderModeType;
       routes?: Record<string, RouteRule>;
     }
   ) {
-    this.defaultMode = config?.renderMode || 'isr';
-    this.routes = config?.routes || {};
+    this.defaultMode = config.renderMode;
+    this.routes = config.routes || {};
   }
 
   setup(requestHandler: Express): void {

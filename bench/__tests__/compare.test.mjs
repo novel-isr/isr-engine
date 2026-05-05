@@ -103,6 +103,39 @@ describe('bench/compare.mjs', () => {
     expect(output).toContain('n/a');
     expect(output).not.toContain('Infinity');
   });
+
+  it('ignores p95 percentage noise below the absolute millisecond budget', () => {
+    const dir = mkdtempSync(path.join(tmpdir(), 'bench-compare-'));
+    const baselinePath = writeBench(dir, 'baseline.json', [
+      row({ path: '/', connections: 10, qps: 10_000, p95: 1 }),
+    ]);
+    const currentPath = writeBench(dir, 'current.json', [
+      row({ path: '/', connections: 10, qps: 10_100, p95: 2 }),
+    ]);
+
+    const output = execFileSync(process.execPath, [comparePath, baselinePath, currentPath], {
+      encoding: 'utf8',
+    });
+
+    expect(output).toContain('no regressions detected');
+  });
+
+  it('fails p95 only when relative and absolute budgets are both exceeded', () => {
+    const dir = mkdtempSync(path.join(tmpdir(), 'bench-compare-'));
+    const baselinePath = writeBench(dir, 'baseline.json', [
+      row({ path: '/about', connections: 1000, qps: 5_000, p95: 100 }),
+    ]);
+    const currentPath = writeBench(dir, 'current.json', [
+      row({ path: '/about', connections: 1000, qps: 5_100, p95: 180 }),
+    ]);
+
+    const result = spawnSync(process.execPath, [comparePath, baselinePath, currentPath], {
+      encoding: 'utf8',
+    });
+
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain('P95 +80.0% / +80.0ms');
+  });
 });
 
 function writeBench(dir, filename, results, meta = {}) {

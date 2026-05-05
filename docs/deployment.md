@@ -37,11 +37,9 @@ helmet → security headers → gzip/deflate(streaming-safe) → static (SSG 路
 |---|---|---|
 | `PORT` | 监听端口（默认 3000） | `PORT=8080` |
 | `NODE_ENV` | 必须 `production` | 自动 |
-| `SEO_BASE_URL` | sitemap 域名 | `https://my-app.com` |
-| `PUBLIC_BASE_URL` | 同上备选 | 同上 |
-| `BASE_URL` | 同上备选 | 同上 |
+| `SITE_URL` | 站点公网域名；在 `ssr.config.ts runtime.site` 显式读取 | `https://my-app.com` |
 | `API_URL` | 上游 API 基址 | `https://api.internal/v1` |
-| `REDIS_URL` | Redis L2 缓存（可选） | `redis://...:6379/0` |
+| `REDIS_URL` | Redis L2 缓存；在 `ssr.config.ts runtime.redis.url` 显式读取 | `redis://...:6379/0` |
 | `SENTRY_ENABLED` | 是否启用 Sentry integration | `true` |
 | `SENTRY_DSN` | Sentry DSN；仅在启用 integration 后使用 | `https://...@sentry.io/...` |
 | `ISR_OPS_TOKEN` | `/metrics` 鉴权（如果生产开启） | 任意 secret |
@@ -65,7 +63,6 @@ CMD ["pnpm", "novel-isr", "start"]
 |---|---|---|
 | `/health` | 公开 | 公开 |
 | `/sitemap.xml` `/robots.txt` | 公开 | 公开 |
-| `/__isr/stats` | dev/bench 内部观测 | 不是生产公开配置面 |
 | `/metrics` | 开 | 默认不注册；需要 `server.ops.metrics.enabled` + token |
 
 ## Edge runtime 部署
@@ -109,7 +106,7 @@ i18n / A/B / rate-limit 是平台级横切能力，生产配置写在 `ssr.confi
 
 - `runtime.i18n`：locale、远端字典 endpoint、TTL、本地 fallback。
 - `runtime.experiments`：A/B testing / experimentation 定义；页面用 `getVariant()`。
-- `runtime.rateLimit`：站点入口限流；默认 `store='auto'`。`runtime.redis.url/host` 或 `REDIS_URL/REDIS_HOST` 非空时自动用 Redis，否则进程内 memory fixed-window counter。
+- `runtime.rateLimit`：站点入口限流；默认 `store='auto'`。`runtime.redis.url/host` 非空时自动用 Redis，否则进程内 memory fixed-window counter。环境变量必须在 `ssr.config.ts` 显式接入。
 
 `entry.server.tsx beforeRequest` 只补充本次请求的业务上下文字段，例如
 `userId`、`tenantId`、`requestSegment`。不要在 `beforeRequest` 里重新实现 i18n、
@@ -120,7 +117,7 @@ Vercel Edge 部署可用 `toVercelMiddleware` 包出平台原生 `middleware.ts`
 
 ## 上生产前 checklist
 
-- [ ] `SEO_BASE_URL` 设到真实域名
+- [ ] `ssr.config.ts runtime.site` 设到真实公网域名
 - [ ] `ssr.config.ts` 的 `runtime.redis.url` 读取 `process.env.REDIS_URL`，并在部署平台把 `REDIS_URL` 设到生产 Redis（多 pod 必需）
 - [ ] 需要分布式限流时，确认 `runtime.rateLimit` 保持默认 `auto` 或显式 `'redis'`，确认 429 响应带 `RateLimit-*` / `Retry-After`，并确认静态资源、健康检查和 dev 资源不会消耗应用入口配额
 - [ ] 如需 Sentry，配置 `runtime.telemetry.integrations.sentry.enabled=true` 并注入 `SENTRY_DSN`

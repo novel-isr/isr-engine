@@ -8,7 +8,7 @@
  * - 内存使用采样
  *
  * @description 零依赖、无侧效果的纯内存采集器
- * 可被 Prometheus exporter 或 CLI stats 消费
+ * 可被 Prometheus exporter 消费
  */
 
 import type { RenderModeType } from '../types';

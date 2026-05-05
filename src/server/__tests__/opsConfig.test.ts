@@ -6,7 +6,6 @@ describe('resolveOpsConfig', () => {
     const resolved = resolveOpsConfig({}, 'production');
     expect(resolved.health.enabled).toBe(true);
     expect(resolved.health.public).toBe(true);
-    expect(resolved.stats.enabled).toBe(false);
     expect(resolved.metrics.enabled).toBe(false);
   });
 

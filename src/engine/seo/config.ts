@@ -6,14 +6,14 @@ import type { SEOConfig, DeepPartial } from './types';
 
 /** 默认 SEO 配置 */
 export const DEFAULT_SEO_CONFIG: SEOConfig = {
-  baseUrl: process.env.BASE_URL || '',
-  siteName: process.env.SITE_NAME || 'My App',
+  baseUrl: '',
+  siteName: 'My App',
   defaultLanguage: 'zh',
   supportedLanguages: ['zh', 'en'],
 
-  defaultTitle: process.env.SITE_TITLE || 'My App',
-  defaultDescription: process.env.SITE_DESCRIPTION || '',
-  titleTemplate: `%s | ${process.env.SITE_NAME || 'My App'}`,
+  defaultTitle: 'My App',
+  defaultDescription: '',
+  titleTemplate: '%s | My App',
   keywords: [],
   author: '',
   robots: 'index,follow',

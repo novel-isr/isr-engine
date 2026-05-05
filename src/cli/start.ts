@@ -121,7 +121,7 @@ export async function startProductionServer(options: StartOptions): Promise<void
 
   const extraConnectSrc = Array.from(
     new Set(
-      [runtime?.services?.api ?? runtime?.api, runtime?.services?.i18n, runtime?.services?.seo]
+      [runtime?.services?.api, runtime?.services?.telemetry]
         .map(safeOrigin)
         .filter((origin): origin is string => !!origin)
     )
@@ -246,7 +246,7 @@ export async function startProductionServer(options: StartOptions): Promise<void
   const { createImageMiddleware } = await import('@/plugin/createImagePlugin');
   app.use(createImageMiddleware({ remoteAllowlist: [] }));
 
-  // ISR 缓存：runtime.redis 可只声明 keyPrefix；REDIS_URL/REDIS_HOST 的判定由 engine 统一解析。
+  // ISR 缓存：只读取 ssr.config.ts runtime.redis；环境变量需由业务配置显式注入。
   const { createAutoCacheStore } = await import('@/cache/createAutoCacheStore');
   const { RedisInvalidationBus } = await import('@/cache/RedisInvalidationBus');
   const { hasRuntimeRedisConnection, resolveRuntimeRedisConfig } =
@@ -274,13 +274,6 @@ export async function startProductionServer(options: StartOptions): Promise<void
   });
   app.use(cache);
 
-  // Dev/bench cache stats endpoint. Production config does not expose this knob.
-  if (opsConfig.stats.enabled) {
-    app.get('/__isr/stats', createOpsAuthMiddleware('stats', opsConfig), (_req, res) =>
-      res.json(cache.stats())
-    );
-  }
-
   // Prometheus 抓取端点（prom-client 文本格式）
   const { promRegistry } = await import('@/metrics/PromMetrics');
   if (opsConfig.metrics.enabled) {
@@ -298,7 +291,7 @@ export async function startProductionServer(options: StartOptions): Promise<void
   }
 
   // SEO 端点：sitemap.xml + robots.txt（基于 SEOEngine 自动生成）
-  // —— 用户配置 runtime.site 或注入 SEO_BASE_URL 环境变量后才有内容
+  // —— 生产必须在 ssr.config.ts 配置 runtime.site；dev 自动用 localhost。
   const { SEOEngine } = await import('@/engine/seo/SEOEngine');
   const { resolveSeoConfig } = await import('@/engine/seo/resolveSeoConfig');
   const seoCfg = resolveSeoConfig(config);
@@ -350,13 +343,9 @@ export async function startProductionServer(options: StartOptions): Promise<void
   if (opsConfig.health.enabled) {
     logger.info('[Server]', `健康检查: ${result.url}/health`);
   }
-  if (opsConfig.stats.enabled) {
-    logger.info('[Server]', `缓存统计: ${result.url}/__isr/stats`);
-  }
   if (opsConfig.metrics.enabled) {
     logger.info('[Server]', `Prometheus: ${result.url}/metrics`);
   }
-  logger.info('[Stats]', `内存使用: ${Math.round(process.memoryUsage().heapUsed / 1024 / 1024)}MB`);
 
   // 优雅关闭（同 dev：强制断开 keep-alive + 3s 超时兜底）
   let shuttingDown = false;

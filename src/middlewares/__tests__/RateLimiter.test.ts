@@ -396,85 +396,52 @@ describe('RateLimiter —— Redis Lua 原子脚本', () => {
 });
 
 describe('RateLimiter —— runtime store 解析', () => {
-  const withoutRedisEnv = async <T>(fn: () => Promise<T>): Promise<T> => {
-    const originalUrl = process.env.REDIS_URL;
-    const originalHost = process.env.REDIS_HOST;
-    const originalPort = process.env.REDIS_PORT;
-    const originalPassword = process.env.REDIS_PASSWORD;
-    delete process.env.REDIS_URL;
-    delete process.env.REDIS_HOST;
-    delete process.env.REDIS_PORT;
-    delete process.env.REDIS_PASSWORD;
-    try {
-      return await fn();
-    } finally {
-      if (originalUrl === undefined) delete process.env.REDIS_URL;
-      else process.env.REDIS_URL = originalUrl;
-      if (originalHost === undefined) delete process.env.REDIS_HOST;
-      else process.env.REDIS_HOST = originalHost;
-      if (originalPort === undefined) delete process.env.REDIS_PORT;
-      else process.env.REDIS_PORT = originalPort;
-      if (originalPassword === undefined) delete process.env.REDIS_PASSWORD;
-      else process.env.REDIS_PASSWORD = originalPassword;
-    }
-  };
-
   it('默认 store 未指定 + 无 Redis 配置 → memory（开箱即用）', async () => {
-    await withoutRedisEnv(async () => {
-      const resolved = await createRateLimitStoreFromRuntime({});
-      expect(resolved.backend).toBe('memory');
+    const resolved = await createRateLimitStoreFromRuntime({});
+    expect(resolved.backend).toBe('memory');
 
-      const first = await resolved.store.incr('ip:1', 60_000);
-      const second = await resolved.store.incr('ip:1', 60_000);
-      expect(first.count).toBe(1);
-      expect(second.count).toBe(2);
-    });
+    const first = await resolved.store.incr('ip:1', 60_000);
+    const second = await resolved.store.incr('ip:1', 60_000);
+    expect(first.count).toBe(1);
+    expect(second.count).toBe(2);
   });
 
   it("默认 store 未指定 + 显式 store='memory' → 强制 memory，即使 runtime.redis 存在", async () => {
-    await withoutRedisEnv(async () => {
-      const resolved = await createRateLimitStoreFromRuntime(
-        { store: 'memory' },
-        { url: 'redis://127.0.0.1:6379' }
-      );
-      expect(resolved.backend).toBe('memory');
-    });
+    const resolved = await createRateLimitStoreFromRuntime(
+      { store: 'memory' },
+      { url: 'redis://127.0.0.1:6379' }
+    );
+    expect(resolved.backend).toBe('memory');
   });
 
   it("store='redis' 缺少 Redis 配置时回退 memory，而不是启动失败", async () => {
-    await withoutRedisEnv(async () => {
-      const resolved = await createRateLimitStoreFromRuntime({ store: 'redis' });
-      expect(resolved.backend).toBe('memory');
-    });
+    const resolved = await createRateLimitStoreFromRuntime({ store: 'redis' });
+    expect(resolved.backend).toBe('memory');
   });
 
   it("store='auto' 只有检测到 Redis 配置才切换 Redis", async () => {
-    await withoutRedisEnv(async () => {
-      const resolved = await createRateLimitStoreFromRuntime({ store: 'auto' });
-      expect(resolved.backend).toBe('memory');
-    });
+    const resolved = await createRateLimitStoreFromRuntime({ store: 'auto' });
+    expect(resolved.backend).toBe('memory');
   });
 
   it('非法 store 值 → warn 一次 + 当 auto 处理（不静默吞）', async () => {
-    await withoutRedisEnv(async () => {
-      const warnings: unknown[][] = [];
-      const { logger } = await import('../../logger');
-      const spy = vi.spyOn(logger, 'warn').mockImplementation((...args: unknown[]) => {
-        warnings.push(args);
-      });
-      try {
-        const resolved = await createRateLimitStoreFromRuntime({
-          store: 'mem' as unknown as 'memory',
-        });
-        expect(resolved.backend).toBe('memory');
-        expect(warnings.length).toBeGreaterThan(0);
-        const flat = warnings.flat().join(' ');
-        expect(flat).toContain('rate-limit');
-        expect(flat).toContain('mem');
-      } finally {
-        spy.mockRestore();
-      }
+    const warnings: unknown[][] = [];
+    const { logger } = await import('../../logger');
+    const spy = vi.spyOn(logger, 'warn').mockImplementation((...args: unknown[]) => {
+      warnings.push(args);
     });
+    try {
+      const resolved = await createRateLimitStoreFromRuntime({
+        store: 'mem' as unknown as 'memory',
+      });
+      expect(resolved.backend).toBe('memory');
+      expect(warnings.length).toBeGreaterThan(0);
+      const flat = warnings.flat().join(' ');
+      expect(flat).toContain('rate-limit');
+      expect(flat).toContain('mem');
+    } finally {
+      spy.mockRestore();
+    }
   });
 
   it('store 未指定 + runtime.redis 已配置 → 自动用 Redis（开箱即用 / 复用 Redis 真值源）', async () => {

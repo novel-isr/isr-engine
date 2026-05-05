@@ -8,8 +8,8 @@
 
 ### Changed — 行为收口（轻量 BREAKING / 默认值变更）
 
-- **`runtime.rateLimit.store` 默认从 `'memory'` 改为 `'auto'`**。已配置 `runtime.redis`
-  （或 `REDIS_URL` / `REDIS_HOST` 环境变量）时，限流自动切到 Redis backend；否则
+- **`runtime.rateLimit.store` 默认从 `'memory'` 改为 `'auto'`**。已配置 `runtime.redis.url/host`
+  时，限流自动切到 Redis backend；否则
   仍用 memory。**消费方一般不再需要显式声明 `store`** —— Redis 配置即统一真值源。
   > 旧行为「不因 redis 存在而隐式切换」是为了避免惊喜，但实际上让每个消费方都得
   > 重复写 `store: 'redis'`。新行为更符合 engine 「开箱即用」的第一性原则。
@@ -281,10 +281,10 @@ export { extractRoutesForSitemap, nodeToWebRequest, pipeWebResponse }  // start.
 - `bench/fixture/` —— self-contained 最小 ISR 应用，覆盖 ISR / SSG / 动态 ISR / SSR
   四种渲染路径。CI 不再依赖 sibling 业务 repo
 - `bench/utils.mjs` —— 抽出可单测的 `extractP95` + `sleep` helpers
-- `bench/baseline.json` —— 10/100/1000/10000 conn × 3 paths 的代表性 baseline
+- `bench/baseline.json` —— 10/100/1000 conn × 3 paths 的代表性 baseline
 - `BENCH_DISABLE_RATE_LIMIT=1` —— bench 专用 env，每请求动态读取 `process.env`，
   绕过 RateLimiter（autocannon 单 IP 高并发需要）
-- bench.mjs 增强：preflight + per-path warmup + non-2xx% + stats(pre/post) diff +
+- bench.mjs 增强：preflight + per-path warmup + non-2xx% +
   CI gates (`BENCH_P95_BUDGET_MS` / `BENCH_QPS_FLOOR` / `BENCH_FAIL_ON_NON_2XX`)
 
 #### CI/CD
@@ -395,7 +395,6 @@ export { extractRoutesForSitemap, nodeToWebRequest, pipeWebResponse }  // start.
 | `engine/RenderMode` (新) | +19 | matchRoutePattern + resolveRenderMode + fallback chain |
 | `engine/normalizeEngineConfig` (新) | +10 | 别名兼容 + 默认值 + 字段透传 |
 | `cli/migrate` (新) | +13 | Next.js 检测 + Vite 配置 + 必需文件 |
-| `cli/stats` (新) | +9 | HTTP client + payload 校验 + 错误降级 |
 | `cli/loadConfig` (新) | +12 | esbuild TS 编译 + 缓存 + forceReload |
 | `cli/manifest` (新) | +22 | Vite 5+/4 路径探测 + entry 候选匹配 + HTML tag 生成 |
 | `cli/fallback` (新) | +14 | 静态/api/SSR 反代 + 5xx → SPA fallback |

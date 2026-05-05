@@ -12,6 +12,7 @@
  *
  * 阈值环境变量：
  *   BENCH_P95_REGRESSION_PCT   默认 20    P95 +20% → 视为退化
+ *   BENCH_P95_REGRESSION_MS    默认 50    P95 绝对增加超过 50ms 才视为有效退化
  *   BENCH_QPS_REGRESSION_PCT   默认 15    QPS -15% → 视为退化
  *   BENCH_MAX_NON_2XX_RATE     默认 0     当前结果非 2xx 预算；baseline 超过则整份基线无效
  *   BENCH_MAX_ERRORS           默认不检查 autocannon 建连错误；显式设置后才作为预算
@@ -25,6 +26,7 @@ if (!baselinePath || !currentPath) {
 }
 
 const P95_REGRESSION_PCT = parseFloat(process.env.BENCH_P95_REGRESSION_PCT ?? '20');
+const P95_REGRESSION_MS = parseFloat(process.env.BENCH_P95_REGRESSION_MS ?? '50');
 const QPS_REGRESSION_PCT = parseFloat(process.env.BENCH_QPS_REGRESSION_PCT ?? '15');
 const MAX_NON_2XX_RATE = parseFloat(process.env.BENCH_MAX_NON_2XX_RATE ?? '0');
 const MAX_ERRORS =
@@ -98,8 +100,13 @@ for (const cur of current.results) {
   }
   const qpsDelta = percentDelta(cur.requests_per_sec, base.requests_per_sec);
   const p95Delta = percentDelta(cur.latency_p95_ms, base.latency_p95_ms);
+  const p95DeltaMs = Number(cur.latency_p95_ms) - Number(base.latency_p95_ms);
   const qpsBad = Number.isFinite(qpsDelta) && qpsDelta < -QPS_REGRESSION_PCT;
-  const p95Bad = Number.isFinite(p95Delta) && p95Delta > P95_REGRESSION_PCT;
+  const p95Bad =
+    Number.isFinite(p95Delta) &&
+    Number.isFinite(p95DeltaMs) &&
+    p95Delta > P95_REGRESSION_PCT &&
+    p95DeltaMs > P95_REGRESSION_MS;
   const flag = qpsBad || p95Bad ? '✗' : '✓';
   console.log(
     `${flag} ${cur.path.padEnd(13)}${String(cur.connections).padEnd(6)}` +
@@ -112,6 +119,7 @@ for (const cur of current.results) {
       conns: cur.connections,
       qpsDelta,
       p95Delta,
+      p95DeltaMs,
       qpsBad,
       p95Bad,
     });
@@ -123,7 +131,11 @@ if (regressions.length > 0) {
   for (const r of regressions) {
     const reasons = [];
     if (r.qpsBad) reasons.push(`QPS ${r.qpsDelta.toFixed(1)}% (budget -${QPS_REGRESSION_PCT}%)`);
-    if (r.p95Bad) reasons.push(`P95 +${r.p95Delta.toFixed(1)}% (budget +${P95_REGRESSION_PCT}%)`);
+    if (r.p95Bad) {
+      reasons.push(
+        `P95 +${r.p95Delta.toFixed(1)}% / +${r.p95DeltaMs.toFixed(1)}ms (budget +${P95_REGRESSION_PCT}% and +${P95_REGRESSION_MS}ms)`
+      );
+    }
     console.error(`  ${r.path} @${r.conns}c → ${reasons.join(', ')}`);
   }
   process.exit(1);

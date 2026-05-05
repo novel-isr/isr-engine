@@ -159,10 +159,6 @@ export class RedisCacheAdapter implements ICacheAdapter {
 
   constructor(config: Partial<RedisCacheConfig> = {}) {
     const merged: RedisCacheConfig = { ...DEFAULT_CONFIG, ...config };
-    merged.url = merged.url || process.env.REDIS_URL;
-    merged.host = merged.host || process.env.REDIS_HOST;
-    merged.port =
-      merged.port || (process.env.REDIS_PORT ? parseInt(process.env.REDIS_PORT) : merged.port);
     this.config = merged;
     this.logger = Logger.getInstance();
 

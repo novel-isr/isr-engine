@@ -35,6 +35,7 @@ interface MockApp {
 function makeConfig(overrides: Partial<ISRConfig> = {}): ResolvedISRConfig {
   return {
     renderMode: 'isr',
+    revalidate: 3600,
     routes: {},
     cache: { strategy: 'memory', ttl: 3600 },
     ...overrides,

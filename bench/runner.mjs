@@ -4,10 +4,8 @@
  *
  * 流水线：
  *   preflight  → 每条 path 单 GET 校验 2xx，把死配置 fail-fast 暴露
- *   stats(pre) → 拉 /__isr/stats（可选）记录 bench 开始前的 cache 状态
  *   warmup     → 每条 path 短跑 autocannon（让 JIT 稳态 + 把 cache 全填上 HIT）
  *   bench      → 多档并发主测，每档间 cooldown
- *   stats(post)→ 再拉 /__isr/stats，diff 显示 bench 期间多少 entry 进入缓存
  *   summary    → 按 path 分组汇总
  *
  * 用法：
@@ -55,9 +53,6 @@ const WARMUP_SECONDS = parseInt(process.env.BENCH_WARMUP_SECONDS ?? '3', 10);
 const COOLDOWN_MS = parseInt(process.env.BENCH_COOLDOWN_MS ?? '2000', 10);
 // preflight 单 GET 的超时；设 0 关闭 preflight（不推荐）
 const PREFLIGHT_TIMEOUT_MS = parseInt(process.env.BENCH_PREFLIGHT_TIMEOUT_MS ?? '5000', 10);
-// stats 端点（可选 —— dev/bench ops route；缺失静默跳过）
-const STATS_PATH = process.env.BENCH_STATS_PATH ?? '/__isr/stats';
-
 console.log(`\n=== isr-engine bench ===`);
 console.log(`target:      ${URL}`);
 console.log(`tiers:       ${TIERS.join(', ')} concurrent connections`);
@@ -93,23 +88,6 @@ if (PREFLIGHT_TIMEOUT_MS > 0) {
       process.exit(2);
     }
   }
-}
-
-// ─── Stats(pre)：可选地拉 /__isr/stats 记录 bench 前的 cache 状态 ───
-async function fetchStats() {
-  try {
-    const r = await fetch(`${URL}${STATS_PATH}`);
-    if (!r.ok) return null;
-    return await r.json();
-  } catch {
-    return null;
-  }
-}
-const statsBefore = await fetchStats();
-if (statsBefore) {
-  console.log(
-    `   cache(before): ${statsBefore.size}/${statsBefore.max} entries, backend=${statsBefore.backend}`
-  );
 }
 
 // ─── Warmup：每条 path 单独短跑一次 autocannon ───
@@ -193,15 +171,6 @@ for (const path of PATHS) {
   }
 }
 
-// ─── Stats(post)：bench 结束后再拉一次，diff cache 增量 ───
-const statsAfter = await fetchStats();
-if (statsBefore && statsAfter) {
-  const delta = statsAfter.size - statsBefore.size;
-  console.log(
-    `\n   cache(after):  ${statsAfter.size}/${statsAfter.max} entries (Δ ${delta >= 0 ? '+' : ''}${delta})`
-  );
-}
-
 // ─── Summary table ───
 console.log('\n=== summary by path ===');
 const byPath = new Map();
@@ -246,8 +215,6 @@ if (OUTPUT) {
           timestamp: new Date().toISOString(),
           node: process.version,
         },
-        stats_before: statsBefore,
-        stats_after: statsAfter,
         results,
       },
       null,

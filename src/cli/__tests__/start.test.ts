@@ -31,7 +31,7 @@ describe('extractRoutesForSitemap —— 路由筛选', () => {
         '/contact': 'ssg',
         '/books/*': 'isr', // 通配 → 跳过
         '/users/:id': 'ssr', // 动态 → 跳过
-        '/__isr/stats': 'ssr', // 内部 → 跳过
+        '/__internal/debug': 'ssr', // 内部 → 跳过
         '/api/health': 'ssr', // API → 跳过
       },
     });
@@ -53,7 +53,7 @@ describe('extractRoutesForSitemap —— 路由筛选', () => {
     const result = extractRoutesForSitemap({
       routes: {
         '/api/x': 'ssr',
-        '/__isr/stats': 'ssr',
+        '/__internal/debug': 'ssr',
         '/blog/*': 'isr',
         '/users/:id': 'ssr',
       },

@@ -56,7 +56,7 @@ function formatHostForUrl(address: string): string {
 
 /** 启动 HTTP/1.1 服务器 */
 export function startHttp1Server(app: Express, config: ServerConfig): Promise<ServerStartResult> {
-  const maxAttempts = config.allowPortFallback === true ? 20 : 1;
+  const maxAttempts = config.strictPort === false ? 20 : 1;
   const startPort = config.port;
 
   return new Promise((resolve, reject) => {

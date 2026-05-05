@@ -53,19 +53,14 @@ export async function loadConfig(options: LoadConfigOptions = {}): Promise<Resol
       } catch (error: unknown) {
         const err = error as Error & { code?: string };
         logger.error(`加载配置文件失败 ${filePath}:`, err);
+        throw new Error(`加载配置文件失败: ${filePath}`, { cause: err });
       }
     }
   }
 
-  logger.info('未找到配置文件，使用默认配置');
-
-  return normalizeEngineConfig({
-    renderMode: 'isr',
-    revalidate: 3600,
-    server: {
-      port: 3000,
-    },
-  });
+  throw new Error(
+    `未找到配置文件：请在项目根目录创建 ${CONFIG_FILES.join(' / ')} 并显式声明 renderMode、revalidate 等运行配置。`
+  );
 }
 
 async function resolveImportPath(

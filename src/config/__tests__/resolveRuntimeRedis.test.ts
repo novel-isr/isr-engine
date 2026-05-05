@@ -3,49 +3,42 @@ import { describe, expect, it } from 'vitest';
 import { hasRuntimeRedisConnection, resolveRuntimeRedisConfig } from '../resolveRuntimeRedis';
 
 describe('resolveRuntimeRedisConfig', () => {
-  it('runtime.redis url 优先于环境变量', () => {
-    const resolved = resolveRuntimeRedisConfig(
-      { url: 'redis://runtime:6379/0', keyPrefix: 'app:' },
-      { REDIS_URL: 'redis://env:6379/0' }
-    );
+  it('runtime.redis url 显式启用 Redis', () => {
+    const resolved = resolveRuntimeRedisConfig({
+      url: 'redis://runtime:6379/0',
+      keyPrefix: 'app:',
+    });
 
     expect(resolved).toMatchObject({
       url: 'redis://runtime:6379/0',
       keyPrefix: 'app:',
     });
-    expect(hasRuntimeRedisConnection(resolved, {})).toBe(true);
+    expect(hasRuntimeRedisConnection(resolved)).toBe(true);
   });
 
-  it('runtime 只声明 keyPrefix 时，由 engine 自动读取 REDIS_URL', () => {
-    const resolved = resolveRuntimeRedisConfig(
-      { keyPrefix: 'novel:' },
-      { REDIS_URL: ' redis://env:6379/1 ' }
-    );
+  it('runtime 只声明 keyPrefix 时不暗读环境变量', () => {
+    const resolved = resolveRuntimeRedisConfig({ keyPrefix: 'novel:' });
 
     expect(resolved).toMatchObject({
-      url: 'redis://env:6379/1',
       keyPrefix: 'novel:',
     });
-    expect(hasRuntimeRedisConnection({ keyPrefix: 'novel:' }, { REDIS_URL: 'redis://env' })).toBe(
-      true
-    );
+    expect(hasRuntimeRedisConnection({ keyPrefix: 'novel:' })).toBe(false);
   });
 
-  it('空字符串 env 不会启用 Redis', () => {
-    const resolved = resolveRuntimeRedisConfig(undefined, {
-      REDIS_URL: '   ',
-      REDIS_HOST: '',
-    });
+  it('未配置连接信息不会启用 Redis', () => {
+    const resolved = resolveRuntimeRedisConfig(undefined);
 
     expect(resolved).toBeUndefined();
-    expect(hasRuntimeRedisConnection(undefined, { REDIS_URL: '   ' })).toBe(false);
+    expect(hasRuntimeRedisConnection(undefined)).toBe(false);
   });
 
-  it('host/port/password 可从 runtime 和 env 合并', () => {
-    const resolved = resolveRuntimeRedisConfig(
-      { host: 'redis.internal', keyPrefix: 'isr:' },
-      { REDIS_PORT: '6380', REDIS_PASSWORD: 'secret' }
-    );
+  it('host/port/password 只从 runtime.redis 读取', () => {
+    const resolved = resolveRuntimeRedisConfig({
+      host: 'redis.internal',
+      port: 6380,
+      password: 'secret',
+      keyPrefix: 'isr:',
+    });
 
     expect(resolved).toEqual({
       host: 'redis.internal',

@@ -24,7 +24,7 @@ export default {
   },
 
   runtime: {
-    site: process.env.SEO_BASE_URL ?? 'http://localhost:3000',
+    site: process.env.SITE_URL ?? 'http://localhost:3000',
     redis: {
       url: process.env.REDIS_URL,
       keyPrefix: 'hello-world:',

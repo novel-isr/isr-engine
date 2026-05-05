@@ -52,11 +52,10 @@ export class RedisInvalidationBus implements IsrInvalidationBus {
 
   constructor(config: RedisInvalidationBusConfig = {}) {
     this.config = {
-      url: config.url ?? process.env.REDIS_URL,
-      host: config.host ?? process.env.REDIS_HOST,
-      port:
-        config.port ?? (process.env.REDIS_PORT ? parseInt(process.env.REDIS_PORT, 10) : undefined),
-      password: config.password ?? process.env.REDIS_PASSWORD,
+      url: config.url,
+      host: config.host,
+      port: config.port,
+      password: config.password,
       keyPrefix: config.keyPrefix ?? 'isr:',
       channel: config.channel,
       connectTimeout: config.connectTimeout ?? 5_000,
@@ -127,7 +126,9 @@ export class RedisInvalidationBus implements IsrInvalidationBus {
         return;
       }
       if (!this.config.url && !this.config.host) {
-        this.logger.info('Redis invalidation bus disabled: no REDIS_URL/REDIS_HOST configured');
+        this.logger.info(
+          'Redis invalidation bus disabled: runtime.redis.url/host is not configured'
+        );
         return;
       }
 

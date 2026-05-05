@@ -36,7 +36,7 @@ export interface IsrCacheStore {
   delete(key: string): boolean;
   /** 清空（同步 L1 + 异步 L2）*/
   clear(): void;
-  /** L1 中遍历 —— 用于 tag 失效与 admin 端点 */
+  /** L1 中遍历 —— 用于 tag 失效与内部测试/诊断 */
   entries(): IterableIterator<[string, IsrCachedEntry]>;
   keys(): IterableIterator<string>;
   size: number;

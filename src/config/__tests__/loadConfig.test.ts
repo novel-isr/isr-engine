@@ -6,8 +6,8 @@
  *   2) TS 文件通过 esbuild 编译 → .isr-cache/ssr.config.<hash>.mjs
  *   3) 缓存：默认命中；forceReload 绕过缓存 + 绕过 ESM 模块缓存
  *   4) 编译产物按 mtime 写入（mtime 不变 → 复用缓存；mtime 变 → 重新编译）
- *   5) 文件不存在 → 返回 engine 默认配置
- *   6) 加载失败 → 日志打印 + 返回默认
+ *   5) 文件不存在 → fail fast
+ *   6) 加载失败 → fail fast
  */
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { promises as fs } from 'node:fs';
@@ -73,14 +73,10 @@ describe('loadConfig —— 文件扩展名优先级', () => {
     }
   });
 
-  it('无任何配置 → 返回默认 config（renderMode:isr, cache.strategy:memory）', async () => {
+  it('无任何配置 → fail fast，避免隐藏默认配置', async () => {
     const cwd = await mkTmpDir();
     try {
-      const config = await loadConfig({ cwd });
-      expect(config.renderMode).toBe('isr');
-      expect(config.cache.strategy).toBe('memory');
-      expect(config.cache.ttl).toBe(3600);
-      expect(config.revalidate).toBe(3600);
+      await expect(loadConfig({ cwd })).rejects.toThrow('未找到配置文件');
     } finally {
       await rmTmp(cwd);
     }
@@ -187,8 +183,7 @@ export const runtime = {
   site: 'https://www.example.com',
   services: {
     api: 'https://api.example.com',
-    i18n: 'https://i18n.example.com',
-    seo: 'https://seo.example.com',
+    telemetry: 'https://telemetry.example.com',
   },
   redis: { url: 'redis://127.0.0.1:6379', keyPrefix: 'app:' },
   rateLimit: { windowMs: 60000, max: 200 },
@@ -203,8 +198,7 @@ export default {
       const config = await loadConfig({ cwd });
       expect(config.runtime?.site).toBe('https://www.example.com');
       expect(config.runtime?.services?.api).toBe('https://api.example.com');
-      expect(config.runtime?.services?.i18n).toBe('https://i18n.example.com');
-      expect(config.runtime?.services?.seo).toBe('https://seo.example.com');
+      expect(config.runtime?.services?.telemetry).toBe('https://telemetry.example.com');
       expect(config.runtime?.redis?.keyPrefix).toBe('app:');
       expect(config.runtime?.rateLimit?.max).toBe(200);
     } finally {
@@ -340,11 +334,11 @@ describe('loadConfig —— TS 编译产物缓存复用', () => {
   });
 });
 
-describe('loadConfig —— 加载失败兜底', () => {
-  it('.ts 顶层抛错 → 回退默认配置（不崩）', async () => {
+describe('loadConfig —— 加载失败', () => {
+  it('.ts 顶层抛错 → fail fast，不回退隐藏默认配置', async () => {
     const cwd = await mkTmpDir();
     try {
-      // 顶层执行就 throw —— 动态 import 会 reject，loadConfig 应兜底
+      // 顶层执行就 throw —— 动态 import 会 reject，loadConfig 应直接暴露错误
       await writeConfig(
         cwd,
         'ssr.config.ts',
@@ -353,21 +347,16 @@ throw new Error('intentional boom at module top level');
 export default { renderMode: 'ssr', revalidate: 1 };
 `
       );
-      const config = await loadConfig({ cwd });
-      // 加载失败走默认配置
-      expect(config.renderMode).toBe('isr');
-      expect(config.cache.strategy).toBe('memory');
+      await expect(loadConfig({ cwd })).rejects.toThrow('加载配置文件失败');
     } finally {
       await rmTmp(cwd);
     }
   });
 
-  it('空 cwd 目录 → 使用默认配置不崩', async () => {
+  it('空 cwd 目录 → fail fast', async () => {
     const cwd = await mkTmpDir();
     try {
-      const config = await loadConfig({ cwd });
-      expect(config.renderMode).toBe('isr');
-      expect(config.cache.strategy).toBe('memory');
+      await expect(loadConfig({ cwd })).rejects.toThrow('未找到配置文件');
     } finally {
       await rmTmp(cwd);
     }
