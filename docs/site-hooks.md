@@ -11,7 +11,7 @@
 
 ```ts
 // ssr.config.ts
-import { defineIsrConfig } from '@novel-isr/engine';
+import { defineIsrConfig } from '@novel-isr/engine/config';
 import fallbackLocal from './src/config/site-fallback-local.json';
 
 export default defineIsrConfig({

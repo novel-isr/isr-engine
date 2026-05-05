@@ -78,7 +78,7 @@ export function App({ url }: { url: URL }) {
 
 ```ts
 // ssr.config.ts —— 启动期 / 部署期 / 平台级配置
-import { defineIsrConfig } from '@novel-isr/engine';
+import { defineIsrConfig } from '@novel-isr/engine/config';
 import fallbackLocal from './src/config/site-fallback-local.json';
 
 export default defineIsrConfig({

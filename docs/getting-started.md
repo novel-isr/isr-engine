@@ -60,7 +60,7 @@ export const { routes } = defineRoutes({
 ## 5. `ssr.config.ts` —— 平台配置和渲染模式
 
 ```ts
-import { defineIsrConfig } from '@novel-isr/engine';
+import { defineIsrConfig } from '@novel-isr/engine/config';
 import fallbackLocal from './src/config/site-fallback-local.json';
 
 export default defineIsrConfig({
@@ -299,7 +299,7 @@ export async function seo({ params }: { params: { id: string } }) {
 
 ```ts
 // ssr.config.ts
-import { defineIsrConfig } from '@novel-isr/engine';
+import { defineIsrConfig } from '@novel-isr/engine/config';
 
 export default defineIsrConfig({
   renderMode: 'isr',

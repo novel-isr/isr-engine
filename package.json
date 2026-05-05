@@ -58,6 +58,11 @@
       "import": "./dist/defaults/runtime/defineSiteHooks.js",
       "require": "./dist/defaults/runtime/defineSiteHooks.cjs"
     },
+    "./config": {
+      "types": "./dist/config/defineConfig.d.ts",
+      "import": "./dist/config/defineConfig.js",
+      "require": "./dist/config/defineConfig.cjs"
+    },
     "./adapters/observability": {
       "import": "./dist/adapters/observability/index.js",
       "require": "./dist/adapters/observability/index.cjs",

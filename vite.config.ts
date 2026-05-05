@@ -32,6 +32,9 @@ export default defineConfig({
         'adapters/runtime/index': resolve(__dirname, 'src/adapters/runtime/index.ts'),
         // <Image> 组件 —— 用户在 React 树里引用
         'image/index': resolve(__dirname, 'src/runtime/Image.tsx'),
+        // ssr.config.ts 专用轻量入口。不要从根入口导入 config helper，否则会把
+        // CLI/plugin/esbuild 等 Node 工具链带进消费方 RSC/SSG bundle。
+        'config/defineConfig': resolve(__dirname, 'src/config/defineConfig.ts'),
         // ─── 消费方加载的辅助入口（无 'use client' / plugin-rsc 依赖） ────────
         // defineSiteHooks / auto-observability 是纯逻辑模块，预打包成 ESM JS
         // 让消费方 Vite scanner 能正常发现 React 等依赖（不再 alias 到源文件）。

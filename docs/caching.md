@@ -76,7 +76,7 @@ if (!response.ok) {
 
 ```ts
 // ssr.config.ts
-import { defineRuntimeConfig } from '@novel-isr/engine';
+import { defineRuntimeConfig } from '@novel-isr/engine/config';
 
 export const runtime = defineRuntimeConfig({
   redis: process.env.REDIS_URL
@@ -111,7 +111,7 @@ export const runtime = defineRuntimeConfig({
 
 ```ts
 // ssr.config.ts
-import { defineRuntimeConfig } from '@novel-isr/engine';
+import { defineRuntimeConfig } from '@novel-isr/engine/config';
 
 export const runtime = defineRuntimeConfig({
   redis: {
