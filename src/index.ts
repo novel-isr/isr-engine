@@ -19,6 +19,7 @@ export { createISRApp } from './app/createISRApp';
 export { loadConfig } from './config/loadConfig';
 export { getEnv } from './config/getEnv';
 export { isDev, isProd } from './config/getStatus';
+export { defineIsrConfig, defineRuntimeConfig } from './config/defineConfig';
 
 // ========== 服务管理 ==========
 export { startAppServer, shutdownServer } from './server/manager';

@@ -103,22 +103,14 @@ describe('resolveClientObservabilityOptions', () => {
     });
   });
 
-  it('can read first-party endpoint paths from the http exporter', () => {
+  it('events/errors endpoint 是第一方 HTTP 上报的唯一真值源', () => {
     const options = resolveClientObservabilityOptions({
       runtime: {
         services: { telemetry: 'https://admin.example.com' },
         telemetry: {
           app: 'app',
-          exporters: [
-            {
-              type: 'http',
-              name: 'admin-server',
-              endpoints: {
-                events: '/api/telemetry/events',
-                errors: '/api/telemetry/errors',
-              },
-            },
-          ],
+          events: { endpoint: '/api/telemetry/events' },
+          errors: { endpoint: '/api/telemetry/errors' },
         },
       },
     });

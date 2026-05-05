@@ -76,9 +76,9 @@ if (!response.ok) {
 
 ```ts
 // ssr.config.ts
-import type { ISRConfig } from '@novel-isr/engine';
+import { defineRuntimeConfig } from '@novel-isr/engine';
 
-export const runtime = {
+export const runtime = defineRuntimeConfig({
   redis: process.env.REDIS_URL
     ? {
         url: process.env.REDIS_URL,
@@ -86,7 +86,7 @@ export const runtime = {
         invalidationChannel: 'isr:invalidate',
       }
     : undefined,
-} satisfies NonNullable<ISRConfig['runtime']>;
+});
 ```
 
 ### 行为细节
@@ -111,16 +111,16 @@ export const runtime = {
 
 ```ts
 // ssr.config.ts
-import type { ISRConfig } from '@novel-isr/engine';
+import { defineRuntimeConfig } from '@novel-isr/engine';
 
-export const runtime = {
+export const runtime = defineRuntimeConfig({
   redis: {
     url: process.env.REDIS_URL,
     keyPrefix: 'isr:',
     // 可选；默认 `${keyPrefix}invalidate`
     invalidationChannel: 'isr:invalidate',
   },
-} satisfies NonNullable<ISRConfig['runtime']>;
+});
 ```
 
 注意：Pub/Sub 不是持久化队列。Redis 短暂不可用或 pod 断线期间的失效事件可能丢失，

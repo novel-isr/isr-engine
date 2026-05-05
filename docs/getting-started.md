@@ -60,59 +60,45 @@ export const { routes } = defineRoutes({
 ## 5. `ssr.config.ts` —— 平台配置和渲染模式
 
 ```ts
-import type { ISRConfig } from '@novel-isr/engine';
+import { defineIsrConfig } from '@novel-isr/engine';
 import fallbackLocal from './src/config/site-fallback-local.json';
 
-export const runtime = {
-  site: process.env.SEO_BASE_URL ?? 'http://localhost:3000',
-  services: {
-    api: process.env.API_URL ?? 'http://localhost:8080',
-    i18n: process.env.I18N_API_URL ?? process.env.API_URL ?? 'http://localhost:8080',
-    seo: process.env.SEO_API_URL ?? process.env.API_URL ?? 'http://localhost:8080',
-    telemetry: process.env.TELEMETRY_API_URL ?? process.env.API_URL ?? 'http://localhost:8080',
-  },
-  redis: process.env.REDIS_URL ? { url: process.env.REDIS_URL, keyPrefix: 'isr:' } : undefined,
-  telemetry: {
-    app: 'novel-rating',
-    events: { endpoint: '/api/observability/analytics' },
-    errors: { endpoint: '/api/observability/errors' },
-    webVitals: { enabled: true },
-    exporters: [
-      {
-        type: 'http',
-        name: 'admin-server',
-        required: true,
-        endpoints: {
-          events: '/api/observability/analytics',
-          errors: '/api/observability/errors',
-        },
-      },
-    ],
-  },
-  rateLimit: {
-    store: 'memory',
-    windowMs: 60_000,
-    max: 200,
-    trustProxy: false,
-    sendHeaders: true,
-  },
-  i18n: {
-    locales: fallbackLocal.site.locales,
-    defaultLocale: fallbackLocal.site.defaultLocale,
-    endpoint: '/api/i18n/{locale}/manifest',
-    fallbackLocal: fallbackLocal.i18n.strings,
-    ttl: 60_000,
-  },
-  seo: {
-    endpoint: '/api/seo?path={pathname}',
-    fallbackLocal: fallbackLocal.seo.entries,
-    ttl: 60_000,
-  },
-} satisfies NonNullable<ISRConfig['runtime']>;
-
-export default {
+export default defineIsrConfig({
   renderMode: 'isr',
-  runtime,
+  runtime: {
+    site: process.env.SEO_BASE_URL ?? 'http://localhost:3000',
+    services: {
+      api: process.env.API_URL ?? 'http://localhost:8080',
+      i18n: process.env.I18N_API_URL ?? process.env.API_URL ?? 'http://localhost:8080',
+      seo: process.env.SEO_API_URL ?? process.env.API_URL ?? 'http://localhost:8080',
+      telemetry: process.env.TELEMETRY_API_URL ?? process.env.API_URL ?? 'http://localhost:8080',
+    },
+    redis: process.env.REDIS_URL ? { url: process.env.REDIS_URL, keyPrefix: 'isr:' } : undefined,
+    telemetry: {
+      app: 'novel-rating',
+      events: { endpoint: '/api/observability/analytics' },
+      errors: { endpoint: '/api/observability/errors' },
+      webVitals: { enabled: true },
+    },
+    rateLimit: {
+      windowMs: 60_000,
+      max: 200,
+      trustProxy: false,
+      sendHeaders: true,
+    },
+    i18n: {
+      locales: fallbackLocal.site.locales,
+      defaultLocale: fallbackLocal.site.defaultLocale,
+      endpoint: '/api/i18n/{locale}/manifest',
+      fallbackLocal: fallbackLocal.i18n.strings,
+      ttl: 60_000,
+    },
+    seo: {
+      endpoint: '/api/seo?path={pathname}',
+      fallbackLocal: fallbackLocal.seo.entries,
+      ttl: 60_000,
+    },
+  },
   routes: {
     '/': { mode: 'isr', ttl: 60, staleWhileRevalidate: 300 },
     '/about': 'ssg',
@@ -122,7 +108,7 @@ export default {
   ssg: { routes: ['/about'] },
   isr: { revalidate: 3600 },
   cache: { strategy: 'memory', ttl: 3600 },
-} satisfies ISRConfig;
+});
 ```
 
 `ssr.config.ts` 是启动期单一配置入口。路由渲染模式、Redis、Sentry、限流、A/B、站点 URL 都放这里。
@@ -278,17 +264,6 @@ export const runtime = {
     events: { endpoint: '/api/observability/analytics' },
     errors: { endpoint: '/api/observability/errors' },
     webVitals: { enabled: true },
-    exporters: [
-      {
-        type: 'http',
-        name: 'admin-server',
-        required: true,
-        endpoints: {
-          events: '/api/observability/analytics',
-          errors: '/api/observability/errors',
-        },
-      },
-    ],
   },
   rateLimit: {
     store: 'memory',
@@ -324,9 +299,9 @@ export async function seo({ params }: { params: { id: string } }) {
 
 ```ts
 // ssr.config.ts
-import type { ISRConfig } from '@novel-isr/engine';
+import { defineIsrConfig } from '@novel-isr/engine';
 
-export default {
+export default defineIsrConfig({
   renderMode: 'isr',
   routes: {
     '/':         { mode: 'isr', ttl: 60, staleWhileRevalidate: 300 },
@@ -335,7 +310,7 @@ export default {
     '/login':    'ssr',
   },
   ssg: { routes: ['/about'], concurrent: 3 },
-} satisfies ISRConfig;
+});
 ```
 
 ## 三种使用层级

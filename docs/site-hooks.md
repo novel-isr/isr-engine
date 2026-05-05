@@ -2,7 +2,7 @@
 
 成熟项目建议把配置分成两层：
 
-- `ssr.config.ts`：启动期 / 部署期 / 平台级配置，例如 `runtime.site`、`runtime.services`、`runtime.i18n`、`runtime.seo`、Redis、endpoint observability、限流、A/B testing、路由渲染模式。
+- `ssr.config.ts`：启动期 / 部署期 / 平台级配置，例如 `runtime.site`、`runtime.services`、`runtime.i18n`、`runtime.seo`、Redis、telemetry endpoint、限流、A/B testing、路由渲染模式。
 - `src/entry.server.tsx`：请求期 hooks，例如用户、租户、灰度上下文、`beforeRequest`、`onError`。
 
 第一性原则是：会影响整个运行时拓扑的东西放配置文件；会依赖本次请求的东西放 server entry。
@@ -11,58 +11,47 @@
 
 ```ts
 // ssr.config.ts
-import type { ISRConfig } from '@novel-isr/engine';
+import { defineIsrConfig } from '@novel-isr/engine';
 import fallbackLocal from './src/config/site-fallback-local.json';
 
-export const runtime = {
-  site: process.env.SEO_BASE_URL ?? 'http://localhost:3000',
-  services: {
-    api: process.env.API_URL ?? 'http://localhost:8080',
-    i18n: process.env.I18N_API_URL ?? process.env.API_URL ?? 'http://localhost:8080',
-    seo: process.env.SEO_API_URL ?? process.env.API_URL ?? 'http://localhost:8080',
-    telemetry: process.env.TELEMETRY_API_URL ?? process.env.API_URL ?? 'http://localhost:8080',
-  },
-  redis: process.env.REDIS_URL ? { url: process.env.REDIS_URL, keyPrefix: 'isr:' } : undefined,
-  telemetry: {
-    app: 'novel-rating',
-    errors: { endpoint: '/api/observability/errors' },
-    exporters: [
-      {
-        type: 'http',
-        name: 'admin-server',
-        required: true,
-        endpoints: { errors: '/api/observability/errors' },
-      },
-    ],
-  },
-  rateLimit: {
-    store: process.env.RATE_LIMIT_STORE === 'redis' ? 'redis' : 'memory',
-    windowMs: 60_000,
-    max: 200,
-    lruMax: 10_000,
-    trustProxy: process.env.TRUST_PROXY === '1',
-    sendHeaders: true,
-  },
-  experiments: {
-    'hero-style': { variants: ['classic', 'bold'], weights: [50, 50] },
-  },
-  i18n: {
-    locales: fallbackLocal.site.locales,
-    defaultLocale: fallbackLocal.site.defaultLocale,
-    endpoint: '/api/i18n/{locale}/manifest',
-    fallbackLocal: fallbackLocal.i18n.strings,
-    ttl: 60_000,
-  },
-  seo: {
-    endpoint: '/api/seo?path={pathname}',
-    fallbackLocal: fallbackLocal.seo.entries,
-    ttl: 60_000,
-  },
-} satisfies NonNullable<ISRConfig['runtime']>;
-
-export default {
+export default defineIsrConfig({
   renderMode: 'isr',
-  runtime,
+  runtime: {
+    site: process.env.SEO_BASE_URL ?? 'http://localhost:3000',
+    services: {
+      api: process.env.API_URL ?? 'http://localhost:8080',
+      i18n: process.env.I18N_API_URL ?? process.env.API_URL ?? 'http://localhost:8080',
+      seo: process.env.SEO_API_URL ?? process.env.API_URL ?? 'http://localhost:8080',
+      telemetry: process.env.TELEMETRY_API_URL ?? process.env.API_URL ?? 'http://localhost:8080',
+    },
+    redis: process.env.REDIS_URL ? { url: process.env.REDIS_URL, keyPrefix: 'isr:' } : undefined,
+    telemetry: {
+      app: 'novel-rating',
+      errors: { endpoint: '/api/observability/errors' },
+    },
+    rateLimit: {
+      windowMs: 60_000,
+      max: 200,
+      lruMax: 10_000,
+      trustProxy: process.env.TRUST_PROXY === '1',
+      sendHeaders: true,
+    },
+    experiments: {
+      'hero-style': { variants: ['classic', 'bold'], weights: [50, 50] },
+    },
+    i18n: {
+      locales: fallbackLocal.site.locales,
+      defaultLocale: fallbackLocal.site.defaultLocale,
+      endpoint: '/api/i18n/{locale}/manifest',
+      fallbackLocal: fallbackLocal.i18n.strings,
+      ttl: 60_000,
+    },
+    seo: {
+      endpoint: '/api/seo?path={pathname}',
+      fallbackLocal: fallbackLocal.seo.entries,
+      ttl: 60_000,
+    },
+  },
   routes: {
     '/': { mode: 'isr', ttl: 60, staleWhileRevalidate: 300 },
     '/about': 'ssg',
@@ -72,7 +61,7 @@ export default {
   ssg: { routes: ['/about'] },
   isr: { revalidate: 3600 },
   cache: { strategy: 'memory', ttl: 3600 },
-} satisfies ISRConfig;
+});
 ```
 
 ```tsx
@@ -250,7 +239,7 @@ fire-and-forget 上报到 telemetry endpoint，再执行业务自定义 `onError
 如果同时配置 `runtime.telemetry.integrations.sentry.enabled=true`，Sentry 会作为同一条
 telemetry pipeline 的第三方平台集成执行；integration 失败不会阻断 endpoint 上报或业务 `onError`。
 如果不希望第一方 endpoint 和 Sentry 双写，显式关闭 `runtime.telemetry.errors`
-或移除 http exporter 的 errors endpoint。
+即可。
 
 `readCookie()` 由 engine 提供，兼容 Web `Request` 和 Node/Express header record。
 业务不要自己写正则解析 cookie，避免在 SSR、dev server、middleware 和测试环境之间

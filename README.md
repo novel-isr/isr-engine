@@ -78,56 +78,53 @@ export function App({ url }: { url: URL }) {
 
 ```ts
 // ssr.config.ts —— 启动期 / 部署期 / 平台级配置
-import type { ISRConfig } from '@novel-isr/engine';
+import { defineIsrConfig } from '@novel-isr/engine';
 import fallbackLocal from './src/config/site-fallback-local.json';
 
-export const runtime = {
-  site: process.env.SEO_BASE_URL ?? 'http://localhost:3000',
-  services: {
-    api: process.env.API_URL ?? 'http://localhost:8080',
-    i18n: process.env.I18N_API_URL ?? process.env.API_URL ?? 'http://localhost:8080',
-    seo: process.env.SEO_API_URL ?? process.env.API_URL ?? 'http://localhost:8080',
-    telemetry: process.env.TELEMETRY_API_URL ?? process.env.API_URL ?? 'http://localhost:8080',
-  },
-  redis: process.env.REDIS_URL ? { url: process.env.REDIS_URL, keyPrefix: 'isr:' } : undefined,
-  telemetry: {
-    integrations: {
-      sentry: {
-        enabled: process.env.SENTRY_ENABLED === 'true',
-        dsn: process.env.SENTRY_DSN,
+export default defineIsrConfig({
+  renderMode: 'isr',
+  runtime: {
+    site: process.env.SEO_BASE_URL ?? 'http://localhost:3000',
+    services: {
+      api: process.env.API_URL ?? 'http://localhost:8080',
+      i18n: process.env.I18N_API_URL ?? process.env.API_URL ?? 'http://localhost:8080',
+      seo: process.env.SEO_API_URL ?? process.env.API_URL ?? 'http://localhost:8080',
+      telemetry: process.env.TELEMETRY_API_URL ?? process.env.API_URL ?? 'http://localhost:8080',
+    },
+    redis: process.env.REDIS_URL ? { url: process.env.REDIS_URL, keyPrefix: 'isr:' } : undefined,
+    telemetry: {
+      app: 'novel-rating',
+      events: { endpoint: '/api/observability/analytics' },
+      errors: { endpoint: '/api/observability/errors' },
+      integrations: {
+        sentry: {
+          enabled: process.env.SENTRY_ENABLED === 'true',
+          dsn: process.env.SENTRY_DSN,
+        },
       },
     },
+    rateLimit: {
+      windowMs: 60_000,
+      max: 200,
+      trustProxy: process.env.TRUST_PROXY === '1',
+      sendHeaders: true,
+    },
+    experiments: {
+      'hero-style': { variants: ['classic', 'bold'], weights: [50, 50] },
+    },
+    i18n: {
+      locales: fallbackLocal.site.locales,
+      defaultLocale: fallbackLocal.site.defaultLocale,
+      endpoint: '/api/i18n/{locale}/manifest',
+      fallbackLocal: fallbackLocal.i18n.strings,
+      ttl: 60_000,
+    },
+    seo: {
+      endpoint: '/api/seo?path={pathname}',
+      fallbackLocal: fallbackLocal.seo.entries,
+      ttl: 60_000,
+    },
   },
-  // 默认是进程内 memory LRU；分布式限流需显式 store='redis' 并配置 runtime.redis/REDIS_URL。
-  rateLimit: {
-    store: process.env.RATE_LIMIT_STORE === 'redis' ? 'redis' : 'memory',
-    windowMs: 60_000, // 固定窗口长度：1 分钟
-    max: 200, // 每个客户端 IP 在窗口内最多 200 次请求
-    lruMax: 10_000,
-    trustProxy: process.env.TRUST_PROXY === '1',
-    sendHeaders: true,
-  },
-  // 字段名沿用 experimentation platform 术语；业务侧可理解为 A/B testing。
-  experiments: {
-    'hero-style': { variants: ['classic', 'bold'], weights: [50, 50] },
-  },
-  i18n: {
-    locales: fallbackLocal.site.locales,
-    defaultLocale: fallbackLocal.site.defaultLocale,
-    endpoint: '/api/i18n/{locale}/manifest',
-    fallbackLocal: fallbackLocal.i18n.strings,
-    ttl: 60_000,
-  },
-  seo: {
-    endpoint: '/api/seo?path={pathname}',
-    fallbackLocal: fallbackLocal.seo.entries,
-    ttl: 60_000,
-  },
-} satisfies NonNullable<ISRConfig['runtime']>;
-
-export default {
-  renderMode: 'isr',
-  runtime,
   routes: {
     '/': { mode: 'isr', ttl: 60, staleWhileRevalidate: 300 },
     '/about': 'ssg',
@@ -137,7 +134,7 @@ export default {
   ssg: { routes: ['/about'] },
   isr: { revalidate: 3600 },
   cache: { strategy: 'memory', ttl: 3600 },
-} satisfies ISRConfig;
+});
 ```
 
 ```ts
@@ -172,7 +169,7 @@ export default {
 ```
 
 浏览器埋点和错误上报由 engine 内置收口，业务不用重写导航监听或全局错误监听。
-部署期只在 `ssr.config.ts` 配 telemetry endpoint、采样、批量策略和 exporter：
+部署期只在 `ssr.config.ts` 配 telemetry endpoint、采样、批量策略和 integration：
 
 ```ts
 // ssr.config.ts
@@ -194,17 +191,6 @@ export default {
         captureResourceErrors: true,
       },
       webVitals: { enabled: true },
-      exporters: [
-        {
-          type: 'http',
-          name: 'admin-server',
-          required: true,
-          endpoints: {
-            events: '/api/observability/analytics',
-            errors: '/api/observability/errors',
-          },
-        },
-      ],
       integrations: {
         sentry: {
           enabled: process.env.SENTRY_ENABLED === 'true',
@@ -219,13 +205,14 @@ export default {
 ```
 
 设计边界：`isr-engine` 不 import 业务 SDK，也不绑定 Sentry/Datadog/自研采集端；
-第一方链路只根据 endpoint 使用内置 HTTP uploader。Sentry 是
+第一方 HTTP 链路只看 `events.endpoint` / `errors.endpoint`，不再在 exporter 里重复配置同一个地址。
+Sentry 是
 `runtime.telemetry.integrations.sentry` 里的完整第三方平台集成，不降级成普通 HTTP exporter；
-它可和第一方 endpoint 同时 fan-out 使用，也可通过关闭 http exporter 做二选一。
+它可和第一方 endpoint 同时使用，也可通过关闭 `events/errors` 做二选一。
 engine 不做隐式替换，失败不会影响渲染或其它上报。
 `@novel-isr/analytics` 和 `@novel-isr/error-reporting`
 是独立 SDK，给非 engine 应用或自定义集成使用。
-完整说明见 [docs/observability.md](./docs/observability.md#前端埋点与错误上报)。
+完整说明见 [docs/observability.md](./docs/observability.md)。
 
 完事。
 

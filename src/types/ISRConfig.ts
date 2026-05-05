@@ -178,18 +178,6 @@ export interface RuntimeTelemetryWebVitalsConfig {
   enabled?: boolean;
 }
 
-export interface RuntimeTelemetryHttpExporterConfig {
-  type: 'http';
-  name?: string;
-  /** true 表示该 exporter 失败应进入重试语义；默认 true */
-  required?: boolean;
-  endpoints?: {
-    events?: string;
-    errors?: string;
-    traces?: string;
-  };
-}
-
 export interface RuntimeTelemetrySentryIntegrationConfig {
   /** 是否启用 Sentry integration；默认 false，避免仅配置环境变量就隐式接入第三方平台 */
   enabled?: boolean;
@@ -216,7 +204,6 @@ export interface RuntimeTelemetryOtelExporterConfig {
 }
 
 export type RuntimeTelemetryExporterConfig =
-  | RuntimeTelemetryHttpExporterConfig
   | RuntimeTelemetryDatadogExporterConfig
   | RuntimeTelemetryOtelExporterConfig;
 
@@ -225,6 +212,7 @@ export interface RuntimeTelemetryIntegrationsConfig {
    * Sentry 是完整第三方监控平台 integration，不是普通 HTTP endpoint。
    *
    * 语义：
+   * - events/errors endpoint 是第一方 HTTP 上报的唯一真值源。
    * - integration 和 exporters 可同时启用，用于迁移、双写或第一方数据仓库 + Sentry 排障并存。
    * - 如果只想二选一，显式关闭不需要的 exporter 或 integration；engine 不做隐式替换。
    *
@@ -249,11 +237,12 @@ export interface RuntimeTelemetryConfig {
   /** Web Vitals 配置；false 表示关闭性能指标 */
   webVitals?: false | RuntimeTelemetryWebVitalsConfig;
   /**
-   * 上报出口。http 是第一方 endpoint；其它纯 HTTP/collector 出口也放这里。
+   * 额外 collector 出口。第一方 HTTP 上报不放这里，唯一真值源是
+   * events.endpoint / errors.endpoint，避免同一个地址配置两遍。
    * Sentry 这类完整 SDK 平台放 integrations，不降级为普通 exporter。
    */
   exporters?: readonly RuntimeTelemetryExporterConfig[];
-  /** 第三方平台集成，和第一方 custom/http telemetry 并列挂在 telemetry 下面 */
+  /** 第三方平台集成，和第一方 endpoint telemetry 并列挂在 telemetry 下面 */
   integrations?: RuntimeTelemetryIntegrationsConfig;
 }
 

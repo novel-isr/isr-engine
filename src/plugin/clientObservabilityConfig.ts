@@ -5,7 +5,6 @@ import type {
   RuntimeConfig,
   RuntimeTelemetryConfig,
   RuntimeTelemetryEndpointOptions,
-  RuntimeTelemetryHttpExporterConfig,
 } from '../types';
 import type { BrowserObservabilityOptions } from '../defaults/runtime/browserObservability';
 
@@ -37,31 +36,25 @@ export function resolveClientObservabilityOptions({
   const serviceOrigin =
     runtime?.services?.telemetry ?? runtime?.services?.api ?? runtime?.api ?? '';
   const app = config.app ?? readPackageName(root) ?? 'novel-isr-app';
-  const httpExporter = findHttpExporter(config);
 
   return {
     app,
     release: config.release ?? env.VITE_APP_VERSION ?? env.APP_VERSION ?? env.npm_package_version,
     environment: config.environment ?? env.NODE_ENV ?? env.MODE,
     includeQueryString: config.includeQueryString,
-    analytics: resolveAnalyticsConfig(config, serviceOrigin, httpExporter),
-    errorReporting: resolveErrorReportingConfig(config, serviceOrigin, httpExporter),
+    analytics: resolveAnalyticsConfig(config, serviceOrigin),
+    errorReporting: resolveErrorReportingConfig(config, serviceOrigin),
   };
 }
 
 function resolveAnalyticsConfig(
   config: RuntimeTelemetryConfig,
-  serviceOrigin: string,
-  httpExporter?: RuntimeTelemetryHttpExporterConfig
+  serviceOrigin: string
 ): BrowserObservabilityOptions['analytics'] {
   if (config.events === false) return false;
   const events = config.events ?? {};
   return {
-    endpoint: resolveEndpoint(
-      events,
-      serviceOrigin,
-      httpExporter?.endpoints?.events ?? DEFAULT_ANALYTICS_PATH
-    ),
+    endpoint: resolveEndpoint(events, serviceOrigin, DEFAULT_ANALYTICS_PATH),
     sampleRate: events.sampleRate,
     batchSize: events.batchSize,
     flushIntervalMs: events.flushIntervalMs,
@@ -75,17 +68,12 @@ function resolveAnalyticsConfig(
 
 function resolveErrorReportingConfig(
   config: RuntimeTelemetryConfig,
-  serviceOrigin: string,
-  httpExporter?: RuntimeTelemetryHttpExporterConfig
+  serviceOrigin: string
 ): BrowserObservabilityOptions['errorReporting'] {
   if (config.errors === false) return false;
   const errors = config.errors ?? {};
   return {
-    endpoint: resolveEndpoint(
-      errors,
-      serviceOrigin,
-      httpExporter?.endpoints?.errors ?? DEFAULT_ERRORS_PATH
-    ),
+    endpoint: resolveEndpoint(errors, serviceOrigin, DEFAULT_ERRORS_PATH),
     sampleRate: errors.sampleRate,
     batchSize: errors.batchSize,
     flushIntervalMs: errors.flushIntervalMs,
@@ -108,14 +96,6 @@ function joinEndpoint(origin: string, endpoint: string): string {
   if (/^https?:\/\//i.test(endpoint)) return endpoint;
   if (!origin) return endpoint.startsWith('/') ? endpoint : `/${endpoint}`;
   return `${origin.replace(/\/+$/, '')}/${endpoint.replace(/^\/+/, '')}`;
-}
-
-function findHttpExporter(
-  config: RuntimeTelemetryConfig
-): RuntimeTelemetryHttpExporterConfig | undefined {
-  return config.exporters?.find(
-    (exporter): exporter is RuntimeTelemetryHttpExporterConfig => exporter.type === 'http'
-  );
 }
 
 function readPackageName(root: string): string | undefined {

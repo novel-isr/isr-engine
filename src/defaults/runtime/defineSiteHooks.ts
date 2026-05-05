@@ -716,11 +716,8 @@ function createServerErrorEndpointReporter(
   if (config === false || !config || config.errors === false) return null;
 
   const errors = config.errors ?? {};
-  const httpExporter = config.exporters?.find(exporter => exporter.type === 'http');
   const endpoint = resolveAdminUrl(
-    errors.endpoint ??
-      (httpExporter?.type === 'http' ? httpExporter.endpoints?.errors : undefined) ??
-      '/api/observability/errors',
+    errors.endpoint ?? '/api/observability/errors',
     {},
     ctx,
     {
