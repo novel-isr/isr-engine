@@ -253,13 +253,13 @@ export async function startProductionServer(options: StartOptions): Promise<void
   const { createImageMiddleware } = await import('@/plugin/createImagePlugin');
   app.use(createImageMiddleware({ remoteAllowlist: [] }));
 
-  // ISR 缓存：ssr.config.ts runtime.redis 优先；未配置时 createAutoCacheStore 读取 REDIS_URL/REDIS_HOST。
+  // ISR 缓存：runtime.redis 可只声明 keyPrefix；REDIS_URL/REDIS_HOST 的判定由 engine 统一解析。
   const { createAutoCacheStore } = await import('@/cache/createAutoCacheStore');
   const { RedisInvalidationBus } = await import('@/cache/RedisInvalidationBus');
-  const redisCfg = runtime?.redis;
-  const hasRedisConfig = Boolean(
-    redisCfg?.url || redisCfg?.host || process.env.REDIS_URL || process.env.REDIS_HOST
-  );
+  const { hasRuntimeRedisConnection, resolveRuntimeRedisConfig } =
+    await import('@/config/resolveRuntimeRedis');
+  const redisCfg = resolveRuntimeRedisConfig(runtime?.redis);
+  const hasRedisConfig = hasRuntimeRedisConnection(runtime?.redis);
   const cache = createIsrCacheHandler(config, {
     store: createAutoCacheStore({
       redisUrl: redisCfg?.url,
@@ -311,7 +311,7 @@ export async function startProductionServer(options: StartOptions): Promise<void
   }
 
   // SEO 端点：sitemap.xml + robots.txt（基于 SEOEngine 自动生成）
-  // —— 用户配置 seo.baseUrl 或注入 SEO_BASE_URL 环境变量后才有内容
+  // —— 用户配置 runtime.site 或注入 SEO_BASE_URL 环境变量后才有内容
   const { SEOEngine } = await import('@/engine/seo/SEOEngine');
   const { resolveSeoConfig } = await import('@/engine/seo/resolveSeoConfig');
   const seoCfg = resolveSeoConfig(config);

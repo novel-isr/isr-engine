@@ -79,13 +79,10 @@ if (!response.ok) {
 import { defineRuntimeConfig } from '@novel-isr/engine/config';
 
 export const runtime = defineRuntimeConfig({
-  redis: process.env.REDIS_URL
-    ? {
-        url: process.env.REDIS_URL,
-        keyPrefix: 'isr:',
-        invalidationChannel: 'isr:invalidate',
-      }
-    : undefined,
+  redis: {
+    keyPrefix: 'isr:',
+    invalidationChannel: 'isr:invalidate',
+  },
 });
 ```
 
@@ -100,7 +97,7 @@ export const runtime = defineRuntimeConfig({
 ### Cross-pod invalidation
 
 `revalidate.ts` 用 `Symbol.for(globalThis)` 注册本进程 invalidator；engine 在检测到
-`ssr.config.ts runtime.redis`、`REDIS_URL` 或 `REDIS_HOST` 时，会额外启用 Redis Pub/Sub
+`ssr.config.ts runtime.redis.url/host`、非空 `REDIS_URL` 或 `REDIS_HOST` 时，会额外启用 Redis Pub/Sub
 失效广播：
 
 - 当前 pod 先清本地 L1，再 publish `{ kind, value }`
@@ -115,7 +112,6 @@ import { defineRuntimeConfig } from '@novel-isr/engine/config';
 
 export const runtime = defineRuntimeConfig({
   redis: {
-    url: process.env.REDIS_URL,
     keyPrefix: 'isr:',
     // 可选；默认 `${keyPrefix}invalidate`
     invalidationChannel: 'isr:invalidate',

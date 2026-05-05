@@ -9,7 +9,6 @@ describe('defineConfig helpers', () => {
   it('defineIsrConfig 返回原对象并保留 ISRConfig 类型约束', () => {
     const config = {
       renderMode: 'isr',
-      cache: { strategy: 'memory', ttl: 3600 },
       runtime: {
         telemetry: {
           events: { endpoint: '/events' },

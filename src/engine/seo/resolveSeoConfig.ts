@@ -19,7 +19,7 @@ export interface ResolvedSeoConfig {
   baseUrl: string;
   /** 解析来源（便于 admin / 日志） */
   baseUrlSource:
-    | 'config'
+    | 'runtime.site'
     | 'env:SEO_BASE_URL'
     | 'env:PUBLIC_BASE_URL'
     | 'env:BASE_URL'
@@ -29,7 +29,7 @@ export interface ResolvedSeoConfig {
 
 /**
  * 按以下顺序解析 baseUrl：
- *   1. user config `seo.baseUrl`
+ *   1. runtime.site
  *   2. env `SEO_BASE_URL` → `PUBLIC_BASE_URL` → `BASE_URL`
  *   3. dev 模式：`http://localhost:${server.port||3000}`
  *   4. prod 且未配置：返回空串（SEOEngine 在调用 generateSitemap 时报错给出修复提示）
@@ -43,9 +43,9 @@ export function resolveSeoConfig(config: ISRConfig): ResolvedSeoConfig {
   let baseUrl = '';
   let source: ResolvedSeoConfig['baseUrlSource'] = 'unset';
 
-  if (userSeo.baseUrl) {
-    baseUrl = userSeo.baseUrl;
-    source = 'config';
+  if (config.runtime?.site) {
+    baseUrl = config.runtime.site;
+    source = 'runtime.site';
   } else if (process.env.SEO_BASE_URL) {
     baseUrl = process.env.SEO_BASE_URL;
     source = 'env:SEO_BASE_URL';
@@ -64,7 +64,7 @@ export function resolveSeoConfig(config: ISRConfig): ResolvedSeoConfig {
 
   if (enabled && !baseUrl) {
     logger.warn(
-      '⚠️  SEO baseUrl 未配置：sitemap 端点将报错。请在 ssr.config.ts 设置 seo.baseUrl 或注入 SEO_BASE_URL / PUBLIC_BASE_URL / BASE_URL 环境变量。'
+      '⚠️  SEO baseUrl 未配置：sitemap 端点将报错。请在 ssr.config.ts 设置 runtime.site 或注入 SEO_BASE_URL / PUBLIC_BASE_URL / BASE_URL 环境变量。'
     );
   } else if (enabled) {
     logger.info(`🎯 SEO baseUrl=${baseUrl}（来源：${source}）`);

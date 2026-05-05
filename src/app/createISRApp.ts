@@ -1,8 +1,9 @@
 import type { ISRConfig, RenderModeType } from '@/types';
 import ISREngine from '@/engine/ISREngine';
+import { normalizeEngineConfig } from '@/config/normalizeEngineConfig';
 
 function normalizeAppConfig(raw: ISRConfig): ISRConfig {
-  return { ...raw };
+  return normalizeEngineConfig(raw);
 }
 
 /**
@@ -15,14 +16,8 @@ function validateConfig(config: ISRConfig): void {
     throw new Error(`无效的 renderMode: "${config.renderMode}"，可选值: ${validModes.join(', ')}`);
   }
 
-  if (!config.cache) {
-    config.cache = { strategy: 'memory', ttl: 3600 };
-  }
   if (!config.seo) {
     config.seo = { enabled: true, generateSitemap: true, generateRobots: true };
-  }
-  if (!config.renderMode) {
-    config.renderMode = 'isr';
   }
 }
 

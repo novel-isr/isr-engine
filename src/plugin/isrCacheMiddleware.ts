@@ -52,6 +52,7 @@ import { resolveAdminConfig, createAdminAuthMiddleware } from '@/server/adminCon
 import { stripRscClientReferenceCacheSuffix } from './devAssetRequestMiddleware';
 import { createAutoCacheStore } from '@/cache/createAutoCacheStore';
 import { RedisInvalidationBus } from '@/cache/RedisInvalidationBus';
+import { hasRuntimeRedisConnection, resolveRuntimeRedisConfig } from '@/config/resolveRuntimeRedis';
 import { readCookie } from '@/utils/cookie';
 
 const logger = Logger.getInstance();
@@ -253,8 +254,7 @@ function matchRouteRule(path: string, rules: RoutingRules): ResolvedRouteRule {
 }
 
 function hasRedisRuntime(config: Partial<ISRConfig> | undefined): boolean {
-  const redis = config?.runtime?.redis;
-  return Boolean(redis?.url || redis?.host || process.env.REDIS_URL || process.env.REDIS_HOST);
+  return hasRuntimeRedisConnection(config?.runtime?.redis);
 }
 
 function withRuntimeCacheOptions(
@@ -263,7 +263,7 @@ function withRuntimeCacheOptions(
 ): IsrCacheMiddlewareOptions {
   if (options.store) return options;
 
-  const redis = config?.runtime?.redis;
+  const redis = resolveRuntimeRedisConfig(config?.runtime?.redis);
   const hasRedis = hasRedisRuntime(config);
   return {
     ...options,

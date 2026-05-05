@@ -2,7 +2,7 @@
  * ISR 引擎 —— ISR/SSG/Fallback 编排层（plugin-rsc 模式）
  *
  * 职责范围：
- *   - 配置归一化（补齐 defaults，收口 runtime.site → seo.baseUrl）
+ *   - 配置归一化（补齐 defaults，收口 cache / routes / renderMode）
  *   - 项目扫描（路由发现，供 virtual:isr-routes 或 CLI stats 使用）
  *   - SEO 引擎初始化（sitemap / robots 生成）
  *   - 启动 Express 服务器 + 挂载 admin 路由（/health / sitemap.xml / robots.txt）
@@ -18,7 +18,9 @@
 import fs from 'node:fs';
 import path from 'node:path';
 
-import type { ISRConfig } from '../types';
+import type { ISRConfig, ResolvedISRConfig } from '../types';
+export { normalizeEngineConfig } from '@/config/normalizeEngineConfig';
+import { normalizeEngineConfig } from '@/config/normalizeEngineConfig';
 import { Logger } from '../logger/Logger';
 import { CacheCleanup } from '../utils/CacheCleanup';
 import { isDev } from '../config/getStatus';
@@ -33,30 +35,9 @@ import { registerInvalidator } from '@/rsc/revalidate';
 
 import type { Express } from 'express';
 
-/** 归一化默认值，避免缺省配置导致启动失败；导出以便单测覆盖。 */
-export function normalizeEngineConfig(config: ISRConfig): ISRConfig {
-  const normalized: ISRConfig = { ...config };
-
-  if (!normalized.renderMode) {
-    normalized.renderMode = 'isr';
-  }
-  if (!normalized.routes) {
-    normalized.routes = {};
-  }
-
-  if (normalized.runtime?.site) {
-    normalized.seo = {
-      ...normalized.seo,
-      baseUrl: normalized.seo?.baseUrl ?? normalized.runtime.site,
-    };
-  }
-
-  return normalized;
-}
-
 export default class ISREngine {
   private readonly logger: Logger = Logger.getInstance();
-  private readonly config: ISRConfig;
+  private readonly config: ResolvedISRConfig;
   private readonly resolvedSeo: ResolvedSeoConfig;
   private readonly middlewareComposer: MiddlewareComposer;
   private readonly seoEngine: SEOEngine;

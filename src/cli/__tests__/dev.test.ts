@@ -23,7 +23,7 @@ vi.mock('../../app/createISRApp', () => ({
 import { startDevServer } from '../dev';
 import { loadConfig } from '../../config/loadConfig';
 import { createISRApp } from '../../app/createISRApp';
-import type { ISRConfig } from '../../types';
+import type { ISRConfig, ResolvedISRConfig } from '../../types';
 
 type SignalHandler = (signal: NodeJS.Signals) => void;
 
@@ -32,12 +32,13 @@ interface MockApp {
   shutdown: ReturnType<typeof vi.fn>;
 }
 
-function makeConfig(overrides: Partial<ISRConfig> = {}): ISRConfig {
+function makeConfig(overrides: Partial<ISRConfig> = {}): ResolvedISRConfig {
   return {
     renderMode: 'isr',
+    routes: {},
     cache: { strategy: 'memory', ttl: 3600 },
     ...overrides,
-  };
+  } as ResolvedISRConfig;
 }
 
 let processOnSpy: ReturnType<typeof vi.spyOn>;
@@ -154,7 +155,7 @@ describe('startDevServer —— 配置 + CLI 参数', () => {
     const baseConfig = makeConfig();
     const { server: _, ...rest } = baseConfig;
     void _;
-    const config = rest as ISRConfig;
+    const config = rest as unknown as ResolvedISRConfig;
     vi.mocked(loadConfig).mockResolvedValue(config);
     vi.mocked(createISRApp).mockResolvedValue({
       start: async () => ({ url: 'http://localhost:3000' }),

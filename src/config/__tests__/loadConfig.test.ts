@@ -6,7 +6,7 @@
  *   2) TS 文件通过 esbuild 编译 → .isr-cache/ssr.config.<hash>.mjs
  *   3) 缓存：默认命中；forceReload 绕过缓存 + 绕过 ESM 模块缓存
  *   4) 编译产物按 mtime 写入（mtime 不变 → 复用缓存；mtime 变 → 重新编译）
- *   5) 文件不存在 → 返回硬编码默认配置
+ *   5) 文件不存在 → 返回 engine 默认配置
  *   6) 加载失败 → 日志打印 + 返回默认
  */
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
@@ -73,12 +73,12 @@ describe('loadConfig —— 文件扩展名优先级', () => {
     }
   });
 
-  it('无任何配置 → 返回默认 config（renderMode:isr, cache.strategy:no-cache）', async () => {
+  it('无任何配置 → 返回默认 config（renderMode:isr, cache.strategy:memory）', async () => {
     const cwd = await mkTmpDir();
     try {
       const config = await loadConfig({ cwd });
       expect(config.renderMode).toBe('isr');
-      expect(config.cache.strategy).toBe('no-cache');
+      expect(config.cache.strategy).toBe('memory');
       expect(config.cache.ttl).toBe(3600);
       expect(config.seo?.enabled).toBe(true);
     } finally {
@@ -130,6 +130,26 @@ export default {
       );
       const config = await loadConfig({ cwd });
       expect(config.cache.ttl).toBe(3000);
+    } finally {
+      await rmTmp(cwd);
+    }
+  });
+
+  it('业务配置可省略 cache，engine 自动补齐 memory 默认值', async () => {
+    const cwd = await mkTmpDir();
+    try {
+      await writeConfig(
+        cwd,
+        'ssr.config.ts',
+        `
+export default {
+  renderMode: 'isr' as const,
+  isr: { revalidate: 120 },
+};
+`
+      );
+      const config = await loadConfig({ cwd });
+      expect(config.cache).toEqual({ strategy: 'memory', ttl: 120 });
     } finally {
       await rmTmp(cwd);
     }
@@ -315,7 +335,7 @@ export default { renderMode: 'ssr', cache: { strategy: 'memory', ttl: 1 } };
       const config = await loadConfig({ cwd });
       // 加载失败走默认配置
       expect(config.renderMode).toBe('isr');
-      expect(config.cache.strategy).toBe('no-cache');
+      expect(config.cache.strategy).toBe('memory');
     } finally {
       await rmTmp(cwd);
     }
@@ -326,7 +346,7 @@ export default { renderMode: 'ssr', cache: { strategy: 'memory', ttl: 1 } };
     try {
       const config = await loadConfig({ cwd });
       expect(config.renderMode).toBe('isr');
-      expect(config.cache.strategy).toBe('no-cache');
+      expect(config.cache.strategy).toBe('memory');
     } finally {
       await rmTmp(cwd);
     }

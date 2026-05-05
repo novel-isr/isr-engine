@@ -7,13 +7,14 @@ import fs from 'fs';
 import { pathToFileURL } from 'url';
 import { createHash } from 'crypto';
 import * as esbuild from 'esbuild';
-import { ISRConfig } from '@/types';
+import type { ISRConfig, ResolvedISRConfig } from '@/types';
 import { Logger } from '@/logger/Logger';
+import { normalizeEngineConfig } from './normalizeEngineConfig';
 
 // 支持的配置文件列表
 const CONFIG_FILES = ['ssr.config.ts', 'ssr.config.js', 'ssr.config.mjs', 'ssr.config.cjs'];
 
-let cachedConfig: ISRConfig | null = null;
+let cachedConfig: ResolvedISRConfig | null = null;
 
 export interface LoadConfigOptions {
   forceReload?: boolean;
@@ -24,7 +25,7 @@ export interface LoadConfigOptions {
  * 加载项目配置
  * 支持运行时动态更新和加载 ssr.config.ts 等配置文件
  */
-export async function loadConfig(options: LoadConfigOptions = {}): Promise<ISRConfig> {
+export async function loadConfig(options: LoadConfigOptions = {}): Promise<ResolvedISRConfig> {
   const { forceReload = false, cwd = process.cwd() } = options;
   const logger = Logger.getInstance();
 
@@ -43,8 +44,9 @@ export async function loadConfig(options: LoadConfigOptions = {}): Promise<ISRCo
         // 动态导入
         const module = await import(/* @vite-ignore */ importPath);
         const config = module.default || module;
+        const normalized = normalizeEngineConfig(config as ISRConfig);
 
-        cachedConfig = config as ISRConfig;
+        cachedConfig = normalized;
         logger.info(`成功加载配置: ${filePath}`);
 
         return cachedConfig;
@@ -57,12 +59,8 @@ export async function loadConfig(options: LoadConfigOptions = {}): Promise<ISRCo
 
   logger.info('未找到配置文件，使用默认配置');
 
-  return {
+  return normalizeEngineConfig({
     renderMode: 'isr',
-    cache: {
-      strategy: 'no-cache',
-      ttl: 3600,
-    },
     seo: {
       enabled: true,
       generateSitemap: true,
@@ -72,7 +70,7 @@ export async function loadConfig(options: LoadConfigOptions = {}): Promise<ISRCo
       port: 3000,
       protocol: 'http1.1',
     },
-  };
+  });
 }
 
 async function resolveImportPath(

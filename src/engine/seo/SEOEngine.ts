@@ -97,7 +97,7 @@ export class SEOEngine {
     // SEO 必须显式配置 baseUrl，禁止静默降级到占位域名
     if (!this.config.baseUrl) {
       throw new Error(
-        'SEO baseUrl 未配置，无法生成 sitemap。请设置 ssr.config.seo.baseUrl 或 SEO_BASE_URL / PUBLIC_BASE_URL 环境变量。'
+        'SEO baseUrl 未配置，无法生成 sitemap。请设置 ssr.config.ts runtime.site 或 SEO_BASE_URL / PUBLIC_BASE_URL 环境变量。'
       );
     }
     const sitemap = new SitemapStream({ hostname: this.config.baseUrl });

@@ -30,6 +30,7 @@ import type { Request, Response, NextFunction } from 'express';
 import { LRUCache } from 'lru-cache';
 import { logger } from '../logger';
 import type { RuntimeRateLimitConfig, RuntimeRedisConfig } from '../types/ISRConfig';
+import { hasRuntimeRedisConnection, resolveRuntimeRedisConfig } from '@/config/resolveRuntimeRedis';
 
 export interface RateLimitOptions {
   /** 窗口毫秒；默认 60_000（1 分钟） */
@@ -184,17 +185,6 @@ export function createRedisRateLimitStore(redis: RedisLikeClient): RateLimitStor
   };
 }
 
-function hasRedisRuntimeConfig(redis?: RuntimeRedisConfig): boolean {
-  return Boolean(redis?.url || redis?.host || process.env.REDIS_URL || process.env.REDIS_HOST);
-}
-
-function envRedisPort(): number | undefined {
-  const raw = process.env.REDIS_PORT;
-  if (!raw) return undefined;
-  const parsed = parseInt(raw, 10);
-  return Number.isFinite(parsed) ? parsed : undefined;
-}
-
 const VALID_STORE_MODES = ['memory', 'redis', 'auto'] as const;
 type StoreMode = (typeof VALID_STORE_MODES)[number];
 
@@ -305,7 +295,9 @@ export async function createRateLimitStoreFromRuntime(
   redis?: RuntimeRedisConfig
 ): Promise<ResolvedRateLimitStore> {
   const mode = resolveStoreMode(rateLimit.store);
-  const shouldUseRedis = mode === 'redis' || (mode === 'auto' && hasRedisRuntimeConfig(redis));
+  const resolvedRedis = resolveRuntimeRedisConfig(redis);
+  const hasRedis = hasRuntimeRedisConnection(redis);
+  const shouldUseRedis = mode === 'redis' || (mode === 'auto' && hasRedis);
 
   if (!shouldUseRedis) {
     return {
@@ -314,7 +306,7 @@ export async function createRateLimitStoreFromRuntime(
     };
   }
 
-  if (!hasRedisRuntimeConfig(redis)) {
+  if (!hasRedis) {
     logger.warn(
       '[rate-limit]',
       "runtime.rateLimit.store='redis' 但未检测到 runtime.redis / REDIS_URL / REDIS_HOST，回退到 memory"
@@ -328,11 +320,11 @@ export async function createRateLimitStoreFromRuntime(
   try {
     const mod = await import('ioredis');
     const Redis = mod.default;
-    const url = redis?.url ?? process.env.REDIS_URL;
-    const host = redis?.host ?? process.env.REDIS_HOST ?? '127.0.0.1';
-    const port = redis?.port ?? envRedisPort() ?? 6379;
-    const password = redis?.password ?? process.env.REDIS_PASSWORD;
-    const keyPrefix = rateLimit.keyPrefix ?? `${redis?.keyPrefix ?? 'isr:'}rate-limit:`;
+    const url = resolvedRedis?.url;
+    const host = resolvedRedis?.host ?? '127.0.0.1';
+    const port = resolvedRedis?.port ?? 6379;
+    const password = resolvedRedis?.password;
+    const keyPrefix = rateLimit.keyPrefix ?? `${resolvedRedis?.keyPrefix ?? 'isr:'}rate-limit:`;
     const options: import('ioredis').RedisOptions = {
       host,
       port,

@@ -67,7 +67,7 @@ export interface RuntimeExperimentConfig {
 export interface RuntimeRateLimitConfig {
   /**
    * 限流状态存储。**默认 'auto'：开箱即用**——
-   * 已配置 runtime.redis（或 REDIS_URL / REDIS_HOST 环境变量）就自动用 Redis，
+   * 已配置 runtime.redis.url/host（或 REDIS_URL / REDIS_HOST 环境变量）就自动用 Redis，
    * 否则进程内 memory。消费方一般无需显式设置 store。
    *
    * - 'auto'（默认）：检测到 Redis 配置 → redis backend；否则 memory backend。
@@ -138,9 +138,9 @@ export interface RuntimeSeoConfig {
 export interface RuntimeServicesConfig {
   /** 默认后端 API origin；业务数据、admin 配置、mock fixture 未拆服务时都走这里 */
   api?: string;
-  /** i18n 字典下发 origin；不配置时回退到 api */
+  /** i18n 字典下发 origin；不配置时由 engine 回退到 api */
   i18n?: string;
-  /** SEO 配置下发 origin；不配置时回退到 api */
+  /** SEO 配置下发 origin；不配置时由 engine 回退到 api */
   seo?: string;
   /** telemetry 上报 origin；不配置时回退到 api，同源部署可留空 */
   telemetry?: string;
@@ -268,7 +268,7 @@ export interface RuntimeConfig {
   /**
    * 站点入口限流。
    *
-   * 默认 store='auto'：已配置 runtime.redis 时自动用 Redis 做分布式限流，
+   * 默认 store='auto'：检测到 Redis 连接时自动用 Redis 做分布式限流，
    * 否则用进程内 memory。消费方一般无需显式设置 store。
    * 多实例生产环境仍应优先使用 CDN/WAF/API Gateway 做第一层限流。
    */
@@ -277,7 +277,7 @@ export interface RuntimeConfig {
   experiments?: Record<string, RuntimeExperimentConfig>;
   /** i18n 字典源配置；请求期加载由 engine 默认 SiteHooks 消费 */
   i18n?: RuntimeI18nConfig;
-  /** 页面 SEO 元数据源配置；不要和 ISRConfig 顶层 seo.baseUrl 混淆 */
+  /** 页面 SEO 元数据源配置；站点 canonical/sitemap base URL 统一来自 runtime.site */
   seo?: RuntimeSeoConfig;
   /**
    * telemetry 上报配置。engine 会把浏览器安全子集序列化到 client entry，
@@ -356,15 +356,21 @@ export interface ISRConfig {
    */
   runtime?: RuntimeConfig;
 
-  cache: {
-    strategy: CacheStrategyType;
-    ttl: number;
+  /**
+   * ISR HTTP response cache policy.
+   *
+   * Usually omit this. Engine defaults to memory LRU and automatically enables
+   * Redis L2 when runtime.redis or REDIS_URL/REDIS_HOST is available.
+   */
+  cache?: {
+    strategy?: CacheStrategyType;
+    ttl?: number;
   };
   /**
    * SEO 配置 —— 可选；缺省时 engine 启用默认行为：
    *   - enabled = true（dev/prod 都自动注入 sitemap.xml / robots.txt 路由）
    *   - baseUrl 解析顺序：
-   *       1) 此处显式 baseUrl
+   *       1) runtime.site
    *       2) 环境变量 SEO_BASE_URL → PUBLIC_BASE_URL → BASE_URL
    *       3) dev 模式：http://localhost:${server.port||3000}
    *       4) prod 模式且仍未拿到：保留空串（生成 sitemap 时报错并提示）
@@ -373,7 +379,6 @@ export interface ISRConfig {
     enabled?: boolean;
     generateSitemap?: boolean;
     generateRobots?: boolean;
-    baseUrl?: string;
   };
   server?: {
     ssl?: {
@@ -473,5 +478,14 @@ export interface ISRConfig {
      * 设 1.0 关闭（不推荐——会 mask 真实问题）。设 0 = 任何失败都 fail build。
      */
     failBuildThreshold?: number;
+  };
+}
+
+export interface ResolvedISRConfig extends ISRConfig {
+  renderMode: RenderModeType;
+  routes: Record<string, RouteRule>;
+  cache: {
+    strategy: CacheStrategyType;
+    ttl: number;
   };
 }

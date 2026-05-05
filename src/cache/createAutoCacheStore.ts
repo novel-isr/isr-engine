@@ -14,6 +14,7 @@ import {
 } from '../plugin/isrCacheStore';
 import { RedisCacheAdapter } from './RedisCacheAdapter';
 import { Logger } from '../logger/Logger';
+import { resolveRuntimeRedisConfig } from '@/config/resolveRuntimeRedis';
 
 const logger = Logger.getInstance();
 
@@ -34,8 +35,15 @@ export interface AutoCacheStoreOptions {
 
 export function createAutoCacheStore(opts: AutoCacheStoreOptions = {}): IsrCacheStore {
   // 优先级：显式参数（通常来自 ssr.config.ts runtime.redis）> 环境变量
-  const url = opts.redisUrl ?? process.env.REDIS_URL;
-  const host = opts.redisHost ?? process.env.REDIS_HOST;
+  const redisConfig = resolveRuntimeRedisConfig({
+    url: opts.redisUrl,
+    host: opts.redisHost,
+    port: opts.redisPort,
+    password: opts.redisPassword,
+    keyPrefix: opts.redisKeyPrefix,
+  });
+  const url = redisConfig?.url;
+  const host = redisConfig?.host;
   const max = opts.max ?? 1000;
 
   if (!url && !host) {
@@ -43,20 +51,16 @@ export function createAutoCacheStore(opts: AutoCacheStoreOptions = {}): IsrCache
     return createMemoryCacheStore({ max });
   }
 
-  const portRaw =
-    opts.redisPort ?? (process.env.REDIS_PORT ? parseInt(process.env.REDIS_PORT, 10) : undefined);
-  const password = opts.redisPassword ?? process.env.REDIS_PASSWORD;
-
   const redis = new RedisCacheAdapter({
     url,
     host,
-    port: portRaw ?? 6379,
-    password,
-    keyPrefix: opts.redisKeyPrefix ?? 'isr:',
+    port: redisConfig?.port ?? 6379,
+    password: redisConfig?.password,
+    keyPrefix: redisConfig?.keyPrefix ?? 'isr:',
     enableFallback: true, // Redis 挂了仍保有内存兜底
   });
   logger.info(
-    `🗂️  ISR cache backend: hybrid (L1 LRU + L2 Redis ${url ?? `${host}:${portRaw ?? 6379}`})`
+    `🗂️  ISR cache backend: hybrid (L1 LRU + L2 Redis ${url ?? `${host}:${redisConfig?.port ?? 6379}`})`
   );
   return createHybridCacheStore({
     redis,

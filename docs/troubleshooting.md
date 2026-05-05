@@ -7,7 +7,7 @@
 | 改了 Server Component 不生效 | RSC env HMR 偶尔失效 | `Ctrl+C` 重启 dev + `rm -rf node_modules/.vite` |
 | `Cannot read 'useState'` 等怪异水合错 | 双 React 实例（engine 与 app 解析到不同副本） | 已自动 dedupe；如仍出现，删 `node_modules/.vite` 重启 |
 | `Identifier 'RefreshRuntime' has already been declared` | 装了 `@vitejs/plugin-react` | 卸载它（plugin-rsc 已内置） |
-| `/sitemap.xml` 500 | 站点 base URL 未设 | dev 自动兜底；prod 在 `ssr.config.ts runtime.site`、`seo.baseUrl` 或 `SEO_BASE_URL` 配置 |
+| `/sitemap.xml` 500 | 站点 base URL 未设 | dev 自动兜底；prod 在 `ssr.config.ts runtime.site` 或 `SEO_BASE_URL` 配置 |
 | ISR 永远 MISS / 不进缓存 | 上游 API 失败，Server Component 调了 `markUncacheable` | 修复上游或不调 markUncacheable |
 | SSR 一直显示 `BYPASS` | 正常行为；SSR 每次实时渲染，永不写页面缓存 | 不需要修；用 ISR/SSG 才会 HIT |
 | dev inspector 里 i18n 是 `local-fallback` | API/i18n 服务未启动、`runtime.services.i18n/api` 不对，或远端返回非 2xx | 启动 API/i18n 服务，确认 `ssr.config.ts runtime.services.i18n` 和 `entry.server.tsx` loader 指向正确 |

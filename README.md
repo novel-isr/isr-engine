@@ -87,11 +87,9 @@ export default defineIsrConfig({
     site: process.env.SEO_BASE_URL ?? 'http://localhost:3000',
     services: {
       api: process.env.API_URL ?? 'http://localhost:8080',
-      i18n: process.env.I18N_API_URL ?? process.env.API_URL ?? 'http://localhost:8080',
-      seo: process.env.SEO_API_URL ?? process.env.API_URL ?? 'http://localhost:8080',
       telemetry: process.env.TELEMETRY_API_URL ?? process.env.API_URL ?? 'http://localhost:8080',
     },
-    redis: process.env.REDIS_URL ? { url: process.env.REDIS_URL, keyPrefix: 'isr:' } : undefined,
+    redis: { keyPrefix: 'isr:' },
     telemetry: {
       app: 'novel-rating',
       events: { endpoint: '/api/observability/analytics' },
@@ -407,19 +405,18 @@ getI18n('book.count', { count: 12 }); // 字典里写 "共 {count} 本书"
 - SSR / ISR / SSG：server 端按 cookie `locale` → `Accept-Language` → `defaultLocale` 协商 locale，远程字典走 TTL + SWR + 并发去重缓存；同一份 `intl` 进入 RSC payload，客户端水合不二次拉取。
 - 客户端导航：浏览器拉 `_.rsc`，payload 带最新 `intl`，engine 自动更新 `getI18n()` 的客户端存储。
 
-### rateLimit：默认 memory，显式 Redis 才分布式
+### rateLimit：默认 auto，有 Redis 连接才分布式
 
-`runtime.rateLimit` 是站点入口的应用层保护。默认 `store: 'memory'`，状态在当前
-Node 进程的 LRU 中，重启清空，多 pod 不共享；不会因为配置了 `runtime.redis` 就隐式改成
-Redis 限流。
+`runtime.rateLimit` 是站点入口的应用层保护。默认 `store: 'auto'`：engine 检测到
+`runtime.redis.url/host` 或非空 `REDIS_URL/REDIS_HOST` 就使用 Redis；否则使用进程内
+memory LRU。业务只需要声明窗口和阈值，不需要重复写环境变量判断。
 
 要开启分布式限流：
 
 ```ts
 runtime: {
-  redis: { url: process.env.REDIS_URL, keyPrefix: 'novel:' },
+  redis: { keyPrefix: 'novel:' },
   rateLimit: {
-    store: 'redis',
     windowMs: 60_000,
     max: 200,
     trustProxy: true,

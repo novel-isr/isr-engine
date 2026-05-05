@@ -69,11 +69,9 @@ export default defineIsrConfig({
     site: process.env.SEO_BASE_URL ?? 'http://localhost:3000',
     services: {
       api: process.env.API_URL ?? 'http://localhost:8080',
-      i18n: process.env.I18N_API_URL ?? process.env.API_URL ?? 'http://localhost:8080',
-      seo: process.env.SEO_API_URL ?? process.env.API_URL ?? 'http://localhost:8080',
       telemetry: process.env.TELEMETRY_API_URL ?? process.env.API_URL ?? 'http://localhost:8080',
     },
-    redis: process.env.REDIS_URL ? { url: process.env.REDIS_URL, keyPrefix: 'isr:' } : undefined,
+    redis: { keyPrefix: 'isr:' },
     telemetry: {
       app: 'novel-rating',
       events: { endpoint: '/api/observability/analytics' },
@@ -253,12 +251,10 @@ export const runtime = {
   site: process.env.SEO_BASE_URL ?? 'http://localhost:3000',
   services: {
     api: process.env.API_URL ?? 'http://localhost:8080',
-    i18n: process.env.I18N_API_URL ?? process.env.API_URL ?? 'http://localhost:8080',
-    seo: process.env.SEO_API_URL ?? process.env.API_URL ?? 'http://localhost:8080',
     telemetry: process.env.TELEMETRY_API_URL ?? process.env.API_URL ?? 'http://localhost:8080',
   },
 
-  redis: process.env.REDIS_URL ? { url: process.env.REDIS_URL, keyPrefix: 'isr:' } : undefined,
+  redis: { keyPrefix: 'isr:' },
   telemetry: {
     app: 'novel-rating',
     events: { endpoint: '/api/observability/analytics' },
@@ -266,7 +262,6 @@ export const runtime = {
     webVitals: { enabled: true },
   },
   rateLimit: {
-    store: 'memory',
     windowMs: 60_000,
     max: 200,
     trustProxy: false,
