@@ -69,13 +69,25 @@ export const runtime = {
     api: process.env.API_URL ?? 'http://localhost:8080',
     i18n: process.env.I18N_API_URL ?? process.env.API_URL ?? 'http://localhost:8080',
     seo: process.env.SEO_API_URL ?? process.env.API_URL ?? 'http://localhost:8080',
-    observability: process.env.OBSERVABILITY_API_URL ?? process.env.API_URL ?? 'http://localhost:8080',
+    telemetry: process.env.TELEMETRY_API_URL ?? process.env.API_URL ?? 'http://localhost:8080',
   },
   redis: process.env.REDIS_URL ? { url: process.env.REDIS_URL, keyPrefix: 'isr:' } : undefined,
-  observability: {
+  telemetry: {
     app: 'novel-rating',
-    analytics: { endpoint: '/api/observability/analytics', webVitals: true },
-    errorReporting: { endpoint: '/api/observability/errors' },
+    events: { endpoint: '/api/observability/analytics' },
+    errors: { endpoint: '/api/observability/errors' },
+    webVitals: { enabled: true },
+    exporters: [
+      {
+        type: 'http',
+        name: 'admin-server',
+        required: true,
+        endpoints: {
+          events: '/api/observability/analytics',
+          errors: '/api/observability/errors',
+        },
+      },
+    ],
   },
   rateLimit: {
     store: 'memory',
@@ -245,7 +257,7 @@ export default function PublishBookForm() {
 详细模式语义：[render-modes.md](./render-modes.md)。
 缓存与失效：[caching.md](./caching.md)。
 
-## 扩展平台配置（Redis / Sentry / 限流 / A/B）
+## 扩展平台配置（Redis / Telemetry / 限流 / A/B）
 
 继续写在 `ssr.config.ts` 的 `runtime`：
 
@@ -257,14 +269,26 @@ export const runtime = {
     api: process.env.API_URL ?? 'http://localhost:8080',
     i18n: process.env.I18N_API_URL ?? process.env.API_URL ?? 'http://localhost:8080',
     seo: process.env.SEO_API_URL ?? process.env.API_URL ?? 'http://localhost:8080',
-    observability: process.env.OBSERVABILITY_API_URL ?? process.env.API_URL ?? 'http://localhost:8080',
+    telemetry: process.env.TELEMETRY_API_URL ?? process.env.API_URL ?? 'http://localhost:8080',
   },
 
   redis: process.env.REDIS_URL ? { url: process.env.REDIS_URL, keyPrefix: 'isr:' } : undefined,
-  observability: {
+  telemetry: {
     app: 'novel-rating',
-    analytics: { endpoint: '/api/observability/analytics', webVitals: true },
-    errorReporting: { endpoint: '/api/observability/errors' },
+    events: { endpoint: '/api/observability/analytics' },
+    errors: { endpoint: '/api/observability/errors' },
+    webVitals: { enabled: true },
+    exporters: [
+      {
+        type: 'http',
+        name: 'admin-server',
+        required: true,
+        endpoints: {
+          events: '/api/observability/analytics',
+          errors: '/api/observability/errors',
+        },
+      },
+    ],
   },
   rateLimit: {
     store: 'memory',

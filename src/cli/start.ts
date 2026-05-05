@@ -251,17 +251,20 @@ export async function startProductionServer(options: StartOptions): Promise<void
   });
   app.use(cache);
 
-  // Sentry：可选第三方服务端 vendor。runtime.sentry 仅用于把 DSN 映射给 auto adapter；
-  // 默认 endpoint 观测走 runtime.observability，不依赖 Sentry SDK。
-  if (runtime?.sentry?.dsn) {
-    process.env.SENTRY_DSN = runtime.sentry.dsn;
-    if (runtime.sentry.tracesSampleRate !== undefined) {
-      process.env.SENTRY_TRACES_SAMPLE_RATE = String(runtime.sentry.tracesSampleRate);
+  // Telemetry exporters：Sentry 是 runtime.telemetry.exporters 里的一个出口；
+  // engine core 不静态依赖 @sentry/node，只把配置映射给 auto adapter 做 optional import。
+  const sentryExporter = runtime?.telemetry
+    ? runtime.telemetry.exporters?.find(exporter => exporter.type === 'sentry')
+    : undefined;
+  if (sentryExporter?.type === 'sentry' && sentryExporter.dsn) {
+    process.env.SENTRY_DSN = sentryExporter.dsn;
+    if (sentryExporter.tracesSampleRate !== undefined) {
+      process.env.SENTRY_TRACES_SAMPLE_RATE = String(sentryExporter.tracesSampleRate);
     }
-    if (runtime.sentry.environment) {
-      process.env.NODE_ENV = runtime.sentry.environment;
+    if (sentryExporter.environment) {
+      process.env.NODE_ENV = sentryExporter.environment;
     }
-    logger.info(`🛰️  Sentry DSN 来自 ssr.config.ts runtime`);
+    logger.info(`🛰️  Sentry exporter 来自 ssr.config.ts runtime.telemetry`);
   }
 
   // 缓存观测端点

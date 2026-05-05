@@ -12,15 +12,15 @@ describe('resolveClientObservabilityOptions', () => {
     await Promise.all(roots.splice(0).map(root => rm(root, { recursive: true, force: true })));
   });
 
-  it('returns null when runtime.observability is not configured', () => {
+  it('returns null when runtime.telemetry is not configured', () => {
     expect(resolveClientObservabilityOptions({ runtime: {} })).toBeNull();
   });
 
-  it('returns false when browser observability is explicitly disabled', () => {
-    expect(resolveClientObservabilityOptions({ runtime: { observability: false } })).toBe(false);
+  it('returns false when browser telemetry is explicitly disabled', () => {
+    expect(resolveClientObservabilityOptions({ runtime: { telemetry: false } })).toBe(false);
   });
 
-  it('serializes only browser-safe observability options and joins service origin', async () => {
+  it('serializes only browser-safe telemetry options and joins service origin', async () => {
     const root = await createRoot('novel-rating');
     const options = resolveClientObservabilityOptions({
       root,
@@ -30,27 +30,27 @@ describe('resolveClientObservabilityOptions', () => {
       } as NodeJS.ProcessEnv,
       runtime: {
         redis: { url: 'redis://secret@localhost:6379/0' },
-        sentry: { dsn: 'https://private@sentry.example/1' },
         services: {
           api: 'https://admin.example.com',
-          observability: 'https://rum.example.com',
+          telemetry: 'https://rum.example.com',
         },
-        observability: {
+        telemetry: {
           includeQueryString: false,
-          analytics: {
+          events: {
             endpoint: '/ingest/events',
             batchSize: 12,
             maxQueueSize: 120,
             retryBaseDelayMs: 500,
             retryMaxDelayMs: 5000,
           },
-          errorReporting: {
+          errors: {
             endpoint: '/ingest/errors',
             sampleRate: 0.5,
             maxQueueSize: 80,
             retryBaseDelayMs: 1000,
             retryMaxDelayMs: 10000,
           },
+          exporters: [{ type: 'sentry', dsn: 'https://private@sentry.example/1' }],
         },
       },
     });
@@ -88,7 +88,7 @@ describe('resolveClientObservabilityOptions', () => {
 
   it('uses same-origin default endpoints when service origin is empty', () => {
     const options = resolveClientObservabilityOptions({
-      runtime: { observability: { app: 'app' } },
+      runtime: { telemetry: { app: 'app' } },
     });
 
     if (!options) throw new Error('expected browser observability options');
@@ -98,6 +98,36 @@ describe('resolveClientObservabilityOptions', () => {
     });
     expect(options.errorReporting).toMatchObject({
       endpoint: '/api/observability/errors',
+    });
+  });
+
+  it('can read first-party endpoint paths from the http exporter', () => {
+    const options = resolveClientObservabilityOptions({
+      runtime: {
+        services: { telemetry: 'https://admin.example.com' },
+        telemetry: {
+          app: 'app',
+          exporters: [
+            {
+              type: 'http',
+              name: 'admin-server',
+              endpoints: {
+                events: '/api/telemetry/events',
+                errors: '/api/telemetry/errors',
+              },
+            },
+          ],
+        },
+      },
+    });
+
+    if (!options) throw new Error('expected browser telemetry options');
+
+    expect(options.analytics).toMatchObject({
+      endpoint: 'https://admin.example.com/api/telemetry/events',
+    });
+    expect(options.errorReporting).toMatchObject({
+      endpoint: 'https://admin.example.com/api/telemetry/errors',
     });
   });
 });

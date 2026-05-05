@@ -17,48 +17,19 @@
 
 engine request context 的 `traceId` 自动贯穿整个请求生命周期（从 `X-Request-Id`/`X-Trace-Id` 读入，无则生成），所有 hook 都能拿到。
 
-## Sentry / Datadog / OTel —— 多 vendor fan-out
+## Telemetry —— 统一上报配置
 
-Engine 不绑定任何 SDK，但提供**预制 hook 工厂**，避免每个项目重复写 span 模板。
-第三方 vendor 和第一方 endpoint 是两个层级：
+Engine 的公共配置只叫 `runtime.telemetry`。第一方 HTTP endpoint、Sentry、Datadog、
+OTel 都是同一条 telemetry pipeline 的 exporter，不再拆成 `runtime.observability`
+和 `runtime.sentry` 两套概念。
 
-- `runtime.observability`：第一方 endpoint，负责 browser analytics / browser error /
-  Server Action error / server-render error 的默认上报。
-- Sentry / Datadog / OTel：第三方 vendor，负责 issue grouping、source map、APM、
-  trace、告警等平台能力。
+第一性原则：
 
-多个 vendor 可以同时开启。engine 会 fan-out 调用，每个 vendor hook 都被隔离；
-某个 vendor 抛错不会阻断其它 vendor、第一方 endpoint 或业务 `entry.server.tsx`
-hooks。服务端最少配置如下：
-
-```ts
-// ssr.config.ts
-export default {
-  runtime: {
-    sentry: process.env.SENTRY_DSN
-      ? {
-          dsn: process.env.SENTRY_DSN,
-          tracesSampleRate: 0.1,
-          environment: process.env.NODE_ENV,
-        }
-      : undefined,
-  },
-};
-```
-
-也可以直接使用环境变量：
-
-```bash
-SENTRY_DSN=https://xxx@sentry.io/123
-DD_SERVICE=novel-rating
-OTEL_EXPORTER_OTLP_ENDPOINT=https://otel.example.com/v1/traces
-```
-
-## Endpoint 埋点与错误上报
-
-默认链路由 engine 内置 HTTP uploader 接管，不需要业务安装或 import SDK。第一性原则：
-渲染引擎只拥有生命周期和协议边界，真实上报端可以是 admin-server、Sentry 网关、Datadog
-网关或企业内部采集服务，因此配置只暴露 endpoint、采样、批量和隐私选项。
+- engine 拥有生命周期：首屏、导航、Web Vitals、全局错误、Server Action 失败、服务端渲染异常。
+- engine 不绑定 vendor SDK，也不 import 业务 SDK；它只根据 endpoint 和 exporter 配置工作。
+- endpoint 是具体上报地址，可以是相对路径或完整 URL；`services.telemetry` 是这些相对路径的 base URL。
+- Sentry / Datadog / OTel 是 exporter，用于 issue grouping、source map、APM、trace 和告警。
+- 多个 exporter 可以同时开启；非 required exporter 失败不会阻断 required endpoint、渲染或业务 hooks。
 
 `@novel-isr/analytics` 与 `@novel-isr/error-reporting` 是独立 SDK，给非 engine 应用或
 自定义前端使用；engine 自身不会动态 import 这些包，也不会把它们变成隐式依赖。
@@ -68,16 +39,15 @@ OTEL_EXPORTER_OTLP_ENDPOINT=https://otel.example.com/v1/traces
 export default {
   runtime: {
     services: {
-      observability: process.env.OBSERVABILITY_API_URL ?? 'https://admin.example.com',
+      telemetry: process.env.TELEMETRY_API_URL ?? 'https://admin.example.com',
     },
-    observability: {
+    telemetry: {
       app: 'novel-rating',
       environment: process.env.NODE_ENV,
       release: process.env.APP_VERSION,
       includeQueryString: false,
-      analytics: {
+      events: {
         endpoint: '/api/observability/analytics',
-        webVitals: true,
         sampleRate: 1,
         batchSize: 20,
         flushIntervalMs: 3000,
@@ -85,7 +55,7 @@ export default {
         retryBaseDelayMs: 1000,
         retryMaxDelayMs: 30000,
       },
-      errorReporting: {
+      errors: {
         endpoint: '/api/observability/errors',
         captureResourceErrors: true,
         sampleRate: 1,
@@ -95,6 +65,30 @@ export default {
         retryBaseDelayMs: 1000,
         retryMaxDelayMs: 30000,
       },
+      webVitals: { enabled: true },
+      exporters: [
+        {
+          type: 'http',
+          name: 'admin-server',
+          required: true,
+          endpoints: {
+            events: '/api/observability/analytics',
+            errors: '/api/observability/errors',
+          },
+        },
+        ...(process.env.SENTRY_DSN
+          ? [
+              {
+                type: 'sentry',
+                name: 'sentry',
+                required: false,
+                dsn: process.env.SENTRY_DSN,
+                tracesSampleRate: 0.1,
+                environment: process.env.NODE_ENV,
+              } as const,
+            ]
+          : []),
+      ],
     },
   },
 };
@@ -104,10 +98,10 @@ export default {
 
 - 首屏：engine endpoint uploader 上报一次初始 `page_view`。
 - 客户端导航：engine 拦截 `pushState` / `replaceState` / `popstate` 后上报 `page_view`。
-- Web Vitals：开启 `analytics.webVitals` 后采集 FCP、LCP、INP、CLS、TTFB。
+- Web Vitals：开启 `telemetry.webVitals.enabled` 后采集 FCP、LCP、INP、CLS、TTFB。
 - 全局错误：engine endpoint uploader 注册 `window.error` / `unhandledrejection`。
 - Server Action：action 返回 `{ ok:false }` 时上报 `source=server-action` 和 `actionId`。
-- 服务端渲染异常：`runtime.observability.errorReporting` 配置存在时，`onError`
+- 服务端渲染异常：`runtime.telemetry.errors` 配置存在时，`onError`
   会 fire-and-forget 上报 `source=server-render`，同时保留业务自定义 `onError`。
 
 生产约束：
@@ -116,19 +110,18 @@ export default {
 - 默认不会上报完整 query/hash；只有显式 `includeQueryString: true` 才上报 query。
 - 浏览器上报失败会回填有界队列，并用指数退避 + online 恢复重试，不影响水合、导航和用户交互。
 - 服务端错误上报是非阻塞 fire-and-forget；失败不会改变 SSR/ISR/RSC 的异常语义。
-- `src/entry.tsx beforeStart` 仍可接 Sentry 等第三方 SDK；`runtime.observability`
-  是平台默认收口，不是锁定供应商。
+- `src/entry.tsx beforeStart` 仍可接业务自定义 SDK；平台默认链路是 `runtime.telemetry`，
+  不是锁定供应商。
 
-### Sentry
+## Sentry / Datadog / OTel
 
-Sentry 是第三方错误监控 / APM 平台 adapter，不是 endpoint 默认链路。生产中可以：
+Sentry 是第三方错误监控 / APM 平台 exporter，不是单独的配置入口。生产中可以：
 
-- 只用 `runtime.observability`：打到 admin-server 或公司内部采集服务。
-- 同时接 Sentry：把 Sentry 当外部 vendor，用于 issue grouping、source map、告警和 trace。
+- 只用 `runtime.telemetry.exporters[{ type: 'http' }]`：打到 admin-server 或公司内部采集服务。
+- 同时接 Sentry：把 Sentry 当 `runtime.telemetry.exporters[{ type: 'sentry' }]` 外部出口。
 
 不要在 `src/entry.tsx` 重复手写同一份第一方 PV / error endpoint 上传；默认生命周期已经由
-`runtime.observability` 接管。浏览器侧如果要接 Sentry，应在 `entry.tsx` 初始化 Sentry
-并把 `onNavigate` / `onActionError` 作为第三方 breadcrumb / captureException 的补充链路。
+`runtime.telemetry` 接管。
 
 ```tsx
 // src/entry.server.tsx

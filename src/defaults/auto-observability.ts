@@ -60,7 +60,7 @@ export async function createAutoServerHooks(): Promise<AutoServerHooks> {
   if (activeHooks.length > 0) return composeAutoServerHooks(activeHooks);
 
   logger.info(
-    '🛰️  observability: 未检测到 SENTRY_DSN/DD_SERVICE/OTEL_EXPORTER_OTLP_ENDPOINT，跳过第三方服务端 adapter'
+    '🛰️  telemetry: 未检测到 SENTRY_DSN/DD_SERVICE/OTEL_EXPORTER_OTLP_ENDPOINT，跳过第三方服务端 adapter'
   );
   return {};
 }
@@ -134,9 +134,7 @@ async function loadSentry(dsn: string): Promise<AutoServerHooks> {
       environment: process.env.NODE_ENV ?? 'production',
     });
     const { createSentryServerHooks } = await loadObservability();
-    logger.info(
-      `🛰️  observability: Sentry auto-wired (DSN ${dsn.replace(/\/\/[^@]+@/, '//<key>@')})`
-    );
+    logger.info(`🛰️  telemetry: Sentry auto-wired (DSN ${dsn.replace(/\/\/[^@]+@/, '//<key>@')})`);
     return createSentryServerHooks({
       Sentry: Sentry as unknown as Parameters<typeof createSentryServerHooks>[0]['Sentry'],
     }) as AutoServerHooks;
@@ -157,7 +155,7 @@ async function loadDatadog(service: string): Promise<AutoServerHooks> {
       env: process.env.DD_ENV ?? process.env.NODE_ENV,
       version: process.env.DD_VERSION,
     }) as Parameters<typeof createDatadogServerHooks>[0]['tracer'];
-    logger.info(`🛰️  observability: Datadog auto-wired (service=${service})`);
+    logger.info(`🛰️  telemetry: Datadog auto-wired (service=${service})`);
     return createDatadogServerHooks({ tracer }) as AutoServerHooks;
   } catch (err) {
     logger.warn('🛰️  Datadog auto-wire 失败（dd-trace 未安装？）', err);
@@ -174,7 +172,7 @@ async function loadOtel(endpoint: string): Promise<AutoServerHooks> {
       };
     };
     const tracer = otelApi.trace.getTracer(process.env.OTEL_SERVICE_NAME ?? 'novel-isr-app');
-    logger.info(`🛰️  observability: OTel auto-wired (endpoint=${endpoint})`);
+    logger.info(`🛰️  telemetry: OTel auto-wired (endpoint=${endpoint})`);
     return createOtelServerHooks({ tracer }) as AutoServerHooks;
   } catch (err) {
     logger.warn('🛰️  OTel auto-wire 失败（@opentelemetry/api 未安装？）', err);

@@ -140,12 +140,12 @@ export interface ClientEntryHooks {
   /** Server Action 调用失败时调用 —— 适合错误上报 */
   onActionError?: (error: unknown, actionId: string) => void;
   /**
-   * 浏览器可观测性。engine 接管启动、导航和 Server Action 失败这些生命周期点；
-   * 具体上报只通过 ssr.config.ts runtime.observability 里的 endpoint。
+   * 浏览器 telemetry。engine 接管启动、导航和 Server Action 失败这些生命周期点；
+   * 具体上报只通过 ssr.config.ts runtime.telemetry 里的 endpoint。
    * engine 不 import `@novel-isr/analytics` / `@novel-isr/error-reporting`；
    * 这两个独立 SDK 只给非 engine 应用或业务自定义接入使用。
    */
-  observability?: false | BrowserObservabilityOptions;
+  telemetry?: false | BrowserObservabilityOptions;
   /**
    * 开发态渲染检查器。默认启用；业务如需完全隐藏可在 src/entry.tsx 返回
    * `{ devInspector: false }`。
@@ -159,8 +159,8 @@ export function defineClientEntry(hooks: ClientEntryHooks = {}): void {
 
 async function main(hooks: ClientEntryHooks): Promise<void> {
   const observability =
-    hooks.observability && hooks.observability !== false
-      ? await installBrowserObservability(hooks.observability)
+    hooks.telemetry && hooks.telemetry !== false
+      ? await installBrowserObservability(hooks.telemetry)
       : null;
 
   if (hooks.beforeStart) await hooks.beforeStart();

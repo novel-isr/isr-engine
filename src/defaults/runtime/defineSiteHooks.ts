@@ -2,7 +2,7 @@
  * defineSiteHooks —— 高阶 FaaS hooks 工厂（声明式配置 → 完整 ServerEntryHooks）
  *
  * 让用户的 src/entry.server.tsx 收紧到「只写请求期 hooks」。
- * 部署/平台配置（api/site/redis/sentry/rateLimit/experiments/i18n/seo/observability）放
+ * 部署/平台配置（api/site/redis/rateLimit/experiments/i18n/seo/telemetry）放
  * ssr.config.ts 的 runtime 字段；entry.server.tsx 只保留 beforeRequest / onError。
  * 注：experiments 是 experimentation platform 的通用字段名，业务侧可理解为 A/B testing。
  * 内部固化：
@@ -10,7 +10,7 @@
  *   - SEO 路由表 pattern → resolver
  *   - locale 检测（cookie → Accept-Language → 默认）
  *   - api/i18n/seo 远端 origin 从 ssr.config.ts runtime.services 注入
- *   - 服务端渲染错误打印 + runtime.observability endpoint 上报
+ *   - 服务端渲染错误打印 + runtime.telemetry errors endpoint 上报
  *
  * beforeRequest 的边界：
  *   - 它在每次 HTTP/RSC 请求进入渲染前执行。
@@ -45,7 +45,7 @@ export interface SiteRuntimeContext {
   api?: string;
   i18n?: string;
   seo?: string;
-  observability?: string;
+  telemetry?: string;
   site?: string;
 }
 
@@ -53,7 +53,7 @@ export interface RuntimeServices {
   api?: string;
   i18n?: string;
   seo?: string;
-  observability?: string;
+  telemetry?: string;
 }
 
 export type RuntimeServiceBase = string | ((ctx: SiteRuntimeContext) => string | null | undefined);
@@ -173,7 +173,7 @@ export interface SiteHooksConfig {
   /** SEO 路由表：path pattern（支持 `:param`）→ 静态 meta 或 remote loader */
   seo?: Record<string, SeoEntry | (() => Promise<PageSeoMeta | null> | PageSeoMeta | null)>;
   /**
-   * 错误回调。平台默认会先执行 console + runtime.observability endpoint 上报；
+   * 错误回调。平台默认会先执行 console + runtime.telemetry errors endpoint 上报；
    * 自定义 onError 作为业务补充回调追加执行，不会关闭平台默认上报。
    */
   onError?: (
@@ -434,7 +434,7 @@ function createSiteHooks(config: SiteHooksConfig, runtime: SiteRuntimeConfig): S
     api: api || undefined,
     i18n: services.i18n,
     seo: services.seo,
-    observability: services.observability,
+    telemetry: services.telemetry,
     site: site || undefined,
   };
   const fetchJson = async (path: string, baseUrl?: string): Promise<unknown> => {
@@ -712,19 +712,22 @@ function createServerErrorEndpointReporter(
   runtime: SiteRuntimeConfig,
   ctx: SiteRuntimeContext
 ): ((err: unknown, req: Request, errorCtx: { traceId: string; locale?: string }) => void) | null {
-  const config = runtime.observability;
-  if (config === false || !config || config.errorReporting === false) return null;
+  const config = runtime.telemetry;
+  if (config === false || !config || config.errors === false) return null;
 
-  const errorReporting = config.errorReporting ?? {};
+  const errors = config.errors ?? {};
+  const httpExporter = config.exporters?.find(exporter => exporter.type === 'http');
   const endpoint = resolveAdminUrl(
-    errorReporting.endpoint ?? '/api/observability/errors',
+    errors.endpoint ??
+      (httpExporter?.type === 'http' ? httpExporter.endpoints?.errors : undefined) ??
+      '/api/observability/errors',
     {},
     ctx,
     {
       baseUrl: runtimeCtx =>
-        runtimeCtx.services.observability ?? runtimeCtx.services.api ?? runtimeCtx.api,
+        runtimeCtx.services.telemetry ?? runtimeCtx.services.api ?? runtimeCtx.api,
     },
-    'observability'
+    'telemetry'
   );
   if (!endpoint) return null;
 
@@ -859,7 +862,7 @@ function resolveRuntimeServices(runtime: SiteRuntimeConfig): RuntimeServices {
     api,
     i18n: services.i18n ?? api,
     seo: services.seo ?? api,
-    observability: services.observability ?? api,
+    telemetry: services.telemetry ?? api,
   };
 }
 
@@ -869,7 +872,7 @@ function hasRuntimeContentConfig(runtime: SiteRuntimeConfig): boolean {
     runtime.i18n?.fallbackLocal ||
     runtime.seo?.endpoint ||
     runtime.seo?.fallbackLocal ||
-    runtime.observability
+    runtime.telemetry
   );
 }
 

@@ -363,19 +363,19 @@ describe('defineSiteHooks: onError', () => {
     expect(cb).toHaveBeenCalledWith(err, expect.any(Request), { traceId: 't' });
   });
 
-  it('runtime.observability.errorReporting 上报服务端渲染错误且默认不带 query', () => {
+  it('runtime.telemetry.errors 上报服务端渲染错误且默认不带 query', () => {
     vi.spyOn(console, 'error').mockImplementation(() => {});
     const fetchSpy = vi
       .spyOn(globalThis, 'fetch')
       .mockResolvedValue(new Response(JSON.stringify({ ok: true }), { status: 202 }));
     const hooks = applyRuntimeToServerHooks(defineAdminSiteHooks(), {
-      services: { observability: 'https://admin.example.com' },
-      observability: {
+      services: { telemetry: 'https://admin.example.com' },
+      telemetry: {
         app: 'novel-rating',
         release: '1.2.3',
         environment: 'test',
         includeQueryString: false,
-        errorReporting: {
+        errors: {
           endpoint: '/api/observability/errors',
         },
       },

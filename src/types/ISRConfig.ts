@@ -59,12 +59,6 @@ export interface RuntimeRedisConfig {
   invalidationChannel?: string;
 }
 
-export interface RuntimeSentryConfig {
-  dsn: string;
-  tracesSampleRate?: number;
-  environment?: string;
-}
-
 export interface RuntimeExperimentConfig {
   variants: readonly string[];
   weights?: readonly number[];
@@ -148,12 +142,12 @@ export interface RuntimeServicesConfig {
   i18n?: string;
   /** SEO 配置下发 origin；不配置时回退到 api */
   seo?: string;
-  /** 浏览器埋点和错误上报 origin；不配置时回退到 api，同源部署可留空 */
-  observability?: string;
+  /** telemetry 上报 origin；不配置时回退到 api，同源部署可留空 */
+  telemetry?: string;
 }
 
-export interface RuntimeObservabilityEndpointOptions {
-  /** 远端上报地址；相对路径会拼到 services.observability/api 上 */
+export interface RuntimeTelemetryEndpointOptions {
+  /** 远端上报地址；相对路径会拼到 services.telemetry/api 上 */
   endpoint?: string;
   /** 采样率，0..1；默认 1 */
   sampleRate?: number;
@@ -169,19 +163,65 @@ export interface RuntimeObservabilityEndpointOptions {
   retryMaxDelayMs?: number;
 }
 
-export interface RuntimeObservabilityAnalyticsConfig extends RuntimeObservabilityEndpointOptions {
-  /** 是否自动采集 Web Vitals；默认 true */
-  webVitals?: boolean;
+export interface RuntimeTelemetryEventsConfig extends RuntimeTelemetryEndpointOptions {
   /** 是否自动上报首屏 page_view；默认 true */
   trackInitialPage?: boolean;
 }
 
-export interface RuntimeObservabilityErrorReportingConfig extends RuntimeObservabilityEndpointOptions {
+export interface RuntimeTelemetryErrorsConfig extends RuntimeTelemetryEndpointOptions {
   /** 是否采集 script/link/img 等资源加载失败；默认 true */
   captureResourceErrors?: boolean;
 }
 
-export interface RuntimeObservabilityConfig {
+export interface RuntimeTelemetryWebVitalsConfig {
+  /** 是否自动采集 Web Vitals；默认 true */
+  enabled?: boolean;
+}
+
+export interface RuntimeTelemetryHttpExporterConfig {
+  type: 'http';
+  name?: string;
+  /** true 表示该 exporter 失败应进入重试语义；默认 true */
+  required?: boolean;
+  endpoints?: {
+    events?: string;
+    errors?: string;
+    traces?: string;
+  };
+}
+
+export interface RuntimeTelemetrySentryExporterConfig {
+  type: 'sentry';
+  name?: string;
+  /** Sentry 是第三方增强出口，默认 false，不阻断第一方 endpoint */
+  required?: boolean;
+  dsn: string;
+  tracesSampleRate?: number;
+  environment?: string;
+}
+
+export interface RuntimeTelemetryDatadogExporterConfig {
+  type: 'datadog';
+  name?: string;
+  required?: boolean;
+  service?: string;
+}
+
+export interface RuntimeTelemetryOtelExporterConfig {
+  type: 'otel';
+  name?: string;
+  required?: boolean;
+  endpoint?: string;
+  serviceName?: string;
+}
+
+export type RuntimeTelemetryExporterConfig =
+  | RuntimeTelemetryHttpExporterConfig
+  | RuntimeTelemetrySentryExporterConfig
+  | RuntimeTelemetryDatadogExporterConfig
+  | RuntimeTelemetryOtelExporterConfig;
+
+export interface RuntimeTelemetryConfig {
   /** 应用名；不配置时读取 package.json name */
   app?: string;
   /** 发布版本，用于错误归因和发布影响分析 */
@@ -190,10 +230,17 @@ export interface RuntimeObservabilityConfig {
   environment?: string;
   /** 是否把 query string 纳入 URL；默认 false，避免采集敏感参数 */
   includeQueryString?: boolean;
-  /** 前端埋点配置；false 表示关闭 analytics */
-  analytics?: false | RuntimeObservabilityAnalyticsConfig;
-  /** 前端错误上报配置；false 表示关闭 error reporting */
-  errorReporting?: false | RuntimeObservabilityErrorReportingConfig;
+  /** 前端事件/PV 埋点配置；false 表示关闭 events */
+  events?: false | RuntimeTelemetryEventsConfig;
+  /** 前端错误上报配置；false 表示关闭 errors */
+  errors?: false | RuntimeTelemetryErrorsConfig;
+  /** Web Vitals 配置；false 表示关闭性能指标 */
+  webVitals?: false | RuntimeTelemetryWebVitalsConfig;
+  /**
+   * 上报出口。http 是第一方 endpoint；sentry/datadog/otel 是第三方 vendor。
+   * 所有出口属于同一条 telemetry pipeline，不再拆成 runtime.sentry 等并列配置。
+   */
+  exporters?: readonly RuntimeTelemetryExporterConfig[];
 }
 
 /**
@@ -216,11 +263,6 @@ export interface RuntimeConfig {
   /** 分布式 ISR 缓存与跨实例失效广播 */
   redis?: RuntimeRedisConfig;
   /**
-   * 第三方服务端错误监控 vendor（Sentry adapter）。
-   * 一般项目优先使用 runtime.observability endpoint；需要 Sentry 平台能力时再配置。
-   */
-  sentry?: RuntimeSentryConfig;
-  /**
    * 站点入口限流。
    *
    * 默认 store='auto'：已配置 runtime.redis 时自动用 Redis 做分布式限流，
@@ -235,11 +277,11 @@ export interface RuntimeConfig {
   /** 页面 SEO 元数据源配置；不要和 ISRConfig 顶层 seo.baseUrl 混淆 */
   seo?: RuntimeSeoConfig;
   /**
-   * endpoint 观测配置。engine 会把浏览器安全子集序列化到 client entry，
+   * telemetry 上报配置。engine 会把浏览器安全子集序列化到 client entry，
    * 自动接入 page_view、Web Vitals、全局错误、资源加载失败、Server Action 错误；
-   * 服务端渲染异常会通过同一个 errorReporting endpoint 非阻塞上报。
+   * 服务端渲染异常会通过同一个 errors endpoint 非阻塞上报。
    */
-  observability?: false | RuntimeObservabilityConfig;
+  telemetry?: false | RuntimeTelemetryConfig;
 }
 
 export const RenderModes = {

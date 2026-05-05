@@ -297,10 +297,10 @@ function createEngineDefaultEntriesPlugin(root: string, inlineConfig: Partial<IS
             return {
               ...runtimeConfig,
               ...userConfig,
-              observability:
-                Object.prototype.hasOwnProperty.call(userConfig, 'observability')
-                  ? userConfig.observability
-                  : runtimeConfig.observability,
+              telemetry:
+                Object.prototype.hasOwnProperty.call(userConfig, 'telemetry')
+                  ? userConfig.telemetry
+                  : runtimeConfig.telemetry,
               devInspector:
                 Object.prototype.hasOwnProperty.call(userConfig, 'devInspector')
                   ? userConfig.devInspector
@@ -419,13 +419,13 @@ async function resolveClientRuntimeConfigModule(
 ): Promise<string> {
   const config =
     Object.keys(inlineConfig).length > 0 ? inlineConfig : await loadConfig({ cwd: root });
-  const observability = resolveClientObservabilityOptions({
+  const telemetry = resolveClientObservabilityOptions({
     runtime: config.runtime,
     root,
   });
 
   return `export default ${JSON.stringify({
-    ...(observability === null ? {} : { observability }),
+    ...(telemetry === null ? {} : { telemetry }),
   })};`;
 }
 

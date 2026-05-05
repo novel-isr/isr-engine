@@ -4,7 +4,7 @@
  * isr-engine owns the browser lifecycle points: app boot, page navigation,
  * Web Vitals, global browser errors and Server Action failures. It deliberately
  * does not import a vendor SDK or a project-specific SDK. The only integration
- * contract is HTTP endpoints resolved from ssr.config.ts runtime.observability.
+ * contract is HTTP endpoints resolved from ssr.config.ts runtime.telemetry.
  * Rendering, hydration and navigation must never depend on observability.
  */
 
