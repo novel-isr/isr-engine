@@ -65,4 +65,36 @@ describe('httpServer enterprise hardening', () => {
       await closeServer(server);
     }
   });
+
+  it('uses strictPort=true to fail fast when the configured port is occupied', async () => {
+    const app = createHandler();
+    const occupied = await startHttp1Server(app, { port: 0, strictPort: true });
+    const occupiedPort = Number(new URL(occupied.url).port);
+
+    try {
+      await expect(
+        startHttp1Server(app, { port: occupiedPort, strictPort: true })
+      ).rejects.toMatchObject({ code: 'EADDRINUSE' });
+    } finally {
+      await closeServer(occupied.server);
+    }
+  });
+
+  it('uses strictPort=false to try the next available local dev port', async () => {
+    const app = createHandler();
+    const occupied = await startHttp1Server(app, { port: 0, strictPort: true });
+    const occupiedPort = Number(new URL(occupied.url).port);
+
+    let fallback: Awaited<ReturnType<typeof startHttp1Server>> | null = null;
+    try {
+      fallback = await startHttp1Server(app, {
+        port: occupiedPort,
+        strictPort: false,
+      });
+      expect(Number(new URL(fallback.url).port)).toBeGreaterThan(occupiedPort);
+    } finally {
+      if (fallback) await closeServer(fallback.server);
+      await closeServer(occupied.server);
+    }
+  });
 });

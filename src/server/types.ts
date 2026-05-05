@@ -13,7 +13,7 @@ export type RouteSetupFn = (requestHandler: Express) => void;
 export interface ServerConfig {
   port: number;
   host?: string;
-  /** Internal only. false lets dev try the next port; production keeps this true. */
+  /** true: port in use fails fast; false: try following ports for local dev ergonomics. */
   strictPort?: boolean;
 }
 

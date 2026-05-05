@@ -427,11 +427,15 @@ runtime: {
     keyPrefix: 'novel:',
   },
   rateLimit: {
+    store: 'auto',
     windowMs: 60_000,
     max: 200,
     trustProxy: true,
     sendHeaders: true,
     keyPrefix: 'novel:rate-limit:',
+    skipPaths: [],
+    skipPathPrefixes: [],
+    skipExtensions: [],
   },
 }
 ```
@@ -440,11 +444,28 @@ runtime: {
 - `max`：同一个 key 在一个窗口内允许的最大请求数。默认 key 是客户端 IP。
 - `trustProxy`：只在可信 CDN/LB/Nginx 后面开启，否则客户端可伪造代理头。
 - `sendHeaders`：返回 `RateLimit-*` 和 `Retry-After` 标准头。
+- `store: 'auto'`：显式写出自动选择；有 `runtime.redis.url/host` 时用 Redis，否则 memory。
 - 默认跳过 `/health`、`/metrics`、`OPTIONS`、静态资源扩展名，以及 dev 下的 Vite/module 请求；业务可用 `skipPaths` / `skipPathPrefixes` / `skipExtensions` 补充内部探针或自定义资源路径。
 - Redis store 使用 Lua 原子递增 + TTL；Redis 故障时 fail-open 放行，不拖垮业务入口。
 - CSR recovery：engine 默认 RSC shell fallback 会先 fetch 当前页面 `_.rsc`，拿到 `intl` 后再渲染页面；业务不再需要维护第二套路由或自定义 CSR App。
 - 服务端完全不可用且 `_.rsc` 也失败时，只会显示最终不可用壳；这时没有远程 i18n，因为数据源本身不可达。
 - 诊断：响应头 `x-i18n-source` 会显示字典来源，例如 `admin` / `local-fallback`。
+
+### server.strictPort：端口严格模式
+
+`server.strictPort` 是业务可见配置：
+
+```ts
+server: {
+  port: Number(process.env.PORT ?? 3000),
+  host: process.env.HOST,
+  strictPort: process.env.NODE_ENV !== 'development',
+}
+```
+
+- `true`：端口被占用时直接启动失败，适合生产、容器和 CI，避免服务悄悄跑到错误端口。
+- `false`：端口被占用时最多尝试后续 20 个端口，适合本地开发。
+- 不配置时 engine 默认 dev=false、prod=true；生产项目建议显式写出，方便审查部署行为。
 
 ## 与业界方案对比
 

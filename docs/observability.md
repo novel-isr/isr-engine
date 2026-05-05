@@ -206,8 +206,10 @@ const orderCounter = new Counter({
 // ssr.config.ts
 {
   server: {
+    strictPort: process.env.NODE_ENV !== 'development',
     ops: {
       authToken: process.env.ISR_OPS_TOKEN,
+      tokenHeader: 'x-isr-admin-token',
       metrics: { enabled: true, public: false },
     },
   },

@@ -373,6 +373,15 @@ export interface ISRConfig {
     /** Node origin 监听地址；通常本地留空，容器/内网按部署平台注入。 */
     host?: string;
     /**
+     * 端口严格模式。
+     *
+     * - true：端口被占用时启动失败，适合生产 / 容器 / CI，避免服务悄悄跑到错误端口。
+     * - false：端口被占用时最多尝试后续 20 个端口，适合本地 dev。
+     *
+     * 不配置时 engine 默认 dev=false、prod=true；成熟业务建议在 ssr.config.ts 显式写出。
+     */
+    strictPort?: boolean;
+    /**
      * 运维端点暴露策略。
      *
      * 公开配置只保留稳定运维边界：

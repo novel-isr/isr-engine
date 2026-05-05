@@ -199,7 +199,7 @@ export async function startAppServer(
   const serverConfig = {
     port: config.server?.port ?? 3000,
     host: config.server?.host,
-    strictPort: !isDev(),
+    strictPort: config.server?.strictPort ?? !isDev(),
   };
   const result = await startServer(serverContext.requestHandler, serverConfig);
 

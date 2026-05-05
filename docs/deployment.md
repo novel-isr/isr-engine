@@ -44,6 +44,29 @@ helmet → security headers → gzip/deflate(streaming-safe) → static (SSG 路
 | `SENTRY_DSN` | Sentry DSN；仅在启用 integration 后使用 | `https://...@sentry.io/...` |
 | `ISR_OPS_TOKEN` | `/metrics` 鉴权（如果生产开启） | 任意 secret |
 
+## Node origin 配置
+
+业务只配置 Node origin 的监听边界和 ops 认证；TLS、HTTP/2/3、Brotli、网关超时属于 CDN / Ingress / Nginx / Envoy / ALB。
+
+```ts
+// ssr.config.ts
+export default defineIsrConfig({
+  server: {
+    port: Number(process.env.PORT ?? 3000),
+    host: process.env.HOST,
+    strictPort: process.env.NODE_ENV !== 'development',
+    ops: {
+      authToken: process.env.ISR_OPS_TOKEN,
+      tokenHeader: 'x-isr-admin-token',
+      health: { enabled: true, public: true },
+      metrics: { enabled: process.env.ENABLE_METRICS === '1', public: false },
+    },
+  },
+});
+```
+
+`strictPort=true` 时端口占用会直接失败，适合生产和 CI；`false` 仅用于本地 dev 自动尝试后续端口。
+
 ## Docker
 
 ```dockerfile

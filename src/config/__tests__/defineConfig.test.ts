@@ -67,6 +67,7 @@ describe('defineConfig helpers', () => {
       server: {
         port: 3000,
         host: '127.0.0.1',
+        strictPort: true,
         ops: {
           authToken: 'secret',
           tokenHeader: 'x-custom-token',
@@ -82,16 +83,6 @@ describe('defineConfig helpers', () => {
         port: 3000,
         // @ts-expect-error protocol/TLS belongs to CDN or reverse proxy, not app config.
         protocol: 'https',
-      },
-    });
-
-    defineIsrConfig({
-      renderMode: 'isr',
-      revalidate: 3600,
-      server: {
-        port: 3000,
-        // @ts-expect-error strict port is an internal engine default.
-        strictPort: true,
       },
     });
 
