@@ -10,7 +10,7 @@ import {
  *
  * 支持的 overrides 形态（每条值均可）：
  *   - 'isr' | 'ssg' | 'ssr'                   字符串 shorthand
- *   - { mode: 'isr', ttl?, staleWhileRevalidate? }  完整对象
+ *   - { mode: 'isr', ttl: 60, staleWhileRevalidate: 300 }  完整对象
  */
 
 /** 将 RouteRule 统一抽取出 mode 字段 */

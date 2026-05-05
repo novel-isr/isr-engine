@@ -7,14 +7,14 @@ import fs from 'fs';
 import { pathToFileURL } from 'url';
 import { createHash } from 'crypto';
 import * as esbuild from 'esbuild';
-import type { ISRConfig, ResolvedISRConfig } from '@/types';
+import type { ISRConfig } from '@/types';
 import { Logger } from '@/logger/Logger';
 import { normalizeEngineConfig } from './normalizeEngineConfig';
 
 // 支持的配置文件列表
 const CONFIG_FILES = ['ssr.config.ts', 'ssr.config.js', 'ssr.config.mjs', 'ssr.config.cjs'];
 
-let cachedConfig: ResolvedISRConfig | null = null;
+let cachedConfig: ISRConfig | null = null;
 
 export interface LoadConfigOptions {
   forceReload?: boolean;
@@ -25,7 +25,7 @@ export interface LoadConfigOptions {
  * 加载项目配置
  * 支持运行时动态更新和加载 ssr.config.ts 等配置文件
  */
-export async function loadConfig(options: LoadConfigOptions = {}): Promise<ResolvedISRConfig> {
+export async function loadConfig(options: LoadConfigOptions = {}): Promise<ISRConfig> {
   const { forceReload = false, cwd = process.cwd() } = options;
   const logger = Logger.getInstance();
 
@@ -53,7 +53,8 @@ export async function loadConfig(options: LoadConfigOptions = {}): Promise<Resol
       } catch (error: unknown) {
         const err = error as Error & { code?: string };
         logger.error(`加载配置文件失败 ${filePath}:`, err);
-        throw new Error(`加载配置文件失败: ${filePath}`, { cause: err });
+        const reason = err.message ? ` —— ${err.message}` : '';
+        throw new Error(`加载配置文件失败: ${filePath}${reason}`, { cause: err });
       }
     }
   }

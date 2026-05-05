@@ -4,7 +4,7 @@
  * 测试策略：mock 掉 `loadConfig` + `createISRApp`，让 startDevServer 跑完整路径但
  * 不真起 Vite。捕获 process.on 注册的 signal handler 后手动触发，验证：
  *   - 配置加载 + CLI 参数覆盖（port string→int / host）
- *   - 缺 server 字段时填默认值
+ *   - CLI 参数只覆盖 ssr.config.ts 已显式声明的 server 字段
  *   - 启动失败 → 抛错 + spinner 停止
  *   - SIGINT/SIGTERM → 调 app.shutdown() → process.exit(0)
  *   - 二次触发 SIGINT → 立即 process.exit(1)
@@ -23,7 +23,7 @@ vi.mock('../../app/createISRApp', () => ({
 import { startDevServer } from '../dev';
 import { loadConfig } from '../../config/loadConfig';
 import { createISRApp } from '../../app/createISRApp';
-import type { ISRConfig, ResolvedISRConfig } from '../../types';
+import type { ISRConfig } from '../../types';
 
 type SignalHandler = (signal: NodeJS.Signals) => void;
 
@@ -32,14 +32,42 @@ interface MockApp {
   shutdown: ReturnType<typeof vi.fn>;
 }
 
-function makeConfig(overrides: Partial<ISRConfig> = {}): ResolvedISRConfig {
+function makeConfig(overrides: Partial<ISRConfig> = {}): ISRConfig {
   return {
     renderMode: 'isr',
     revalidate: 3600,
     routes: {},
-    cache: { strategy: 'memory', ttl: 3600 },
+    runtime: {
+      site: undefined,
+      services: { api: undefined, telemetry: undefined },
+      redis: undefined,
+      rateLimit: false,
+      experiments: {},
+      i18n: undefined,
+      seo: undefined,
+      telemetry: false,
+    },
+    server: {
+      port: 3000,
+      host: '127.0.0.1',
+      strictPort: true,
+      ops: {
+        authToken: undefined,
+        tokenHeader: 'x-isr-admin-token',
+        health: { enabled: true, public: true },
+        metrics: { enabled: false, public: false },
+      },
+    },
+    ssg: {
+      routes: [],
+      concurrent: 3,
+      requestTimeoutMs: 30_000,
+      maxRetries: 3,
+      retryBaseDelayMs: 200,
+      failBuildThreshold: 0.05,
+    },
     ...overrides,
-  } as ResolvedISRConfig;
+  };
 }
 
 let processOnSpy: ReturnType<typeof vi.spyOn>;
@@ -148,25 +176,6 @@ describe('startDevServer —— 配置 + CLI 参数', () => {
     await startDevServer({ port: '3000', host: '0.0.0.0' });
 
     expect(config.server?.host).toBe('0.0.0.0');
-  });
-
-  it('config 缺 server 字段 → 填默认端口', async () => {
-    // 构造一个无 server 字段的 config —— `delete` 会让 TS 把 server 收窄成 never
-    // 后续断言取不到属性。直接用 type assertion 重组以保留 server 字段类型空间。
-    const baseConfig = makeConfig();
-    const { server: _, ...rest } = baseConfig;
-    void _;
-    const config = rest as unknown as ResolvedISRConfig;
-    vi.mocked(loadConfig).mockResolvedValue(config);
-    vi.mocked(createISRApp).mockResolvedValue({
-      start: async () => ({ url: 'http://localhost:3000' }),
-      shutdown: async () => {},
-    } as never);
-
-    await startDevServer({ port: '3000' });
-
-    expect(config.server).toBeDefined();
-    expect(config.server?.port).toBe(3000);
   });
 
   it('startDevServer 注册 SIGINT 和 SIGTERM handler', async () => {

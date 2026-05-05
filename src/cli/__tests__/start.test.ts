@@ -15,12 +15,42 @@
 import { describe, it, expect, vi } from 'vitest';
 import { Readable } from 'node:stream';
 import type { Request as ExpressReq, Response as ExpressRes } from 'express';
+import type { RuntimeConfig, RuntimeTelemetrySentryIntegrationConfig } from '../../types';
 import {
   applyTelemetryIntegrationEnv,
   extractRoutesForSitemap,
   nodeToWebRequest,
   pipeWebResponse,
 } from '../start';
+
+function runtime(telemetry: RuntimeConfig['telemetry']): RuntimeConfig {
+  return {
+    site: undefined,
+    services: { api: undefined, telemetry: undefined },
+    redis: undefined,
+    rateLimit: false,
+    experiments: {},
+    i18n: undefined,
+    seo: undefined,
+    telemetry,
+  };
+}
+
+function sentryTelemetry(
+  sentry: RuntimeTelemetrySentryIntegrationConfig
+): RuntimeConfig['telemetry'] {
+  return {
+    app: undefined,
+    release: undefined,
+    environment: undefined,
+    includeQueryString: false,
+    events: false,
+    errors: false,
+    webVitals: false,
+    exporters: [],
+    integrations: { sentry },
+  };
+}
 
 describe('extractRoutesForSitemap —— 路由筛选', () => {
   it('返回静态路由 + 跳过通配符 / 动态参数 / 内部 / API', () => {
@@ -74,30 +104,31 @@ describe('applyTelemetryIntegrationEnv —— Sentry integration 显式开关', 
     delete process.env.SENTRY_TRACES_SAMPLE_RATE;
 
     try {
-      applyTelemetryIntegrationEnv({
-        telemetry: {
-          integrations: {
-            sentry: {
-              enabled: false,
-              dsn: 'https://key@sentry.example/1',
-            },
-          },
-        },
-      });
+      applyTelemetryIntegrationEnv(
+        runtime(
+          sentryTelemetry({
+            enabled: false,
+            dsn: 'https://key@sentry.example/1',
+            tracesSampleRate: undefined,
+            environment: undefined,
+            release: undefined,
+          })
+        )
+      );
       expect(process.env.SENTRY_ENABLED).toBe('false');
       expect(process.env.SENTRY_DSN).toBeUndefined();
 
-      applyTelemetryIntegrationEnv({
-        telemetry: {
-          integrations: {
-            sentry: {
-              enabled: true,
-              dsn: 'https://key@sentry.example/1',
-              tracesSampleRate: 0.25,
-            },
-          },
-        },
-      });
+      applyTelemetryIntegrationEnv(
+        runtime(
+          sentryTelemetry({
+            enabled: true,
+            dsn: 'https://key@sentry.example/1',
+            tracesSampleRate: 0.25,
+            environment: undefined,
+            release: undefined,
+          })
+        )
+      );
       expect(process.env.SENTRY_ENABLED).toBe('true');
       expect(process.env.SENTRY_DSN).toBe('https://key@sentry.example/1');
       expect(process.env.SENTRY_TRACES_SAMPLE_RATE).toBe('0.25');

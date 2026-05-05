@@ -51,6 +51,29 @@ helmet → security headers → gzip/deflate(streaming-safe) → static (SSG 路
 ```ts
 // ssr.config.ts
 export default defineIsrConfig({
+  renderMode: 'isr',
+  revalidate: 3600,
+  routes: {},
+  runtime: {
+    site: process.env.SITE_URL,
+    services: {
+      api: process.env.API_URL,
+      telemetry: process.env.TELEMETRY_API_URL ?? process.env.API_URL,
+    },
+    redis: {
+      url: process.env.REDIS_URL,
+      host: undefined,
+      port: undefined,
+      password: undefined,
+      keyPrefix: 'isr:',
+      invalidationChannel: 'isr:invalidate',
+    },
+    rateLimit: false,
+    experiments: {},
+    i18n: undefined,
+    seo: undefined,
+    telemetry: false,
+  },
   server: {
     port: Number(process.env.PORT ?? 3000),
     host: process.env.HOST,
@@ -61,6 +84,14 @@ export default defineIsrConfig({
       health: { enabled: true, public: true },
       metrics: { enabled: process.env.ENABLE_METRICS === '1', public: false },
     },
+  },
+  ssg: {
+    routes: [],
+    concurrent: 3,
+    requestTimeoutMs: 30_000,
+    maxRetries: 3,
+    retryBaseDelayMs: 200,
+    failBuildThreshold: 0.05,
   },
 });
 ```

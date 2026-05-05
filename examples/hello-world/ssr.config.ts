@@ -25,15 +25,30 @@ export default {
 
   runtime: {
     site: process.env.SITE_URL ?? 'http://localhost:3000',
-    redis: {
-      url: process.env.REDIS_URL,
-      keyPrefix: 'hello-world:',
+    services: {
+      api: undefined,
+      telemetry: undefined,
     },
+    redis: process.env.REDIS_URL
+      ? {
+          url: process.env.REDIS_URL,
+          host: undefined,
+          port: undefined,
+          password: undefined,
+          keyPrefix: 'hello-world:',
+          invalidationChannel: 'hello-world:isr:invalidate',
+        }
+      : undefined,
+    rateLimit: false,
+    experiments: {},
+    i18n: undefined,
+    seo: undefined,
+    telemetry: false,
   },
 
   ssg: {
-    // Explicit SSG route list. If omitted, mode=ssg entries from routes are used.
-    // routes: ['/about', '/terms', '/privacy'],
+    // Explicit SSG route list. Keep [] if the app has no build-time pages.
+    routes: ['/about'],
     concurrent: 4,
     requestTimeoutMs: 30_000,
     maxRetries: 3,
@@ -44,9 +59,14 @@ export default {
   server: {
     port: Number(process.env.PORT ?? 3000),
     host: process.env.HOST,
+    strictPort: process.env.NODE_ENV === 'production',
     ops: {
       authToken: process.env.ISR_OPS_TOKEN,
-      // tokenHeader: 'x-isr-admin-token',
+      tokenHeader: 'x-isr-admin-token',
+      health: {
+        enabled: true,
+        public: true,
+      },
       metrics: {
         enabled: process.env.ENABLE_METRICS === '1',
         public: false,

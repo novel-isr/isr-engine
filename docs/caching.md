@@ -82,6 +82,9 @@ export const runtime = defineRuntimeConfig({
   redis: {
     // 连接凭证仍通过环境变量注入；ssr.config.ts 只声明入口。
     url: process.env.REDIS_URL,
+    host: undefined,
+    port: undefined,
+    password: undefined,
     keyPrefix: 'isr:',
     invalidationChannel: 'isr:invalidate',
   },
@@ -115,8 +118,10 @@ import { defineRuntimeConfig } from '@novel-isr/engine/config';
 export const runtime = defineRuntimeConfig({
   redis: {
     url: process.env.REDIS_URL,
+    host: undefined,
+    port: undefined,
+    password: undefined,
     keyPrefix: 'isr:',
-    // 可选；默认 `${keyPrefix}invalidate`
     invalidationChannel: 'isr:invalidate',
   },
 });

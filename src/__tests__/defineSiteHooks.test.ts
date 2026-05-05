@@ -17,8 +17,24 @@ import {
   defineSiteHooks,
   type ServerHooksOutput,
 } from '../defaults/runtime/defineSiteHooks';
+import type { ISRConfig } from '../types';
 
 const engineCtx = { traceId: 't', startedAt: 0 };
+
+function runtime(overrides: Record<string, unknown> = {}): ISRConfig['runtime'] {
+  const services = overrides.services as Partial<ISRConfig['runtime']['services']> | undefined;
+  return {
+    site: undefined,
+    redis: undefined,
+    rateLimit: false,
+    experiments: {},
+    i18n: undefined,
+    seo: undefined,
+    telemetry: false,
+    ...overrides,
+    services: { api: undefined, telemetry: undefined, ...services },
+  } as ISRConfig['runtime'];
+}
 
 beforeEach(() => {
   vi.restoreAllMocks();
@@ -82,7 +98,7 @@ describe('defineSiteHooks: SEO 路由表', () => {
           '/about': { title: 'About', description: 'd' },
         },
       }),
-      { site: 'https://x.com' }
+      runtime({ site: 'https://x.com' })
     );
     const meta = await hooks.loadSeoMeta(new Request('http://x.com/about'));
     expect(meta?.title).toBe('About');
@@ -107,7 +123,7 @@ describe('defineSiteHooks: SEO 路由表', () => {
           },
         },
       }),
-      { services: { api: 'http://api.x' } }
+      runtime({ services: { api: 'http://api.x' } })
     );
     const meta = await hooks.loadSeoMeta(new Request('http://x.com/books/42'));
     expect(meta?.title).toBe('诡秘之主 · 42');
@@ -131,7 +147,7 @@ describe('defineSiteHooks: SEO 路由表', () => {
           },
         },
       }),
-      { services: { api: 'http://api.x' } }
+      runtime({ services: { api: 'http://api.x' } })
     );
     const meta = await hooks.loadSeoMeta(new Request('http://x.com/books/1'));
     expect(meta).toBeNull();
@@ -157,7 +173,7 @@ describe('defineSiteHooks: i18n loader', () => {
       defineSiteHooks({
         intl: { endpoint: '/api/i18n?locale={locale}' },
       }),
-      { services: { api: 'http://api.x' } }
+      runtime({ services: { api: 'http://api.x' } })
     );
     const intl = await hooks.loadIntl(
       new Request('http://x.com', { headers: { cookie: 'locale=zh-CN' } })
@@ -171,7 +187,7 @@ describe('defineSiteHooks: i18n loader', () => {
     vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response('null', { status: 200 }));
     const hooks = applyRuntimeToServerHooks(
       defineSiteHooks({ intl: { endpoint: '/x?l={locale}' } }),
-      { services: { api: 'http://api.x' } }
+      runtime({ services: { api: 'http://api.x' } })
     );
     const intl = await hooks.loadIntl(
       new Request('http://x.com', { headers: { cookie: 'locale=ar' } })
@@ -213,7 +229,7 @@ describe('admin loaders', () => {
           }),
         },
       }),
-      { services: { api: 'http://api.x' } }
+      runtime({ services: { api: 'http://api.x' } })
     );
     const intl = await hooks.loadIntl(
       new Request('http://x.com', { headers: { cookie: 'locale=zh' } })
@@ -236,7 +252,7 @@ describe('admin loaders', () => {
           }),
         },
       }),
-      { services: { api: 'http://api.x' } }
+      runtime({ services: { api: 'http://api.x' } })
     );
     const intl = await hooks.loadIntl(
       new Request('http://x.com', { headers: { cookie: 'locale=fr' } })
@@ -263,7 +279,7 @@ describe('admin loaders', () => {
           },
         },
       }),
-      { services: { api: 'http://api.x' } }
+      runtime({ services: { api: 'http://api.x' } })
     );
     const meta = await hooks.loadSeoMeta(new Request('http://x.com/'));
     expect(fetchSpy).toHaveBeenCalledWith('http://api.x/api/seo?path=%2F', expect.any(Object));
@@ -282,7 +298,7 @@ describe('admin loaders', () => {
           },
         },
       }),
-      { services: { api: 'http://api.x' } }
+      runtime({ services: { api: 'http://api.x' } })
     );
     const meta = await hooks.loadSeoMeta(new Request('http://x.com/about'));
     expect(meta).toEqual({ title: '关于' });
@@ -290,15 +306,18 @@ describe('admin loaders', () => {
 
   it('defineAdminSiteHooks 从 runtime.i18n/runtime.seo 生成商业默认 SiteHooks', async () => {
     vi.spyOn(globalThis, 'fetch').mockRejectedValue(new Error('down'));
-    const hooks = applyRuntimeToServerHooks(defineAdminSiteHooks(), {
-      services: { api: 'http://api.x' },
-      i18n: {
-        locales: ['zh', 'en'],
-        defaultLocale: 'zh',
-        fallbackLocal: { zh: { 'home.title': '首页' } },
-      },
-      seo: { fallbackLocal: [{ path: '/', title: '首页 SEO' }] },
-    });
+    const hooks = applyRuntimeToServerHooks(
+      defineAdminSiteHooks(),
+      runtime({
+        services: { api: 'http://api.x' },
+        i18n: {
+          locales: ['zh', 'en'],
+          defaultLocale: 'zh',
+          fallbackLocal: { zh: { 'home.title': '首页' } },
+        },
+        seo: { fallbackLocal: [{ path: '/', title: '首页 SEO' }] },
+      })
+    );
     const intl = await hooks.loadIntl(
       new Request('http://x.com', { headers: { cookie: 'locale=zh' } })
     );
@@ -316,7 +335,7 @@ describe('admin loaders', () => {
           tenantId: req.headers.get('x-tenant-id') ?? 'public',
         }),
       },
-      {
+      runtime({
         services: { api: 'http://api.x' },
         i18n: {
           locales: ['zh', 'en'],
@@ -324,7 +343,7 @@ describe('admin loaders', () => {
           fallbackLocal: { zh: { 'home.title': '首页' } },
         },
         seo: { fallbackLocal: [{ path: '/', title: '首页 SEO' }] },
-      }
+      })
     ) as unknown as ServerHooksOutput;
     const ctx = await hooks.beforeRequest(
       new Request('http://x.com', {
@@ -367,18 +386,21 @@ describe('defineSiteHooks: onError', () => {
     const fetchSpy = vi
       .spyOn(globalThis, 'fetch')
       .mockResolvedValue(new Response(JSON.stringify({ ok: true }), { status: 202 }));
-    const hooks = applyRuntimeToServerHooks(defineAdminSiteHooks(), {
-      services: { telemetry: 'https://admin.example.com' },
-      telemetry: {
-        app: 'novel-rating',
-        release: '1.2.3',
-        environment: 'test',
-        includeQueryString: false,
-        errors: {
-          endpoint: '/api/observability/errors',
+    const hooks = applyRuntimeToServerHooks(
+      defineAdminSiteHooks(),
+      runtime({
+        services: { telemetry: 'https://admin.example.com' },
+        telemetry: {
+          app: 'novel-rating',
+          release: '1.2.3',
+          environment: 'test',
+          includeQueryString: false,
+          errors: {
+            endpoint: '/api/observability/errors',
+          },
         },
-      },
-    });
+      })
+    );
 
     hooks.onError(new Error('render boom'), new Request('http://site.test/books?token=secret'), {
       traceId: 'trace-1',

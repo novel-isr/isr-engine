@@ -12,11 +12,76 @@ import { describe, it, expect } from 'vitest';
 import { RouteManager } from '../RouteManager';
 import type { ISRConfig } from '../../types';
 
-function cfg(extra: Partial<ISRConfig> = {}): ISRConfig {
+type DeepPartial<T> = {
+  [K in keyof T]?: T[K] extends (...args: never[]) => unknown
+    ? T[K]
+    : T[K] extends object
+      ? DeepPartial<T[K]>
+      : T[K];
+};
+
+const defaults: ISRConfig = {
+  renderMode: 'isr',
+  revalidate: 3600,
+  routes: {},
+  runtime: {
+    site: undefined,
+    services: { api: undefined, telemetry: undefined },
+    redis: undefined,
+    rateLimit: false,
+    experiments: {},
+    i18n: undefined,
+    seo: undefined,
+    telemetry: false,
+  },
+  server: {
+    port: 3000,
+    host: '127.0.0.1',
+    strictPort: true,
+    ops: {
+      authToken: undefined,
+      tokenHeader: 'x-isr-admin-token',
+      health: { enabled: true, public: true },
+      metrics: { enabled: false, public: false },
+    },
+  },
+  ssg: {
+    routes: [],
+    concurrent: 3,
+    requestTimeoutMs: 30_000,
+    maxRetries: 3,
+    retryBaseDelayMs: 200,
+    failBuildThreshold: 0.05,
+  },
+};
+
+function cfg(extra: DeepPartial<ISRConfig> = {}): ISRConfig {
   return {
-    renderMode: 'isr',
-    revalidate: 3600,
+    ...defaults,
     ...extra,
+    routes: (extra.routes as ISRConfig['routes'] | undefined) ?? defaults.routes,
+    runtime: { ...defaults.runtime, ...extra.runtime } as ISRConfig['runtime'],
+    server: {
+      ...defaults.server,
+      ...extra.server,
+      ops: {
+        ...defaults.server.ops,
+        ...extra.server?.ops,
+        health: {
+          ...defaults.server.ops.health,
+          ...extra.server?.ops?.health,
+        },
+        metrics: {
+          ...defaults.server.ops.metrics,
+          ...extra.server?.ops?.metrics,
+        },
+      },
+    },
+    ssg: {
+      ...defaults.ssg,
+      ...extra.ssg,
+      routes: (extra.ssg?.routes as ISRConfig['ssg']['routes'] | undefined) ?? defaults.ssg.routes,
+    },
   };
 }
 
@@ -144,7 +209,11 @@ describe('RouteManager.getSSGRoutes', () => {
     const rm = new RouteManager(
       cfg({
         routes: {
-          '/static/page': { mode: 'ssg' },
+          '/static/page': {
+            mode: 'ssg',
+            ttl: undefined,
+            staleWhileRevalidate: undefined,
+          },
         },
       })
     );
@@ -157,8 +226,16 @@ describe('RouteManager.getISRRoutes', () => {
     const rm = new RouteManager(
       cfg({
         routes: {
-          '/blog/*': { mode: 'isr', ttl: 600 },
-          '/products/:id': { mode: 'isr', ttl: 1800 },
+          '/blog/*': {
+            mode: 'isr',
+            ttl: 600,
+            staleWhileRevalidate: undefined,
+          },
+          '/products/:id': {
+            mode: 'isr',
+            ttl: 1800,
+            staleWhileRevalidate: undefined,
+          },
           '/static': 'ssg',
           '/checkout': 'ssr',
         },
@@ -189,11 +266,15 @@ describe('RouteManager.getISRRoutes', () => {
     expect(rm.getISRRoutes()['/blog']).toEqual({ revalidate: 120, priority: 0.5 });
   });
 
-  it('mode=isr 但 ttl 非 number → 默认 3600', () => {
+  it('mode=isr 且显式 ttl=undefined → 使用顶层 revalidate', () => {
     const rm = new RouteManager(
       cfg({
         routes: {
-          '/x': { mode: 'isr' }, // 没传 ttl
+          '/x': {
+            mode: 'isr',
+            ttl: undefined,
+            staleWhileRevalidate: undefined,
+          },
         },
       })
     );

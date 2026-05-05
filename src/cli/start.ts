@@ -172,8 +172,8 @@ export async function startProductionServer(options: StartOptions): Promise<void
     );
     app.use(
       createRateLimiter({
-        windowMs: runtime.rateLimit.windowMs ?? 60_000,
-        max: runtime.rateLimit.max ?? 100,
+        windowMs: runtime.rateLimit.windowMs,
+        max: runtime.rateLimit.max,
         store: resolvedRateLimitStore.store,
         lruMax: runtime.rateLimit.lruMax,
         trustProxy: runtime.rateLimit.trustProxy,
@@ -185,7 +185,7 @@ export async function startProductionServer(options: StartOptions): Promise<void
       })
     );
     logger.info(
-      `🚦 限流已启用：${runtime.rateLimit.max ?? 100} req / ${(runtime.rateLimit.windowMs ?? 60_000) / 1000}s per IP (store=${resolvedRateLimitStore.backend})`
+      `🚦 限流已启用：${runtime.rateLimit.max} req / ${runtime.rateLimit.windowMs / 1000}s per IP (store=${resolvedRateLimitStore.backend})`
     );
   }
 

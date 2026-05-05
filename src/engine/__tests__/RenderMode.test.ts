@@ -76,7 +76,11 @@ describe('resolveRenderMode', () => {
 
   it('RouteRuleObject 形态也识别', () => {
     const overrides: Record<string, RouteRule> = {
-      '/books/*': { mode: 'isr', ttl: 60 },
+      '/books/*': {
+        mode: 'isr',
+        ttl: 60,
+        staleWhileRevalidate: undefined,
+      },
     };
     expect(resolveRenderMode('/books/42', 'ssr', overrides)).toBe('isr');
   });

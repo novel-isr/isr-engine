@@ -24,7 +24,14 @@ export function resolveRuntimeRedisConfig(
 
   if (!url && !host) {
     if (keyPrefix || invalidationChannel) {
-      return { keyPrefix, invalidationChannel };
+      return {
+        url: undefined,
+        host: undefined,
+        port: undefined,
+        password: undefined,
+        keyPrefix,
+        invalidationChannel,
+      };
     }
     return undefined;
   }

@@ -409,7 +409,14 @@ describe('RateLimiter —— runtime store 解析', () => {
   it("默认 store 未指定 + 显式 store='memory' → 强制 memory，即使 runtime.redis 存在", async () => {
     const resolved = await createRateLimitStoreFromRuntime(
       { store: 'memory' },
-      { url: 'redis://127.0.0.1:6379' }
+      {
+        url: 'redis://127.0.0.1:6379',
+        host: undefined,
+        port: undefined,
+        password: undefined,
+        keyPrefix: undefined,
+        invalidationChannel: undefined,
+      }
     );
     expect(resolved.backend).toBe('memory');
   });
@@ -464,7 +471,14 @@ describe('RateLimiter —— runtime store 解析', () => {
     try {
       const resolved = await createRateLimitStoreFromRuntime(
         {}, // ← 不指定 store，期望 engine 自动切到 redis
-        { url: 'redis://127.0.0.1:6379' }
+        {
+          url: 'redis://127.0.0.1:6379',
+          host: undefined,
+          port: undefined,
+          password: undefined,
+          keyPrefix: undefined,
+          invalidationChannel: undefined,
+        }
       );
       expect(resolved.backend).toBe('redis');
     } finally {
@@ -494,7 +508,14 @@ describe('RateLimiter —— runtime store 解析', () => {
     try {
       const resolved = await createRateLimitStoreFromRuntime(
         { store: 'redis', keyPrefix: 'novel:rl:' },
-        { url: 'redis://127.0.0.1:6379', keyPrefix: 'novel:' }
+        {
+          url: 'redis://127.0.0.1:6379',
+          host: undefined,
+          port: undefined,
+          password: undefined,
+          keyPrefix: 'novel:',
+          invalidationChannel: undefined,
+        }
       );
       expect(resolved.backend).toBe('redis');
       expect(clients[0]?.[0]).toBe('redis://127.0.0.1:6379');

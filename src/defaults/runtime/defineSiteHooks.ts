@@ -32,12 +32,12 @@
  */
 import { createCachedFetcher } from './createCachedFetcher';
 import type { IntlPayload, PageSeoMeta } from './seo-runtime';
-import type { ISRConfig } from '../../types';
+import type { ISRConfig, RuntimeI18nConfig, RuntimeSeoConfig } from '../../types';
 import { readCookie } from '../../utils/cookie';
 
 export { getCookieHeader, parseCookieHeader, readCookie } from '../../utils/cookie';
 
-export type SiteRuntimeConfig = NonNullable<ISRConfig['runtime']>;
+export type SiteRuntimeConfig = ISRConfig['runtime'];
 
 export interface SiteRuntimeContext {
   runtime: SiteRuntimeConfig;
@@ -49,6 +49,19 @@ export interface SiteRuntimeContext {
 export interface RuntimeServices {
   api?: string;
   telemetry?: string;
+}
+
+function createEmptyRuntimeConfig(): SiteRuntimeConfig {
+  return {
+    site: undefined,
+    services: { api: undefined, telemetry: undefined },
+    redis: undefined,
+    rateLimit: false,
+    experiments: {},
+    i18n: undefined,
+    seo: undefined,
+    telemetry: false,
+  };
 }
 
 export type RuntimeServiceBase = string | ((ctx: SiteRuntimeContext) => string | null | undefined);
@@ -269,15 +282,15 @@ export function createAdminSeoLoader(
 }
 
 export function defineAdminSiteHooks(options: DefineAdminSiteHooksOptions = {}): ServerHooksOutput {
-  return createAdminSiteHooks(options, {});
+  return createAdminSiteHooks(options, createEmptyRuntimeConfig());
 }
 
 function createAdminSiteHooks(
   options: DefineAdminSiteHooksOptions,
   runtime: SiteRuntimeConfig
 ): ServerHooksOutput {
-  const runtimeI18n = runtime.i18n ?? {};
-  const runtimeSeo = runtime.seo ?? {};
+  const runtimeI18n: Partial<RuntimeI18nConfig> = runtime.i18n ?? {};
+  const runtimeSeo: Partial<RuntimeSeoConfig> = runtime.seo ?? {};
   const i18n = options.i18n ?? {};
   const seo = options.seo ?? {};
   const fallbackMessages = i18n.fallbackLocal ?? runtimeI18n.fallbackLocal ?? {};
@@ -354,7 +367,7 @@ export interface ServerHooksOutput {
 }
 
 export function defineSiteHooks(config: SiteHooksConfig): ServerHooksOutput {
-  return createSiteHooks(config, {});
+  return createSiteHooks(config, createEmptyRuntimeConfig());
 }
 
 export function applyRuntimeToServerHooks<T extends object>(

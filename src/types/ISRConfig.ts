@@ -27,41 +27,39 @@ export type RenderModeType = 'ssg' | 'isr' | 'ssr';
  *                   通过 _.rsc 端点尝试自救拉数据 —— 体验降级但不是 5xx 白屏
  */
 export type InternalStrategyType = 'static' | 'cached' | 'regenerate' | 'server' | 'csr-shell';
-export type CacheStrategyType = 'no-cache' | 'memory' | 'redis' | 'filesystem';
-
 /**
  * 路由级规则（对象形式）—— 允许精细控制 TTL 与 stale-while-revalidate 窗口
  */
 export interface RouteRuleObject {
   mode: RenderModeType;
-  /** TTL（秒），覆盖全局 revalidate 默认值 */
-  ttl?: number;
-  /** stale-while-revalidate 窗口（秒）—— TTL 过期后继续回放旧内容的时长 */
-  staleWhileRevalidate?: number;
+  /** TTL（秒），覆盖全局 revalidate 默认值；不覆盖时显式写 undefined */
+  ttl: number | undefined;
+  /** stale-while-revalidate 窗口（秒）；不覆盖时显式写 undefined */
+  staleWhileRevalidate: number | undefined;
 }
 
 /**
  * 路由规则 —— 字符串 shorthand 或完整对象
- *   'isr'                                        等价于 { mode: 'isr', ttl: 默认, swr: 默认 }
+ *   'isr'                                        使用全局 revalidate
  *   { mode: 'isr', ttl: 60, staleWhileRevalidate: 300 }
  */
 export type RouteRule = RenderModeType | RouteRuleObject;
 
 export interface RuntimeRedisConfig {
   /** 完整 Redis URL（redis://[:pass@]host:port/db），优先级高于 host/port */
-  url?: string;
-  host?: string;
-  port?: number;
-  password?: string;
+  url: string | undefined;
+  host: string | undefined;
+  port: number | undefined;
+  password: string | undefined;
   /** 页面缓存 key 前缀，默认由 cache layer 使用 isr: */
-  keyPrefix?: string;
+  keyPrefix: string | undefined;
   /** 跨实例 revalidate 广播频道 */
-  invalidationChannel?: string;
+  invalidationChannel: string | undefined;
 }
 
 export interface RuntimeExperimentConfig {
   variants: readonly string[];
-  weights?: readonly number[];
+  weights: readonly number[] | undefined;
 }
 
 export interface RuntimeRateLimitConfig {
@@ -76,127 +74,127 @@ export interface RuntimeRateLimitConfig {
    *
    * 非法值（拼错 / 类型错）engine 会 warn 一次并按 'auto' 处理，不静默吞。
    */
-  store?: 'memory' | 'redis' | 'auto';
+  store: 'memory' | 'redis' | 'auto';
   /** 固定窗口长度（毫秒）；默认 60_000 */
-  windowMs?: number;
+  windowMs: number;
   /** 每个 key 在窗口内允许的最大请求数；默认 100 */
-  max?: number;
+  max: number;
   /** memory store 最大 key 数；默认 10_000 */
-  lruMax?: number;
+  lruMax: number;
   /**
    * 是否信任上游代理头来提取真实客户端 IP。
    * 只有部署在可信 CDN/LB/Nginx 后面时才开启，否则客户端可伪造 X-Forwarded-For。
    */
-  trustProxy?: boolean;
+  trustProxy: boolean;
   /** 是否发送 RateLimit-* / Retry-After 响应头；默认 true */
-  sendHeaders?: boolean;
-  /** Redis rate-limit key 前缀；默认 `${runtime.redis.keyPrefix ?? 'isr:'}rate-limit:` */
-  keyPrefix?: string;
+  sendHeaders: boolean;
+  /** Redis rate-limit key 前缀；默认基于 runtime.redis.keyPrefix 拼接 rate-limit 命名空间 */
+  keyPrefix: string | undefined;
   /**
    * 精确跳过的请求 path。engine 默认已跳过 /health、/metrics、OPTIONS、静态资源扩展名；
    * 业务只在确有内部探针或自定义资源路径时补充。
    */
-  skipPaths?: readonly string[];
+  skipPaths: readonly string[];
   /** 按 path 前缀跳过限流，例如 ['/internal/static/'] */
-  skipPathPrefixes?: readonly string[];
+  skipPathPrefixes: readonly string[];
   /** 额外静态资源扩展名，例如 ['.wasm']；默认已覆盖 js/css/image/font/map 等常见资源 */
-  skipExtensions?: readonly string[];
+  skipExtensions: readonly string[];
 }
 
 export interface RuntimeI18nConfig {
   /** 支持的 locale 列表，用于 URL locale 前缀解析和请求协商 */
-  locales?: readonly string[];
+  locales: readonly string[];
   /** 默认 locale；不配置时取 locales[0] */
-  defaultLocale?: string;
+  defaultLocale: string;
   /** 默认 locale 是否带 URL 前缀 */
-  prefixDefault?: boolean;
+  prefixDefault: boolean;
   /** 远端字典端点；相对路径会拼到 services.api 上 */
-  endpoint?: string;
+  endpoint: string | undefined;
   /** 本地兜底字典；配置 API 不可用时使用 */
-  fallbackLocal?: Record<string, Record<string, unknown>>;
+  fallbackLocal: Record<string, Record<string, unknown>> | undefined;
   /** 字典缓存 TTL（毫秒） */
-  ttl?: number;
+  ttl: number;
   /** 远端请求超时（毫秒） */
-  timeoutMs?: number;
+  timeoutMs: number;
   /** 响应头 / dev inspector 里显示的远端来源名 */
-  remoteSource?: string;
+  remoteSource: string;
   /** 响应头 / dev inspector 里显示的本地兜底来源名 */
-  fallbackSource?: string;
+  fallbackSource: string;
 }
 
 export interface RuntimeSeoConfig {
   /** 远端 SEO 端点；支持 {pathname} */
-  endpoint?: string;
+  endpoint: string | undefined;
   /** 本地兜底 SEO 路由表；配置 API 不可用时使用 */
-  fallbackLocal?: readonly Record<string, unknown>[];
+  fallbackLocal: readonly Record<string, unknown>[] | undefined;
   /** SEO 元数据缓存 TTL（毫秒） */
-  ttl?: number;
+  ttl: number;
   /** 远端请求超时（毫秒） */
-  timeoutMs?: number;
+  timeoutMs: number;
 }
 
 export interface RuntimeServicesConfig {
   /** 默认后端 API origin；业务数据、配置中心、mock fixture 都走这里 */
-  api?: string;
+  api: string | undefined;
   /** telemetry 上报 origin；不配置时回退到 api，同源部署可留空 */
-  telemetry?: string;
+  telemetry: string | undefined;
 }
 
 export interface RuntimeTelemetryEndpointOptions {
   /** 远端上报地址；相对路径会拼到 services.telemetry/api 上 */
-  endpoint?: string;
+  endpoint: string | undefined;
   /** 采样率，0..1；默认 1 */
-  sampleRate?: number;
+  sampleRate: number;
   /** 批量上报条数；analytics 默认 20，error-reporting 默认 10 */
-  batchSize?: number;
+  batchSize: number;
   /** 定时 flush 间隔，毫秒；默认 3000 */
-  flushIntervalMs?: number;
+  flushIntervalMs: number;
   /** 失败后内存队列上限；analytics 默认 500，error-reporting 默认 200 */
-  maxQueueSize?: number;
+  maxQueueSize: number;
   /** 失败重试初始退避，毫秒；默认 1000 */
-  retryBaseDelayMs?: number;
+  retryBaseDelayMs: number;
   /** 失败重试最大退避，毫秒；默认 30000 */
-  retryMaxDelayMs?: number;
+  retryMaxDelayMs: number;
 }
 
 export interface RuntimeTelemetryEventsConfig extends RuntimeTelemetryEndpointOptions {
   /** 是否自动上报首屏 page_view；默认 true */
-  trackInitialPage?: boolean;
+  trackInitialPage: boolean;
 }
 
 export interface RuntimeTelemetryErrorsConfig extends RuntimeTelemetryEndpointOptions {
   /** 是否采集 script/link/img 等资源加载失败；默认 true */
-  captureResourceErrors?: boolean;
+  captureResourceErrors: boolean;
 }
 
 export interface RuntimeTelemetryWebVitalsConfig {
   /** 是否自动采集 Web Vitals；默认 true */
-  enabled?: boolean;
+  enabled: boolean;
 }
 
 export interface RuntimeTelemetrySentryIntegrationConfig {
   /** 是否启用 Sentry integration；默认 false，避免仅配置环境变量就隐式接入第三方平台 */
-  enabled?: boolean;
+  enabled: boolean;
   /** Sentry DSN；enabled=true 但不配置时 engine 会跳过 adapter 并记录 warn */
-  dsn?: string;
-  tracesSampleRate?: number;
-  environment?: string;
-  release?: string;
+  dsn: string | undefined;
+  tracesSampleRate: number | undefined;
+  environment: string | undefined;
+  release: string | undefined;
 }
 
 export interface RuntimeTelemetryDatadogExporterConfig {
   type: 'datadog';
-  name?: string;
-  required?: boolean;
-  service?: string;
+  name: string | undefined;
+  required: boolean | undefined;
+  service: string | undefined;
 }
 
 export interface RuntimeTelemetryOtelExporterConfig {
   type: 'otel';
-  name?: string;
-  required?: boolean;
-  endpoint?: string;
-  serviceName?: string;
+  name: string | undefined;
+  required: boolean | undefined;
+  endpoint: string | undefined;
+  serviceName: string | undefined;
 }
 
 export type RuntimeTelemetryExporterConfig =
@@ -214,32 +212,32 @@ export interface RuntimeTelemetryIntegrationsConfig {
    *
    * SDK / issue grouping / source map / release health / performance 都在这一层。
    */
-  sentry?: RuntimeTelemetrySentryIntegrationConfig;
+  sentry: RuntimeTelemetrySentryIntegrationConfig | undefined;
 }
 
 export interface RuntimeTelemetryConfig {
   /** 应用名；不配置时读取 package.json name */
-  app?: string;
+  app: string | undefined;
   /** 发布版本，用于错误归因和发布影响分析 */
-  release?: string;
+  release: string | undefined;
   /** 当前环境：development/staging/production */
-  environment?: string;
+  environment: string | undefined;
   /** 是否把 query string 纳入 URL；默认 false，避免采集敏感参数 */
-  includeQueryString?: boolean;
+  includeQueryString: boolean;
   /** 前端事件/PV 埋点配置；false 表示关闭 events */
-  events?: false | RuntimeTelemetryEventsConfig;
+  events: false | RuntimeTelemetryEventsConfig;
   /** 前端错误上报配置；false 表示关闭 errors */
-  errors?: false | RuntimeTelemetryErrorsConfig;
+  errors: false | RuntimeTelemetryErrorsConfig;
   /** Web Vitals 配置；false 表示关闭性能指标 */
-  webVitals?: false | RuntimeTelemetryWebVitalsConfig;
+  webVitals: false | RuntimeTelemetryWebVitalsConfig;
   /**
    * 额外 collector 出口。第一方 HTTP 上报不放这里，唯一真值源是
    * events.endpoint / errors.endpoint，避免同一个地址配置两遍。
    * Sentry 这类完整 SDK 平台放 integrations，不降级为普通 exporter。
    */
-  exporters?: readonly RuntimeTelemetryExporterConfig[];
+  exporters: readonly RuntimeTelemetryExporterConfig[];
   /** 第三方平台集成，和第一方 endpoint telemetry 并列挂在 telemetry 下面 */
-  integrations?: RuntimeTelemetryIntegrationsConfig;
+  integrations: RuntimeTelemetryIntegrationsConfig;
 }
 
 /**
@@ -251,11 +249,11 @@ export interface RuntimeTelemetryConfig {
  */
 export interface RuntimeConfig {
   /** 站点公网 base URL，用于 SEO canonical / sitemap / robots */
-  site?: string;
+  site: string | undefined;
   /** 按职责拆开的后端服务 origin */
-  services?: RuntimeServicesConfig;
+  services: RuntimeServicesConfig;
   /** 分布式 ISR 缓存与跨实例失效广播 */
-  redis?: RuntimeRedisConfig;
+  redis: RuntimeRedisConfig | undefined;
   /**
    * 站点入口限流。
    *
@@ -263,19 +261,19 @@ export interface RuntimeConfig {
    * 否则用进程内 memory。消费方一般无需显式设置 store。
    * 多实例生产环境仍应优先使用 CDN/WAF/API Gateway 做第一层限流。
    */
-  rateLimit?: RuntimeRateLimitConfig;
+  rateLimit: false | RuntimeRateLimitConfig;
   /** A/B testing / experimentation 定义，供 getVariant() 在 Server Component 中读取 */
-  experiments?: Record<string, RuntimeExperimentConfig>;
+  experiments: Record<string, RuntimeExperimentConfig>;
   /** i18n 字典源配置；请求期加载由 engine 默认 SiteHooks 消费 */
-  i18n?: RuntimeI18nConfig;
+  i18n: RuntimeI18nConfig | undefined;
   /** 页面 SEO 元数据源配置；站点 canonical/sitemap base URL 统一来自 runtime.site */
-  seo?: RuntimeSeoConfig;
+  seo: RuntimeSeoConfig | undefined;
   /**
    * telemetry 上报配置。engine 会把浏览器安全子集序列化到 client entry，
    * 自动接入 page_view、Web Vitals、全局错误、资源加载失败、Server Action 错误；
    * 服务端渲染异常会通过同一个 errors endpoint 非阻塞上报。
    */
-  telemetry?: false | RuntimeTelemetryConfig;
+  telemetry: false | RuntimeTelemetryConfig;
 }
 
 export const RenderModes = {
@@ -291,14 +289,6 @@ export const InternalStrategies = {
   REGENERATE: 'regenerate' as const, // ISR 重新生成
   SERVER: 'server' as const, // 实时跑管线（SSR / 中间兜底）
   CSR_SHELL: 'csr-shell' as const, // 最后兜底：返回壳 HTML，浏览器自救
-} as const;
-
-// 缓存策略
-export const CacheStrategies = {
-  NO_CACHE: 'no-cache' as const,
-  MEMORY: 'memory' as const,
-  REDIS: 'redis' as const,
-  FILE_SYSTEM: 'filesystem' as const,
 } as const;
 
 /**
@@ -324,8 +314,8 @@ export interface ISRConfig {
   renderMode: RenderModeType;
 
   /**
-   * 路由级别覆盖配置（可选）
-   * 仅当需要对特定路由使用不同于全局 renderMode 时才配置
+   * 路由级别覆盖配置。
+   * 没有覆盖时显式写 `{}`，这样 ssr.config.ts 不存在隐藏默认值。
    * 支持通配符匹配：'/posts/*' 匹配所有 /posts/ 开头的路由
    * 支持动态路由：'/post/:id' 匹配 /post/123 等
    *
@@ -337,7 +327,7 @@ export interface ISRConfig {
    * }
    * ```
    */
-  routes?: Record<string, RouteRule>;
+  routes: Record<string, RouteRule>;
 
   /**
    * 平台运行时配置。
@@ -345,7 +335,7 @@ export interface ISRConfig {
    * 这些是稳定的部署/启动配置，成熟项目应放在 ssr.config.ts，而不是散落在
    * entry.server.tsx 里。entry.server.tsx 只负责如何在请求期使用这些配置。
    */
-  runtime?: RuntimeConfig;
+  runtime: RuntimeConfig;
 
   /*
    * No public `cache` field by design.
@@ -367,11 +357,11 @@ export interface ISRConfig {
    */
   revalidate: number;
 
-  server?: {
+  server: {
     /** Node origin 监听端口；缺省 3000。 */
-    port?: number;
+    port: number;
     /** Node origin 监听地址；通常本地留空，容器/内网按部署平台注入。 */
-    host?: string;
+    host: string | undefined;
     /**
      * 端口严格模式。
      *
@@ -380,7 +370,7 @@ export interface ISRConfig {
      *
      * 不配置时 engine 默认 dev=false、prod=true；成熟业务建议在 ssr.config.ts 显式写出。
      */
-    strictPort?: boolean;
+    strictPort: boolean;
     /**
      * 运维端点暴露策略。
      *
@@ -390,47 +380,38 @@ export interface ISRConfig {
      *
      * Cache debug JSON 不作为产品配置面；生产观测使用 Prometheus /metrics。
      */
-    ops?: {
+    ops: {
       /** 共享运维口令；接受 `Authorization: Bearer <token>` 或 tokenHeader 指定 header */
-      authToken?: string;
+      authToken: string | undefined;
       /** 自定义 header 名，默认 `x-isr-admin-token` */
-      tokenHeader?: string;
-      health?: {
-        enabled?: boolean;
-        public?: boolean;
+      tokenHeader: string;
+      health: {
+        enabled: boolean;
+        public: boolean;
       };
-      metrics?: {
-        enabled?: boolean;
-        public?: boolean;
+      metrics: {
+        enabled: boolean;
+        public: boolean;
       };
     };
   };
 
   /** SSG 预生成配置 */
-  ssg?: {
+  ssg: {
     /** 显式 SSG 路由列表（可选，优先级高于 routes 中 mode=ssg 的条目） */
-    routes?: string[] | (() => Promise<string[]>);
+    routes: readonly string[] | (() => readonly string[] | Promise<readonly string[]>);
     /** 并发度，默认 3 */
-    concurrent?: number;
+    concurrent: number;
     /** 单页请求超时毫秒，默认 30_000；防 hang 拖死整个 build */
-    requestTimeoutMs?: number;
+    requestTimeoutMs: number;
     /** 单页最大重试次数（不含首次），默认 3；只重试 timeout/network/5xx，不重试 4xx */
-    maxRetries?: number;
+    maxRetries: number;
     /** 重试初始退避毫秒，默认 200；指数退避 = base * 2^(N-1) */
-    retryBaseDelayMs?: number;
+    retryBaseDelayMs: number;
     /**
      * 整体失败率阈值（0-1），默认 0.05（5%）；超过则 build 失败。
      * 设 1.0 关闭（不推荐——会 mask 真实问题）。设 0 = 任何失败都 fail build。
      */
-    failBuildThreshold?: number;
-  };
-}
-
-export interface ResolvedISRConfig extends ISRConfig {
-  renderMode: RenderModeType;
-  routes: Record<string, RouteRule>;
-  cache: {
-    strategy: CacheStrategyType;
-    ttl: number;
+    failBuildThreshold: number;
   };
 }

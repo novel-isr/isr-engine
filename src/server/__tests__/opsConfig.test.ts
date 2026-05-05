@@ -1,6 +1,40 @@
 import { describe, expect, it, vi } from 'vitest';
 import { createOpsAuthMiddleware, resolveOpsConfig } from '../opsConfig';
 
+type PartialOpsConfig = {
+  authToken?: string;
+  tokenHeader?: string;
+  health?: { enabled?: boolean; public?: boolean };
+  metrics?: { enabled?: boolean; public?: boolean };
+};
+
+function serverOpsConfig(
+  ops: PartialOpsConfig
+): NonNullable<Parameters<typeof resolveOpsConfig>[0]> {
+  return {
+    server: {
+      port: 3000,
+      host: '127.0.0.1',
+      strictPort: true,
+      ops: {
+        authToken: undefined,
+        tokenHeader: 'x-isr-admin-token',
+        ...ops,
+        health: {
+          enabled: true,
+          public: true,
+          ...ops.health,
+        },
+        metrics: {
+          enabled: false,
+          public: false,
+          ...ops.metrics,
+        },
+      },
+    },
+  };
+}
+
 describe('resolveOpsConfig', () => {
   it('production 默认只公开 health', () => {
     const resolved = resolveOpsConfig({}, 'production');
@@ -11,14 +45,9 @@ describe('resolveOpsConfig', () => {
 
   it('production 未配置 authToken 时自动关闭受保护 metrics', () => {
     const resolved = resolveOpsConfig(
-      {
-        server: {
-          port: 3000,
-          ops: {
-            metrics: { enabled: true },
-          },
-        },
-      },
+      serverOpsConfig({
+        metrics: { enabled: true },
+      }),
       'production'
     );
 
@@ -28,14 +57,9 @@ describe('resolveOpsConfig', () => {
 
   it('production 显式 public 会保留并打印 warning', () => {
     const resolved = resolveOpsConfig(
-      {
-        server: {
-          port: 3000,
-          ops: {
-            metrics: { enabled: true, public: true },
-          },
-        },
-      },
+      serverOpsConfig({
+        metrics: { enabled: true, public: true },
+      }),
       'production'
     );
 
@@ -48,15 +72,10 @@ describe('resolveOpsConfig', () => {
 describe('createOpsAuthMiddleware', () => {
   it('允许 Bearer token 访问受保护端点', () => {
     const resolved = resolveOpsConfig(
-      {
-        server: {
-          port: 3000,
-          ops: {
-            authToken: 'secret-token',
-            metrics: { enabled: true, public: false },
-          },
-        },
-      },
+      serverOpsConfig({
+        authToken: 'secret-token',
+        metrics: { enabled: true, public: false },
+      }),
       'production'
     );
     const middleware = createOpsAuthMiddleware('metrics', resolved);
@@ -78,15 +97,10 @@ describe('createOpsAuthMiddleware', () => {
 
   it('缺失 token 时返回 401', () => {
     const resolved = resolveOpsConfig(
-      {
-        server: {
-          port: 3000,
-          ops: {
-            authToken: 'secret-token',
-            metrics: { enabled: true, public: false },
-          },
-        },
-      },
+      serverOpsConfig({
+        authToken: 'secret-token',
+        metrics: { enabled: true, public: false },
+      }),
       'production'
     );
     const middleware = createOpsAuthMiddleware('metrics', resolved);

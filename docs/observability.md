@@ -46,6 +46,7 @@ Engine 的公共配置只叫 `runtime.telemetry`。第一方 HTTP 上报、Sentr
 export default {
   runtime: {
     services: {
+      api: process.env.API_URL ?? 'https://admin.example.com',
       telemetry: process.env.TELEMETRY_API_URL ?? 'https://admin.example.com',
     },
     telemetry: {
@@ -73,12 +74,14 @@ export default {
         retryMaxDelayMs: 30000,
       },
       webVitals: { enabled: true },
+      exporters: [],
       integrations: {
         sentry: {
           enabled: process.env.SENTRY_ENABLED === 'true',
           dsn: process.env.SENTRY_DSN,
           tracesSampleRate: 0.1,
           environment: process.env.NODE_ENV,
+          release: process.env.APP_VERSION,
         },
       },
     },

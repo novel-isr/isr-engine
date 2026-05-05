@@ -1,29 +1,29 @@
 import type { ISRConfig, RuntimeConfig } from '../types';
 
 type ExactTopLevel<T, Shape> = T & Record<Exclude<keyof T, keyof Shape>, never>;
-type IsrServerConfig = NonNullable<ISRConfig['server']>;
-type IsrOpsConfig = NonNullable<IsrServerConfig['ops']>;
-type RuntimeServicesConfig = NonNullable<RuntimeConfig['services']>;
-type ExactOps<T> = T extends { ops?: infer Ops }
+type IsrServerConfig = ISRConfig['server'];
+type IsrOpsConfig = IsrServerConfig['ops'];
+type RuntimeServicesConfig = RuntimeConfig['services'];
+type ExactOps<T> = T extends { ops: infer Ops }
   ? {
-      ops?: ExactTopLevel<NonNullable<Ops>, IsrOpsConfig>;
+      ops: ExactTopLevel<Ops & IsrOpsConfig, IsrOpsConfig>;
     }
   : unknown;
-type ExactServer<T> = T extends { server?: infer Server }
+type ExactServer<T> = T extends { server: infer Server }
   ? {
-      server?: ExactTopLevel<NonNullable<Server>, IsrServerConfig> & ExactOps<NonNullable<Server>>;
+      server: ExactTopLevel<Server & IsrServerConfig, IsrServerConfig> & ExactOps<Server>;
     }
   : unknown;
-type ExactRuntimeServices<T> = T extends { services?: infer Services }
+type ExactRuntimeServices<T> = T extends { services: infer Services }
   ? {
-      services?: ExactTopLevel<NonNullable<Services>, RuntimeServicesConfig>;
+      services: ExactTopLevel<Services & RuntimeServicesConfig, RuntimeServicesConfig>;
     }
   : unknown;
 type ExactRuntime<T extends RuntimeConfig> = ExactTopLevel<T, RuntimeConfig> &
   ExactRuntimeServices<T>;
-type ExactIsrRuntime<T> = T extends { runtime?: infer Runtime }
+type ExactIsrRuntime<T> = T extends { runtime: infer Runtime }
   ? {
-      runtime?: ExactRuntime<NonNullable<Runtime> & RuntimeConfig>;
+      runtime: ExactRuntime<Runtime & RuntimeConfig>;
     }
   : unknown;
 type ExactIsrConfig<T extends ISRConfig> = ExactTopLevel<T, ISRConfig> &
@@ -37,8 +37,8 @@ type ExactIsrConfig<T extends ISRConfig> = ExactTopLevel<T, ISRConfig> &
  *   import { defineIsrConfig } from '@novel-isr/engine/config';
  *   export default defineIsrConfig({ ... })
  *
- * 不需要维护 `satisfies ISRConfig` 或 `satisfies NonNullable<ISRConfig['runtime']>`
- * 这种类型技巧。配置形状由 engine API 统一承接，后续字段演进也只改 engine。
+ * 不需要维护 `satisfies ISRConfig` 这类类型技巧。配置形状由 engine API 统一承接，
+ * 后续字段演进也只改 engine。
  *
  * 注意：ssr.config.ts 应从 @novel-isr/engine/config 导入，避免根入口把 CLI/plugin
  * 工具链打进 RSC/SSG bundle。

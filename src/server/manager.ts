@@ -141,8 +141,8 @@ async function initServerContext(config?: ISRConfig): Promise<ServerContext> {
     );
     serverContext.requestHandler.use(
       createRateLimiter({
-        windowMs: config.runtime.rateLimit.windowMs ?? 60_000,
-        max: config.runtime.rateLimit.max ?? 100,
+        windowMs: config.runtime.rateLimit.windowMs,
+        max: config.runtime.rateLimit.max,
         store: resolvedRateLimitStore.store,
         lruMax: config.runtime.rateLimit.lruMax,
         trustProxy: config.runtime.rateLimit.trustProxy,
@@ -154,7 +154,7 @@ async function initServerContext(config?: ISRConfig): Promise<ServerContext> {
       })
     );
     logger.info(
-      `🚦 限流已启用：${config.runtime.rateLimit.max ?? 100} req / ${(config.runtime.rateLimit.windowMs ?? 60_000) / 1000}s per IP (store=${resolvedRateLimitStore.backend})`
+      `🚦 限流已启用：${config.runtime.rateLimit.max} req / ${config.runtime.rateLimit.windowMs / 1000}s per IP (store=${resolvedRateLimitStore.backend})`
     );
   }
 
@@ -197,9 +197,9 @@ export async function startAppServer(
 
   // 4. 解析配置并启动 HTTP 服务器
   const serverConfig = {
-    port: config.server?.port ?? 3000,
-    host: config.server?.host,
-    strictPort: config.server?.strictPort ?? !isDev(),
+    port: config.server.port,
+    host: config.server.host,
+    strictPort: config.server.strictPort,
   };
   const result = await startServer(serverContext.requestHandler, serverConfig);
 

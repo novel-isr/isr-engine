@@ -291,7 +291,7 @@ function resolveStoreMode(raw: unknown): StoreMode {
  *   - store: <脏值>    → warn 一次 + 当 'auto' 处理
  */
 export async function createRateLimitStoreFromRuntime(
-  rateLimit: RuntimeRateLimitConfig = {},
+  rateLimit: Partial<RuntimeRateLimitConfig> = {},
   redis?: RuntimeRedisConfig
 ): Promise<ResolvedRateLimitStore> {
   const mode = resolveStoreMode(rateLimit.store);

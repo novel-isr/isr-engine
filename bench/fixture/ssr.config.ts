@@ -16,20 +16,57 @@ const config: ISRConfig = {
   renderMode: 'isr',
   runtime: {
     site: process.env.SITE_URL ?? 'http://localhost:3000',
+    services: {
+      api: undefined,
+      telemetry: undefined,
+    },
+    redis: process.env.REDIS_URL
+      ? {
+          url: process.env.REDIS_URL,
+          host: undefined,
+          port: undefined,
+          password: undefined,
+          keyPrefix: 'bench:',
+          invalidationChannel: 'bench:isr:invalidate',
+        }
+      : undefined,
+    rateLimit: false,
+    experiments: {},
+    i18n: undefined,
+    seo: undefined,
+    telemetry: false,
   },
   routes: {
     '/': { mode: 'isr', ttl: 60, staleWhileRevalidate: 300 },
-    '/about': { mode: 'ssg' },
+    '/about': { mode: 'ssg', ttl: undefined, staleWhileRevalidate: undefined },
     '/books/:id': { mode: 'isr', ttl: 120, staleWhileRevalidate: 600 },
-    '/api/health': { mode: 'ssr' },
+    '/api/health': { mode: 'ssr', ttl: undefined, staleWhileRevalidate: undefined },
   },
   ssg: {
     routes: ['/about'],
+    concurrent: 3,
+    requestTimeoutMs: 30_000,
+    maxRetries: 3,
+    retryBaseDelayMs: 200,
+    failBuildThreshold: 0.05,
   },
   revalidate: 60,
   server: {
     port: Number(process.env.PORT ?? 3000),
     host: process.env.HOST ?? '127.0.0.1',
+    strictPort: true,
+    ops: {
+      authToken: process.env.ISR_OPS_TOKEN,
+      tokenHeader: 'x-isr-admin-token',
+      health: {
+        enabled: true,
+        public: true,
+      },
+      metrics: {
+        enabled: process.env.ENABLE_METRICS === '1',
+        public: false,
+      },
+    },
   },
 };
 

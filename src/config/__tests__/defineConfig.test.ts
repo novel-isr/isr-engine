@@ -5,15 +5,75 @@ import { describe, expect, expectTypeOf, it } from 'vitest';
 
 import { defineIsrConfig, defineRuntimeConfig } from '../defineConfig';
 
+const baseConfig = {
+  renderMode: 'isr',
+  revalidate: 3600,
+  routes: {},
+  runtime: {
+    site: undefined,
+    services: { api: undefined, telemetry: undefined },
+    redis: undefined,
+    rateLimit: false,
+    experiments: {},
+    i18n: undefined,
+    seo: undefined,
+    telemetry: false,
+  },
+  server: {
+    port: 3000,
+    host: '127.0.0.1',
+    strictPort: true,
+    ops: {
+      authToken: undefined,
+      tokenHeader: 'x-isr-admin-token',
+      health: { enabled: true, public: true },
+      metrics: { enabled: false, public: false },
+    },
+  },
+  ssg: {
+    routes: [],
+    concurrent: 3,
+    requestTimeoutMs: 30_000,
+    maxRetries: 3,
+    retryBaseDelayMs: 200,
+    failBuildThreshold: 0.05,
+  },
+} as const;
+
 describe('defineConfig helpers', () => {
   it('defineIsrConfig 返回原对象并保留 ISRConfig 类型约束', () => {
     const config = {
-      renderMode: 'isr',
-      revalidate: 3600,
+      ...baseConfig,
       runtime: {
+        ...baseConfig.runtime,
         telemetry: {
-          events: { endpoint: '/events' },
-          errors: { endpoint: '/errors' },
+          app: undefined,
+          release: undefined,
+          environment: undefined,
+          includeQueryString: false,
+          events: {
+            endpoint: '/events',
+            sampleRate: 1,
+            batchSize: 20,
+            flushIntervalMs: 3000,
+            maxQueueSize: 500,
+            retryBaseDelayMs: 1000,
+            retryMaxDelayMs: 30000,
+            trackInitialPage: true,
+          },
+          errors: {
+            endpoint: '/errors',
+            sampleRate: 1,
+            batchSize: 10,
+            flushIntervalMs: 3000,
+            maxQueueSize: 200,
+            retryBaseDelayMs: 1000,
+            retryMaxDelayMs: 30000,
+            captureResourceErrors: true,
+          },
+          webVitals: false,
+          exporters: [],
+          integrations: { sentry: undefined },
         },
       },
     } as const;
@@ -28,12 +88,28 @@ describe('defineConfig helpers', () => {
   it('defineRuntimeConfig 让业务拆分 runtime 时不需要 NonNullable 类型技巧', () => {
     const runtime = defineRuntimeConfig({
       site: 'https://novel.example.com',
+      services: { api: undefined, telemetry: undefined },
+      redis: undefined,
+      rateLimit: false,
+      experiments: {},
+      i18n: undefined,
+      seo: undefined,
       telemetry: {
+        app: undefined,
+        release: undefined,
+        environment: undefined,
+        includeQueryString: false,
+        events: false,
         errors: false,
+        webVitals: false,
+        exporters: [],
         integrations: {
           sentry: {
             enabled: true,
             dsn: 'https://key@sentry.example/1',
+            tracesSampleRate: undefined,
+            environment: undefined,
+            release: undefined,
           },
         },
       },
@@ -45,8 +121,7 @@ describe('defineConfig helpers', () => {
 
   it('defineIsrConfig 不再暴露业务级 cache 配置', () => {
     defineIsrConfig({
-      renderMode: 'isr',
-      revalidate: 3600,
+      ...baseConfig,
       // @ts-expect-error cache backend belongs to engine normalization; page TTL uses routes[*].ttl/revalidate.
       cache: { strategy: 'memory', ttl: 3600 },
     });
@@ -54,16 +129,15 @@ describe('defineConfig helpers', () => {
 
   it('defineIsrConfig 不再暴露顶层 SEO 开关和旧 isr.revalidate', () => {
     // @ts-expect-error SEO sitemap/robots are core engine capabilities, not business toggles.
-    defineIsrConfig({ renderMode: 'isr', revalidate: 3600, seo: { enabled: false } });
+    defineIsrConfig({ ...baseConfig, seo: { enabled: false } });
 
     // @ts-expect-error default page TTL is now top-level revalidate.
-    defineIsrConfig({ renderMode: 'isr', revalidate: 3600, isr: { revalidate: 3600 } });
+    defineIsrConfig({ ...baseConfig, isr: { revalidate: 3600 } });
   });
 
   it('defineIsrConfig 只暴露最小 Node origin server 配置', () => {
     defineIsrConfig({
-      renderMode: 'isr',
-      revalidate: 3600,
+      ...baseConfig,
       server: {
         port: 3000,
         host: '127.0.0.1',
@@ -71,36 +145,38 @@ describe('defineConfig helpers', () => {
         ops: {
           authToken: 'secret',
           tokenHeader: 'x-custom-token',
+          health: { enabled: true, public: true },
           metrics: { enabled: true, public: false },
         },
       },
     });
 
     defineIsrConfig({
-      renderMode: 'isr',
-      revalidate: 3600,
+      ...baseConfig,
       server: {
         port: 3000,
+        host: '127.0.0.1',
+        strictPort: true,
+        ops: baseConfig.server.ops,
         // @ts-expect-error protocol/TLS belongs to CDN or reverse proxy, not app config.
         protocol: 'https',
       },
     });
 
     // @ts-expect-error HTTP timeouts are engine-owned hardening defaults.
-    defineIsrConfig({ renderMode: 'isr', revalidate: 3600, server: { port: 3000, timeouts: {} } });
+    defineIsrConfig({ ...baseConfig, server: { ...baseConfig.server, timeouts: {} } });
 
     defineIsrConfig({
-      renderMode: 'isr',
-      revalidate: 3600,
+      ...baseConfig,
       server: {
-        port: 3000,
+        ...baseConfig.server,
         // @ts-expect-error compression is an internal origin fallback, not business config.
         compression: {},
       },
     });
 
     // @ts-expect-error admin/clear/stats were removed from the public API; use server.ops.
-    defineIsrConfig({ renderMode: 'isr', revalidate: 3600, server: { port: 3000, admin: {} } });
+    defineIsrConfig({ ...baseConfig, server: { ...baseConfig.server, admin: {} } });
   });
 
   it('defineIsrConfig 不再暴露 i18n/seo 独立服务源', () => {

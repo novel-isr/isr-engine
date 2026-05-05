@@ -18,7 +18,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 
-import type { ISRConfig, ResolvedISRConfig } from '../types';
+import type { ISRConfig } from '../types';
 export { normalizeEngineConfig } from '@/config/normalizeEngineConfig';
 import { normalizeEngineConfig } from '@/config/normalizeEngineConfig';
 import { Logger } from '../logger/Logger';
@@ -37,7 +37,7 @@ import type { Express } from 'express';
 
 export default class ISREngine {
   private readonly logger: Logger = Logger.getInstance();
-  private readonly config: ResolvedISRConfig;
+  private readonly config: ISRConfig;
   private readonly resolvedSeo: ResolvedSeoConfig;
   private readonly middlewareComposer: MiddlewareComposer;
   private readonly seoEngine: SEOEngine;

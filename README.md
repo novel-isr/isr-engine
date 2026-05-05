@@ -91,24 +91,60 @@ export default defineIsrConfig({
     },
     redis: {
       url: process.env.REDIS_URL,
+      host: undefined,
+      port: undefined,
+      password: undefined,
       keyPrefix: 'isr:',
+      invalidationChannel: 'isr:invalidate',
     },
     telemetry: {
       app: 'novel-rating',
-      events: { endpoint: '/api/observability/analytics' },
-      errors: { endpoint: '/api/observability/errors' },
+      release: process.env.APP_VERSION,
+      environment: process.env.NODE_ENV,
+      includeQueryString: false,
+      events: {
+        endpoint: '/api/observability/analytics',
+        trackInitialPage: true,
+        sampleRate: 1,
+        batchSize: 20,
+        flushIntervalMs: 3000,
+        maxQueueSize: 500,
+        retryBaseDelayMs: 1000,
+        retryMaxDelayMs: 30000,
+      },
+      errors: {
+        endpoint: '/api/observability/errors',
+        captureResourceErrors: true,
+        sampleRate: 1,
+        batchSize: 10,
+        flushIntervalMs: 3000,
+        maxQueueSize: 200,
+        retryBaseDelayMs: 1000,
+        retryMaxDelayMs: 30000,
+      },
+      webVitals: { enabled: true },
+      exporters: [],
       integrations: {
         sentry: {
           enabled: process.env.SENTRY_ENABLED === 'true',
           dsn: process.env.SENTRY_DSN,
+          tracesSampleRate: 0.1,
+          environment: process.env.NODE_ENV,
+          release: process.env.APP_VERSION,
         },
       },
     },
     rateLimit: {
+      store: 'auto',
       windowMs: 60_000,
       max: 200,
+      lruMax: 10_000,
       trustProxy: process.env.TRUST_PROXY === '1',
       sendHeaders: true,
+      keyPrefix: 'isr:rate-limit:',
+      skipPaths: [],
+      skipPathPrefixes: [],
+      skipExtensions: [],
     },
     experiments: {
       'hero-style': { variants: ['classic', 'bold'], weights: [50, 50] },
@@ -116,14 +152,19 @@ export default defineIsrConfig({
     i18n: {
       locales: fallbackLocal.site.locales,
       defaultLocale: fallbackLocal.site.defaultLocale,
+      prefixDefault: false,
       endpoint: '/api/i18n/{locale}/manifest',
       fallbackLocal: fallbackLocal.i18n.strings,
       ttl: 60_000,
+      timeoutMs: 1200,
+      remoteSource: 'admin-server',
+      fallbackSource: 'fallback-local',
     },
     seo: {
       endpoint: '/api/seo?path={pathname}',
       fallbackLocal: fallbackLocal.seo.entries,
       ttl: 60_000,
+      timeoutMs: 1200,
     },
   },
   routes: {
@@ -132,7 +173,25 @@ export default defineIsrConfig({
     '/login': 'ssr',
     '/*': 'isr',
   },
-  ssg: { routes: ['/about'] },
+  server: {
+    port: Number(process.env.PORT ?? 3000),
+    host: process.env.HOST,
+    strictPort: process.env.NODE_ENV !== 'development',
+    ops: {
+      authToken: process.env.ISR_OPS_TOKEN,
+      tokenHeader: 'x-isr-admin-token',
+      health: { enabled: true, public: true },
+      metrics: { enabled: process.env.ENABLE_METRICS === '1', public: false },
+    },
+  },
+  ssg: {
+    routes: ['/about'],
+    concurrent: 3,
+    requestTimeoutMs: 30_000,
+    maxRetries: 3,
+    retryBaseDelayMs: 200,
+    failBuildThreshold: 0.05,
+  },
   revalidate: 3600,
 });
 ```
@@ -177,6 +236,7 @@ export default {
 export default {
   runtime: {
     services: {
+      api: process.env.API_URL ?? 'https://admin.example.com',
       telemetry: process.env.TELEMETRY_API_URL ?? 'https://admin.example.com',
     },
     telemetry: {
@@ -186,18 +246,33 @@ export default {
       includeQueryString: false,
       events: {
         endpoint: '/api/observability/analytics',
+        trackInitialPage: true,
+        sampleRate: 1,
+        batchSize: 20,
+        flushIntervalMs: 3000,
+        maxQueueSize: 500,
+        retryBaseDelayMs: 1000,
+        retryMaxDelayMs: 30000,
       },
       errors: {
         endpoint: '/api/observability/errors',
         captureResourceErrors: true,
+        sampleRate: 1,
+        batchSize: 10,
+        flushIntervalMs: 3000,
+        maxQueueSize: 200,
+        retryBaseDelayMs: 1000,
+        retryMaxDelayMs: 30000,
       },
       webVitals: { enabled: true },
+      exporters: [],
       integrations: {
         sentry: {
           enabled: process.env.SENTRY_ENABLED === 'true',
           dsn: process.env.SENTRY_DSN,
           tracesSampleRate: 0.1,
           environment: process.env.NODE_ENV,
+          release: process.env.APP_VERSION,
         },
       },
     },
@@ -424,12 +499,17 @@ getI18n('book.count', { count: 12 }); // 字典里写 "共 {count} 本书"
 runtime: {
   redis: {
     url: process.env.REDIS_URL,
+    host: undefined,
+    port: undefined,
+    password: undefined,
     keyPrefix: 'novel:',
+    invalidationChannel: 'novel:isr:invalidate',
   },
   rateLimit: {
     store: 'auto',
     windowMs: 60_000,
     max: 200,
+    lruMax: 10_000,
     trustProxy: true,
     sendHeaders: true,
     keyPrefix: 'novel:rate-limit:',
@@ -460,12 +540,18 @@ server: {
   port: Number(process.env.PORT ?? 3000),
   host: process.env.HOST,
   strictPort: process.env.NODE_ENV !== 'development',
+  ops: {
+    authToken: process.env.ISR_OPS_TOKEN,
+    tokenHeader: 'x-isr-admin-token',
+    health: { enabled: true, public: true },
+    metrics: { enabled: process.env.ENABLE_METRICS === '1', public: false },
+  },
 }
 ```
 
 - `true`：端口被占用时直接启动失败，适合生产、容器和 CI，避免服务悄悄跑到错误端口。
 - `false`：端口被占用时最多尝试后续 20 个端口，适合本地开发。
-- 不配置时 engine 默认 dev=false、prod=true；生产项目建议显式写出，方便审查部署行为。
+- `server.strictPort` 是公开配置的一部分；生产项目应显式写出，方便审查部署行为。
 
 ## 与业界方案对比
 
@@ -481,7 +567,7 @@ server: {
 | 构建栈灵活度 | ❌ 绑死自家栈 | ✅ Vite | ❌ 绑死自家栈 | ✅ Vite |
 | 内置图片 / 字体优化 | ✅ | ❌ | ⚠️ | ✅ |
 | Edge runtime 支持 | ✅ | ⚠️ | ❌ | ✅（CF / Vercel adapter；Deno / Bun 走原生 `{fetch}`） |
-| 单元测试覆盖 | 数千用例 | ⚠️ | ✅ | 44 文件 / 564 tests / ~50% |
+| 单元测试覆盖 | 数千用例 | ⚠️ | ✅ | 52 文件 / 609 tests / ~50% |
 
 定位：**中等规模业务的 ISR / SSG / Fallback 编排层**，构建于 React 19 + `@vitejs/plugin-rsc` 官方流水线之上。
 
@@ -495,7 +581,7 @@ v2.3.1 收口了消费侧首跑 0 配置 + express 5 + 入口架构清理。但*
 ✅ **稳的部分**：
 - Flight 协议委托给官方 `@vitejs/plugin-rsc@^0.5.24`，不自维护
 - 依赖全是工业级（Express 5 / Helmet / Prometheus / sitemap / lru-cache / ioredis）
-- 564 tests / ~50% 覆盖；CI 任何分支 push 都跑 lint+typecheck+test
+- 609 tests / ~50% 覆盖；CI 任何分支 push 都跑 lint+typecheck+test
 - bench 退化追踪走 nightly `bench.yml`（信息性输出，不 gate release）
 - GitHub Packages 发布有 3 段 gate（lint+test+build），任一失败 → 不发布
 - 安全硬化覆盖了 Set-Cookie 跨用户回放、SSG 路径穿越、Redis Buffer 破损、

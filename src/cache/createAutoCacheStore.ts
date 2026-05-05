@@ -38,6 +38,7 @@ export function createAutoCacheStore(opts: AutoCacheStoreOptions = {}): IsrCache
     port: opts.redisPort,
     password: opts.redisPassword,
     keyPrefix: opts.redisKeyPrefix,
+    invalidationChannel: undefined,
   });
   const url = redisConfig?.url;
   const host = redisConfig?.host;
