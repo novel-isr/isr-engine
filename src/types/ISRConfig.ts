@@ -356,16 +356,17 @@ export interface ISRConfig {
    */
   runtime?: RuntimeConfig;
 
-  /**
-   * ISR HTTP response cache policy.
+  /*
+   * No public `cache` field by design.
    *
-   * Usually omit this. Engine defaults to memory LRU and automatically enables
-   * Redis L2 when runtime.redis or REDIS_URL/REDIS_HOST is available.
+   * Page cache backend selection is engine-owned:
+   *   - runtime.redis.url/host or REDIS_URL/REDIS_HOST => L1 memory + L2 Redis
+   *   - no Redis connection => in-process memory
+   *
+   * Page TTL belongs to routes[*].ttl or isr.revalidate. Keeping backend and TTL
+   * in separate product-level fields avoids asking every business app to know
+   * cache-store internals.
    */
-  cache?: {
-    strategy?: CacheStrategyType;
-    ttl?: number;
-  };
   /**
    * SEO 配置 —— 可选；缺省时 engine 启用默认行为：
    *   - enabled = true（dev/prod 都自动注入 sitemap.xml / robots.txt 路由）

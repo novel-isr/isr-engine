@@ -42,6 +42,11 @@ describe('defineConfig helpers', () => {
     expectTypeOf(runtime.telemetry.integrations.sentry.enabled).toEqualTypeOf<true>();
   });
 
+  it('defineIsrConfig 不再暴露业务级 cache 配置', () => {
+    // @ts-expect-error cache backend belongs to engine normalization; page TTL uses routes[*].ttl/isr.revalidate.
+    defineIsrConfig({ renderMode: 'isr', cache: { strategy: 'memory', ttl: 3600 } });
+  });
+
   it('package exposes a lightweight config subpath for ssr.config.ts', () => {
     const pkg = JSON.parse(
       fs.readFileSync(path.resolve(process.cwd(), 'package.json'), 'utf8')

@@ -14,8 +14,8 @@ export function normalizeEngineConfig(config: ISRConfig): ResolvedISRConfig {
   const renderMode = config.renderMode ?? 'isr';
   const routes: Record<string, RouteRule> = config.routes ?? {};
   const cache = {
-    strategy: config.cache?.strategy ?? DEFAULT_CACHE_STRATEGY,
-    ttl: config.cache?.ttl ?? config.isr?.revalidate ?? DEFAULT_CACHE_TTL_SECONDS,
+    strategy: DEFAULT_CACHE_STRATEGY,
+    ttl: config.isr?.revalidate ?? DEFAULT_CACHE_TTL_SECONDS,
   };
 
   return {

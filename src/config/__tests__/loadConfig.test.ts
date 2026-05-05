@@ -42,12 +42,12 @@ describe('loadConfig —— 文件扩展名优先级', () => {
       await writeConfig(
         cwd,
         'ssr.config.ts',
-        `export default { renderMode: 'isr', cache: { strategy: 'memory', ttl: 1111 } };`
+        `export default { renderMode: 'isr', isr: { revalidate: 1111 } };`
       );
       await writeConfig(
         cwd,
         'ssr.config.js',
-        `export default { renderMode: 'ssr', cache: { strategy: 'memory', ttl: 2222 } };`
+        `export default { renderMode: 'ssr', isr: { revalidate: 2222 } };`
       );
       const config = await loadConfig({ cwd });
       expect(config.renderMode).toBe('isr');
@@ -63,7 +63,7 @@ describe('loadConfig —— 文件扩展名优先级', () => {
       await writeConfig(
         cwd,
         'ssr.config.mjs',
-        `export default { renderMode: 'ssg', cache: { strategy: 'memory', ttl: 3333 } };`
+        `export default { renderMode: 'ssg', isr: { revalidate: 3333 } };`
       );
       const config = await loadConfig({ cwd });
       expect(config.renderMode).toBe('ssg');
@@ -95,8 +95,8 @@ describe('loadConfig —— TS 走 esbuild 编译', () => {
         cwd,
         'ssr.config.ts',
         `
-interface Cfg { renderMode: 'isr'; cache: { strategy: 'memory'; ttl: number } }
-const config: Cfg = { renderMode: 'isr', cache: { strategy: 'memory', ttl: 7777 } };
+interface Cfg { renderMode: 'isr'; isr: { revalidate: number } }
+const config: Cfg = { renderMode: 'isr', isr: { revalidate: 7777 } };
 export default config;
 `
       );
@@ -124,7 +124,7 @@ const compute = (base: number): number => base * 2;
 const baseTtl = 1500;
 export default {
   renderMode: 'isr' as const,
-  cache: { strategy: 'memory' as const, ttl: compute(baseTtl) },
+  isr: { revalidate: compute(baseTtl) },
 };
 `
       );
@@ -135,7 +135,7 @@ export default {
     }
   });
 
-  it('业务配置可省略 cache，engine 自动补齐 memory 默认值', async () => {
+  it('业务配置不需要 cache，engine 自动补齐内部 memory 默认值', async () => {
     const cwd = await mkTmpDir();
     try {
       await writeConfig(
@@ -150,6 +150,27 @@ export default {
       );
       const config = await loadConfig({ cwd });
       expect(config.cache).toEqual({ strategy: 'memory', ttl: 120 });
+    } finally {
+      await rmTmp(cwd);
+    }
+  });
+
+  it('历史遗留 cache 字段不会覆盖 isr.revalidate', async () => {
+    const cwd = await mkTmpDir();
+    try {
+      await writeConfig(
+        cwd,
+        'ssr.config.js',
+        `
+export default {
+  renderMode: 'isr',
+  isr: { revalidate: 240 },
+  cache: { strategy: 'redis', ttl: 9999 },
+};
+`
+      );
+      const config = await loadConfig({ cwd });
+      expect(config.cache).toEqual({ strategy: 'memory', ttl: 240 });
     } finally {
       await rmTmp(cwd);
     }
@@ -175,7 +196,7 @@ export const runtime = {
 export default {
   renderMode: 'isr' as const,
   runtime,
-  cache: { strategy: 'memory' as const, ttl: 3600 },
+  isr: { revalidate: 3600 },
 };
 `
       );
@@ -199,7 +220,7 @@ describe('loadConfig —— 缓存与 forceReload', () => {
       await writeConfig(
         cwd,
         'ssr.config.ts',
-        `export default { renderMode: 'isr', cache: { strategy: 'memory', ttl: 100 } };`
+        `export default { renderMode: 'isr', isr: { revalidate: 100 } };`
       );
       const a = await loadConfig({ cwd });
       const b = await loadConfig({ cwd });
@@ -215,7 +236,7 @@ describe('loadConfig —— 缓存与 forceReload', () => {
       await writeConfig(
         cwd,
         'ssr.config.ts',
-        `export default { renderMode: 'isr', cache: { strategy: 'memory', ttl: 100 } };`
+        `export default { renderMode: 'isr', isr: { revalidate: 100 } };`
       );
       const a = await loadConfig({ cwd });
       expect(a.cache.ttl).toBe(100);
@@ -225,7 +246,7 @@ describe('loadConfig —— 缓存与 forceReload', () => {
       await writeConfig(
         cwd,
         'ssr.config.ts',
-        `export default { renderMode: 'isr', cache: { strategy: 'memory', ttl: 500 } };`
+        `export default { renderMode: 'isr', isr: { revalidate: 500 } };`
       );
 
       // 不加 forceReload → 返回缓存的老值
@@ -246,7 +267,7 @@ describe('loadConfig —— 缓存与 forceReload', () => {
       await writeConfig(
         cwd,
         'ssr.config.ts',
-        `export default { renderMode: 'isr', cache: { strategy: 'memory', ttl: 100 } };`
+        `export default { renderMode: 'isr', isr: { revalidate: 100 } };`
       );
       const a = await loadConfig({ cwd });
       expect(a.cache.ttl).toBe(100);
@@ -256,7 +277,7 @@ describe('loadConfig —— 缓存与 forceReload', () => {
       await writeConfig(
         cwd,
         'ssr.config.ts',
-        `export default { renderMode: 'ssr', cache: { strategy: 'memory', ttl: 999 } };`
+        `export default { renderMode: 'ssr', isr: { revalidate: 999 } };`
       );
 
       const b = await loadConfig({ cwd, forceReload: true });
@@ -273,7 +294,7 @@ describe('loadConfig —— 缓存与 forceReload', () => {
       await writeConfig(
         cwd,
         'ssr.config.js',
-        `export default { renderMode: 'isr', cache: { strategy: 'memory', ttl: 42 } };`
+        `export default { renderMode: 'isr', isr: { revalidate: 42 } };`
       );
       const a = await loadConfig({ cwd });
       expect(a.cache.ttl).toBe(42);
@@ -284,7 +305,7 @@ describe('loadConfig —— 缓存与 forceReload', () => {
       await writeConfig(
         cwd2,
         'ssr.config.js',
-        `export default { renderMode: 'ssg', cache: { strategy: 'memory', ttl: 99 } };`
+        `export default { renderMode: 'ssg', isr: { revalidate: 99 } };`
       );
       const b = await loadConfig({ cwd: cwd2 });
       expect(b.cache.ttl).toBe(99);
@@ -302,7 +323,7 @@ describe('loadConfig —— TS 编译产物缓存复用', () => {
       await writeConfig(
         cwd,
         'ssr.config.ts',
-        `export default { renderMode: 'isr', cache: { strategy: 'memory', ttl: 100 } };`
+        `export default { renderMode: 'isr', isr: { revalidate: 100 } };`
       );
       await loadConfig({ cwd });
       const dir1 = await fs.readdir(path.join(cwd, '.isr-cache'));
@@ -329,7 +350,7 @@ describe('loadConfig —— 加载失败兜底', () => {
         'ssr.config.ts',
         `
 throw new Error('intentional boom at module top level');
-export default { renderMode: 'ssr', cache: { strategy: 'memory', ttl: 1 } };
+export default { renderMode: 'ssr', isr: { revalidate: 1 } };
 `
       );
       const config = await loadConfig({ cwd });

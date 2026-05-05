@@ -5,7 +5,8 @@
  *   - REDIS_URL 或 REDIS_HOST 已设 → HybridCacheStore（L1 LRU + L2 Redis 写穿）
  *   - 都未设               → MemoryCacheStore（单层 LRU，行为不变）
  *
- * 用户 zero-config 不动代码，只需在 `.env` 加 REDIS_URL=redis://... 就自动启用 Redis。
+ * 应用通常在 ssr.config.ts 写 `runtime.redis.url: process.env.REDIS_URL`。
+ * 如果未显式传入，engine 仍会读取 REDIS_URL / REDIS_HOST 作为兜底。
  */
 import {
   createMemoryCacheStore,

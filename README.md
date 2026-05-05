@@ -89,7 +89,10 @@ export default defineIsrConfig({
       api: process.env.API_URL ?? 'http://localhost:8080',
       telemetry: process.env.TELEMETRY_API_URL ?? process.env.API_URL ?? 'http://localhost:8080',
     },
-    redis: { keyPrefix: 'isr:' },
+    redis: {
+      url: process.env.REDIS_URL,
+      keyPrefix: 'isr:',
+    },
     telemetry: {
       app: 'novel-rating',
       events: { endpoint: '/api/observability/analytics' },
@@ -131,7 +134,6 @@ export default defineIsrConfig({
   },
   ssg: { routes: ['/about'] },
   isr: { revalidate: 3600 },
-  cache: { strategy: 'memory', ttl: 3600 },
 });
 ```
 
@@ -409,13 +411,19 @@ getI18n('book.count', { count: 12 }); // 字典里写 "共 {count} 本书"
 
 `runtime.rateLimit` 是站点入口的应用层保护。默认 `store: 'auto'`：engine 检测到
 `runtime.redis.url/host` 或非空 `REDIS_URL/REDIS_HOST` 就使用 Redis；否则使用进程内
-memory LRU。业务只需要声明窗口和阈值，不需要重复写环境变量判断。
+memory LRU。业务只需要声明窗口和阈值，不需要重复写存储后端判断。
+
+页面缓存同样不暴露 `cache` 配置。engine 自动选择本机 memory 或 Redis L2；
+业务只在 `routes[*].ttl` 和 `isr.revalidate` 配置页面 TTL。
 
 要开启分布式限流：
 
 ```ts
 runtime: {
-  redis: { keyPrefix: 'novel:' },
+  redis: {
+    url: process.env.REDIS_URL,
+    keyPrefix: 'novel:',
+  },
   rateLimit: {
     windowMs: 60_000,
     max: 200,

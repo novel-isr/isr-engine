@@ -14,10 +14,6 @@ import type { ISRConfig } from '@novel-isr/engine';
 
 const config: ISRConfig = {
   renderMode: 'isr',
-  cache: {
-    strategy: 'memory',
-    ttl: 3600,
-  },
   routes: {
     '/': { mode: 'isr', ttl: 60, staleWhileRevalidate: 300 },
     '/about': { mode: 'ssg' },

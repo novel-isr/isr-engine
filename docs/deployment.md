@@ -110,7 +110,7 @@ i18n / A/B / rate-limit 是平台级横切能力，生产配置写在 `ssr.confi
 
 - `runtime.i18n`：locale、远端字典 endpoint、TTL、本地 fallback。
 - `runtime.experiments`：A/B testing / experimentation 定义；页面用 `getVariant()`。
-- `runtime.rateLimit`：站点入口限流；默认是当前进程内 memory fixed-window counter。多实例分布式限流需显式 `rateLimit.store='redis'` 或 `'auto'`，并配置 `runtime.redis` / `REDIS_URL`。
+- `runtime.rateLimit`：站点入口限流；默认 `store='auto'`。`runtime.redis.url/host` 或 `REDIS_URL/REDIS_HOST` 非空时自动用 Redis，否则进程内 memory fixed-window counter。
 
 `entry.server.tsx beforeRequest` 只补充本次请求的业务上下文字段，例如
 `userId`、`tenantId`、`requestSegment`。不要在 `beforeRequest` 里重新实现 i18n、
@@ -122,8 +122,8 @@ Vercel Edge 部署可用 `toVercelMiddleware` 包出平台原生 `middleware.ts`
 ## 上生产前 checklist
 
 - [ ] `SEO_BASE_URL` 设到真实域名
-- [ ] `REDIS_URL` 设到生产 Redis（多 pod 必需）
-- [ ] 需要分布式限流时，配置 `runtime.redis` 或把 `runtime.rateLimit.store` 设为 `'redis'`，确认 429 响应带 `RateLimit-*` / `Retry-After`，并确认静态资源、健康检查和 dev 资源不会消耗应用入口配额
+- [ ] `ssr.config.ts` 的 `runtime.redis.url` 读取 `process.env.REDIS_URL`，并在部署平台把 `REDIS_URL` 设到生产 Redis（多 pod 必需）
+- [ ] 需要分布式限流时，确认 `runtime.rateLimit` 保持默认 `auto` 或显式 `'redis'`，确认 429 响应带 `RateLimit-*` / `Retry-After`，并确认静态资源、健康检查和 dev 资源不会消耗应用入口配额
 - [ ] 如需 Sentry，配置 `runtime.telemetry.integrations.sentry.enabled=true` 并注入 `SENTRY_DSN`
 - [ ] `ISR_ADMIN_TOKEN` 设到强 secret（如果开了 `/__isr/*` 或 `/metrics`）
 - [ ] 跑一周以上 staging 压测，监控内存增长（L1 LRU 默认 1000 条够不够你的业务）

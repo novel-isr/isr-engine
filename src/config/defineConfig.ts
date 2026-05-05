@@ -1,5 +1,7 @@
 import type { ISRConfig, RuntimeConfig } from '../types';
 
+type ExactTopLevel<T, Shape> = T & Record<Exclude<keyof T, keyof Shape>, never>;
+
 /**
  * ssr.config.ts 的类型收口入口。
  *
@@ -13,10 +15,12 @@ import type { ISRConfig, RuntimeConfig } from '../types';
  * 注意：ssr.config.ts 应从 @novel-isr/engine/config 导入，避免根入口把 CLI/plugin
  * 工具链打进 RSC/SSG bundle。
  */
-export function defineIsrConfig<const T extends ISRConfig>(config: T): T {
+export function defineIsrConfig<const T extends ISRConfig>(config: ExactTopLevel<T, ISRConfig>): T {
   return config;
 }
 
-export function defineRuntimeConfig<const T extends RuntimeConfig>(runtime: T): T {
+export function defineRuntimeConfig<const T extends RuntimeConfig>(
+  runtime: ExactTopLevel<T, RuntimeConfig>
+): T {
   return runtime;
 }

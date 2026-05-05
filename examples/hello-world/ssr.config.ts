@@ -4,7 +4,7 @@
  * 本文件覆盖 engine 真正消费的全部字段，可作 ssr.config 起手模板复制。
  *
  * 字段分组:
- *   1. 必填:        renderMode, cache
+ *   1. 必填:        renderMode
  *   2. 路由级覆盖:  routes
  *   3. ISR / SSG:   isr, ssg
  *   4. SEO:         seo
@@ -21,16 +21,6 @@ export default {
    *   'ssr' ── 不缓存，每次请求都跑 RSC + SSR 管线
    */
   renderMode: 'isr',
-
-  /**
-   * 缓存后端（必填）
-   *   strategy: 'memory' | 'redis' | 'filesystem' | 'no-cache'
-   *   ttl:      秒，单条缓存条目存活时间
-   */
-  cache: {
-    strategy: 'memory',
-    ttl: 3600,
-  },
 
   // ─── 2. 路由级覆盖 ────────────────────────────────────────────────
   /**
