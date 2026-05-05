@@ -20,15 +20,16 @@ engine request context 的 `traceId` 自动贯穿整个请求生命周期（从 
 ## Telemetry —— 统一上报配置
 
 Engine 的公共配置只叫 `runtime.telemetry`。第一方 HTTP endpoint、Sentry、Datadog、
-OTel 都是同一条 telemetry pipeline 的 exporter，不再拆成 `runtime.observability`
-和 `runtime.sentry` 两套概念。
+OTel 都属于同一条 telemetry pipeline，但层级不同：自研/内部 HTTP 上报是 exporter，
+Sentry 这种包含 SDK、issue grouping、source map、release health、performance 的平台是 integration。
+不再拆成 `runtime.observability` 和 `runtime.sentry` 两套顶层概念。
 
 第一性原则：
 
 - engine 拥有生命周期：首屏、导航、Web Vitals、全局错误、Server Action 失败、服务端渲染异常。
 - engine 不绑定 vendor SDK，也不 import 业务 SDK；它只根据 endpoint 和 exporter 配置工作。
 - endpoint 是具体上报地址，可以是相对路径或完整 URL；`services.telemetry` 是这些相对路径的 base URL。
-- Sentry / Datadog / OTel 是 exporter，用于 issue grouping、source map、APM、trace 和告警。
+- Sentry 是 integration，用于 SDK 接入、issue grouping、source map、APM、trace 和告警。
 - 多个 exporter 可以同时开启；非 required exporter 失败不会阻断 required endpoint、渲染或业务 hooks。
 
 `@novel-isr/analytics` 与 `@novel-isr/error-reporting` 是独立 SDK，给非 engine 应用或
@@ -76,19 +77,16 @@ export default {
             errors: '/api/observability/errors',
           },
         },
-        ...(process.env.SENTRY_DSN
-          ? [
-              {
-                type: 'sentry',
-                name: 'sentry',
-                required: false,
-                dsn: process.env.SENTRY_DSN,
-                tracesSampleRate: 0.1,
-                environment: process.env.NODE_ENV,
-              } as const,
-            ]
-          : []),
       ],
+      integrations: {
+        sentry: process.env.SENTRY_DSN
+          ? {
+              dsn: process.env.SENTRY_DSN,
+              tracesSampleRate: 0.1,
+              environment: process.env.NODE_ENV,
+            }
+          : false,
+      },
     },
   },
 };
@@ -115,10 +113,10 @@ export default {
 
 ## Sentry / Datadog / OTel
 
-Sentry 是第三方错误监控 / APM 平台 exporter，不是单独的配置入口。生产中可以：
+Sentry 是第三方错误监控 / APM 平台 integration，不是单独的顶层配置入口，也不是普通 HTTP exporter。生产中可以：
 
 - 只用 `runtime.telemetry.exporters[{ type: 'http' }]`：打到 admin-server 或公司内部采集服务。
-- 同时接 Sentry：把 Sentry 当 `runtime.telemetry.exporters[{ type: 'sentry' }]` 外部出口。
+- 同时接 Sentry：配置 `runtime.telemetry.integrations.sentry`，让 engine 把服务端错误/trace 映射给 Sentry adapter。
 
 不要在 `src/entry.tsx` 重复手写同一份第一方 PV / error endpoint 上传；默认生命周期已经由
 `runtime.telemetry` 接管。

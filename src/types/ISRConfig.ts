@@ -190,14 +190,14 @@ export interface RuntimeTelemetryHttpExporterConfig {
   };
 }
 
-export interface RuntimeTelemetrySentryExporterConfig {
-  type: 'sentry';
-  name?: string;
-  /** Sentry 是第三方增强出口，默认 false，不阻断第一方 endpoint */
-  required?: boolean;
+export interface RuntimeTelemetrySentryIntegrationConfig {
+  /** false 表示关闭 Sentry integration */
+  enabled?: boolean;
+  /** Sentry DSN；不配置时不会初始化 Sentry adapter */
   dsn: string;
   tracesSampleRate?: number;
   environment?: string;
+  release?: string;
 }
 
 export interface RuntimeTelemetryDatadogExporterConfig {
@@ -217,9 +217,16 @@ export interface RuntimeTelemetryOtelExporterConfig {
 
 export type RuntimeTelemetryExporterConfig =
   | RuntimeTelemetryHttpExporterConfig
-  | RuntimeTelemetrySentryExporterConfig
   | RuntimeTelemetryDatadogExporterConfig
   | RuntimeTelemetryOtelExporterConfig;
+
+export interface RuntimeTelemetryIntegrationsConfig {
+  /**
+   * Sentry 是完整第三方监控平台 integration，不是普通 HTTP endpoint：
+   * SDK / issue grouping / source map / release health / performance 都在这一层。
+   */
+  sentry?: false | RuntimeTelemetrySentryIntegrationConfig;
+}
 
 export interface RuntimeTelemetryConfig {
   /** 应用名；不配置时读取 package.json name */
@@ -237,10 +244,12 @@ export interface RuntimeTelemetryConfig {
   /** Web Vitals 配置；false 表示关闭性能指标 */
   webVitals?: false | RuntimeTelemetryWebVitalsConfig;
   /**
-   * 上报出口。http 是第一方 endpoint；sentry/datadog/otel 是第三方 vendor。
-   * 所有出口属于同一条 telemetry pipeline，不再拆成 runtime.sentry 等并列配置。
+   * 上报出口。http 是第一方 endpoint；其它纯 HTTP/collector 出口也放这里。
+   * Sentry 这类完整 SDK 平台放 integrations，不降级为普通 exporter。
    */
   exporters?: readonly RuntimeTelemetryExporterConfig[];
+  /** 第三方平台集成，和第一方 custom/http telemetry 并列挂在 telemetry 下面 */
+  integrations?: RuntimeTelemetryIntegrationsConfig;
 }
 
 /**

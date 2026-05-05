@@ -50,7 +50,9 @@ describe('resolveClientObservabilityOptions', () => {
             retryBaseDelayMs: 1000,
             retryMaxDelayMs: 10000,
           },
-          exporters: [{ type: 'sentry', dsn: 'https://private@sentry.example/1' }],
+          integrations: {
+            sentry: { dsn: 'https://private@sentry.example/1' },
+          },
         },
       },
     });

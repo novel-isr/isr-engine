@@ -251,20 +251,21 @@ export async function startProductionServer(options: StartOptions): Promise<void
   });
   app.use(cache);
 
-  // Telemetry exporters：Sentry 是 runtime.telemetry.exporters 里的一个出口；
+  // Telemetry integrations：Sentry 是完整平台集成，不是普通 HTTP exporter。
   // engine core 不静态依赖 @sentry/node，只把配置映射给 auto adapter 做 optional import。
-  const sentryExporter = runtime?.telemetry
-    ? runtime.telemetry.exporters?.find(exporter => exporter.type === 'sentry')
-    : undefined;
-  if (sentryExporter?.type === 'sentry' && sentryExporter.dsn) {
-    process.env.SENTRY_DSN = sentryExporter.dsn;
-    if (sentryExporter.tracesSampleRate !== undefined) {
-      process.env.SENTRY_TRACES_SAMPLE_RATE = String(sentryExporter.tracesSampleRate);
+  const sentryIntegration =
+    runtime?.telemetry && runtime.telemetry.integrations?.sentry !== false
+      ? runtime.telemetry.integrations?.sentry
+      : undefined;
+  if (sentryIntegration?.dsn) {
+    process.env.SENTRY_DSN = sentryIntegration.dsn;
+    if (sentryIntegration.tracesSampleRate !== undefined) {
+      process.env.SENTRY_TRACES_SAMPLE_RATE = String(sentryIntegration.tracesSampleRate);
     }
-    if (sentryExporter.environment) {
-      process.env.NODE_ENV = sentryExporter.environment;
+    if (sentryIntegration.environment) {
+      process.env.NODE_ENV = sentryIntegration.environment;
     }
-    logger.info(`🛰️  Sentry exporter 来自 ssr.config.ts runtime.telemetry`);
+    logger.info(`🛰️  Sentry integration 来自 ssr.config.ts runtime.telemetry.integrations`);
   }
 
   // 缓存观测端点

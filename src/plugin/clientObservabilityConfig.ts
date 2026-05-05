@@ -23,7 +23,7 @@ export interface ResolveClientObservabilityOptionsInput {
  *
  * Only this whitelisted shape may be serialized into the client bundle. Never
  * pass the whole runtime object to the browser because it can contain Redis,
- * Sentry DSN, private service URLs, and other server-only exporter settings.
+ * Sentry DSN, private service URLs, and other server-only integration settings.
  */
 export function resolveClientObservabilityOptions({
   runtime,
