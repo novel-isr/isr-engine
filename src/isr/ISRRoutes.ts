@@ -1,14 +1,14 @@
 /**
- * ISR admin 路由注册
+ * ISR ops 路由注册
  *
  * plugin-rsc 模式下所有页面请求由 @vitejs/plugin-rsc 的 server handler 处理；
- * 本模块只挂载引擎级管理端点：
+ * 本模块只挂载引擎级运维端点：
  *   GET  /health            健康检查（JSON）
  *   GET  /sitemap.xml       站点地图（SEO 引擎生成）
  *   GET  /robots.txt        爬虫规则
  *
- * 缓存清空端点（/__isr/clear / /__isr/stats）由 cli/start.ts 的生产装配处单独挂载，
- * 因为它们需要访问 createIsrCacheHandler 返回的 handler.stats()/clear() 方法。
+ * dev-only 缓存统计端点（/__isr/stats）由缓存中间件内部挂载，
+ * 因为它需要访问 createIsrCacheHandler 返回的 handler.stats()。
  */
 
 import type { Express, Request, Response } from 'express';
@@ -109,6 +109,6 @@ export class ISRRoutes {
       }
     });
 
-    this.logger.debug('ISRRoutes: 已注册 admin 端点 (/health, /sitemap.xml, /robots.txt)');
+    this.logger.debug('ISRRoutes: 已注册 ops 端点 (/health, /sitemap.xml, /robots.txt)');
   }
 }

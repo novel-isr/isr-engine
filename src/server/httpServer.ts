@@ -1,16 +1,13 @@
 /**
  * HTTP 服务器启动器
  *
- * 支持的 origin 协议：
- *   http1.1  ── 标准明文 HTTP（默认）
- *   https    ── TLS 加密 HTTP/1.1
+ * Node origin 只启动 HTTP/1.1。
  *
- * HTTP/2 / HTTP/3 不在 origin 暴露 —— 协议升级是 CDN / Nginx / Caddy / ALB 的事。
- * Node + Express 不是 HTTP/2 一等运行时；origin 直出 HTTP/2/HTTP/3 是负担、不是卖点。
+ * TLS / HTTP/2 / HTTP/3 / Brotli 属于 CDN / Ingress / Nginx / Envoy / ALB 边界。
+ * isr-engine 负责 SSR/ISR/RSC/cache/revalidate，不把网关层协议暴露为业务配置。
  */
 
 import { createServer as createHttpServer, Server } from 'http';
-import { createServer as createHttpsServer } from 'https';
 import type { AddressInfo } from 'net';
 import type { Express } from 'express';
 import { Logger } from '@/logger/Logger';
@@ -24,22 +21,18 @@ const DEFAULT_TIMEOUTS = {
   keepAliveTimeoutMs: 5_000,
   idleTimeoutMs: 30_000,
   shutdownTimeoutMs: 5_000,
-  maxRequestsPerSocket: 1_000,
+  maxRequestsPerSocket: 0,
 };
+const LISTEN_BACKLOG = 8192;
 
-function resolveTimeouts(config: ServerConfig): Required<NonNullable<ServerConfig['timeouts']>> {
-  return { ...DEFAULT_TIMEOUTS, ...config.timeouts };
-}
-
-function applyHttpTimeouts(server: Server, config: ServerConfig): void {
-  const timeouts = resolveTimeouts(config);
-  server.requestTimeout = timeouts.requestTimeoutMs;
-  server.headersTimeout = timeouts.headersTimeoutMs;
-  server.keepAliveTimeout = timeouts.keepAliveTimeoutMs;
-  server.maxRequestsPerSocket = timeouts.maxRequestsPerSocket;
-  server.setTimeout(timeouts.idleTimeoutMs);
+function applyHttpTimeouts(server: Server): void {
+  server.requestTimeout = DEFAULT_TIMEOUTS.requestTimeoutMs;
+  server.headersTimeout = DEFAULT_TIMEOUTS.headersTimeoutMs;
+  server.keepAliveTimeout = DEFAULT_TIMEOUTS.keepAliveTimeoutMs;
+  server.maxRequestsPerSocket = DEFAULT_TIMEOUTS.maxRequestsPerSocket;
+  server.setTimeout(DEFAULT_TIMEOUTS.idleTimeoutMs);
   (server as unknown as { __shutdownTimeoutMs?: number }).__shutdownTimeoutMs =
-    timeouts.shutdownTimeoutMs;
+    DEFAULT_TIMEOUTS.shutdownTimeoutMs;
 }
 
 function getServerAddress(server: Server): { address: string; port: number } {
@@ -63,16 +56,16 @@ function formatHostForUrl(address: string): string {
 
 /** 启动 HTTP/1.1 服务器 */
 export function startHttp1Server(app: Express, config: ServerConfig): Promise<ServerStartResult> {
-  const maxAttempts = config.strictPort === false ? 20 : 1;
+  const maxAttempts = config.allowPortFallback === true ? 20 : 1;
   const startPort = config.port;
 
   return new Promise((resolve, reject) => {
     const server = createHttpServer(app);
-    applyHttpTimeouts(server, config);
+    applyHttpTimeouts(server);
 
     let attempt = 0;
     const listen = (port: number) => {
-      server.listen(port, config.host);
+      server.listen({ port, host: config.host, backlog: LISTEN_BACKLOG });
     };
 
     server.on('listening', () => {
@@ -98,63 +91,9 @@ export function startHttp1Server(app: Express, config: ServerConfig): Promise<Se
   });
 }
 
-/** 启动 HTTPS 服务器 */
-export function startHttpsServer(app: Express, config: ServerConfig): Promise<ServerStartResult> {
-  const maxAttempts = config.strictPort === false ? 20 : 1;
-  const startPort = config.port;
-
-  return new Promise((resolve, reject) => {
-    if (!config.ssl) {
-      reject(new Error('HTTPS 需要 SSL 配置'));
-      return;
-    }
-
-    const server = createHttpsServer(
-      {
-        key: config.ssl.key,
-        cert: config.ssl.cert,
-      },
-      app
-    );
-    applyHttpTimeouts(server as unknown as Server, config);
-
-    let attempt = 0;
-    const listen = (port: number) => {
-      server.listen(port, config.host);
-    };
-
-    server.on('listening', () => {
-      const { address, port } = getServerAddress(server as unknown as Server);
-      const url = `https://${formatHostForUrl(address)}:${port || config.port}`;
-      logger.info(`HTTPS 服务器已启动: ${url}`);
-      resolve({ server: server as unknown as Server, url });
-    });
-
-    server.on('error', error => {
-      const nodeError = error as NodeJS.ErrnoException;
-      if (nodeError.code === 'EADDRINUSE' && attempt + 1 < maxAttempts) {
-        attempt += 1;
-        const nextPort = startPort + attempt;
-        logger.warn(`端口 ${startPort + attempt - 1} 已占用，尝试 ${nextPort}`);
-        listen(nextPort);
-        return;
-      }
-      reject(error);
-    });
-
-    listen(startPort);
-  });
-}
-
-/** 根据协议启动服务器 */
+/** 启动 Node origin 服务器 */
 export function startServer(app: Express, config: ServerConfig): Promise<ServerStartResult> {
-  switch (config.protocol) {
-    case 'https':
-      return startHttpsServer(app, config);
-    case 'http1.1':
-    default:
-      return startHttp1Server(app, config);
-  }
+  return startHttp1Server(app, config);
 }
 
 /**

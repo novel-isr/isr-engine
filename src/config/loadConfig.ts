@@ -61,14 +61,9 @@ export async function loadConfig(options: LoadConfigOptions = {}): Promise<Resol
 
   return normalizeEngineConfig({
     renderMode: 'isr',
-    seo: {
-      enabled: true,
-      generateSitemap: true,
-      generateRobots: true,
-    },
+    revalidate: 3600,
     server: {
       port: 3000,
-      protocol: 'http1.1',
     },
   });
 }

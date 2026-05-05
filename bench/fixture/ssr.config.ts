@@ -14,6 +14,9 @@ import type { ISRConfig } from '@novel-isr/engine';
 
 const config: ISRConfig = {
   renderMode: 'isr',
+  runtime: {
+    site: process.env.SEO_BASE_URL ?? 'http://localhost:3000',
+  },
   routes: {
     '/': { mode: 'isr', ttl: 60, staleWhileRevalidate: 300 },
     '/about': { mode: 'ssg' },
@@ -23,20 +26,10 @@ const config: ISRConfig = {
   ssg: {
     routes: ['/about'],
   },
-  isr: {
-    revalidate: 60,
-  },
-  seo: {
-    enabled: false, // bench 不需要 sitemap
-  },
+  revalidate: 60,
   server: {
     port: Number(process.env.PORT ?? 3000),
-    timeouts: {
-      // Bench reuses a small number of hot keep-alive sockets. Keep the
-      // engine's production default, but prevent fixture runs from measuring
-      // Node's max-requests-per-socket guard instead of ISR/SSG/SSR throughput.
-      maxRequestsPerSocket: 1_000_000,
-    },
+    host: process.env.HOST ?? '127.0.0.1',
   },
 };
 

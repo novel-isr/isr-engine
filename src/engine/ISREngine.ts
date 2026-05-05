@@ -5,7 +5,7 @@
  *   - 配置归一化（补齐 defaults，收口 cache / routes / renderMode）
  *   - 项目扫描（路由发现，供 virtual:isr-routes 或 CLI stats 使用）
  *   - SEO 引擎初始化（sitemap / robots 生成）
- *   - 启动 Express 服务器 + 挂载 admin 路由（/health / sitemap.xml / robots.txt）
+ *   - 启动 Express 服务器 + 挂载 ops 路由（/health / sitemap.xml / robots.txt）
  *   - ISR 缓存失效 invalidator 的注册（来自 revalidatePath / revalidateTag 调用）
  *
  * 非职责：
@@ -55,9 +55,7 @@ export default class ISREngine {
     this.resolvedSeo = resolveSeoConfig(this.config);
 
     this.seoEngine = SEOEngine.getInstance({
-      enabled: this.resolvedSeo.enabled,
       baseUrl: this.resolvedSeo.baseUrl,
-      sitemap: { enabled: this.resolvedSeo.generateSitemap },
     });
   }
 
@@ -80,15 +78,13 @@ export default class ISREngine {
     );
 
     // 3. SEO 引擎初始化
-    if (this.resolvedSeo.enabled) {
-      await this.seoEngine.initialize();
-    }
+    await this.seoEngine.initialize();
 
     this.logger.info('🎉 ISR 引擎初始化完成');
   }
 
   /**
-   * 启动服务器 + 注册 admin 路由 + 注册 revalidate invalidator
+   * 启动服务器 + 注册 ops 路由 + 注册 revalidate invalidator
    */
   async start(): Promise<ServerContext> {
     await this.initialize();

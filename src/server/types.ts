@@ -9,35 +9,15 @@ import type { ViteDevServer } from 'vite';
 /** 路由注册函数 */
 export type RouteSetupFn = (requestHandler: Express) => void;
 
-/** 服务器协议 */
-export type ServerProtocol = 'http1.1' | 'https';
-
 /** 服务器配置 */
 export interface ServerConfig {
   port: number;
   host?: string;
-  /**
-   * When false, retry the next available port on EADDRINUSE. Keep production
-   * strict by default; dev server can opt into fallback ports.
-   */
-  strictPort?: boolean;
-  protocol?: ServerProtocol;
-  ssl?: { key: string; cert: string } | null;
-  /**
-   * Public edge hardening knobs. Defaults are intentionally conservative for
-   * SSR/RSC workloads and should normally be paired with an upstream proxy.
-   */
-  timeouts?: {
-    requestTimeoutMs?: number;
-    headersTimeoutMs?: number;
-    keepAliveTimeoutMs?: number;
-    idleTimeoutMs?: number;
-    shutdownTimeoutMs?: number;
-    maxRequestsPerSocket?: number;
-  };
+  /** Internal dev-only convenience. Production stays strict and fails on EADDRINUSE. */
+  allowPortFallback?: boolean;
 }
 
-/** HTTP / HTTPS 服务器实例 */
+/** Node origin HTTP/1.1 服务器实例 */
 export type ServerInstance = Server;
 
 /** startServer 返回值 */

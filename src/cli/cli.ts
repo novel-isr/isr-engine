@@ -14,7 +14,7 @@ import { startProductionServer } from './start';
 import { showStats } from './stats';
 import { startFallbackProxy } from './fallback';
 import { logger } from '@/logger';
-import { DEFAULT_PORT, DEFAULT_HOST } from '@/config/defaults';
+import { DEFAULT_PORT } from '@/config/defaults';
 
 const program = new Command();
 
@@ -52,7 +52,7 @@ program
   .command('start')
   .description('启动生产服务器')
   .option('-p, --port <port>', '端口号', String(DEFAULT_PORT))
-  .option('-h, --host <host>', '主机地址', DEFAULT_HOST)
+  .option('-h, --host <host>', '主机地址')
   .action(async options => {
     try {
       await startProductionServer(options);

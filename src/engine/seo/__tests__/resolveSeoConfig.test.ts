@@ -82,18 +82,11 @@ describe('resolveSeoConfig', () => {
     expect(r.baseUrlSource).toBe('unset');
   });
 
-  it('enabled 默认 true', () => {
+  it('SEO 开关不再暴露，engine 始终解析 baseUrl', () => {
     const r = resolveSeoConfig({ renderMode: 'isr' });
-    expect(r.enabled).toBe(true);
-    expect(r.generateSitemap).toBe(true);
-    expect(r.generateRobots).toBe(true);
-  });
-
-  it('用户可显式禁用', () => {
-    const r = resolveSeoConfig({
-      renderMode: 'isr',
-      seo: { enabled: false },
-    });
-    expect(r.enabled).toBe(false);
+    expect(r).toHaveProperty('baseUrl');
+    expect(r).not.toHaveProperty('enabled');
+    expect(r).not.toHaveProperty('generateSitemap');
+    expect(r).not.toHaveProperty('generateRobots');
   });
 });

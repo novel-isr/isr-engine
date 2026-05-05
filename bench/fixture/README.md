@@ -34,6 +34,9 @@ cd ../..
 BENCH_TIERS=10,100,1000 pnpm run bench
 ```
 
+bench runner 默认打 `http://127.0.0.1:3000`，避免 `localhost` 在高并发下同时解析
+IPv6/IPv4 后把操作系统连接抖动计入 engine 性能结果。
+
 ## CI 集成
 
 `.github/workflows/bench.yml` 的 fixture 步骤直接 `cd bench/fixture` → build → start。

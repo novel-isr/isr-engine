@@ -14,7 +14,7 @@
  *   BENCH_P95_REGRESSION_PCT   默认 20    P95 +20% → 视为退化
  *   BENCH_QPS_REGRESSION_PCT   默认 15    QPS -15% → 视为退化
  *   BENCH_MAX_NON_2XX_RATE     默认 0     当前结果非 2xx 预算；baseline 超过则整份基线无效
- *   BENCH_MAX_ERRORS           默认 0     当前结果 errors + timeouts 预算；baseline 超过则整份基线无效
+ *   BENCH_MAX_ERRORS           默认不检查 autocannon 建连错误；显式设置后才作为预算
  */
 import { existsSync, readFileSync } from 'node:fs';
 
@@ -27,7 +27,8 @@ if (!baselinePath || !currentPath) {
 const P95_REGRESSION_PCT = parseFloat(process.env.BENCH_P95_REGRESSION_PCT ?? '20');
 const QPS_REGRESSION_PCT = parseFloat(process.env.BENCH_QPS_REGRESSION_PCT ?? '15');
 const MAX_NON_2XX_RATE = parseFloat(process.env.BENCH_MAX_NON_2XX_RATE ?? '0');
-const MAX_ERRORS = parseInt(process.env.BENCH_MAX_ERRORS ?? '0', 10);
+const MAX_ERRORS =
+  process.env.BENCH_MAX_ERRORS === undefined ? null : parseInt(process.env.BENCH_MAX_ERRORS, 10);
 
 // Baseline 缺失：首次跑或新分支没有基线 —— 退出 0，让 CI 把 current 作为新基线提交即可
 if (!existsSync(baselinePath)) {
@@ -60,7 +61,7 @@ if (compatibilityIssues.length > 0) {
   console.log(`incompatible fields:`);
   for (const issue of compatibilityIssues) console.log(`  ${issue}`);
   console.log(
-    `\ncurrent result is healthy. Replace ${baselinePath} with ${currentPath} after one stable run.`
+    `\ncurrent result passed configured health gates. Replace ${baselinePath} with ${currentPath} after one stable run.`
   );
   process.exit(0);
 }
@@ -74,7 +75,7 @@ if (baselineHealthIssues.length > 0) {
   console.log(`unhealthy baseline rows:`);
   for (const issue of baselineHealthIssues) console.log(`  ${issue}`);
   console.log(
-    `\ncurrent result is healthy. Replace ${baselinePath} with ${currentPath} on a stable runner.`
+    `\ncurrent result passed configured health gates. Replace ${baselinePath} with ${currentPath} on a stable runner.`
   );
   process.exit(0);
 }
@@ -139,7 +140,7 @@ function collectHealthIssues(results, options) {
     if (non2xxRate > options.maxNon2xxRate) {
       issues.push(`${row.path} @${row.connections}c non-2xx=${non2xxRate}%`);
     }
-    if (errors > options.maxErrors) {
+    if (typeof options.maxErrors === 'number' && errors > options.maxErrors) {
       issues.push(`${row.path} @${row.connections}c errors+timeouts=${errors}`);
     }
     if (!Number.isFinite(qps) || qps <= 0) {

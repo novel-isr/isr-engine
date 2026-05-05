@@ -107,12 +107,12 @@ export default defineIsrConfig({
     '/*': 'isr',
   },
   ssg: { routes: ['/about'] },
-  isr: { revalidate: 3600 },
+  revalidate: 3600
 });
 ```
 
 `ssr.config.ts` 是启动期单一配置入口。路由渲染模式、Redis、Sentry、限流、A/B、站点 URL 都放这里。
-页面缓存后端不由业务配置；engine 自动选择 memory / Redis，TTL 放在 `routes[*].ttl` 或 `isr.revalidate`。
+页面缓存后端不由业务配置；engine 自动选择 memory / Redis，TTL 放在 `routes[*].ttl` 或 `revalidate`。
 
 ## 6. `src/entry.server.ts` —— 请求期 SiteHooks
 

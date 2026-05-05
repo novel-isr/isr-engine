@@ -122,7 +122,7 @@ export function createStaticMiddleware(staticDir: string): RequestHandler {
 
 /**
  * 前置中间件：安全 / 压缩 / Body 解析
- * 在 admin 路由和 Vite middleware 之前执行
+ * 在 ops 路由和 Vite middleware 之前执行
  *
  * 注意：dev 模式**不挂 compression** —— 原因：
  *   - 开发环境响应体不需要压缩（带宽不是瓶颈）
@@ -161,7 +161,7 @@ export function applyBaseMiddlewaresWithOptions(
 
 /**
  * Vite 开发中间件 / 静态资源服务
- * 必须在 admin 路由之后挂载 —— 否则 plugin-rsc 会把 /health 等路径当作页面路由吞掉
+ * 必须在 ops 路由之后挂载 —— 否则 plugin-rsc 会把 /health 等路径当作页面路由吞掉
  */
 export function mountViteOrStatic(ctx: ServerContext): void {
   const { requestHandler, isDev, viteDevMiddleware } = ctx;
@@ -175,7 +175,7 @@ export function mountViteOrStatic(ctx: ServerContext): void {
 
 /**
  * 向后兼容入口：一次性按老顺序挂载所有中间件
- * （保留给不需要 admin 路由优先的调用场景）
+ * （保留给不需要 ops 路由优先的调用场景）
  */
 export function applyMiddlewares(ctx: ServerContext): void {
   applyBaseMiddlewaresWithOptions(ctx);

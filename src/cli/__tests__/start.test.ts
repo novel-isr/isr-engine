@@ -53,7 +53,7 @@ describe('extractRoutesForSitemap —— 路由筛选', () => {
     const result = extractRoutesForSitemap({
       routes: {
         '/api/x': 'ssr',
-        '/__isr/clear': 'ssr',
+        '/__isr/stats': 'ssr',
         '/blog/*': 'isr',
         '/users/:id': 'ssr',
       },

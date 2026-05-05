@@ -38,8 +38,7 @@ function resolveMetricsUrl(options: StatsOptions, config: ISRConfig): string | n
     return null;
   }
 
-  const protocol = config.server?.ssl || config.server?.protocol === 'https' ? 'https' : 'http';
-  return `${protocol}://${host}:${port}/__isr/stats`;
+  return `http://${host}:${port}/__isr/stats`;
 }
 
 export async function showStats(options: StatsOptions) {

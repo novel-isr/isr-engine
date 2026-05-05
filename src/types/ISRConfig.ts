@@ -34,7 +34,7 @@ export type CacheStrategyType = 'no-cache' | 'memory' | 'redis' | 'filesystem';
  */
 export interface RouteRuleObject {
   mode: RenderModeType;
-  /** TTL（秒），覆盖全局 isr.revalidate 默认值 */
+  /** TTL（秒），覆盖全局 revalidate 默认值 */
   ttl?: number;
   /** stale-while-revalidate 窗口（秒）—— TTL 过期后继续回放旧内容的时长 */
   staleWhileRevalidate?: number;
@@ -363,78 +363,39 @@ export interface ISRConfig {
    *   - runtime.redis.url/host or REDIS_URL/REDIS_HOST => L1 memory + L2 Redis
    *   - no Redis connection => in-process memory
    *
-   * Page TTL belongs to routes[*].ttl or isr.revalidate. Keeping backend and TTL
+   * Page TTL belongs to routes[*].ttl or top-level revalidate. Keeping backend and TTL
    * in separate product-level fields avoids asking every business app to know
    * cache-store internals.
    */
+
   /**
-   * SEO 配置 —— 可选；缺省时 engine 启用默认行为：
-   *   - enabled = true（dev/prod 都自动注入 sitemap.xml / robots.txt 路由）
-   *   - baseUrl 解析顺序：
-   *       1) runtime.site
-   *       2) 环境变量 SEO_BASE_URL → PUBLIC_BASE_URL → BASE_URL
-   *       3) dev 模式：http://localhost:${server.port||3000}
-   *       4) prod 模式且仍未拿到：保留空串（生成 sitemap 时报错并提示）
+   * 全局默认页面缓存 TTL（秒）。
+   *
+   * routes[*].ttl 优先；未声明路由级 TTL 时使用这里。缺省为 3600。
+   * 这是产品层缓存新鲜度，不是 Redis/memory 后端配置。
    */
-  seo?: {
-    enabled?: boolean;
-    generateSitemap?: boolean;
-    generateRobots?: boolean;
-  };
+  revalidate?: number;
+
   server?: {
-    ssl?: {
-      key: string;
-      cert: string;
-    };
-    port: number;
+    /** Node origin 监听端口；缺省 3000。 */
+    port?: number;
+    /** Node origin 监听地址；通常本地留空，容器/内网按部署平台注入。 */
     host?: string;
     /**
-     * false 时端口占用自动尝试下一个端口。生产建议保持 true；dev 默认 false。
-     */
-    strictPort?: boolean;
-    /**
-     * Origin 协议。HTTP/2/HTTP/3 应该在 CDN / Nginx / Caddy / ALB 终结，
-     * Node origin 只对接 HTTP/1.1（或 HTTPS 直连场景）。
-     */
-    protocol?: 'http1.1' | 'https';
-    /**
-     * Node server timeout limits. These protect the origin from slowloris,
-     * stuck SSR/RSC requests, and long-lived keep-alive exhaustion. Put CDN /
-     * reverse proxy timeouts in front as the first line of defense.
-     */
-    timeouts?: {
-      requestTimeoutMs?: number;
-      headersTimeoutMs?: number;
-      keepAliveTimeoutMs?: number;
-      idleTimeoutMs?: number;
-      shutdownTimeoutMs?: number;
-      maxRequestsPerSocket?: number;
-    };
-    /**
-     * 管理端点（/health /metrics /__isr/*）暴露策略
+     * 运维端点暴露策略。
      *
-     * 安全默认值：
-     *   - development：health/stats/clear/metrics 全开，便于本地调试
-     *   - production：仅 health 默认公开；stats/clear/metrics 默认关闭
+     * 公开配置只保留稳定运维边界：
+     *   - /health：健康检查，默认启用且公开
+     *   - /metrics：Prometheus 文本指标，默认关闭；生产开启时建议配置 authToken
      *
-     * 生产若显式开启 stats/clear/metrics：
-     *   - `public: true` 代表公开暴露，会打印 warning
-     *   - `public: false` 时要求同时配置 `authToken`
+     * dev-only cache stats 属于 engine 内部调试能力，不作为业务配置面暴露。
      */
-    admin?: {
-      /** 共享管理口令；接受 `Authorization: Bearer <token>` 或自定义 header */
+    ops?: {
+      /** 共享运维口令；接受 `Authorization: Bearer <token>` 或 tokenHeader 指定 header */
       authToken?: string;
       /** 自定义 header 名，默认 `x-isr-admin-token` */
       tokenHeader?: string;
       health?: {
-        enabled?: boolean;
-        public?: boolean;
-      };
-      stats?: {
-        enabled?: boolean;
-        public?: boolean;
-      };
-      clear?: {
         enabled?: boolean;
         public?: boolean;
       };
@@ -443,23 +404,6 @@ export interface ISRConfig {
         public?: boolean;
       };
     };
-    /**
-     * Node 进程内压缩策略
-     *
-     * 默认启用 streaming-safe gzip；Brotli 建议放到 CDN / Nginx / Edge 层做，
-     * 避免 Node 端为追求 br 而缓冲整包，破坏 SSR/RSC 流式输出。
-     */
-    compression?: {
-      enabled?: boolean;
-      threshold?: number;
-      level?: number;
-    };
-  };
-
-  /** ISR 相关配置 */
-  isr?: {
-    /** 默认 TTL（秒）—— 未在 routes 显式声明时使用 */
-    revalidate?: number;
   };
 
   /** SSG 预生成配置 */

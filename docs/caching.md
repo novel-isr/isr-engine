@@ -174,8 +174,8 @@ export async function publishBook() {
 
 | 端点 | 内容 |
 |---|---|
-| `/__isr/stats` | JSON `{ size, max, revalidating }` |
-| `/__isr/clear` | POST 清空缓存（dev 默认开，prod 默认关） |
+| `/__isr/stats` | dev-only JSON `{ size, max, revalidating }` |
 | `/metrics` | Prometheus：`isr_cache_entries{backend}` / `isr_cache_hits_total{status}` 等 |
 
-dev 模式默认全开。生产模式 `/__isr/stats` 和 `/__isr/clear` 默认不注册；显式开启时建议配 `server.admin.authToken`。
+`/__isr/stats` 是开发和 bench 观测端点，不作为生产公开配置面。生产缓存失效使用
+`revalidatePath` / `revalidateTag`，跨实例广播由 `runtime.redis` 接管。

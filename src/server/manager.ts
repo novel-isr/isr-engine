@@ -117,12 +117,8 @@ async function initServerContext(config?: ISRConfig): Promise<ServerContext> {
     : await initProdContext(requestHandler);
 
   // 仅应用前置中间件（安全 / 压缩 / Body 解析）
-  // Vite / 静态资源中间件将在 setupRoutes 之后挂载，确保 admin 路由能先于 Vite 匹配
-  applyBaseMiddlewaresWithOptions(serverContext, {
-    enabled: config?.server?.compression?.enabled,
-    threshold: config?.server?.compression?.threshold,
-    level: config?.server?.compression?.level,
-  });
+  // Vite / 静态资源中间件将在 setupRoutes 之后挂载，确保 ops 路由能先于 Vite 匹配
+  applyBaseMiddlewaresWithOptions(serverContext);
 
   serverContext.requestHandler.use((req, _res, next) => {
     const headerReqId = req.headers['x-request-id'];
@@ -191,7 +187,7 @@ export async function startAppServer(
     throw new Error('服务器上下文初始化失败');
   }
 
-  // 2. 注册 admin 路由（/health / /cache/clear / /sitemap.xml / /robots.txt 等）
+  // 2. 注册 ops 路由（/health / /metrics / /sitemap.xml / /robots.txt 等）
   //    必须在 Vite middleware 之前，否则 @vitejs/plugin-rsc 的 server handler 会
   //    把 /health 当作页面请求
   setupRoutes(serverContext.requestHandler);
@@ -203,10 +199,7 @@ export async function startAppServer(
   const serverConfig = {
     port: config.server?.port ?? 3000,
     host: config.server?.host,
-    strictPort: config.server?.strictPort ?? !isDev(),
-    protocol: config.server?.protocol ?? 'http1.1',
-    ssl: config.server?.ssl ?? null,
-    timeouts: config.server?.timeouts,
+    allowPortFallback: isDev(),
   };
   const result = await startServer(serverContext.requestHandler, serverConfig);
 

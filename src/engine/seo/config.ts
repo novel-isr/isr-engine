@@ -6,7 +6,6 @@ import type { SEOConfig, DeepPartial } from './types';
 
 /** 默认 SEO 配置 */
 export const DEFAULT_SEO_CONFIG: SEOConfig = {
-  enabled: true,
   baseUrl: process.env.BASE_URL || '',
   siteName: process.env.SITE_NAME || 'My App',
   defaultLanguage: 'zh',
@@ -20,7 +19,6 @@ export const DEFAULT_SEO_CONFIG: SEOConfig = {
   robots: 'index,follow',
 
   sitemap: {
-    enabled: true,
     priority: {
       '/': 1.0,
       '/blog/*': 0.7,

@@ -6,7 +6,7 @@ import { spawn } from 'node:child_process';
 import { logger } from '@/logger';
 import { createISRApp } from '../app/createISRApp';
 import { loadConfig } from '../config/loadConfig';
-import { DEFAULT_PORT, DEFAULT_PROTOCOL } from '@/config/defaults';
+import { DEFAULT_PORT } from '@/config/defaults';
 import type { ISRConfig } from '@/types';
 
 interface StartOptions {
@@ -67,7 +67,6 @@ export async function startDevServer(options: StartOptions) {
     // 确保 server 配置存在
     config.server = config.server || {
       port: DEFAULT_PORT,
-      protocol: DEFAULT_PROTOCOL,
     };
 
     // CLI 参数覆盖配置
@@ -77,8 +76,6 @@ export async function startDevServer(options: StartOptions) {
     if (host) {
       config.server.host = host;
     }
-    config.server.strictPort ??= false;
-
     // 创建应用实例
     const app = await createISRApp(config);
 

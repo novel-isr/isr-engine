@@ -31,7 +31,7 @@ describe('httpServer enterprise hardening', () => {
       expect(typed.requestTimeout).toBe(60_000);
       expect(typed.headersTimeout).toBe(15_000);
       expect(typed.keepAliveTimeout).toBe(5_000);
-      expect(typed.maxRequestsPerSocket).toBe(1_000);
+      expect(typed.maxRequestsPerSocket).toBe(0);
 
       const response = await fetch(`${url}/health`);
       await expect(response.json()).resolves.toEqual({ ok: true });
@@ -40,19 +40,11 @@ describe('httpServer enterprise hardening', () => {
     }
   });
 
-  it('respects explicit timeout overrides', async () => {
+  it('keeps timeout hardening internal rather than reading public overrides', async () => {
     const app = createHandler();
 
     const { server } = await startHttp1Server(app, {
       port: 0,
-      timeouts: {
-        requestTimeoutMs: 10_000,
-        headersTimeoutMs: 5_000,
-        keepAliveTimeoutMs: 1_000,
-        idleTimeoutMs: 2_000,
-        shutdownTimeoutMs: 3_000,
-        maxRequestsPerSocket: 10,
-      },
     });
 
     try {
@@ -64,11 +56,11 @@ describe('httpServer enterprise hardening', () => {
         __shutdownTimeoutMs?: number;
       };
 
-      expect(typed.requestTimeout).toBe(10_000);
-      expect(typed.headersTimeout).toBe(5_000);
-      expect(typed.keepAliveTimeout).toBe(1_000);
-      expect(typed.maxRequestsPerSocket).toBe(10);
-      expect(typed.__shutdownTimeoutMs).toBe(3_000);
+      expect(typed.requestTimeout).toBe(60_000);
+      expect(typed.headersTimeout).toBe(15_000);
+      expect(typed.keepAliveTimeout).toBe(5_000);
+      expect(typed.maxRequestsPerSocket).toBe(0);
+      expect(typed.__shutdownTimeoutMs).toBe(5_000);
     } finally {
       await closeServer(server);
     }

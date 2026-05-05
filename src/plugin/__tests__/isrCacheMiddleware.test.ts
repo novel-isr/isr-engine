@@ -36,7 +36,7 @@ async function startFixture(
   configOverride?: Record<string, unknown>
 ): Promise<TestFixture> {
   const handler = createIsrCacheHandler(
-    configOverride ?? { renderMode: 'isr', isr: { revalidate: 3600 } },
+    configOverride ?? { renderMode: 'isr', revalidate: 3600 },
     options
   );
   const renderImpl = {
@@ -273,7 +273,7 @@ describe('isrCacheMiddleware —— A/B variant 隔离', () => {
       {},
       {
         renderMode: 'isr',
-        isr: { revalidate: 3600 },
+        revalidate: 3600,
         runtime: {
           experiments: {
             hero: { variants: ['v1', 'v2'], weights: [50, 50] },

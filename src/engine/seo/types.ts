@@ -4,8 +4,6 @@
 
 /** SEO 引擎配置 */
 export interface SEOConfig {
-  /** 是否启用 SEO */
-  enabled: boolean;
   /** 站点基础 URL */
   baseUrl: string;
   /** 站点名称 */
@@ -30,7 +28,6 @@ export interface SEOConfig {
 
   /** 站点地图配置 */
   sitemap: {
-    enabled: boolean;
     /** URL 优先级映射 (pattern -> priority) */
     priority: Record<string, number>;
     /** URL 更新频率映射 (pattern -> changefreq) */

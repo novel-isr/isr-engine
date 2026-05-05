@@ -1,39 +1,38 @@
 import { describe, expect, it, vi } from 'vitest';
-import { createAdminAuthMiddleware, resolveAdminConfig } from '../adminConfig';
+import { createOpsAuthMiddleware, resolveOpsConfig } from '../opsConfig';
 
-describe('resolveAdminConfig', () => {
+describe('resolveOpsConfig', () => {
   it('production 默认只公开 health', () => {
-    const resolved = resolveAdminConfig({}, 'production');
+    const resolved = resolveOpsConfig({}, 'production');
     expect(resolved.health.enabled).toBe(true);
     expect(resolved.health.public).toBe(true);
     expect(resolved.stats.enabled).toBe(false);
-    expect(resolved.clear.enabled).toBe(false);
     expect(resolved.metrics.enabled).toBe(false);
   });
 
-  it('production 未配置 authToken 时自动关闭受保护端点', () => {
-    const resolved = resolveAdminConfig(
+  it('production 未配置 authToken 时自动关闭受保护 metrics', () => {
+    const resolved = resolveOpsConfig(
       {
         server: {
           port: 3000,
-          admin: {
-            stats: { enabled: true },
+          ops: {
+            metrics: { enabled: true },
           },
         },
       },
       'production'
     );
 
-    expect(resolved.stats.enabled).toBe(false);
-    expect(resolved.warnings[0]).toContain('/__isr/stats');
+    expect(resolved.metrics.enabled).toBe(false);
+    expect(resolved.warnings[0]).toContain('/metrics');
   });
 
   it('production 显式 public 会保留并打印 warning', () => {
-    const resolved = resolveAdminConfig(
+    const resolved = resolveOpsConfig(
       {
         server: {
           port: 3000,
-          admin: {
+          ops: {
             metrics: { enabled: true, public: true },
           },
         },
@@ -47,21 +46,21 @@ describe('resolveAdminConfig', () => {
   });
 });
 
-describe('createAdminAuthMiddleware', () => {
+describe('createOpsAuthMiddleware', () => {
   it('允许 Bearer token 访问受保护端点', () => {
-    const resolved = resolveAdminConfig(
+    const resolved = resolveOpsConfig(
       {
         server: {
           port: 3000,
-          admin: {
+          ops: {
             authToken: 'secret-token',
-            stats: { enabled: true, public: false },
+            metrics: { enabled: true, public: false },
           },
         },
       },
       'production'
     );
-    const middleware = createAdminAuthMiddleware('stats', resolved);
+    const middleware = createOpsAuthMiddleware('metrics', resolved);
     const next = vi.fn();
     const req = {
       headers: {
@@ -79,19 +78,19 @@ describe('createAdminAuthMiddleware', () => {
   });
 
   it('缺失 token 时返回 401', () => {
-    const resolved = resolveAdminConfig(
+    const resolved = resolveOpsConfig(
       {
         server: {
           port: 3000,
-          admin: {
+          ops: {
             authToken: 'secret-token',
-            clear: { enabled: true, public: false },
+            metrics: { enabled: true, public: false },
           },
         },
       },
       'production'
     );
-    const middleware = createAdminAuthMiddleware('clear', resolved);
+    const middleware = createOpsAuthMiddleware('metrics', resolved);
     const next = vi.fn();
     const res = {
       status: vi.fn().mockReturnThis(),

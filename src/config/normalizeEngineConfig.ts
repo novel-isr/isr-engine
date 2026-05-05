@@ -11,16 +11,27 @@ const DEFAULT_CACHE_TTL_SECONDS = 3600;
  * each application's ssr.config.ts.
  */
 export function normalizeEngineConfig(config: ISRConfig): ResolvedISRConfig {
+  const legacy = config as ISRConfig & {
+    cache?: unknown;
+    isr?: unknown;
+    seo?: unknown;
+  };
+  const publicConfig = { ...legacy };
+  delete publicConfig.cache;
+  delete publicConfig.isr;
+  delete publicConfig.seo;
   const renderMode = config.renderMode ?? 'isr';
   const routes: Record<string, RouteRule> = config.routes ?? {};
+  const revalidate = config.revalidate ?? DEFAULT_CACHE_TTL_SECONDS;
   const cache = {
     strategy: DEFAULT_CACHE_STRATEGY,
-    ttl: config.isr?.revalidate ?? DEFAULT_CACHE_TTL_SECONDS,
+    ttl: revalidate,
   };
 
   return {
-    ...config,
+    ...publicConfig,
     renderMode,
+    revalidate,
     routes,
     cache,
   };

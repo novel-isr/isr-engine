@@ -67,10 +67,6 @@ export class SEOEngine {
     context: unknown,
     result: T
   ): Promise<T & { seoScore: number }> {
-    if (!this.config.enabled) {
-      return { ...result, seoScore: 0 };
-    }
-
     const pageData = this.getOrCreatePageData(url, context);
     const seoTags = this.generateAllTags(pageData);
     const structuredData = this.generateStructuredData(pageData);

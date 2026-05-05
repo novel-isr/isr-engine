@@ -149,7 +149,7 @@ describe('startDevServer —— 配置 + CLI 参数', () => {
     expect(config.server?.host).toBe('0.0.0.0');
   });
 
-  it('config 缺 server 字段 → 填默认值（DEFAULT_PORT/PROTOCOL）', async () => {
+  it('config 缺 server 字段 → 填默认端口', async () => {
     // 构造一个无 server 字段的 config —— `delete` 会让 TS 把 server 收窄成 never
     // 后续断言取不到属性。直接用 type assertion 重组以保留 server 字段类型空间。
     const baseConfig = makeConfig();
@@ -166,7 +166,6 @@ describe('startDevServer —— 配置 + CLI 参数', () => {
 
     expect(config.server).toBeDefined();
     expect(config.server?.port).toBe(3000);
-    expect(config.server?.protocol).toBeDefined();
   });
 
   it('startDevServer 注册 SIGINT 和 SIGTERM handler', async () => {

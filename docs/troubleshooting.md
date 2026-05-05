@@ -38,19 +38,8 @@ curl http://localhost:3000/__isr/stats
 # {"size":234,"max":1000,"revalidating":2,"backend":"memory"}
 ```
 
-prod 模式默认关闭，需要 `ISR_ADMIN_TOKEN`：
-
-```bash
-curl -H "x-isr-admin-token: $ISR_ADMIN_TOKEN" \
-     http://localhost:3000/__isr/stats
-```
-
-### 强制清缓存
-
-```bash
-curl -X POST -H "x-isr-admin-token: $ISR_ADMIN_TOKEN" \
-     http://localhost:3000/__isr/clear
-```
+`/__isr/stats` 是 dev/bench 调试端点，不作为生产公开配置面。生产缓存失效请使用
+`revalidatePath` / `revalidateTag`。
 
 ### 看 Prometheus
 

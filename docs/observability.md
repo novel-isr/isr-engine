@@ -172,7 +172,8 @@ export default createOtelServerHooks({ tracer: trace.getTracer('my-app') });
 
 ## Prometheus
 
-`/metrics` 端点：dev 默认开启；prod 需显式配置 `server.admin.metrics.enabled = true`。内容是 prom-client 文本格式：
+`/metrics` 端点：dev 默认开启；prod 需显式配置 `server.ops.metrics.enabled = true`。
+内容是 prom-client 文本格式：
 
 - `isr_http_requests_total{method,route,status,mode,cache}` counter
 - `isr_http_request_duration_seconds{...}` histogram（桶覆盖 1ms - 5s）
@@ -196,20 +197,20 @@ const orderCounter = new Counter({
 
 | 端点 | 内容 |
 |---|---|
-| `/__isr/stats` | JSON `{ size, max, revalidating }` |
-| `/__isr/clear` | POST 清空缓存 |
+| `/__isr/stats` | dev-only JSON `{ size, max, revalidating }` |
 
-dev 模式默认开启；prod 默认关闭。开启时建议配 `server.admin.authToken`：
+生产缓存失效不再暴露“清空全部缓存”端点。请在 Server Action 或后台任务里调用
+`revalidatePath` / `revalidateTag`，多实例广播由 `runtime.redis` 接管。
+
+生产启用 `/metrics` 时建议配 `server.ops.authToken`：
 
 ```ts
 // ssr.config.ts
 {
   server: {
-    admin: {
-      authToken: process.env.ISR_ADMIN_TOKEN,
+    ops: {
+      authToken: process.env.ISR_OPS_TOKEN,
       metrics: { enabled: true, public: false },
-      stats: { enabled: true, public: false },
-      clear: { enabled: false, public: false },
     },
   },
 }

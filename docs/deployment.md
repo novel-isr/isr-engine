@@ -28,7 +28,7 @@ pnpm novel-isr start
 
 ```
 helmet → security headers → gzip/deflate(streaming-safe) → static (SSG 路由)
-       → ISR cache → protected admin endpoints → catch-all RSC handler
+       → ISR cache → protected ops endpoints → catch-all RSC handler
 ```
 
 ## 生产环境变量
@@ -44,7 +44,7 @@ helmet → security headers → gzip/deflate(streaming-safe) → static (SSG 路
 | `REDIS_URL` | Redis L2 缓存（可选） | `redis://...:6379/0` |
 | `SENTRY_ENABLED` | 是否启用 Sentry integration | `true` |
 | `SENTRY_DSN` | Sentry DSN；仅在启用 integration 后使用 | `https://...@sentry.io/...` |
-| `ISR_ADMIN_TOKEN` | `/__isr/*` / `/metrics` 鉴权（如果开启） | 任意 secret |
+| `ISR_OPS_TOKEN` | `/metrics` 鉴权（如果生产开启） | 任意 secret |
 
 ## Docker
 
@@ -65,9 +65,8 @@ CMD ["pnpm", "novel-isr", "start"]
 |---|---|---|
 | `/health` | 公开 | 公开 |
 | `/sitemap.xml` `/robots.txt` | 公开 | 公开 |
-| `/__isr/stats` | 开 | 默认不注册（需显式开 + token） |
-| `/__isr/clear` | 开 | 默认不注册（需显式开 + token） |
-| `/metrics` | 开 | 默认不注册（需显式开 + token） |
+| `/__isr/stats` | dev/bench 内部观测 | 不是生产公开配置面 |
+| `/metrics` | 开 | 默认不注册；需要 `server.ops.metrics.enabled` + token |
 
 ## Edge runtime 部署
 
@@ -125,7 +124,7 @@ Vercel Edge 部署可用 `toVercelMiddleware` 包出平台原生 `middleware.ts`
 - [ ] `ssr.config.ts` 的 `runtime.redis.url` 读取 `process.env.REDIS_URL`，并在部署平台把 `REDIS_URL` 设到生产 Redis（多 pod 必需）
 - [ ] 需要分布式限流时，确认 `runtime.rateLimit` 保持默认 `auto` 或显式 `'redis'`，确认 429 响应带 `RateLimit-*` / `Retry-After`，并确认静态资源、健康检查和 dev 资源不会消耗应用入口配额
 - [ ] 如需 Sentry，配置 `runtime.telemetry.integrations.sentry.enabled=true` 并注入 `SENTRY_DSN`
-- [ ] `ISR_ADMIN_TOKEN` 设到强 secret（如果开了 `/__isr/*` 或 `/metrics`）
+- [ ] `ISR_OPS_TOKEN` 设到强 secret（如果生产开启 `/metrics`）
 - [ ] 跑一周以上 staging 压测，监控内存增长（L1 LRU 默认 1000 条够不够你的业务）
 - [ ] 跑全量 SSG spider 验证（`pnpm vite build`），确认 `ssg.routes` 列表里没有失败 URL
 - [ ] 验证 `revalidateTag` 在 staging 多 pod 下会通过 Redis Pub/Sub 广播（见 [caching.md#cross-pod-invalidation](./caching.md#cross-pod-invalidation)）
@@ -133,7 +132,7 @@ Vercel Edge 部署可用 `toVercelMiddleware` 包出平台原生 `middleware.ts`
 
 ## Origin 协议
 
-Engine origin 只支持 `http1.1` / `https`。HTTP/2 / HTTP/3 应该在 CDN / Nginx /
+Engine origin 只启动 HTTP/1.1。TLS / HTTP/2 / HTTP/3 应该在 CDN / Nginx /
 Caddy / ALB 终结后回源 HTTP/1.1：
 
 ```txt
@@ -141,8 +140,8 @@ Browser -- HTTP/2/HTTP/3 --> CDN / Nginx / Caddy / ALB -- HTTP/1.1 --> novel-isr
 ```
 
 Node + Express 不是 HTTP/2 一等运行时，origin 直出协议升级是负担、不是卖点。
-公网入口的 slowloris / header DoS / keep-alive 耗尽防护，靠上游代理 + `server.timeouts`
-配合做。
+公网入口的 slowloris / header DoS / keep-alive 耗尽防护，靠上游代理和 engine 内部
+HTTP timeout 默认值配合做；业务项目不需要维护 Node timeout 字段。
 
 ## 进一步
 

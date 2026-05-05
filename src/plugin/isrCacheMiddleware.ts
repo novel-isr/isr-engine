@@ -2,7 +2,7 @@
  * ISR 缓存中间件插件 —— engine 的差异化核心能力
  *
  * 架构位置：
- *   Express → [security/compression/body] → admin routes → **ISR Cache** → Vite → @vitejs/plugin-rsc handler
+ *   Express → [security/compression/body] → ops routes → **ISR Cache** → Vite → @vitejs/plugin-rsc handler
  *
  * 工作流（含 SWR / stale-while-revalidate）：
  *   1. 拦截可缓存的 GET 请求（HTML / RSC Flight 流），构造 cache key
@@ -24,7 +24,7 @@
  *       '/books'   : { mode: 'isr', ttl: 60, staleWhileRevalidate: 300 }
  *       '/about'   : 'ssg'
  *       '/login'   : 'ssr'                                    -- 不缓存
- *   - 默认 TTL：ssr.config.ts 的 `isr.revalidate`（默认 3600 秒）
+ *   - 默认 TTL：ssr.config.ts 的顶层 `revalidate`（默认 3600 秒）
  *   - Vite 内部路径 (/@*, /__vite*, /node_modules/.vite/*) 和静态资源一律旁路
  *
  * 可观测性：
@@ -48,7 +48,7 @@ import { Logger } from '../logger/Logger';
 import { registerInvalidator } from '@/rsc/revalidate';
 import { collectTags, runWithTagStore, isUncacheable } from '@/rsc/cacheTag';
 import { loadConfig } from '../config/loadConfig';
-import { resolveAdminConfig, createAdminAuthMiddleware } from '@/server/adminConfig';
+import { resolveOpsConfig, createOpsAuthMiddleware } from '@/server/opsConfig';
 import { stripRscClientReferenceCacheSuffix } from './devAssetRequestMiddleware';
 import { createAutoCacheStore } from '@/cache/createAutoCacheStore';
 import { RedisInvalidationBus } from '@/cache/RedisInvalidationBus';
@@ -78,7 +78,7 @@ interface RoutingRules {
 export interface IsrCacheMiddlewareOptions {
   /** 缓存最大条目数，默认 1000 */
   max?: number;
-  /** 默认 TTL（秒），若未显式配置 isr.revalidate 时兜底 */
+  /** 默认 TTL（秒），若未显式配置 revalidate 时兜底 */
   defaultTtlSeconds?: number;
   /**
    * 自定义 cache store —— 默认 createMemoryCacheStore({ max })
@@ -205,9 +205,9 @@ function extractRoutingRules(
   const globalMode = (cfg.renderMode as RenderModeType | undefined) || 'isr';
   const routes = (cfg.routes as Record<string, RouteRule> | undefined) || {};
 
-  const isr = (cfg.isr ?? {}) as { revalidate?: number };
+  const revalidate = cfg.revalidate;
   const defaultTtlSeconds =
-    typeof isr.revalidate === 'number' && isr.revalidate > 0 ? isr.revalidate : fallbackTtl;
+    typeof revalidate === 'number' && revalidate > 0 ? revalidate : fallbackTtl;
 
   return { globalMode, routes, defaultTtlSeconds };
 }
@@ -469,34 +469,25 @@ export function createIsrCacheMiddleware(
         resolvedConfig,
         withRuntimeCacheOptions(resolvedConfig, options)
       );
-      const adminConfig = resolveAdminConfig(resolvedConfig, 'development');
+      const opsConfig = resolveOpsConfig(resolvedConfig, 'development');
 
-      // dev 也暴露 admin 端点 —— 与生产 cli/start.ts 行为对齐，
-      // 便于 engine dev inspector / 外部控制台在开发期拉取统计数据。
+      // dev-only ops endpoints：供 dev inspector / bench 拉取缓存统计和 Prometheus 指标。
       server.middlewares.use((req, res, next) => {
         const activeHandler = handler;
         if (!activeHandler) {
           next();
           return;
         }
-        if (adminConfig.stats.enabled && req.url === '/__isr/stats' && req.method === 'GET') {
-          createAdminAuthMiddleware('stats', adminConfig)(req as never, res as never, () => {
+        if (opsConfig.stats.enabled && req.url === '/__isr/stats' && req.method === 'GET') {
+          createOpsAuthMiddleware('stats', opsConfig)(req as never, res as never, () => {
             res.setHeader('content-type', 'application/json; charset=utf-8');
             res.end(JSON.stringify(activeHandler.stats()));
           });
           return;
         }
-        if (adminConfig.clear.enabled && req.url === '/__isr/clear' && req.method === 'POST') {
-          createAdminAuthMiddleware('clear', adminConfig)(req as never, res as never, () => {
-            activeHandler.clear();
-            res.setHeader('content-type', 'application/json; charset=utf-8');
-            res.end(JSON.stringify({ ok: true, cleared: true }));
-          });
-          return;
-        }
         // Prometheus exposition：scrape 端点
-        if (adminConfig.metrics.enabled && req.url === '/metrics' && req.method === 'GET') {
-          createAdminAuthMiddleware('metrics', adminConfig)(req as never, res as never, () => {
+        if (opsConfig.metrics.enabled && req.url === '/metrics' && req.method === 'GET') {
+          createOpsAuthMiddleware('metrics', opsConfig)(req as never, res as never, () => {
             import('@/metrics/PromMetrics')
               .then(async ({ promRegistry }) => {
                 const body = await promRegistry.metrics();

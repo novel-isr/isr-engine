@@ -14,10 +14,12 @@ function toMode(rule: RouteRule): RenderModeType {
 export class RouteManager {
   private globalMode: RenderModeType;
   private overrides: Record<string, RouteRule>;
+  private defaultRevalidate: number;
 
   constructor(config: Partial<ISRConfig>) {
     this.globalMode = config.renderMode || 'isr';
     this.overrides = config.routes || {};
+    this.defaultRevalidate = config.revalidate ?? 3600;
   }
 
   getRenderMode(path: string): RenderModeType {
@@ -45,7 +47,10 @@ export class RouteManager {
     const result: Record<string, { revalidate: number; priority: number }> = {};
     for (const [pattern, rule] of Object.entries(this.overrides)) {
       if (toMode(rule) === 'isr') {
-        const ttl = typeof rule === 'object' && typeof rule.ttl === 'number' ? rule.ttl : 3600;
+        const ttl =
+          typeof rule === 'object' && typeof rule.ttl === 'number'
+            ? rule.ttl
+            : this.defaultRevalidate;
         result[pattern] = { revalidate: ttl, priority: 0.5 };
       }
     }

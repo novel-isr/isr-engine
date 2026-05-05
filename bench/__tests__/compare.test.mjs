@@ -45,7 +45,7 @@ describe('bench/compare.mjs', () => {
     });
 
     expect(output).toContain('baseline is unhealthy');
-    expect(output).toContain('current result is healthy');
+    expect(output).toContain('current result passed configured health gates');
   });
 
   it('fails immediately when the current result has non-2xx responses', () => {
@@ -63,6 +63,28 @@ describe('bench/compare.mjs', () => {
 
     expect(result.status).toBe(1);
     expect(result.stderr).toContain('current bench result is unhealthy');
+  });
+
+  it('treats autocannon errors as an explicit optional budget', () => {
+    const dir = mkdtempSync(path.join(tmpdir(), 'bench-compare-'));
+    const baselinePath = writeBench(dir, 'baseline.json', [
+      row({ path: '/', connections: 1000, qps: 2_000, p95: 4 }),
+    ]);
+    const currentPath = writeBench(dir, 'current.json', [
+      row({ path: '/', connections: 1000, qps: 2_100, p95: 4, errors: 3 }),
+    ]);
+
+    const defaultOutput = execFileSync(process.execPath, [comparePath, baselinePath, currentPath], {
+      encoding: 'utf8',
+    });
+    expect(defaultOutput).toContain('no regressions detected');
+
+    const strictResult = spawnSync(process.execPath, [comparePath, baselinePath, currentPath], {
+      encoding: 'utf8',
+      env: { ...process.env, BENCH_MAX_ERRORS: '0' },
+    });
+    expect(strictResult.status).toBe(1);
+    expect(strictResult.stderr).toContain('errors+timeouts=3');
   });
 
   it('does not produce Infinity when baseline p95 is zero', () => {

@@ -150,6 +150,14 @@ describe('RouteManager.getISRRoutes', () => {
     expect(rm.getISRRoutes()['/blog']).toEqual({ revalidate: 3600, priority: 0.5 });
   });
 
+  it('字符串 shorthand "isr" → 使用顶层 revalidate', () => {
+    const rm = new RouteManager({
+      revalidate: 120,
+      routes: { '/blog': 'isr' },
+    });
+    expect(rm.getISRRoutes()['/blog']).toEqual({ revalidate: 120, priority: 0.5 });
+  });
+
   it('mode=isr 但 ttl 非 number → 默认 3600', () => {
     const rm = new RouteManager({
       routes: {

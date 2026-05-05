@@ -32,7 +32,9 @@ import autocannon from 'autocannon';
 import { writeFileSync } from 'node:fs';
 import { extractP95, sleep } from './utils.mjs';
 
-const URL = process.env.BENCH_URL ?? 'http://localhost:3000';
+// Use a numeric loopback address by default. `localhost` can resolve to both ::1 and 127.0.0.1;
+// high-concurrency runs would then measure dual-stack connection churn instead of engine throughput.
+const URL = process.env.BENCH_URL ?? 'http://127.0.0.1:3000';
 const TIERS = (process.env.BENCH_TIERS ?? '10,100,1000,10000')
   .split(',')
   .map(s => parseInt(s.trim(), 10))
@@ -53,7 +55,7 @@ const WARMUP_SECONDS = parseInt(process.env.BENCH_WARMUP_SECONDS ?? '3', 10);
 const COOLDOWN_MS = parseInt(process.env.BENCH_COOLDOWN_MS ?? '2000', 10);
 // preflight 单 GET 的超时；设 0 关闭 preflight（不推荐）
 const PREFLIGHT_TIMEOUT_MS = parseInt(process.env.BENCH_PREFLIGHT_TIMEOUT_MS ?? '5000', 10);
-// stats 端点（可选 —— 服务器开 admin routes 时才有；缺失静默跳过）
+// stats 端点（可选 —— dev/bench ops route；缺失静默跳过）
 const STATS_PATH = process.env.BENCH_STATS_PATH ?? '/__isr/stats';
 
 console.log(`\n=== isr-engine bench ===`);

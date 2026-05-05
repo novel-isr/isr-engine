@@ -4,7 +4,7 @@
  * 流程：
  *   1. 动态 import dist/rsc/index.js → 默认导出 { fetch: handler }（Fetch API）
  *   2. Express 装配：
- *        security/body → admin(/health, /__isr/stats, /__isr/clear) →
+ *        security/body → ops(/health, /metrics) →
  *        ISR cache (framework-agnostic handler) →
  *        express.static(dist/client)  ← 命中 SSG 预生成的 index.html
  *        Web Request → handler(req) → Web Response → Express res
@@ -20,7 +20,7 @@ import { logger } from '@/logger';
 import { DEFAULT_PORT } from '@/config/defaults';
 import { createIsrCacheHandler } from '@/plugin/isrCacheMiddleware';
 import { startServer, closeServer } from '@/server/httpServer';
-import { resolveAdminConfig, createAdminAuthMiddleware } from '@/server/adminConfig';
+import { resolveOpsConfig, createOpsAuthMiddleware } from '@/server/opsConfig';
 import type { RuntimeConfig } from '@/types';
 
 interface StartOptions {
@@ -130,23 +130,16 @@ export async function startProductionServer(options: StartOptions): Promise<void
   const app: Express = express();
   app.disable('x-powered-by');
   app.use(express.json({ limit: '1mb' })); // 防 JSON 炸弹
-  const adminConfig = resolveAdminConfig(config, 'production');
-  for (const warning of adminConfig.warnings) {
-    logger.warn(`[Admin] ${warning}`);
+  const opsConfig = resolveOpsConfig(config, 'production');
+  for (const warning of opsConfig.warnings) {
+    logger.warn(`[Ops] ${warning}`);
   }
   // 安全头 —— helmet 默认 + 生产 CSP（prod 不允许 'unsafe-eval'）
   // CSP connect-src 自动加入用户配置的服务 origin（让 CSR-fallback / 业务 fetch 不被挡）
   const { createSecurityMiddleware, createCompressionMiddleware } =
     await import('@/server/middleware');
   app.use(createSecurityMiddleware(false, extraConnectSrc));
-  if (config.server?.compression?.enabled !== false) {
-    app.use(
-      createCompressionMiddleware({
-        threshold: config.server?.compression?.threshold,
-        level: config.server?.compression?.level,
-      })
-    );
-  }
+  app.use(createCompressionMiddleware());
   if (extraConnectSrc.length > 0) {
     logger.info(`🔒 CSP connect-src 加入：${extraConnectSrc.join(', ')}`);
   }
@@ -203,8 +196,8 @@ export async function startProductionServer(options: StartOptions): Promise<void
     logger.info(`🧪 A/B testing 已启用：${Object.keys(runtime.experiments).join(', ')}`);
   }
 
-  // admin 路由：先于 ISR 缓存 + 静态 + 动态 handler
-  if (adminConfig.health.enabled) {
+  // ops 路由：先于 ISR 缓存 + 静态 + 动态 handler
+  if (opsConfig.health.enabled) {
     app.get('/health', (_req, res) => {
       res.json({
         status: 'healthy',
@@ -281,23 +274,17 @@ export async function startProductionServer(options: StartOptions): Promise<void
   });
   app.use(cache);
 
-  // 缓存观测端点
-  if (adminConfig.stats.enabled) {
-    app.get('/__isr/stats', createAdminAuthMiddleware('stats', adminConfig), (_req, res) =>
+  // Dev/bench cache stats endpoint. Production config does not expose this knob.
+  if (opsConfig.stats.enabled) {
+    app.get('/__isr/stats', createOpsAuthMiddleware('stats', opsConfig), (_req, res) =>
       res.json(cache.stats())
     );
-  }
-  if (adminConfig.clear.enabled) {
-    app.post('/__isr/clear', createAdminAuthMiddleware('clear', adminConfig), (_req, res) => {
-      cache.clear();
-      res.json({ ok: true, cleared: true });
-    });
   }
 
   // Prometheus 抓取端点（prom-client 文本格式）
   const { promRegistry } = await import('@/metrics/PromMetrics');
-  if (adminConfig.metrics.enabled) {
-    app.get('/metrics', createAdminAuthMiddleware('metrics', adminConfig), async (_req, res) => {
+  if (opsConfig.metrics.enabled) {
+    app.get('/metrics', createOpsAuthMiddleware('metrics', opsConfig), async (_req, res) => {
       try {
         res.set('content-type', promRegistry.contentType);
         res.end(await promRegistry.metrics());
@@ -315,30 +302,26 @@ export async function startProductionServer(options: StartOptions): Promise<void
   const { SEOEngine } = await import('@/engine/seo/SEOEngine');
   const { resolveSeoConfig } = await import('@/engine/seo/resolveSeoConfig');
   const seoCfg = resolveSeoConfig(config);
-  const seo = SEOEngine.getInstance({ baseUrl: seoCfg.baseUrl, enabled: seoCfg.enabled });
+  const seo = SEOEngine.getInstance({ baseUrl: seoCfg.baseUrl });
   await seo.initialize();
-  if (seoCfg.enabled && seoCfg.generateSitemap) {
-    app.get('/sitemap.xml', async (_req, res) => {
-      try {
-        const xml = await seo.generateSitemap(extractRoutesForSitemap(config));
-        res.set('content-type', 'application/xml; charset=utf-8');
-        res.set('cache-control', 'public, max-age=3600');
-        res.end(xml);
-      } catch (err) {
-        res
-          .status(500)
-          .type('text/plain')
-          .end(`sitemap error: ${String(err)}`);
-      }
-    });
-  }
-  if (seoCfg.enabled && seoCfg.generateRobots) {
-    app.get('/robots.txt', (_req, res) => {
-      res.set('content-type', 'text/plain; charset=utf-8');
+  app.get('/sitemap.xml', async (_req, res) => {
+    try {
+      const xml = await seo.generateSitemap(extractRoutesForSitemap(config));
+      res.set('content-type', 'application/xml; charset=utf-8');
       res.set('cache-control', 'public, max-age=3600');
-      res.end(seo.generateRobotsTxt());
-    });
-  }
+      res.end(xml);
+    } catch (err) {
+      res
+        .status(500)
+        .type('text/plain')
+        .end(`sitemap error: ${String(err)}`);
+    }
+  });
+  app.get('/robots.txt', (_req, res) => {
+    res.set('content-type', 'text/plain; charset=utf-8');
+    res.set('cache-control', 'public, max-age=3600');
+    res.end(seo.generateRobotsTxt());
+  });
 
   // 根处理器：Express req → Web Request → handler → Response → Express res
   app.all(/.*/, async (req, res) => {
@@ -359,21 +342,18 @@ export async function startProductionServer(options: StartOptions): Promise<void
   const serverConfig = {
     port: config.server?.port ?? DEFAULT_PORT,
     host: config.server?.host,
-    protocol: config.server?.protocol ?? 'http1.1',
-    ssl: config.server?.ssl ?? null,
-    timeouts: config.server?.timeouts,
   };
   const result = await startServer(app, serverConfig);
 
   logger.success('[CLI]', '生产服务器已启动');
   logger.info('[Server]', `服务地址: ${result.url}`);
-  if (adminConfig.health.enabled) {
+  if (opsConfig.health.enabled) {
     logger.info('[Server]', `健康检查: ${result.url}/health`);
   }
-  if (adminConfig.stats.enabled) {
+  if (opsConfig.stats.enabled) {
     logger.info('[Server]', `缓存统计: ${result.url}/__isr/stats`);
   }
-  if (adminConfig.metrics.enabled) {
+  if (opsConfig.metrics.enabled) {
     logger.info('[Server]', `Prometheus: ${result.url}/metrics`);
   }
   logger.info('[Stats]', `内存使用: ${Math.round(process.memoryUsage().heapUsed / 1024 / 1024)}MB`);

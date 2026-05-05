@@ -16,9 +16,9 @@ function validateConfig(config: ISRConfig): void {
     throw new Error(`无效的 renderMode: "${config.renderMode}"，可选值: ${validModes.join(', ')}`);
   }
 
-  if (!config.seo) {
-    config.seo = { enabled: true, generateSitemap: true, generateRobots: true };
-  }
+  // SEO is a core SSR/ISR capability and is always enabled by the engine.
+  // Sitemap/robots endpoints are registered by the server layer; business apps
+  // only provide runtime.site and runtime.seo data sources.
 }
 
 /**

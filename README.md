@@ -133,7 +133,7 @@ export default defineIsrConfig({
     '/*': 'isr',
   },
   ssg: { routes: ['/about'] },
-  isr: { revalidate: 3600 },
+  revalidate: 3600
 });
 ```
 
@@ -414,7 +414,7 @@ getI18n('book.count', { count: 12 }); // 字典里写 "共 {count} 本书"
 memory LRU。业务只需要声明窗口和阈值，不需要重复写存储后端判断。
 
 页面缓存同样不暴露 `cache` 配置。engine 自动选择本机 memory 或 Redis L2；
-业务只在 `routes[*].ttl` 和 `isr.revalidate` 配置页面 TTL。
+业务只在 `routes[*].ttl` 和 `revalidate` 配置页面 TTL。
 
 要开启分布式限流：
 

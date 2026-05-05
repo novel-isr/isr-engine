@@ -3,8 +3,8 @@
  *
  * 职责：
  *   1) 兜底默认：缺 `renderMode` 时设 'isr'，缺 `routes` 时设 {}
- *   2) 内部 cache 默认由 engine 归一化，TTL 来自 isr.revalidate/3600
- *   3) 不破坏其他字段（server/seo/runtime 等透传）
+ *   2) 内部 cache 默认由 engine 归一化，TTL 来自 revalidate/3600
+ *   3) 不破坏其他字段（server/runtime/ssg 等透传）
  */
 import { describe, it, expect } from 'vitest';
 import { normalizeEngineConfig } from '../ISREngine';
@@ -36,45 +36,48 @@ describe('normalizeEngineConfig —— 兜底默认值', () => {
     expect(r.routes).toEqual({});
   });
 
-  it('内部 cache 默认 memory，并优先使用 isr.revalidate 作为 ttl', () => {
-    const r = normalizeEngineConfig(base({ isr: { revalidate: 120 } }));
+  it('内部 cache 默认 memory，并优先使用 revalidate 作为 ttl', () => {
+    const r = normalizeEngineConfig(base({ revalidate: 120 }));
     expect(r.cache).toEqual({ strategy: 'memory', ttl: 120 });
   });
 
-  it('没有 isr.revalidate → 内部 cache ttl 默认 3600 秒', () => {
+  it('没有 revalidate → 内部 cache ttl 默认 3600 秒', () => {
     const r = normalizeEngineConfig(base());
     expect(r.cache).toEqual({ strategy: 'memory', ttl: 3600 });
   });
 });
 
 describe('normalizeEngineConfig —— 不破坏其他字段', () => {
-  it('server / seo / isr / ssg 字段原样透传，cache 由 engine 归一化', () => {
+  it('server / revalidate / ssg 字段原样透传，cache 由 engine 归一化', () => {
     const config: ISRConfig = {
       renderMode: 'isr',
       server: { port: 8080, host: '0.0.0.0' },
-      seo: { enabled: true },
-      isr: { revalidate: 600 },
+      revalidate: 600,
       ssg: { routes: ['/'], concurrent: 5 },
     };
     const r = normalizeEngineConfig(config);
     expect(r.cache).toEqual({ strategy: 'memory', ttl: 600 });
     expect(r.server).toEqual({ port: 8080, host: '0.0.0.0' });
-    expect(r.seo).toEqual({ enabled: true });
-    expect(r.isr).toEqual({ revalidate: 600 });
+    expect(r.revalidate).toBe(600);
     expect(r.ssg).toEqual({ routes: ['/'], concurrent: 5 });
   });
 
-  it('忽略历史遗留 cache 字段，TTL 只从 isr.revalidate 读取', () => {
+  it('忽略历史遗留 cache/isr/seo 字段，TTL 只从顶层 revalidate 读取', () => {
     const config = {
       renderMode: 'isr',
       cache: { strategy: 'redis', ttl: 7200 },
-      isr: { revalidate: 300 },
+      isr: { revalidate: 9999 },
+      seo: { enabled: false },
+      revalidate: 300,
     } as unknown as ISRConfig;
 
-    expect(normalizeEngineConfig(config).cache).toEqual({
+    const normalized = normalizeEngineConfig(config);
+    expect(normalized.cache).toEqual({
       strategy: 'memory',
       ttl: 300,
     });
+    expect('isr' in normalized).toBe(false);
+    expect('seo' in normalized).toBe(false);
   });
 
   it('返回新对象，不修改入参（引用不等 + 入参关键字段无变异）', () => {
@@ -93,14 +96,13 @@ describe('normalizeEngineConfig —— 不破坏其他字段', () => {
 });
 
 describe('normalizeEngineConfig —— runtime 平台配置', () => {
-  it('runtime.site 保留在 runtime，不再复制到顶层 seo', () => {
+  it('runtime.site 保留在 runtime，不再需要顶层 seo', () => {
     const r = normalizeEngineConfig(
       base({
         runtime: { site: 'https://novel.example.com' },
-        seo: { enabled: true },
       })
     );
-    expect(r.seo).toEqual({ enabled: true });
+    expect('seo' in r).toBe(false);
     expect(r.runtime?.site).toBe('https://novel.example.com');
   });
 });
