@@ -1,5 +1,9 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { installBrowserObservability } from '../browserObservability';
+import {
+  installBrowserObservability,
+  resolveIgnorePatterns,
+  shouldIgnore,
+} from '../browserObservability';
 import {
   capture,
   getTelemetry,
@@ -335,6 +339,57 @@ describe('installBrowserObservability', () => {
     });
     expect(listeners.online).toBeTypeOf('function');
     handle.shutdown();
+  });
+});
+
+/**
+ * inbound-filter 单测 —— 这套规则就是为了挡掉 Vite HMR 的
+ * "send was called before connect" 之类的 dev-runtime 噪声，
+ * 别让 admin observability 通道被刷爆。回归测试一下。
+ */
+describe('error inbound filters', () => {
+  it('drops unhandled rejections originating from @vite/client', () => {
+    const patterns = resolveIgnorePatterns(undefined);
+    const viteHmrError = new Error('send was called before connect');
+    viteHmrError.stack =
+      'Error: send was called before connect\n' +
+      '    at Object.send (http://localhost:3000/@vite/client:384:15)';
+    expect(shouldIgnore(patterns, undefined, viteHmrError)).toBe(true);
+  });
+
+  it('drops error events whose filename is a dev-runtime URL', () => {
+    const patterns = resolveIgnorePatterns(undefined);
+    expect(shouldIgnore(patterns, 'http://localhost:3000/@vite/client', null)).toBe(true);
+    expect(shouldIgnore(patterns, 'http://localhost:3000/@react-refresh', null)).toBe(true);
+  });
+
+  it('drops errors from browser extensions', () => {
+    const patterns = resolveIgnorePatterns(undefined);
+    expect(shouldIgnore(patterns, 'chrome-extension://abc/content.js', null)).toBe(true);
+  });
+
+  it('keeps real application errors untouched', () => {
+    const patterns = resolveIgnorePatterns(undefined);
+    const appError = new Error('Cannot read property foo of undefined');
+    appError.stack =
+      'Error: Cannot read property foo of undefined\n' +
+      '    at HomePage (http://localhost:3000/src/pages/HomePage.tsx:42:7)';
+    expect(shouldIgnore(patterns, 'http://localhost:3000/src/pages/HomePage.tsx', appError)).toBe(
+      false
+    );
+  });
+
+  it('honors ignoreSourcePatterns: false to disable filtering entirely', () => {
+    const patterns = resolveIgnorePatterns(false);
+    expect(patterns).toEqual([]);
+    expect(shouldIgnore(patterns, 'http://localhost:3000/@vite/client', null)).toBe(false);
+  });
+
+  it('lets callers append custom patterns alongside the defaults', () => {
+    const patterns = resolveIgnorePatterns([/MyVendorBundle/]);
+    expect(shouldIgnore(patterns, 'http://localhost:3000/@vite/client', null)).toBe(true);
+    expect(shouldIgnore(patterns, 'http://localhost:3000/MyVendorBundle.js', null)).toBe(true);
+    expect(shouldIgnore(patterns, 'http://localhost:3000/src/app.ts', null)).toBe(false);
   });
 });
 

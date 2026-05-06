@@ -45,7 +45,31 @@ export interface BrowserErrorReportingOptions {
   retryBaseDelayMs?: number;
   retryMaxDelayMs?: number;
   captureResourceErrors?: boolean;
+  /**
+   * 当错误来源 / 堆栈匹配下面的正则之一时，丢弃不上报。
+   *
+   * 默认会过滤 dev-runtime 噪声（@vite/client、react-refresh、HMR ping
+   * 等），避免开发态 WebSocket 重连时刷出的 "send was called before
+   * connect" 这类错误把 admin observability 通道刷爆。
+   *
+   * 业务可以在这里追加自己的过滤规则；传 `false` 关掉所有过滤（不推荐）。
+   */
+  ignoreSourcePatterns?: RegExp[] | false;
 }
+
+/** Dev-runtime 噪声 —— 由开发工具链自身产生的错误，并非业务问题。
+ * Sentry 风格 inbound filter，industry-standard。 */
+const DEFAULT_IGNORE_SOURCE_PATTERNS: RegExp[] = [
+  /@vite\/client/,
+  /@react-refresh/,
+  /__vite_ping/,
+  /webpack-internal:\/\//,
+  /webpack-hmr/,
+  // Chrome extensions
+  /^chrome-extension:\/\//,
+  /^moz-extension:\/\//,
+  /^safari-extension:\/\//,
+];
 
 export interface BrowserObservabilityOptions {
   app: string;
@@ -269,6 +293,12 @@ function createEndpointErrorReporter(
     });
   };
 
+  // 解析过滤规则：errorOptions.ignoreSourcePatterns
+  //   - undefined / 缺省：用 DEFAULT_IGNORE_SOURCE_PATTERNS（开发噪声 + 浏览器扩展）
+  //   - false：关闭过滤（不推荐）
+  //   - 自定义数组：与默认合并，业务可以追加而不是替换
+  const ignorePatterns = resolveIgnorePatterns(errorOptions?.ignoreSourcePatterns);
+
   return {
     captureException,
     installGlobalHandlers(globalOptions = {}) {
@@ -276,6 +306,7 @@ function createEndpointErrorReporter(
       const captureResourceErrors = globalOptions.captureResourceErrors !== false;
       const onError = (event: ErrorEvent | Event) => {
         if (event instanceof ErrorEvent) {
+          if (shouldIgnore(ignorePatterns, event.filename, event.error)) return;
           captureException(event.error ?? event.message, {
             source: event.filename,
             extra: { lineno: event.lineno, colno: event.colno },
@@ -291,6 +322,7 @@ function createEndpointErrorReporter(
               : target instanceof HTMLLinkElement
                 ? target.href
                 : undefined;
+          if (shouldIgnore(ignorePatterns, url, undefined)) return;
           captureException('Resource load failed', {
             level: 'warning',
             source: target.tagName.toLowerCase(),
@@ -299,6 +331,7 @@ function createEndpointErrorReporter(
         }
       };
       const onRejection = (event: PromiseRejectionEvent) => {
+        if (shouldIgnore(ignorePatterns, undefined, event.reason)) return;
         captureException(event.reason, { source: 'unhandledrejection' });
       };
       window.addEventListener('error', onError, true);
@@ -595,6 +628,37 @@ function readOrCreateBrowserId(key: string): string {
   } catch {
     return createId('runtime');
   }
+}
+
+/** 解析 ignoreSourcePatterns 选项 —— false 关闭过滤；数组与默认合并；缺省走默认。 */
+export function resolveIgnorePatterns(custom: RegExp[] | false | undefined): RegExp[] {
+  if (custom === false) return [];
+  if (Array.isArray(custom)) return [...DEFAULT_IGNORE_SOURCE_PATTERNS, ...custom];
+  return DEFAULT_IGNORE_SOURCE_PATTERNS;
+}
+
+/** 判断错误是否来自 dev-runtime 等噪声源。
+ * 命中 ignorePatterns 任一 → 丢弃。检查 source URL + error.stack 两条。 */
+export function shouldIgnore(
+  ignorePatterns: RegExp[],
+  source: string | undefined,
+  reason: unknown
+): boolean {
+  if (ignorePatterns.length === 0) return false;
+  if (typeof source === 'string') {
+    for (const re of ignorePatterns) if (re.test(source)) return true;
+  }
+  // reason 通常是 Error 实例；其 stack 是字符串。也可能是字符串本身。
+  if (reason && typeof reason === 'object' && 'stack' in reason) {
+    const stack = (reason as { stack?: unknown }).stack;
+    if (typeof stack === 'string') {
+      for (const re of ignorePatterns) if (re.test(stack)) return true;
+    }
+  }
+  if (typeof reason === 'string') {
+    for (const re of ignorePatterns) if (re.test(reason)) return true;
+  }
+  return false;
 }
 
 function normalizeError(error: unknown): { message: string; name?: string; stack?: string } {
