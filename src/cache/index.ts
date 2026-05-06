@@ -8,13 +8,7 @@
 
 export { CacheManager } from './CacheManager';
 export type { CacheManagerConfig, CacheStrategy } from './CacheManager';
-export type {
-  ICacheAdapter,
-  CacheSetOptions,
-  CacheStats,
-  CacheEntry,
-  CacheEntryMeta,
-} from './ICacheAdapter';
+export type { ICacheAdapter, CacheSetOptions, CacheEntry, CacheEntryMeta } from './ICacheAdapter';
 export { MemoryCacheAdapter } from './MemoryCacheAdapter';
 export type { MemoryCacheConfig } from './MemoryCacheAdapter';
 export { RedisCacheAdapter } from './RedisCacheAdapter';

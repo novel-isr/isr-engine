@@ -168,7 +168,7 @@ export interface RuntimeTelemetryErrorsConfig extends RuntimeTelemetryEndpointOp
 }
 
 export interface RuntimeTelemetryWebVitalsConfig {
-  /** 是否自动采集 Web Vitals；默认 true */
+  /** 是否自动采集 Web Vitals；覆盖 FCP/LCP/CLS/INP/TTFB 等前端体验指标 */
   enabled: boolean;
 }
 
@@ -233,7 +233,8 @@ export interface RuntimeTelemetryConfig {
   /**
    * 额外 collector 出口。第一方 HTTP 上报不放这里，唯一真值源是
    * events.endpoint / errors.endpoint，避免同一个地址配置两遍。
-   * Sentry 这类完整 SDK 平台放 integrations，不降级为普通 exporter。
+   * 当前没有 Datadog/OTel collector 时应保持 []；Sentry 这类完整 SDK 平台放
+   * integrations，不降级为普通 exporter。
    */
   exporters: readonly RuntimeTelemetryExporterConfig[];
   /** 第三方平台集成，和第一方 endpoint telemetry 并列挂在 telemetry 下面 */

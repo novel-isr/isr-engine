@@ -1,8 +1,16 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { installBrowserObservability } from '../browserObservability';
+import {
+  capture,
+  getTelemetry,
+  measure,
+  setTelemetryUser,
+  track,
+} from '../../../runtime/telemetry';
 
 describe('installBrowserObservability', () => {
   afterEach(() => {
+    getTelemetry()?.shutdown();
     vi.useRealTimers();
     vi.unstubAllGlobals();
   });
@@ -65,6 +73,108 @@ describe('installBrowserObservability', () => {
       source: 'server-action',
       tags: { actionId: 'create-review' },
     });
+  });
+
+  it('exposes a first-party telemetry API for business events, errors, and custom measures', async () => {
+    const fetchMock = vi.fn(async () => new Response('{}', { status: 202 }));
+    vi.stubGlobal('fetch', fetchMock);
+
+    const handle = await installBrowserObservability({
+      app: 'novel-rating',
+      analytics: {
+        endpoint: '/analytics',
+        batchSize: 1,
+        webVitals: false,
+        trackInitialPage: false,
+      },
+      errorReporting: {
+        endpoint: '/errors',
+        batchSize: 1,
+        captureResourceErrors: false,
+      },
+    });
+
+    setTelemetryUser({ id: 'u1', tenantId: 'tenant-a', segment: 'paid' });
+    track('review.submit', { bookId: 'b1', score: 5 }, { tags: { feature: 'reviews' } });
+    measure('search.latency', 42, {
+      unit: 'ms',
+      properties: { source: 'header' },
+      tags: { route: '/search' },
+    });
+    capture(new Error('domain failed'), {
+      source: 'rating-widget',
+      tags: { feature: 'rating' },
+      extra: { bookId: 'b1' },
+    });
+
+    await vi.waitFor(() => {
+      expect(fetchMock).toHaveBeenCalledTimes(3);
+    });
+
+    const eventBody = JSON.parse(fetchMock.mock.calls[0]?.[1]?.body as string);
+    expect(eventBody.events[0]).toMatchObject({
+      name: 'review.submit',
+      properties: { bookId: 'b1', score: 5 },
+      tags: { feature: 'reviews' },
+      user: { id: 'u1', tenantId: 'tenant-a', segment: 'paid' },
+    });
+
+    const metricBody = JSON.parse(fetchMock.mock.calls[1]?.[1]?.body as string);
+    expect(metricBody.events[0]).toMatchObject({
+      name: 'metric',
+      properties: {
+        metric: 'search.latency',
+        value: 42,
+        unit: 'ms',
+        source: 'header',
+      },
+      tags: { route: '/search' },
+    });
+
+    const errorBody = JSON.parse(fetchMock.mock.calls[2]?.[1]?.body as string);
+    expect(errorBody.reports[0]).toMatchObject({
+      message: 'domain failed',
+      source: 'rating-widget',
+      tags: { feature: 'rating' },
+      extra: { bookId: 'b1' },
+      user: { id: 'u1', tenantId: 'tenant-a', segment: 'paid' },
+    });
+
+    handle.shutdown();
+    expect(getTelemetry()).toBeNull();
+  });
+
+  it('buffers facade calls made before client telemetry is installed', async () => {
+    installBrowserGlobals();
+    const fetchMock = vi.fn(async () => new Response('{}', { status: 202 }));
+    vi.stubGlobal('fetch', fetchMock);
+
+    setTelemetryUser({ id: 'early-user' });
+    track('early.intent', { source: 'module-load' });
+
+    const handle = await installBrowserObservability({
+      app: 'novel-rating',
+      analytics: {
+        endpoint: '/analytics',
+        batchSize: 1,
+        webVitals: false,
+        trackInitialPage: false,
+      },
+      errorReporting: false,
+    });
+
+    await vi.waitFor(() => {
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+    });
+
+    const body = JSON.parse(fetchMock.mock.calls[0]?.[1]?.body as string);
+    expect(body.events[0]).toMatchObject({
+      name: 'early.intent',
+      properties: { source: 'module-load' },
+      user: { id: 'early-user' },
+    });
+
+    handle.shutdown();
   });
 
   it('is a no-op when endpoints are not configured', async () => {
@@ -132,6 +242,62 @@ describe('installBrowserObservability', () => {
 
     const body = JSON.parse(fetchMock.mock.calls[0]?.[1]?.body as string);
     expect(body.events[0].properties.path).toBe('/books?q=allowed');
+  });
+
+  it('reports final Web Vitals facts including INP through the engine endpoint bridge', async () => {
+    const listeners = installBrowserGlobals();
+    const observers = installPerformanceObserverGlobals();
+    const fetchMock = vi.fn(async () => new Response('{}', { status: 202 }));
+    vi.stubGlobal('fetch', fetchMock);
+
+    const handle = await installBrowserObservability({
+      app: 'novel-rating',
+      analytics: {
+        endpoint: '/analytics',
+        batchSize: 50,
+        webVitals: true,
+        trackInitialPage: false,
+      },
+      errorReporting: false,
+    });
+
+    observers.get('largest-contentful-paint')?.([perfEntry({ startTime: 2800 })]);
+    observers.get('layout-shift')?.([
+      perfEntry({ value: 0.04, hadRecentInput: false }),
+      perfEntry({ value: 0.08, hadRecentInput: false }),
+    ]);
+    observers.get('event')?.([
+      perfEntry({ duration: 100, interactionId: 1 }),
+      perfEntry({ duration: 260, interactionId: 2 }),
+    ]);
+    listeners.pagehide?.({ type: 'pagehide' } as Event);
+    await handle.flush();
+
+    await vi.waitFor(() => {
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+    });
+
+    const body = JSON.parse(fetchMock.mock.calls[0]?.[1]?.body as string);
+    expect(body.events).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          name: 'web_vital',
+          properties: { name: 'TTFB', value: 123 },
+        }),
+        expect.objectContaining({
+          name: 'web_vital',
+          properties: { name: 'LCP', value: 2800 },
+        }),
+        expect.objectContaining({
+          name: 'web_vital',
+          properties: { name: 'INP', value: 260 },
+        }),
+        expect.objectContaining({
+          name: 'web_vital',
+          properties: { name: 'CLS', value: 0.12 },
+        }),
+      ])
+    );
   });
 
   it('retries failed endpoint uploads with backoff without blocking the page', async () => {
@@ -207,4 +373,52 @@ function installBrowserGlobals(): Record<string, EventListener> {
   });
 
   return listeners;
+}
+
+function installPerformanceObserverGlobals(): Map<
+  string,
+  (entries: Array<PerformanceEntry & Record<string, unknown>>) => void
+> {
+  const observers = new Map<
+    string,
+    (entries: Array<PerformanceEntry & Record<string, unknown>>) => void
+  >();
+
+  class FakePerformanceObserver {
+    private readonly callback: PerformanceObserverCallback;
+
+    constructor(callback: PerformanceObserverCallback) {
+      this.callback = callback;
+    }
+
+    observe(options: PerformanceObserverInit & { type?: string }): void {
+      if (!options.type) return;
+      observers.set(options.type, entries => {
+        this.callback(
+          { getEntries: () => entries } as unknown as PerformanceObserverEntryList,
+          this as unknown as PerformanceObserver
+        );
+      });
+    }
+
+    disconnect(): void {}
+  }
+
+  vi.stubGlobal('performance', {
+    getEntriesByType: (type: string) => (type === 'navigation' ? [{ responseStart: 123 }] : []),
+  });
+  vi.stubGlobal('PerformanceObserver', FakePerformanceObserver);
+
+  return observers;
+}
+
+function perfEntry(values: Record<string, unknown>): PerformanceEntry & Record<string, unknown> {
+  return {
+    duration: 0,
+    entryType: 'test',
+    name: 'test',
+    startTime: 0,
+    toJSON: () => ({}),
+    ...values,
+  } as PerformanceEntry & Record<string, unknown>;
 }

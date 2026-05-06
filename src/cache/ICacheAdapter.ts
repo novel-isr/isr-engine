@@ -21,22 +21,6 @@ export interface CacheEntry<T = unknown> {
   meta: CacheEntryMeta;
 }
 
-/** 缓存统计信息 */
-export interface CacheStats {
-  /** 当前缓存条目数 */
-  size: number;
-  /** 缓存命中次数 */
-  hits: number;
-  /** 缓存未命中次数 */
-  misses: number;
-  /** 命中率 */
-  hitRate: number;
-  /** 后端类型 */
-  backend: 'memory' | 'redis';
-  /** 是否连接正常 */
-  connected: boolean;
-}
-
 /** 缓存设置选项 */
 export interface CacheSetOptions {
   /** TTL 秒数 */
@@ -78,9 +62,6 @@ export interface ICacheAdapter {
 
   /** 按标签批量失效 */
   invalidateByTag(tag: string): Promise<number>;
-
-  /** 获取统计信息 */
-  getStats(): CacheStats;
 
   /** 连接状态 */
   isConnected(): boolean;

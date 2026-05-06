@@ -306,7 +306,6 @@ function applyModeTtlMultiplier(mode: RenderModeType, ttlSeconds: number): numbe
  */
 export interface IsrCacheHandler {
   (req: IncomingMessage, res: ServerResponse, next: Connect.NextFunction): void;
-  stats(): { size: number; max: number; revalidating: number; backend: 'memory' | 'hybrid' };
   clear(): void;
   destroy(): Promise<void>;
 }
@@ -410,12 +409,6 @@ export function createIsrCacheHandler(
     });
   }) as IsrCacheHandler;
 
-  handler.stats = () => ({
-    size: cache.size,
-    max: cache.max,
-    revalidating: revalidating.size,
-    backend: cache.backend,
-  });
   handler.clear = () => {
     // 释放所有等待 follower（让它们退出等待，自己重走 MISS）
     for (const slot of inflightRegens.values()) slot.resolve();

@@ -1,5 +1,5 @@
 import { Logger } from '../logger/Logger';
-import type { ICacheAdapter, CacheSetOptions, CacheStats } from './ICacheAdapter';
+import type { ICacheAdapter, CacheSetOptions } from './ICacheAdapter';
 import { MemoryCacheAdapter, type MemoryCacheConfig } from './MemoryCacheAdapter';
 import { RedisCacheAdapter, type RedisCacheConfig } from './RedisCacheAdapter';
 
@@ -119,13 +119,6 @@ export class CacheManager {
    */
   async invalidateByTag(tag: string): Promise<number> {
     return this.adapter.invalidateByTag(tag);
-  }
-
-  /**
-   * 获取统计信息
-   */
-  getStats(): CacheStats {
-    return this.adapter.getStats();
   }
 
   /**

@@ -6,7 +6,7 @@
  * 纯函数 / 适配器 helper —— 它们每条请求都跑，错一行整个生产路径就崩：
  *
  *   1. extractRoutesForSitemap —— ssr.config 路由表过滤逻辑
- *   2. applyTelemetryIntegrationEnv —— 第三方 telemetry integration 启动前映射
+ *   2. applyTelemetryIntegrationEnv —— 第三方 telemetry integration/exporter 启动前映射
  *   3. nodeToWebRequest        —— Express req → Web Request 协议转换
  *   4. pipeWebResponse         —— Web Response → Express res 流式回写
  *
@@ -136,6 +136,79 @@ describe('applyTelemetryIntegrationEnv —— Sentry integration 显式开关', 
       restoreEnv('SENTRY_ENABLED', previous.SENTRY_ENABLED);
       restoreEnv('SENTRY_DSN', previous.SENTRY_DSN);
       restoreEnv('SENTRY_TRACES_SAMPLE_RATE', previous.SENTRY_TRACES_SAMPLE_RATE);
+    }
+  });
+
+  it('映射 Datadog / OTel exporters，exporters=[] 时不产生隐式 vendor 配置', () => {
+    const previous = {
+      DD_SERVICE: process.env.DD_SERVICE,
+      DD_ENV: process.env.DD_ENV,
+      DD_VERSION: process.env.DD_VERSION,
+      OTEL_EXPORTER_OTLP_ENDPOINT: process.env.OTEL_EXPORTER_OTLP_ENDPOINT,
+      OTEL_SERVICE_NAME: process.env.OTEL_SERVICE_NAME,
+    };
+    delete process.env.DD_SERVICE;
+    delete process.env.DD_ENV;
+    delete process.env.DD_VERSION;
+    delete process.env.OTEL_EXPORTER_OTLP_ENDPOINT;
+    delete process.env.OTEL_SERVICE_NAME;
+
+    try {
+      applyTelemetryIntegrationEnv(
+        runtime({
+          app: 'novel-rating',
+          release: '1.2.3',
+          environment: 'staging',
+          includeQueryString: false,
+          events: false,
+          errors: false,
+          webVitals: false,
+          exporters: [],
+          integrations: { sentry: undefined },
+        })
+      );
+      expect(process.env.DD_SERVICE).toBeUndefined();
+      expect(process.env.OTEL_EXPORTER_OTLP_ENDPOINT).toBeUndefined();
+
+      applyTelemetryIntegrationEnv(
+        runtime({
+          app: 'novel-rating',
+          release: '1.2.3',
+          environment: 'staging',
+          includeQueryString: false,
+          events: false,
+          errors: false,
+          webVitals: false,
+          exporters: [
+            {
+              type: 'datadog',
+              name: 'dd',
+              required: false,
+              service: 'novel-rating-web',
+            },
+            {
+              type: 'otel',
+              name: 'otel',
+              required: false,
+              endpoint: 'https://otel.example.com/v1/traces',
+              serviceName: 'novel-rating-rsc',
+            },
+          ],
+          integrations: { sentry: undefined },
+        })
+      );
+
+      expect(process.env.DD_SERVICE).toBe('novel-rating-web');
+      expect(process.env.DD_ENV).toBe('staging');
+      expect(process.env.DD_VERSION).toBe('1.2.3');
+      expect(process.env.OTEL_EXPORTER_OTLP_ENDPOINT).toBe('https://otel.example.com/v1/traces');
+      expect(process.env.OTEL_SERVICE_NAME).toBe('novel-rating-rsc');
+    } finally {
+      restoreEnv('DD_SERVICE', previous.DD_SERVICE);
+      restoreEnv('DD_ENV', previous.DD_ENV);
+      restoreEnv('DD_VERSION', previous.DD_VERSION);
+      restoreEnv('OTEL_EXPORTER_OTLP_ENDPOINT', previous.OTEL_EXPORTER_OTLP_ENDPOINT);
+      restoreEnv('OTEL_SERVICE_NAME', previous.OTEL_SERVICE_NAME);
     }
   });
 });

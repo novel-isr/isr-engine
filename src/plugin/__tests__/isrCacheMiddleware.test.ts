@@ -101,6 +101,16 @@ function header(v: string | string[] | undefined): string | undefined {
   return Array.isArray(v) ? v[0] : v;
 }
 
+async function waitFor(predicate: () => boolean, timeoutMs = 500, intervalMs = 10): Promise<void> {
+  const startedAt = Date.now();
+  while (!predicate()) {
+    if (Date.now() - startedAt > timeoutMs) {
+      throw new Error('waitFor timeout');
+    }
+    await new Promise(resolve => setTimeout(resolve, intervalMs));
+  }
+}
+
 describe('isrCacheMiddleware —— Set-Cookie 防回放', () => {
   let fx: TestFixture;
   beforeEach(async () => {
@@ -407,13 +417,15 @@ describe('isrCacheMiddleware —— bg revalidate 安全超时', () => {
         hardExpiresAt: now + 60_000, // 但仍在 hardExpire 内
         tags: [],
       };
-      // stats() 的 size 是底层 store 的 size —— 我们要把条目放进去。
-      // 通过 config 启 handler 时的默认 store，没有直接引用 → 用自带 store option。
+      // 用显式 store 注入一个 STALE 条目，测试通过请求行为验证 revalidating 释放，
+      // 不再读取 handler 内部统计状态。
       const store = createMemoryCacheStore({ max: 10 });
       const fx2 = await startFixture({ store, backgroundRevalidateTimeoutMs: 100 });
       try {
         // 让渲染器永远 hang —— 模拟上游故障
+        let renderCalls = 0;
         fx2.renderImpl.current = () => {
+          renderCalls++;
           /* 不调 res.end，连接挂起 */
         };
 
@@ -425,12 +437,16 @@ describe('isrCacheMiddleware —— bg revalidate 安全超时', () => {
         expect(r.cacheStatus).toBe('STALE');
         expect(r.body).toBe('<html>stale</html>');
 
-        // 此时 bg 请求已发出但上游 hang。stats().revalidating 应为 1。
-        expect(fx2.handler.stats().revalidating).toBe(1);
+        // 此时 bg 请求会异步发出但上游 hang。
+        await waitFor(() => renderCalls === 1);
 
         // 等待 safety timer 触发（bgTimeoutMs=100ms，等 300ms 绰绰有余）
         await new Promise(r => setTimeout(r, 300));
-        expect(fx2.handler.stats().revalidating).toBe(0);
+
+        const r2 = await httpGet(`${fx2.baseUrl}/stale-test`);
+        expect(r2.cacheStatus).toBe('STALE');
+        expect(r2.body).toBe('<html>stale</html>');
+        await waitFor(() => renderCalls === 2);
       } finally {
         await teardown(fx2);
       }

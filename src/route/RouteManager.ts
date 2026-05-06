@@ -90,19 +90,4 @@ export class RouteManager {
         return 'weekly';
     }
   }
-
-  getStats() {
-    const modeCount: Record<string, number> = {};
-    for (const rule of Object.values(this.overrides)) {
-      const m = toMode(rule);
-      modeCount[m] = (modeCount[m] || 0) + 1;
-    }
-    return {
-      globalMode: this.globalMode,
-      overrideCount: Object.keys(this.overrides).length,
-      modeDistribution: modeCount,
-      ssgRoutes: this.getSSGRoutes().length,
-      isrRoutes: Object.keys(this.getISRRoutes()).length,
-    };
-  }
 }

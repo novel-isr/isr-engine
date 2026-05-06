@@ -18,7 +18,7 @@
  */
 /* eslint-disable @typescript-eslint/no-non-null-assertion */
 
-import type { ICacheAdapter, CacheSetOptions, CacheStats } from './ICacheAdapter';
+import type { ICacheAdapter, CacheSetOptions } from './ICacheAdapter';
 import { MemoryCacheAdapter, type MemoryCacheConfig } from './MemoryCacheAdapter';
 import { Logger } from '../logger/Logger';
 
@@ -153,8 +153,6 @@ export class RedisCacheAdapter implements ICacheAdapter {
   private fallback: MemoryCacheAdapter | null = null;
   private usingFallback = false;
   private healthCheckTimer: ReturnType<typeof setInterval> | null = null;
-  private hits = 0;
-  private misses = 0;
   private destroyed = false;
 
   constructor(config: Partial<RedisCacheConfig> = {}) {
@@ -347,25 +345,19 @@ export class RedisCacheAdapter implements ICacheAdapter {
   async get<T = unknown>(key: string): Promise<T | undefined> {
     const fallbackAdapter = this.getActiveAdapter();
     if (fallbackAdapter) {
-      const result = await fallbackAdapter.get<T>(key);
-      if (result !== undefined) this.hits++;
-      else this.misses++;
-      return result;
+      return fallbackAdapter.get<T>(key);
     }
 
     try {
       const raw = await this.redis!.get(key);
       if (raw === null) {
-        this.misses++;
         return undefined;
       }
 
       const entry: SerializedEntry = JSON.parse(raw);
-      this.hits++;
       return decodeBuffers(entry.v) as T;
     } catch (error) {
       this.logger.warn(`⚠️ Redis GET 失败 [${key}]: ${(error as Error).message}`);
-      this.misses++;
       // 如果 Redis 命令失败，降级查询
       if (this.fallback) {
         return this.fallback.get<T>(key);
@@ -473,9 +465,6 @@ export class RedisCacheAdapter implements ICacheAdapter {
           await this.redis!.del(...unprefixedKeys);
         }
       } while (cursor !== '0');
-
-      this.hits = 0;
-      this.misses = 0;
     } catch (error) {
       this.logger.warn(`⚠️ Redis CLEAR 失败: ${(error as Error).message}`);
       if (this.fallback) {
@@ -505,15 +494,12 @@ export class RedisCacheAdapter implements ICacheAdapter {
           const [err, raw] = results[i] as [Error | null, string | null];
           if (err || raw === null) {
             result.set(keys[i], undefined);
-            this.misses++;
           } else {
             try {
               const entry: SerializedEntry = JSON.parse(raw);
               result.set(keys[i], decodeBuffers(entry.v) as T);
-              this.hits++;
             } catch {
               result.set(keys[i], undefined);
-              this.misses++;
             }
           }
         }
@@ -600,18 +586,6 @@ export class RedisCacheAdapter implements ICacheAdapter {
       this.logger.warn(`⚠️ Redis TAG 失效失败 [${tag}]: ${(error as Error).message}`);
       return this.fallback ? this.fallback.invalidateByTag(tag) : 0;
     }
-  }
-
-  getStats(): CacheStats {
-    const total = this.hits + this.misses;
-    return {
-      size: -1, // Redis 不能便宜地获取精确 size
-      hits: this.hits,
-      misses: this.misses,
-      hitRate: total > 0 ? this.hits / total : 0,
-      backend: this.usingFallback ? 'memory' : 'redis',
-      connected: this.connected,
-    };
   }
 
   isConnected(): boolean {

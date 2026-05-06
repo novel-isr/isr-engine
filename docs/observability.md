@@ -56,6 +56,7 @@ export default {
       includeQueryString: false,
       events: {
         endpoint: '/api/observability/analytics',
+        trackInitialPage: true,
         sampleRate: 1,
         batchSize: 20,
         flushIntervalMs: 3000,
@@ -93,7 +94,7 @@ export default {
 
 - 首屏：engine endpoint uploader 上报一次初始 `page_view`。
 - 客户端导航：engine 拦截 `pushState` / `replaceState` / `popstate` 后上报 `page_view`。
-- Web Vitals：开启 `telemetry.webVitals.enabled` 后采集 FCP、LCP、INP、CLS、TTFB。
+- Web Vitals：开启 `telemetry.webVitals.enabled` 后采集 FCP、LCP、INP、CLS、TTFB 的原始观测值。
 - 全局错误：engine endpoint uploader 注册 `window.error` / `unhandledrejection`。
 - Server Action：action 返回 `{ ok:false }` 时上报 `source=server-action` 和 `actionId`。
 - 服务端渲染异常：`runtime.telemetry.errors` 配置存在时，`onError`
@@ -103,10 +104,64 @@ export default {
 
 - endpoint 为空时是 no-op transport，不刷 console，不阻塞页面。
 - 默认不会上报完整 query/hash；只有显式 `includeQueryString: true` 才上报 query。
+- 浏览器只上传 raw fact，例如 `{ name: 'INP', value: 260 }`；p75/p95、评级、慢页面归因和 release 对比由后端 / dashboard 聚合。
 - 浏览器上报失败会回填有界队列，并用指数退避 + online 恢复重试，不影响水合、导航和用户交互。
 - 服务端错误上报是非阻塞 fire-and-forget；失败不会改变 SSR/ISR/RSC 的异常语义。
 - `src/entry.tsx beforeStart` 仍可接业务自定义 SDK；平台默认链路是 `runtime.telemetry`，
   不是锁定供应商。
+
+## 业务显式埋点 API
+
+自动采集只覆盖框架生命周期。业务关键动作、领域错误、指定交互耗时应显式上报，但业务代码不应该关心 endpoint、重试、采样、队列或第三方 SDK。页面或 Client Component 直接使用 runtime facade。
+
+`measure()` 只上报一次原始观测值，不在浏览器里算 p95、趋势、慢页面排行或告警阈值。成熟做法是前端发送 raw fact，后端 / dashboard 按 route、release、device、tenant、用户分群聚合。
+
+```tsx
+'use client';
+
+import { capture, measure, setTelemetryUser, track } from '@novel-isr/engine/runtime';
+
+export function RatingButton({ bookId, userId }: { bookId: string; userId?: string }) {
+  return (
+    <button
+      type="button"
+      onClick={async () => {
+        setTelemetryUser(userId ? { id: userId } : null);
+        const startedAt = performance.now();
+
+        try {
+          await submitRating(bookId, 5);
+          track('rating.submit', { bookId, score: 5 }, { tags: { feature: 'rating' } });
+        } catch (error) {
+          capture(error, {
+            source: 'rating-button',
+            tags: { feature: 'rating' },
+            extra: { bookId },
+          });
+        } finally {
+          measure('rating.submit.latency', performance.now() - startedAt, {
+            unit: 'ms',
+            tags: { feature: 'rating' },
+          });
+        }
+      }}
+    >
+      评分
+    </button>
+  );
+}
+```
+
+这些 API 复用 engine 自动安装的同一条 first-party endpoint transport：
+
+- `track(name, properties, { tags })` → `runtime.telemetry.events.endpoint`，用于业务事件。
+- `measure(name, value, { unit, properties, tags })` → 同一个 events endpoint，事件名为 `metric`，只上传原始数值。
+- `capture(error, { source, tags, extra, fingerprint })` → `runtime.telemetry.errors.endpoint`，用于业务错误或错误边界。
+- `page(url)` → 同一个 events endpoint，事件名为 `page_view`；普通导航已自动处理，自定义 router 才需要手动调用。
+- `setTelemetryUser(user)` → 给之后的 events/errors 增加用户、租户、分群上下文。
+- `flushTelemetry()` → 主动 flush 队列，适合登出、支付跳转或关键页面离开前。
+
+如果没有配置 telemetry 或 endpoint 不可用，这些 API 是 no-op，不会影响 SSR/RSC/CSR。
 
 ## Sentry / Datadog / OTel
 
@@ -132,7 +187,33 @@ export default createSentryServerHooks({ Sentry });
 //   onError     captureException + tag.traceId + extra.url
 ```
 
-浏览器侧：
+浏览器侧常规业务上报优先使用 `track/capture/measure`。`src/entry.tsx` 的高级 hooks 会收到 engine 注入的 `telemetry` facade，适合补充上下文和业务语义，不适合重复上传常规 page_view/error：
+
+```tsx
+// src/entry.tsx
+export default {
+  devInspector: true,
+  beforeStart({ telemetry }) {
+    telemetry.setUser(readPublicUser());
+    telemetry.track('app.client_ready', { source: 'entry' });
+  },
+  onNavigate(url, { telemetry }) {
+    telemetry.track('navigation.section_enter', {
+      path: url.pathname,
+      section: url.pathname.split('/').filter(Boolean)[0] ?? 'home',
+    });
+  },
+  onActionError(error, actionId, { telemetry }) {
+    // engine 已自动 capture 这次 Server Action error；这里只补产品漏斗事件。
+    telemetry.track('server_action.failure_seen', {
+      actionId,
+      message: error instanceof Error ? error.message : String(error),
+    });
+  },
+};
+```
+
+只有需要接第三方浏览器 SDK 的 breadcrumb、release health 或专属 performance 时，才在 `src/entry.tsx` 额外使用第三方 hooks：
 
 ```tsx
 // src/entry.tsx
@@ -142,9 +223,11 @@ import { createSentryClientHooks } from '@novel-isr/engine/adapters/observabilit
 export default createSentryClientHooks({
   Sentry,
   init: () => Sentry.init({ dsn: 'https://…', tracesSampleRate: 0.1 }),
-  webVitals: true,   // 自动接 web-vitals（用户需 pnpm add web-vitals）
+  webVitals: true,   // 可选：把 raw web-vitals 同步给 Sentry metrics；用户需 pnpm add web-vitals
 });
 ```
+
+不要把第一方 endpoint 上传也写进这些 hook；否则会和 engine 自动采集重复。
 
 ### Datadog APM
 

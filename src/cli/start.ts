@@ -53,23 +53,60 @@ export function extractRoutesForSitemap(config: { routes?: Record<string, unknow
 }
 
 /**
- * 把 ssr.config.ts 的第三方 telemetry integration 映射到可选 adapter 使用的 env。
+ * 把 ssr.config.ts 的 telemetry 第三方配置映射到可选 adapter 使用的 env。
  * 这一步必须发生在 import dist/rsc/index.js 之前，因为内置 entry.server 会在模块加载时
- * 初始化 auto hooks。
+ * 初始化 auto hooks。engine 仍不静态 import vendor SDK；这里仅做启动期配置桥接。
  */
 export function applyTelemetryIntegrationEnv(runtime: RuntimeConfig | undefined): void {
-  const sentryIntegration = runtime?.telemetry ? runtime.telemetry.integrations?.sentry : undefined;
-  if (!sentryIntegration) return;
-
-  process.env.SENTRY_ENABLED = sentryIntegration.enabled ? 'true' : 'false';
-  if (!sentryIntegration.enabled) return;
-
-  if (sentryIntegration.dsn) process.env.SENTRY_DSN = sentryIntegration.dsn;
-  if (sentryIntegration.tracesSampleRate !== undefined) {
-    process.env.SENTRY_TRACES_SAMPLE_RATE = String(sentryIntegration.tracesSampleRate);
+  const telemetry = runtime?.telemetry;
+  if (!telemetry) {
+    process.env.SENTRY_ENABLED = 'false';
+    delete process.env.DD_SERVICE;
+    delete process.env.DD_ENV;
+    delete process.env.DD_VERSION;
+    delete process.env.OTEL_EXPORTER_OTLP_ENDPOINT;
+    delete process.env.OTEL_SERVICE_NAME;
+    return;
   }
-  if (sentryIntegration.environment) {
-    process.env.NODE_ENV = sentryIntegration.environment;
+
+  const sentryIntegration = telemetry.integrations?.sentry;
+  if (sentryIntegration) {
+    process.env.SENTRY_ENABLED = sentryIntegration.enabled ? 'true' : 'false';
+    if (sentryIntegration.enabled) {
+      if (sentryIntegration.dsn) process.env.SENTRY_DSN = sentryIntegration.dsn;
+      if (sentryIntegration.tracesSampleRate !== undefined) {
+        process.env.SENTRY_TRACES_SAMPLE_RATE = String(sentryIntegration.tracesSampleRate);
+      }
+      if (sentryIntegration.environment) {
+        process.env.NODE_ENV = sentryIntegration.environment;
+      }
+    } else {
+      delete process.env.SENTRY_DSN;
+      delete process.env.SENTRY_TRACES_SAMPLE_RATE;
+    }
+  } else {
+    process.env.SENTRY_ENABLED = 'false';
+    delete process.env.SENTRY_DSN;
+    delete process.env.SENTRY_TRACES_SAMPLE_RATE;
+  }
+
+  delete process.env.DD_SERVICE;
+  delete process.env.DD_ENV;
+  delete process.env.DD_VERSION;
+  delete process.env.OTEL_EXPORTER_OTLP_ENDPOINT;
+  delete process.env.OTEL_SERVICE_NAME;
+  for (const exporter of telemetry.exporters) {
+    if (exporter.type === 'datadog') {
+      if (exporter.service) process.env.DD_SERVICE = exporter.service;
+      if (telemetry.environment) process.env.DD_ENV = telemetry.environment;
+      if (telemetry.release) process.env.DD_VERSION = telemetry.release;
+      continue;
+    }
+
+    if (exporter.type === 'otel') {
+      if (exporter.endpoint) process.env.OTEL_EXPORTER_OTLP_ENDPOINT = exporter.endpoint;
+      if (exporter.serviceName) process.env.OTEL_SERVICE_NAME = exporter.serviceName;
+    }
   }
 }
 

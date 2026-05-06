@@ -46,14 +46,6 @@ function fakeRedis(): ICacheAdapter & { _store: Map<string, unknown> } {
     getMany: vi.fn(async () => new Map()),
     setMany: vi.fn(async () => undefined),
     invalidateByTag: vi.fn(async () => 0),
-    getStats: vi.fn(() => ({
-      size: _store.size,
-      hits: 0,
-      misses: 0,
-      hitRate: 0,
-      backend: 'redis' as const,
-      connected: true,
-    })),
     isConnected: vi.fn(() => true),
     destroy: vi.fn(async () => undefined),
   };

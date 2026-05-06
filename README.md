@@ -290,7 +290,63 @@ engine 不做隐式替换，失败不会影响渲染或其它上报。
 是独立 SDK，给非 engine 应用或自定义集成使用。
 完整说明见 [docs/observability.md](./docs/observability.md)。
 
-完事。
+业务显式事件不要写 endpoint 上传逻辑，直接用 engine runtime facade：
+
+```ts
+import {
+  capture,
+  flushTelemetry,
+  measure,
+  page,
+  setTelemetryUser,
+  track,
+} from '@novel-isr/engine/runtime';
+
+setTelemetryUser({ id: userId, tenantId });
+track('review.submit', { bookId, score }, { tags: { feature: 'reviews' } });
+measure('search.latency', durationMs, { unit: 'ms', tags: { route: '/search' } });
+capture(error, { source: 'rating-widget', extra: { bookId } });
+page('/custom-router/books/1'); // 常规路由不需要，engine 会自动上报 page_view
+await flushTelemetry();
+```
+
+这些调用复用 `runtime.telemetry.events/errors` 的同一套队列、采样、重试和 sendBeacon，不需要业务关心 transport。
+API 语义：
+
+- `track`：业务事件，例如收藏、评分、搜索提交。
+- `capture`：已知业务失败或组件错误边界，补充 `source/tags/extra/fingerprint`。
+- `measure`：一次原始数值样本，例如请求耗时、队列等待时间、交互延迟。
+- `page`：自定义 router 的页面浏览；普通 `pushState/popstate` 由 engine 自动处理。
+- `setTelemetryUser`：设置后续上报的 user / tenant / segment 上下文。
+- `flushTelemetry`：登出、支付跳转、关闭前主动 flush。
+
+`measure()` 只发送一次原始观测值；p95、趋势、慢页面排行和告警阈值应该在后端 /
+dashboard 聚合，不在浏览器里做二级统计。
+Web Vitals / INP 也是同一原则：浏览器只发送 `{ name, value }` 这类事实样本，
+服务端按 route、release、device、tenant 和用户分群计算 p75/p95 与评级。
+
+`entry.tsx` 的 hooks 仍然保留，适合补充上下文和业务语义：
+
+```ts
+// src/entry.tsx
+export default {
+  devInspector: true,
+  beforeStart({ telemetry }) {
+    telemetry.setUser(readPublicUser());
+    telemetry.track('app.client_ready', { source: 'entry' });
+  },
+  onNavigate(url, { telemetry }) {
+    telemetry.track('navigation.section_enter', { path: url.pathname });
+  },
+  onActionError(error, actionId, { telemetry }) {
+    // engine 已自动错误上报；这里只补一条产品漏斗事件。
+    telemetry.track('server_action.failure_seen', {
+      actionId,
+      message: error instanceof Error ? error.message : String(error),
+    });
+  },
+};
+```
 
 完整的「getting started」（含 i18n / SEO / Server Actions）请看 **[docs/getting-started.md](./docs/getting-started.md)**。
 

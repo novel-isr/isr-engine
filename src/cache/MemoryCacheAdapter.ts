@@ -6,10 +6,9 @@
  * - LRU 淘汰策略，防止内存无限增长
  * - TTL 过期支持，惰性清理 + 定时扫描
  * - 标签系统，支持批量缓存失效
- * - 命中率统计
  */
 
-import type { ICacheAdapter, CacheSetOptions, CacheStats, CacheEntryMeta } from './ICacheAdapter';
+import type { ICacheAdapter, CacheSetOptions, CacheEntryMeta } from './ICacheAdapter';
 
 /** 内存缓存条目 */
 interface MemoryCacheEntry<T = unknown> {
@@ -26,15 +25,12 @@ export interface MemoryCacheConfig {
   defaultTTL: number;
   /** 过期清理间隔 (ms) */
   cleanupInterval: number;
-  /** 是否启用统计 */
-  enableStats: boolean;
 }
 
 const DEFAULT_CONFIG: MemoryCacheConfig = {
   capacity: 10000,
   defaultTTL: 0,
   cleanupInterval: 60_000, // 1 分钟
-  enableStats: true,
 };
 
 export class MemoryCacheAdapter implements ICacheAdapter {
@@ -43,8 +39,6 @@ export class MemoryCacheAdapter implements ICacheAdapter {
   private cache: Map<string, MemoryCacheEntry> = new Map();
   private tagIndex: Map<string, Set<string>> = new Map(); // tag -> keys
   private config: MemoryCacheConfig;
-  private hits = 0;
-  private misses = 0;
   private cleanupTimer: ReturnType<typeof setInterval> | null = null;
 
   constructor(config: Partial<MemoryCacheConfig> = {}) {
@@ -67,14 +61,12 @@ export class MemoryCacheAdapter implements ICacheAdapter {
     const entry = this.cache.get(key);
 
     if (!entry) {
-      this.misses++;
       return undefined;
     }
 
     // 惰性检查 TTL
     if (this.isExpired(entry)) {
       this.deleteEntry(key, entry);
-      this.misses++;
       return undefined;
     }
 
@@ -82,7 +74,6 @@ export class MemoryCacheAdapter implements ICacheAdapter {
     this.cache.delete(key);
     this.cache.set(key, entry);
 
-    this.hits++;
     return entry.value as T;
   }
 
@@ -156,8 +147,6 @@ export class MemoryCacheAdapter implements ICacheAdapter {
   async clear(): Promise<void> {
     this.cache.clear();
     this.tagIndex.clear();
-    this.hits = 0;
-    this.misses = 0;
   }
 
   async getMany<T = unknown>(keys: string[]): Promise<Map<string, T | undefined>> {
@@ -192,18 +181,6 @@ export class MemoryCacheAdapter implements ICacheAdapter {
     }
 
     return count;
-  }
-
-  getStats(): CacheStats {
-    const total = this.hits + this.misses;
-    return {
-      size: this.cache.size,
-      hits: this.hits,
-      misses: this.misses,
-      hitRate: total > 0 ? this.hits / total : 0,
-      backend: 'memory',
-      connected: true,
-    };
   }
 
   isConnected(): boolean {

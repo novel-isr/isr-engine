@@ -5,9 +5,9 @@
  *
  *   形状 A · FaaS 配置（推荐）：
  *     export default {
- *       beforeStart: () => initSentry(),
- *       onNavigate: (url) => analytics.pageview(url.pathname),
- *       onActionError: (err, id) => console.error('action failed', id, err),
+ *       devInspector: true,
+ *       // beforeStart / onNavigate / onActionError 只用于业务补充或第三方 SDK；
+ *       // 常规 PV、Web Vitals 和错误上报由 ssr.config.ts runtime.telemetry 自动接管。
  *     };
  *
  *   形状 B · 不写 src/entry.tsx（engine 默认空 hooks）—— 不需要任何代码

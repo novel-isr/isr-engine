@@ -4,12 +4,11 @@
  * 用户态写法（覆盖 engine 默认行为）：
  *
  *   // src/entry.tsx
- *   import { defineClientEntry } from '@novel-isr/engine/client-entry';
- *   defineClientEntry({
- *     beforeStart: () => { initSentry(); startWebVitals(); },
- *     onNavigate:    (url) => analytics.pageview(url.pathname),
- *     onActionError: (err, id) => console.error('action failed', id, err),
- *   });
+ *   export default {
+ *     devInspector: true,
+ *     // beforeStart / onNavigate / onActionError 是高级逃生口：
+ *     // 普通 PV、Web Vitals、全局错误、Server Action 错误由 runtime.telemetry 自动处理。
+ *   };
  *
  * 不传任何 hook 时（engine 默认入口的写法）：
  *
@@ -133,12 +132,12 @@ function CsrShellFallback(): React.ReactElement {
 }
 
 export interface ClientEntryHooks {
-  /** Client runtime 启动前调用 —— 适合 SDK 初始化 / Web Vitals / 全局埋点 */
-  beforeStart?: () => void | Promise<void>;
-  /** 客户端导航发生时调用（同源 <a> 点击 / pushState / popstate）—— 适合 PV 上报 */
-  onNavigate?: (url: URL) => void;
-  /** Server Action 调用失败时调用 —— 适合错误上报 */
-  onActionError?: (error: unknown, actionId: string) => void;
+  /** Client runtime 启动前调用 —— 适合第三方 SDK 初始化或设置 telemetry user，不负责常规第一方上报 */
+  beforeStart?: (ctx: ClientEntryHookContext) => void | Promise<void>;
+  /** 客户端导航发生时调用；第一方 page_view 已自动上报，这里只做业务补充或第三方 breadcrumb */
+  onNavigate?: (url: URL, ctx: ClientEntryHookContext) => void;
+  /** Server Action 调用失败时调用；第一方错误已自动上报，这里只做业务补充或第三方 breadcrumb */
+  onActionError?: (error: unknown, actionId: string, ctx: ClientEntryHookContext) => void;
   /**
    * 浏览器 telemetry。engine 接管启动、导航和 Server Action 失败这些生命周期点；
    * 具体上报只通过 ssr.config.ts runtime.telemetry 里的 endpoint。
@@ -153,6 +152,15 @@ export interface ClientEntryHooks {
   devInspector?: boolean;
 }
 
+export type ClientEntryTelemetryApi = Pick<
+  BrowserObservabilityHandle,
+  'track' | 'capture' | 'measure' | 'page' | 'setUser' | 'flush'
+>;
+
+export interface ClientEntryHookContext {
+  telemetry: ClientEntryTelemetryApi;
+}
+
 export function defineClientEntry(hooks: ClientEntryHooks = {}): void {
   void main(hooks);
 }
@@ -162,8 +170,9 @@ async function main(hooks: ClientEntryHooks): Promise<void> {
     hooks.telemetry && hooks.telemetry !== false
       ? await installBrowserObservability(hooks.telemetry)
       : null;
+  const hookContext = createHookContext(observability);
 
-  if (hooks.beforeStart) await hooks.beforeStart();
+  if (hooks.beforeStart) await hooks.beforeStart(hookContext);
 
   const installInspector = () => {
     if (hooks.devInspector === false) return;
@@ -223,7 +232,8 @@ async function main(hooks: ClientEntryHooks): Promise<void> {
             fetchRscPayload().catch(() => setFailed(true));
           },
           hooks.onNavigate,
-          observability
+          observability,
+          hookContext
         );
       }, []);
 
@@ -258,7 +268,7 @@ async function main(hooks: ClientEntryHooks): Promise<void> {
         captureActionError(observability, data, id);
         if (hooks.onActionError) {
           try {
-            hooks.onActionError(data, id);
+            hooks.onActionError(data, id, hookContext);
           } catch {
             /* hook 抛错不影响主流程 */
           }
@@ -301,7 +311,10 @@ async function main(hooks: ClientEntryHooks): Promise<void> {
     React.useEffect(() => {
       setPayload = v => React.startTransition(() => setPayload_(v));
     }, [setPayload_]);
-    React.useEffect(() => listenNavigation(fetchRscPayload, hooks.onNavigate, observability), []);
+    React.useEffect(
+      () => listenNavigation(fetchRscPayload, hooks.onNavigate, observability, hookContext),
+      []
+    );
     return payload.root;
   }
 
@@ -328,7 +341,7 @@ async function main(hooks: ClientEntryHooks): Promise<void> {
       captureActionError(observability, data, id);
       if (hooks.onActionError) {
         try {
-          hooks.onActionError(data, id);
+          hooks.onActionError(data, id, hookContext);
         } catch {
           /* hook 抛错不影响主流程 */
         }
@@ -370,8 +383,9 @@ function captureActionError(
 
 function listenNavigation(
   onNavigation: () => void,
-  onNavigateHook?: (url: URL) => void,
-  observability?: BrowserObservabilityHandle | null
+  onNavigateHook?: (url: URL, ctx: ClientEntryHookContext) => void,
+  observability?: BrowserObservabilityHandle | null,
+  hookContext: ClientEntryHookContext = createHookContext(null)
 ): () => void {
   const fire = () => {
     onNavigation();
@@ -383,7 +397,7 @@ function listenNavigation(
     }
     if (onNavigateHook) {
       try {
-        onNavigateHook(url);
+        onNavigateHook(url, hookContext);
       } catch {
         /* hook 抛错不影响主流程 */
       }
@@ -510,3 +524,29 @@ function listenNavigation(
     window.history.replaceState = oldReplaceState;
   };
 }
+
+function createHookContext(
+  observability: BrowserObservabilityHandle | null
+): ClientEntryHookContext {
+  return {
+    telemetry: observability
+      ? {
+          track: observability.track.bind(observability),
+          capture: observability.capture.bind(observability),
+          measure: observability.measure.bind(observability),
+          page: observability.page.bind(observability),
+          setUser: observability.setUser.bind(observability),
+          flush: observability.flush.bind(observability),
+        }
+      : NOOP_TELEMETRY,
+  };
+}
+
+const NOOP_TELEMETRY: ClientEntryTelemetryApi = {
+  track() {},
+  capture() {},
+  measure() {},
+  page() {},
+  setUser() {},
+  flush() {},
+};

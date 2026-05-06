@@ -8,6 +8,15 @@
  * Rendering, hydration and navigation must never depend on observability.
  */
 
+import {
+  __clearBrowserTelemetryHandle,
+  __setBrowserTelemetryHandle,
+  type TelemetryCaptureOptions,
+  type TelemetryEventOptions,
+  type TelemetryMeasureOptions,
+  type TelemetryRuntimeHandle,
+} from '../../runtime/telemetry';
+
 export interface BrowserObservabilityUser {
   id?: string;
   tenantId?: string;
@@ -49,20 +58,27 @@ export interface BrowserObservabilityOptions {
 }
 
 export interface BrowserObservabilityHandle {
+  track(name: string, properties?: Record<string, unknown>, options?: TelemetryEventOptions): void;
+  capture(error: unknown, context?: TelemetryCaptureOptions): void;
+  measure(name: string, value: number, options?: TelemetryMeasureOptions): void;
   page(url?: URL | string): void;
   captureActionError(error: unknown, actionId: string): void;
+  setUser(user: BrowserObservabilityUser | null): void;
+  flush(): Promise<void> | void;
   shutdown(): void;
 }
 
 interface AnalyticsClientLike {
+  track(name: string, properties?: Record<string, unknown>, options?: TelemetryEventOptions): void;
   page(path?: string, options?: Record<string, unknown>): void;
+  measure(name: string, value: number, options?: TelemetryMeasureOptions): void;
   installWebVitals?(): () => void;
   flush?(): Promise<void> | void;
   shutdown?(): void;
 }
 
 interface ErrorReporterLike {
-  captureException(error: unknown, context?: Record<string, unknown>): void;
+  captureException(error: unknown, context?: TelemetryCaptureOptions): void;
   flush?(): Promise<void> | void;
   shutdown?(): void;
   installGlobalHandlers?(options?: Record<string, unknown>): () => void;
@@ -72,9 +88,12 @@ export async function installBrowserObservability(
   options: BrowserObservabilityOptions
 ): Promise<BrowserObservabilityHandle> {
   const cleanups: Array<() => void> = [];
-  const analytics = options.analytics === false ? null : createEndpointAnalyticsClient(options);
+  let currentUser: BrowserObservabilityUser | undefined = options.user;
+  const getUser = () => currentUser;
+  const analytics =
+    options.analytics === false ? null : createEndpointAnalyticsClient(options, getUser);
   const errorReporter =
-    options.errorReporting === false ? null : createEndpointErrorReporter(options);
+    options.errorReporting === false ? null : createEndpointErrorReporter(options, getUser);
 
   if (
     analytics &&
@@ -97,7 +116,16 @@ export async function installBrowserObservability(
     cleanups.push(globalCleanup);
   }
 
-  return {
+  const handle: BrowserObservabilityHandle & TelemetryRuntimeHandle = {
+    track(name, properties, trackOptions) {
+      analytics?.track(name, properties, trackOptions);
+    },
+    capture(error, context) {
+      errorReporter?.captureException(error, context);
+    },
+    measure(name, value, measureOptions) {
+      analytics?.measure(name, value, measureOptions);
+    },
     page(url) {
       if (!analytics) return;
       analytics.page(
@@ -114,7 +142,14 @@ export async function installBrowserObservability(
         tags: { actionId },
       });
     },
+    setUser(user) {
+      currentUser = user ?? undefined;
+    },
+    flush() {
+      return Promise.all([analytics?.flush?.(), errorReporter?.flush?.()]).then(() => undefined);
+    },
     shutdown() {
+      __clearBrowserTelemetryHandle(handle);
       for (const cleanup of cleanups.splice(0)) {
         cleanup();
       }
@@ -122,6 +157,8 @@ export async function installBrowserObservability(
       errorReporter?.shutdown?.();
     },
   };
+  __setBrowserTelemetryHandle(handle);
+  return handle;
 }
 
 function toPagePath(url: URL, includeQueryString?: boolean): string {
@@ -129,24 +166,36 @@ function toPagePath(url: URL, includeQueryString?: boolean): string {
 }
 
 function createEndpointAnalyticsClient(
-  options: BrowserObservabilityOptions
+  options: BrowserObservabilityOptions,
+  getUser: () => BrowserObservabilityUser | undefined
 ): AnalyticsClientLike | null {
   const analyticsOptions = options.analytics === false ? undefined : options.analytics;
   const endpoint = analyticsOptions?.endpoint;
   if (!endpoint) return null;
 
-  const base = createEndpointQueue(options, {
-    endpoint,
-    batchSize: analyticsOptions?.batchSize ?? 20,
-    flushIntervalMs: analyticsOptions?.flushIntervalMs ?? 3000,
-    maxQueueSize: analyticsOptions?.maxQueueSize ?? 500,
-    retryBaseDelayMs: analyticsOptions?.retryBaseDelayMs ?? 1000,
-    retryMaxDelayMs: analyticsOptions?.retryMaxDelayMs ?? 30000,
-    sampleRate: analyticsOptions?.sampleRate ?? 1,
-    key: 'novel_isr_builtin_analytics',
-  });
+  const base = createEndpointQueue(
+    options,
+    {
+      endpoint,
+      batchSize: analyticsOptions?.batchSize ?? 20,
+      flushIntervalMs: analyticsOptions?.flushIntervalMs ?? 3000,
+      maxQueueSize: analyticsOptions?.maxQueueSize ?? 500,
+      retryBaseDelayMs: analyticsOptions?.retryBaseDelayMs ?? 1000,
+      retryMaxDelayMs: analyticsOptions?.retryMaxDelayMs ?? 30000,
+      sampleRate: analyticsOptions?.sampleRate ?? 1,
+      key: 'novel_isr_builtin_analytics',
+    },
+    getUser
+  );
 
   return {
+    track(name, properties, trackOptions) {
+      base.enqueue({
+        name,
+        properties: properties ?? {},
+        tags: normalizeTags(trackOptions?.tags),
+      });
+    },
     page(path) {
       base.enqueue({
         name: 'page_view',
@@ -156,6 +205,19 @@ function createEndpointAnalyticsClient(
           referrer:
             isBrowser() && typeof document.referrer === 'string' ? document.referrer : undefined,
         },
+      });
+    },
+    measure(name, value, measureOptions) {
+      if (!Number.isFinite(value)) return;
+      base.enqueue({
+        name: 'metric',
+        properties: {
+          metric: name,
+          value,
+          unit: measureOptions?.unit,
+          ...(measureOptions?.properties ?? {}),
+        },
+        tags: normalizeTags(measureOptions?.tags),
       });
     },
     installWebVitals() {
@@ -171,24 +233,29 @@ function createEndpointAnalyticsClient(
 }
 
 function createEndpointErrorReporter(
-  options: BrowserObservabilityOptions
+  options: BrowserObservabilityOptions,
+  getUser: () => BrowserObservabilityUser | undefined
 ): ErrorReporterLike | null {
   const errorOptions = options.errorReporting === false ? undefined : options.errorReporting;
   const endpoint = errorOptions?.endpoint;
   if (!endpoint) return null;
 
-  const base = createEndpointQueue(options, {
-    endpoint,
-    batchSize: errorOptions?.batchSize ?? 10,
-    flushIntervalMs: errorOptions?.flushIntervalMs ?? 3000,
-    maxQueueSize: errorOptions?.maxQueueSize ?? 200,
-    retryBaseDelayMs: errorOptions?.retryBaseDelayMs ?? 1000,
-    retryMaxDelayMs: errorOptions?.retryMaxDelayMs ?? 30000,
-    sampleRate: errorOptions?.sampleRate ?? 1,
-    key: 'novel_isr_builtin_errors',
-  });
+  const base = createEndpointQueue(
+    options,
+    {
+      endpoint,
+      batchSize: errorOptions?.batchSize ?? 10,
+      flushIntervalMs: errorOptions?.flushIntervalMs ?? 3000,
+      maxQueueSize: errorOptions?.maxQueueSize ?? 200,
+      retryBaseDelayMs: errorOptions?.retryBaseDelayMs ?? 1000,
+      retryMaxDelayMs: errorOptions?.retryMaxDelayMs ?? 30000,
+      sampleRate: errorOptions?.sampleRate ?? 1,
+      key: 'novel_isr_builtin_errors',
+    },
+    getUser
+  );
 
-  const captureException = (error: unknown, context: Record<string, unknown> = {}) => {
+  const captureException = (error: unknown, context: TelemetryCaptureOptions = {}) => {
     const normalized = normalizeError(error);
     base.enqueue({
       message: normalized.message,
@@ -196,7 +263,7 @@ function createEndpointErrorReporter(
       stack: normalized.stack,
       level: typeof context.level === 'string' ? context.level : 'error',
       source: typeof context.source === 'string' ? context.source : undefined,
-      tags: isRecord(context.tags) ? context.tags : undefined,
+      tags: normalizeTags(context.tags),
       extra: isRecord(context.extra) ? context.extra : undefined,
       fingerprint: Array.isArray(context.fingerprint) ? context.fingerprint : undefined,
     });
@@ -269,7 +336,8 @@ interface FallbackPayload {
 
 function createEndpointQueue(
   options: BrowserObservabilityOptions,
-  baseOptions: FallbackBaseOptions
+  baseOptions: FallbackBaseOptions,
+  getUser: () => BrowserObservabilityUser | undefined
 ) {
   const queue: FallbackPayload[] = [];
   const sessionId = readOrCreateBrowserId(`${baseOptions.key}_session`);
@@ -314,7 +382,7 @@ function createEndpointQueue(
       environment: options.environment,
       sessionId,
       anonymousId,
-      user: options.user,
+      user: getUser(),
       url: currentPath(options.includeQueryString),
       ...payload,
     });
@@ -380,10 +448,13 @@ function installFallbackWebVitals(base: ReturnType<typeof createEndpointQueue>):
   if (!isBrowser() || typeof PerformanceObserver === 'undefined') return () => {};
   const cleanups: Array<() => void> = [];
   let cls = 0;
+  let lcp = 0;
+  let inp = 0;
 
   const observe = (
     type: string,
-    callback: (entry: PerformanceEntry & Record<string, unknown>) => void
+    callback: (entry: PerformanceEntry & Record<string, unknown>) => void,
+    options: Record<string, unknown> = {}
   ) => {
     try {
       const observer = new PerformanceObserver(list => {
@@ -391,7 +462,7 @@ function installFallbackWebVitals(base: ReturnType<typeof createEndpointQueue>):
           callback(entry as PerformanceEntry & Record<string, unknown>);
         }
       });
-      observer.observe({ type, buffered: true });
+      observer.observe({ type, buffered: true, ...options });
       cleanups.push(() => observer.disconnect());
     } catch {
       /* Unsupported metric. */
@@ -404,31 +475,67 @@ function installFallbackWebVitals(base: ReturnType<typeof createEndpointQueue>):
     }
   });
   observe('largest-contentful-paint', entry => {
-    base.enqueue({ name: 'web_vital', properties: { name: 'LCP', value: entry.startTime } });
+    lcp = entry.startTime;
   });
   observe('layout-shift', entry => {
     if (entry.hadRecentInput !== true && typeof entry.value === 'number') {
       cls += entry.value;
     }
   });
-  observe('event', entry => {
-    if (typeof entry.duration === 'number') {
-      base.enqueue({ name: 'web_vital', properties: { name: 'INP', value: entry.duration } });
+  observe(
+    'event',
+    entry => {
+      if (
+        typeof entry.duration === 'number' &&
+        typeof entry.interactionId === 'number' &&
+        entry.interactionId > 0
+      ) {
+        inp = Math.max(inp, entry.duration);
+      }
+    },
+    { durationThreshold: 40 }
+  );
+
+  const flushFinalVitals = () => {
+    if (lcp > 0) {
+      base.enqueue({
+        name: 'web_vital',
+        properties: { name: 'LCP', value: lcp },
+      });
     }
-  });
+    if (inp > 0) {
+      base.enqueue({
+        name: 'web_vital',
+        properties: { name: 'INP', value: inp },
+      });
+    }
+    if (cls > 0) {
+      base.enqueue({
+        name: 'web_vital',
+        properties: { name: 'CLS', value: cls },
+      });
+    }
+  };
 
   const nav = performance.getEntriesByType('navigation')[0] as
     | PerformanceNavigationTiming
     | undefined;
   if (nav) {
-    base.enqueue({ name: 'web_vital', properties: { name: 'TTFB', value: nav.responseStart } });
+    base.enqueue({
+      name: 'web_vital',
+      properties: { name: 'TTFB', value: nav.responseStart },
+    });
   }
 
-  const flushCls = () => {
-    if (cls > 0) base.enqueue({ name: 'web_vital', properties: { name: 'CLS', value: cls } });
+  const flushIfHidden = () => {
+    if (document.visibilityState === 'hidden') flushFinalVitals();
   };
-  window.addEventListener('pagehide', flushCls);
-  cleanups.push(() => window.removeEventListener('pagehide', flushCls));
+  window.addEventListener('pagehide', flushFinalVitals);
+  document.addEventListener('visibilitychange', flushIfHidden);
+  cleanups.push(() => {
+    window.removeEventListener('pagehide', flushFinalVitals);
+    document.removeEventListener('visibilitychange', flushIfHidden);
+  });
   return () => cleanups.splice(0).forEach(cleanup => cleanup());
 }
 
@@ -504,4 +611,16 @@ function normalizeError(error: unknown): { message: string; name?: string; stack
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function normalizeTags(
+  tags: TelemetryEventOptions['tags'] | undefined
+): Record<string, string> | undefined {
+  if (!tags) return undefined;
+  const normalized: Record<string, string> = {};
+  for (const [key, value] of Object.entries(tags)) {
+    if (value === undefined || value === null) continue;
+    normalized[key] = String(value);
+  }
+  return Object.keys(normalized).length > 0 ? normalized : undefined;
 }

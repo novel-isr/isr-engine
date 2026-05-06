@@ -26,6 +26,21 @@ export {
   type Translate,
 } from './i18n-store';
 export { LocaleProvider, useLocale } from './LocaleContext';
+export {
+  capture,
+  flushTelemetry,
+  getTelemetry,
+  measure,
+  page,
+  setTelemetryUser,
+  track,
+  type TelemetryCaptureOptions,
+  type TelemetryEventOptions,
+  type TelemetryLevel,
+  type TelemetryMeasureOptions,
+  type TelemetryRuntimeHandle,
+  type TelemetryUser,
+} from './telemetry';
 
 // 路由 —— route module 风格（{ path, load: () => import('./pages/HomePage') }）
 export {

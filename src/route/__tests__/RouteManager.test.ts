@@ -90,7 +90,8 @@ describe('RouteManager —— 构造与显式配置', () => {
     const rm = new RouteManager(cfg());
     expect(rm.getRenderMode('/anything')).toBe('isr');
     expect(rm.hasOverride('/anything')).toBe(false);
-    expect(rm.getStats().overrideCount).toBe(0);
+    expect(rm.getSSGRoutes()).toEqual([]);
+    expect(rm.getISRRoutes()).toEqual({});
   });
 
   it('显式 renderMode → 覆盖默认', () => {
@@ -340,33 +341,5 @@ describe('RouteManager.getChangeFreq —— sitemap changefreq 字段', () => {
     expect(rm.getChangeFreq('/static')).toBe('monthly');
     expect(rm.getChangeFreq('/blog')).toBe('daily');
     expect(rm.getChangeFreq('/live')).toBe('hourly');
-  });
-});
-
-describe('RouteManager.getStats —— 监控用', () => {
-  it('返回完整统计：globalMode + 各模式数量', () => {
-    const rm = new RouteManager(
-      cfg({
-        renderMode: 'isr',
-        routes: {
-          '/about': 'ssg',
-          '/contact': 'ssg',
-          '/api/*': 'ssr',
-          '/blog/*': 'isr',
-        },
-      })
-    );
-    const stats = rm.getStats();
-    expect(stats.globalMode).toBe('isr');
-    expect(stats.overrideCount).toBe(4);
-    expect(stats.modeDistribution).toEqual({ ssg: 2, ssr: 1, isr: 1 });
-    expect(stats.ssgRoutes).toBe(2);
-    expect(stats.isrRoutes).toBe(1);
-  });
-
-  it('空 overrides → modeDistribution={}', () => {
-    const stats = new RouteManager(cfg()).getStats();
-    expect(stats.modeDistribution).toEqual({});
-    expect(stats.overrideCount).toBe(0);
   });
 });

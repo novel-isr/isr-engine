@@ -358,10 +358,9 @@ describe('RedisCacheAdapter —— pipeline 错误聚合（v2.1 修复）', () =
     await adapter.set('k', { payload: 'fine' }, { tags: ['books'] });
 
     // fallback 里应该有值（set 走到了 catch → this.fallback.set）
-    // 通过 getStats 间接观察：fallback size 从 0 升到 ≥1
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const fb = (adapter as any).fallback as { getStats: () => { size: number } };
-    expect(fb.getStats().size).toBeGreaterThanOrEqual(1);
+    const fb = (adapter as any).fallback as { has: (key: string) => Promise<boolean> };
+    expect(await fb.has('k')).toBe(true);
 
     await adapter.destroy();
   });
