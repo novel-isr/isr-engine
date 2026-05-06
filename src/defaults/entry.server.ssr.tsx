@@ -17,6 +17,7 @@ import type { ReactFormState } from 'react-dom/client';
 import { renderToReadableStream } from 'react-dom/server.edge';
 import { injectRSCPayload } from 'rsc-html-stream/server';
 import type { IntlPayload } from './runtime/seo-runtime';
+import { standardizePreloadHints } from './runtime/standardize-preload-hints';
 import { setClientI18n } from '../runtime/i18n-store';
 import { HydrationShell } from './runtime/hydration-shell';
 // @ts-expect-error - 虚拟模块由 plugin-rsc 注入
@@ -128,34 +129,7 @@ const CSR_SHELL_STYLES = `
   }
 `;
 
-function standardizePreloadHints(stream: ReadableStream<Uint8Array>): ReadableStream<Uint8Array> {
-  const decoder = new TextDecoder();
-  const encoder = new TextEncoder();
-  let carry = '';
-  const preloadStylesheetAsRe =
-    /(<link\b(?=[^>]*\brel=(["'])preload\2)(?=[^>]*\bas=(["'])stylesheet\3)[^>]*?)\bas=(["'])stylesheet\4/gi;
-
-  const normalize = (html: string) =>
-    html.replace(preloadStylesheetAsRe, (_match, prefix, _relQuote, _asQuote, asAttrQuote) => {
-      return `${prefix}as=${asAttrQuote}style${asAttrQuote}`;
-    });
-
-  return stream.pipeThrough(
-    new TransformStream<Uint8Array, Uint8Array>({
-      transform(chunk, controller) {
-        const text = carry + decoder.decode(chunk, { stream: true });
-        const splitAt = Math.max(0, text.lastIndexOf('<link'));
-        const ready = text.slice(0, splitAt);
-        carry = text.slice(splitAt);
-        if (ready) controller.enqueue(encoder.encode(normalize(ready)));
-      },
-      flush(controller) {
-        const text = carry + decoder.decode();
-        if (text) controller.enqueue(encoder.encode(normalize(text)));
-      },
-    })
-  );
-}
+// preload-hint 改写实现独立到 ./runtime/standardize-preload-hints.ts，可单测。
 
 export interface RenderHtmlOptions {
   formState?: ReactFormState;
