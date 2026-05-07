@@ -167,6 +167,13 @@ function collectHealthIssues(results, options) {
 
 function collectCompatibilityIssues(baselineMeta = {}, currentMeta = {}) {
   const issues = [];
+  compareRequiredScalar(
+    issues,
+    'bench_protocol',
+    baselineMeta.bench_protocol,
+    currentMeta.bench_protocol
+  );
+  compareRequiredScalar(issues, 'runner_id', baselineMeta.runner_id, currentMeta.runner_id);
   compareScalar(issues, 'duration_s', baselineMeta.duration_s, currentMeta.duration_s);
   compareScalar(issues, 'pipelining', baselineMeta.pipelining, currentMeta.pipelining);
   compareScalar(issues, 'warmup_s', baselineMeta.warmup_s, currentMeta.warmup_s);
@@ -180,6 +187,16 @@ function collectCompatibilityIssues(baselineMeta = {}, currentMeta = {}) {
     majorVersion(currentMeta.node)
   );
   return issues;
+}
+
+function compareRequiredScalar(issues, field, baselineValue, currentValue) {
+  if (typeof baselineValue === 'undefined' || typeof currentValue === 'undefined') {
+    issues.push(
+      `${field}: baseline=${baselineValue ?? '<missing>'} current=${currentValue ?? '<missing>'}`
+    );
+    return;
+  }
+  compareScalar(issues, field, baselineValue, currentValue);
 }
 
 function compareScalar(issues, field, baselineValue, currentValue) {

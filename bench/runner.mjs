@@ -28,7 +28,10 @@
  */
 import autocannon from 'autocannon';
 import { writeFileSync } from 'node:fs';
+import os from 'node:os';
 import { extractP95, sleep } from './utils.mjs';
+
+const BENCH_PROTOCOL_VERSION = 2;
 
 // Use a numeric loopback address by default. `localhost` can resolve to both ::1 and 127.0.0.1;
 // high-concurrency runs would then measure dual-stack connection churn instead of engine throughput.
@@ -53,8 +56,12 @@ const WARMUP_SECONDS = parseInt(process.env.BENCH_WARMUP_SECONDS ?? '3', 10);
 const COOLDOWN_MS = parseInt(process.env.BENCH_COOLDOWN_MS ?? '2000', 10);
 // preflight 单 GET 的超时；设 0 关闭 preflight（不推荐）
 const PREFLIGHT_TIMEOUT_MS = parseInt(process.env.BENCH_PREFLIGHT_TIMEOUT_MS ?? '5000', 10);
+const RUNNER_ID = process.env.BENCH_RUNNER_ID ?? createRunnerId();
+
 console.log(`\n=== isr-engine bench ===`);
 console.log(`target:      ${URL}`);
+console.log(`protocol:    v${BENCH_PROTOCOL_VERSION}`);
+console.log(`runner:      ${RUNNER_ID}`);
 console.log(`tiers:       ${TIERS.join(', ')} concurrent connections`);
 console.log(`duration:    ${DURATION}s per tier`);
 console.log(`paths:       ${PATHS.join(', ')}`);
@@ -205,7 +212,13 @@ if (OUTPUT) {
     JSON.stringify(
       {
         meta: {
+          bench_protocol: BENCH_PROTOCOL_VERSION,
           url: URL,
+          runner_id: RUNNER_ID,
+          platform: process.platform,
+          arch: process.arch,
+          cpu_model: os.cpus()[0]?.model ?? 'unknown',
+          cpu_count: os.cpus().length,
           tiers: TIERS,
           duration_s: DURATION,
           paths: PATHS,
@@ -243,3 +256,8 @@ if (failed.length > 0) {
   process.exit(1);
 }
 if (gates.length > 0) console.log(`\n✓ all tiers within CI gates`);
+
+function createRunnerId() {
+  const cpu = os.cpus()[0]?.model?.replace(/\s+/g, ' ').trim() || 'unknown-cpu';
+  return `${process.platform}-${process.arch}-${cpu}-${os.cpus().length}cpu`;
+}

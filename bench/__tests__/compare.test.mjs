@@ -31,6 +31,49 @@ describe('bench/compare.mjs', () => {
     expect(output).toContain('tiers: baseline=[10,100,1000,10000] current=[10,100,1000]');
   });
 
+  it('skips regression comparison when the committed baseline lacks runner metadata', () => {
+    const dir = mkdtempSync(path.join(tmpdir(), 'bench-compare-'));
+    const baselinePath = writeBench(
+      dir,
+      'baseline.json',
+      [row({ path: '/', connections: 10, qps: 20_000, p95: 1 })],
+      { bench_protocol: undefined, runner_id: undefined }
+    );
+    const currentPath = writeBench(dir, 'current.json', [
+      row({ path: '/', connections: 10, qps: 2_000, p95: 4 }),
+    ]);
+
+    const output = execFileSync(process.execPath, [comparePath, baselinePath, currentPath], {
+      encoding: 'utf8',
+    });
+
+    expect(output).toContain('baseline protocol is incompatible');
+    expect(output).toContain('bench_protocol: baseline=<missing> current=2');
+    expect(output).toContain('runner_id: baseline=<missing> current=unit-runner');
+  });
+
+  it('skips regression comparison when runner classes differ', () => {
+    const dir = mkdtempSync(path.join(tmpdir(), 'bench-compare-'));
+    const baselinePath = writeBench(
+      dir,
+      'baseline.json',
+      [row({ path: '/', connections: 10, qps: 20_000, p95: 1 })],
+      { runner_id: 'local-mac' }
+    );
+    const currentPath = writeBench(
+      dir,
+      'current.json',
+      [row({ path: '/', connections: 10, qps: 2_000, p95: 4 })],
+      { runner_id: 'github-actions-ubuntu-latest-x64-node22' }
+    );
+
+    const output = execFileSync(process.execPath, [comparePath, baselinePath, currentPath], {
+      encoding: 'utf8',
+    });
+
+    expect(output).toContain('runner_id: baseline=local-mac current=github-actions');
+  });
+
   it('skips regression comparison when the committed baseline is unhealthy', () => {
     const dir = mkdtempSync(path.join(tmpdir(), 'bench-compare-'));
     const baselinePath = writeBench(dir, 'baseline.json', [
@@ -145,6 +188,8 @@ function writeBench(dir, filename, results, meta = {}) {
     JSON.stringify({
       meta: {
         timestamp: '2026-05-04T00:00:00.000Z',
+        bench_protocol: 2,
+        runner_id: 'unit-runner',
         duration_s: 15,
         tiers: [10, 100, 1000],
         paths: ['/', '/about', '/books/1'],

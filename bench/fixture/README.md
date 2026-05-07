@@ -37,6 +37,10 @@ BENCH_TIERS=10,100,1000 pnpm run bench
 bench runner 默认打 `http://127.0.0.1:3000`，避免 `localhost` 在高并发下同时解析
 IPv6/IPv4 后把操作系统连接抖动计入 engine 性能结果。
 
+CI 会设置 `BENCH_RUNNER_ID=github-actions-ubuntu-latest-x64-node22`。`bench/compare.mjs`
+只会比较同一 bench protocol + 同一 runner class 的 raw QPS/P95；旧 baseline 或本地机器
+生成的 baseline 会被判定为不可比较，只保留 non-2xx / errors 等健康门槛。
+
 ## CI 集成
 
 `.github/workflows/bench.yml` 的 fixture 步骤直接 `cd bench/fixture` → build → start。

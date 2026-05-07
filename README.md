@@ -393,19 +393,18 @@ export default {
 ## 性能 benchmark
 
 baseline：[`bench/baseline.json`](./bench/baseline.json) —— 由 [`bench/fixture/`](./bench/fixture/)
-（self-contained 最小 ISR 应用）跑出。MacBook M-series · Node 22 · 单进程 ·
-3s warmup · 8s/tier · 2s cooldown · `BENCH_DISABLE_RATE_LIMIT=1`：
+（self-contained 最小 ISR 应用）跑出。bench 结果会写入 `bench_protocol` 与
+`runner_id`，只有协议、并发档、时长、Node major 和 runner class 一致时才做
+raw QPS/P95 退化比较；否则只做当前结果健康检查并提示重新播种 baseline。
 
-| 路径 | 模式 | QPS @ 10c | QPS @ 10000c | P95 @ 10c | P95 @ 10000c |
-|---|---|---|---|---|---|
-| `/` | ISR + cacheTag | **24 826** | 1 486 | 3.3ms | 1712ms |
-| `/about` | SSG (express.static) | **63 362** | 7 040 | 0ms | 524ms |
-| `/books/1` | ISR + tag-based | **46 065** | 2 984 | 1.3ms | 1030ms |
+当前基线协议：Node 22 · 单进程 · 3s warmup · 8s/tier · 2s cooldown ·
+`BENCH_DISABLE_RATE_LIMIT=1` · tiers 10/100/1000。
 
-复现：`pnpm bench`（生产 baseline）/ `cd bench/fixture && pnpm start` 后跑
-`pnpm bench`（开发 baseline）。bench 退化追踪走 [`.github/workflows/bench.yml`](./.github/workflows/bench.yml)
-nightly 信息性输出（GitHub hosted runner 跨次硬件不一致 ±60%，不能拿来 gate
-release）。详细：[docs/performance.md](./docs/performance.md)。
+复现：`cd bench/fixture && pnpm run build && BENCH_DISABLE_RATE_LIMIT=1 pnpm start`，
+另一终端跑 `BENCH_TIERS=10,100,1000 BENCH_DURATION=8 pnpm bench`。bench 退化
+追踪走 [`.github/workflows/bench.yml`](./.github/workflows/bench.yml)。GitHub hosted
+runner 跨次硬件不一致时必须重新播种同一 runner class 的 baseline，不能把本地
+Mac/PC 结果直接拿去 gate CI。详细：[docs/performance.md](./docs/performance.md)。
 
 ## 文档
 

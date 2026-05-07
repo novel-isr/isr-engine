@@ -124,6 +124,7 @@ jobs:
           BENCH_DURATION: ${{ github.event.inputs.duration || '8' }}
           BENCH_PATHS: '/,/about,/books/1'
           BENCH_OUTPUT: bench-current.json
+          BENCH_RUNNER_ID: github-actions-ubuntu-latest-x64-node22
           BENCH_WARMUP_SECONDS: '3'
           BENCH_COOLDOWN_MS: '2000'
           BENCH_FAIL_ON_NON_2XX: '1'
