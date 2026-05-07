@@ -5,7 +5,11 @@
  * 必须在流出 HTML 前统一矫正。
  */
 import { describe, expect, it } from 'vitest';
-import { rewritePreloadHints, standardizePreloadHints } from '../runtime/standardize-preload-hints';
+import {
+  bytesIncludeAscii,
+  rewritePreloadHints,
+  standardizePreloadHints,
+} from '../runtime/standardize-preload-hints';
 
 const encoder = new TextEncoder();
 const decoder = new TextDecoder();
@@ -72,5 +76,55 @@ describe('standardizePreloadHints', () => {
     expect(out).toContain('as="style"');
     expect(out).toContain(':HL[\\"/b.scss\\",\\"style\\"]');
     expect(out).not.toContain('"stylesheet"');
+  });
+
+  it('passes a chunk with no stylesheet marker through untouched (fast path)', async () => {
+    // Big chunk of regular SSR HTML without any rewrite candidate. The byte-level
+    // fast path should pass it through verbatim — same length, same content.
+    const html =
+      '<!DOCTYPE html><html lang="zh-CN"><head><meta charset="utf-8"/></head><body>'.padEnd(
+        4096,
+        ' '
+      ) + '</body></html>';
+    expect(html).not.toContain('stylesheet');
+    expect(await pipe(html)).toBe(html);
+  });
+
+  it('still rewrites correctly when first chunk is fast-path and second is slow-path', async () => {
+    // Realistic SSR pattern: opening HTML lands first (no stylesheet markers),
+    // then the inline FLIGHT_DATA push with HL hint rows arrives.
+    const chunks = [
+      '<!DOCTYPE html><html><head><meta charset="utf-8"/><title>x</title></head><body>',
+      '<script>(self.__FLIGHT_DATA||=[]).push(":HL[\\"/x.scss\\",\\"stylesheet\\"]")</script>',
+    ];
+    const out = await pipe(chunks);
+    expect(out).toContain(':HL[\\"/x.scss\\",\\"style\\"]');
+    expect(out).not.toContain('\\"stylesheet\\"');
+  });
+});
+
+describe('bytesIncludeAscii', () => {
+  const enc = (s: string) => new TextEncoder().encode(s);
+
+  it('returns false when haystack is shorter than needle', () => {
+    expect(bytesIncludeAscii(enc('xx'), enc('stylesheet'))).toBe(false);
+  });
+
+  it('finds the needle at start, middle, and end', () => {
+    expect(bytesIncludeAscii(enc('stylesheet rest'), enc('stylesheet'))).toBe(true);
+    expect(bytesIncludeAscii(enc('a b stylesheet c'), enc('stylesheet'))).toBe(true);
+    expect(bytesIncludeAscii(enc('a b c stylesheet'), enc('stylesheet'))).toBe(true);
+  });
+
+  it('returns false when needle is absent even with similar characters', () => {
+    // "style" is a prefix of "stylesheet" — must NOT match
+    expect(bytesIncludeAscii(enc('style style style'), enc('stylesheet'))).toBe(false);
+    expect(bytesIncludeAscii(enc('stylesheet'.slice(0, -1)), enc('stylesheet'))).toBe(false);
+  });
+
+  it('handles non-ASCII multi-byte content without false positives', () => {
+    // 中文 / emoji 字节组合不会偶然匹配到 "stylesheet"
+    expect(bytesIncludeAscii(enc('中文 stylé sheet 内容'), enc('stylesheet'))).toBe(false);
+    expect(bytesIncludeAscii(enc('🎨 stylesheet 🎨'), enc('stylesheet'))).toBe(true);
   });
 });
