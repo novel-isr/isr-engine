@@ -32,7 +32,12 @@
  */
 import { createCachedFetcher } from './createCachedFetcher';
 import type { IntlPayload, PageSeoMeta } from './seo-runtime';
-import type { ISRConfig, RuntimeI18nConfig, RuntimeSeoConfig } from '../../types';
+import type {
+  DynamicSeoResolver,
+  ISRConfig,
+  RuntimeI18nConfig,
+  RuntimeSeoConfig,
+} from '../../types';
 import { readCookie } from '../../utils/cookie';
 
 export { getCookieHeader, parseCookieHeader, readCookie } from '../../utils/cookie';
@@ -95,6 +100,42 @@ export interface CreateAdminSeoLoaderOptions {
   fallbackEntries?: readonly AdminSeoFallbackEntry[];
   /** 远端请求超时，默认 1200ms */
   timeoutMs?: number;
+  /**
+   * 参数化路径解析器；admin endpoint 没命中且 fallback 也没命中时按 pattern 匹配
+   * 调一个用户函数。让业务页面零 SEO 代码，所有动态 SEO 集中在 ssr.config.ts。
+   */
+  dynamicResolvers?: readonly DynamicSeoResolver[];
+}
+
+/**
+ * 内部用：把 `/books/:id` 这种 pattern 编译成 RegExp + 参数名列表。
+ * `:name` 匹配单段（不跨 /）。`*` 匹配任意后缀（包括 /），收成 ":wildcard" param。
+ * 编译后缓存，避免每次请求重算。
+ */
+interface CompiledSeoResolver {
+  re: RegExp;
+  paramNames: string[];
+  resolver: DynamicSeoResolver;
+}
+
+function compileSeoResolver(resolver: DynamicSeoResolver): CompiledSeoResolver {
+  const paramNames: string[] = [];
+  const reSrc = resolver.pattern.replace(/[.+?^${}()|[\]\\]/g, '\\$&').replace(
+    /:([A-Za-z_][A-Za-z0-9_]*)|\\\*/g,
+    (m, name) => {
+      if (m === '\\*') {
+        paramNames.push('wildcard');
+        return '(.*)';
+      }
+      paramNames.push(name);
+      return '([^/]+)';
+    }
+  );
+  return {
+    re: new RegExp(`^${reSrc}$`),
+    paramNames,
+    resolver,
+  };
 }
 
 export interface DefineAdminSiteHooksOptions {
@@ -115,6 +156,8 @@ export interface DefineAdminSiteHooksOptions {
     ttl?: number;
     fallbackLocal?: readonly Record<string, unknown>[];
     timeoutMs?: number;
+    /** 参数化路径的 SEO 解析器（参考 RuntimeSeoConfig.dynamicResolvers）。 */
+    dynamicResolvers?: readonly DynamicSeoResolver[];
   };
   beforeRequest?: SiteHooksConfig['beforeRequest'];
   onError?: SiteHooksConfig['onError'];
@@ -262,9 +305,15 @@ export function createAdminSeoLoader(
 ): SeoLocalEntry['load'] {
   const endpoint = options.endpoint ?? '/api/seo?path={pathname}';
   const fallbackEntries = options.fallbackEntries ?? [];
+  // 编译一次 + 缓存。N 个 resolver 在每个请求里只是 N 次正则 test，cost 可忽略。
+  const compiledResolvers: CompiledSeoResolver[] = (options.dynamicResolvers ?? []).map(
+    compileSeoResolver
+  );
 
   return async (params, ctx) => {
     const pathname = normalizePathname(params.pathname || '/');
+
+    // 1. admin endpoint —— 运营在 dashboard 给具体 path 配过的覆盖优先级最高
     const remoteUrl = resolveAdminUrl(endpoint, { ...params, pathname }, ctx);
     const remote = remoteUrl
       ? await fetchJsonWithTimeout<unknown>(remoteUrl, options.timeoutMs)
@@ -272,6 +321,33 @@ export function createAdminSeoLoader(
     const remoteMeta = extractSeoMetaOrNull(remote);
     if (remoteMeta) return remoteMeta;
 
+    // 2. dynamic resolvers —— 参数化路径的请求期数据驱动
+    if (compiledResolvers.length > 0) {
+      for (const compiled of compiledResolvers) {
+        const m = pathname.match(compiled.re);
+        if (!m) continue;
+        const resolverParams: Record<string, string> = {};
+        compiled.paramNames.forEach((name, i) => {
+          resolverParams[name] = m[i + 1] ?? '';
+        });
+        try {
+          const result = await compiled.resolver.resolve({
+            pathname,
+            params: resolverParams,
+            locale: typeof params.locale === 'string' ? params.locale : undefined,
+            services: ctx.services,
+          });
+          if (result) return result as PageSeoMeta;
+        } catch (err) {
+          // resolver 抛错不阻塞渲染：业务异常时把 SEO 当 null 处理
+          console.warn('[seo] dynamic resolver threw, falling through to fallback', err);
+        }
+        // 同 pattern 没命中数据就继续找下一个 resolver / fallback；不退出。
+        // 例：/books/:id 解析失败时，可能匹配了更宽的 /:scope/:id resolver 兜底。
+      }
+    }
+
+    // 3. fallbackLocal —— build 期冻结的兜底
     const fallback = fallbackEntries.find(entry => normalizePathname(entry.path) === pathname);
     if (!fallback) return null;
     const meta = { ...fallback } as Record<string, unknown>;
@@ -327,6 +403,7 @@ function createAdminSiteHooks(
               seo.fallbackLocal ?? runtimeSeo.fallbackLocal
             ),
             timeoutMs: seo.timeoutMs ?? runtimeSeo.timeoutMs,
+            dynamicResolvers: seo.dynamicResolvers ?? runtimeSeo.dynamicResolvers,
           }),
           ttl: seo.ttl ?? runtimeSeo.ttl ?? 60_000,
         },

@@ -122,6 +122,50 @@ export interface RuntimeI18nConfig {
   fallbackSource: string;
 }
 
+/**
+ * 动态 SEO 解析器 —— 用于参数化路径（/books/:id / /u/:handle 等）。
+ *
+ * 设计目标：让业务页面**完全不写 SEO 代码**（不再需要 page export const seo /
+ * generateSeo）。所有动态 SEO 在 ssr.config.ts 一处集中声明：
+ *
+ *   runtime.seo.dynamicResolvers = [
+ *     { pattern: '/books/:id', resolve: async ({ params, services }) => {
+ *         const r = await fetch(`${services.api}/books/${params.id}`);
+ *         if (!r.ok) return null;
+ *         const book = await r.json();
+ *         return { title: book.title, description: book.synopsis, ... };
+ *       }
+ *     },
+ *   ];
+ *
+ * 解析顺序（高 → 低）：
+ *   1. admin endpoint 命中（运营在 dashboard 给具体 path 配过的覆盖）
+ *   2. dynamicResolvers pattern 匹配（业务侧请求期数据驱动）
+ *   3. fallbackLocal exact path 命中
+ *   4. 都没 → null（前端 head 走默认）
+ */
+export interface DynamicSeoResolver {
+  /**
+   * 路径 pattern。支持 `:name` 命名参数（贪婪到 `/`）和 `*` 通配后缀。
+   * 例：`/books/:id`、`/u/:handle`、`/dashboard/*`
+   */
+  pattern: string;
+  /**
+   * 命中后的 resolver。返回 PageSeoMeta（平铺）或 null。
+   * 抛错会被引擎吞掉并写到 onError，不会导致 SSR 失败。
+   *
+   * input.params 包含 pattern 里 :name 解析出的值。
+   * input.locale 是当前请求 locale（可能 undefined，特别是没启 i18n 时）。
+   * input.services / input.runtime 给到完整 runtime context，可拿 api origin。
+   */
+  resolve: (input: {
+    pathname: string;
+    params: Record<string, string>;
+    locale?: string;
+    services: { api?: string; telemetry?: string };
+  }) => Promise<Record<string, unknown> | null> | Record<string, unknown> | null;
+}
+
 export interface RuntimeSeoConfig {
   /** 远端 SEO 端点；支持 {pathname} */
   endpoint: string | undefined;
@@ -131,6 +175,13 @@ export interface RuntimeSeoConfig {
   ttl: number;
   /** 远端请求超时（毫秒） */
   timeoutMs: number;
+  /**
+   * 参数化路径的 SEO 解析器。
+   * admin endpoint / fallbackLocal 是 path 完全匹配的，无法处理 /books/:id
+   * 这种动态路径；这里集中声明所有动态路径的 SEO 拼装逻辑，业务页面不再写
+   * generateSeo。详见 DynamicSeoResolver 注释。
+   */
+  dynamicResolvers: readonly DynamicSeoResolver[] | undefined;
 }
 
 export interface RuntimeServicesConfig {
