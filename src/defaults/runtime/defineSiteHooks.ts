@@ -120,17 +120,16 @@ interface CompiledSeoResolver {
 
 function compileSeoResolver(resolver: DynamicSeoResolver): CompiledSeoResolver {
   const paramNames: string[] = [];
-  const reSrc = resolver.pattern.replace(/[.+?^${}()|[\]\\]/g, '\\$&').replace(
-    /:([A-Za-z_][A-Za-z0-9_]*)|\\\*/g,
-    (m, name) => {
+  const reSrc = resolver.pattern
+    .replace(/[.+?^${}()|[\]\\]/g, '\\$&')
+    .replace(/:([A-Za-z_][A-Za-z0-9_]*)|\\\*/g, (m, name) => {
       if (m === '\\*') {
         paramNames.push('wildcard');
         return '(.*)';
       }
       paramNames.push(name);
       return '([^/]+)';
-    }
-  );
+    });
   return {
     re: new RegExp(`^${reSrc}$`),
     paramNames,
