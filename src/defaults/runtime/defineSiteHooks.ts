@@ -161,6 +161,7 @@ export interface DefineAdminSiteHooksOptions {
   };
   beforeRequest?: SiteHooksConfig['beforeRequest'];
   onError?: SiteHooksConfig['onError'];
+  headExtras?: SiteHooksConfig['headExtras'];
 }
 
 export interface IntlConfig {
@@ -240,6 +241,30 @@ export interface SiteHooksConfig {
    *   - 不要在这里解析 A/B cookie；页面用 `getVariant()`。
    */
   beforeRequest?: (req: Request) => Record<string, unknown> | Promise<Record<string, unknown>>;
+  /**
+   * 注入到 `<head>` 末尾（`</head>` 之前）的 raw HTML 字符串。
+   *
+   * 通过 SSR HTML stream transformer 注入，**完全脱离 React 树** —— 不进 client RSC
+   * payload，不触发 React 19 + plugin-rsc 的 head children mismatch hydration 错误。
+   *
+   * 典型用途：
+   *   - 主题 init inline blocking script（避免 FOUC，next-themes 同款）
+   *   - GA / GTM snippet
+   *   - A/B variant flag injection
+   *   - CSP nonce / preload hints
+   *
+   * 业务侧返回完整的标签 HTML（含 `<script>` / `<style>` / `<meta>` 外壳）。返回
+   * 空字符串 / undefined 时跳过注入。
+   *
+   * ```ts
+   * import { THEME_INIT_SCRIPT } from '@novel-isr/ui/theme-utils';
+   *
+   * defineAdminSiteHooks({
+   *   headExtras: () => `<script>${THEME_INIT_SCRIPT}</script>`,
+   * });
+   * ```
+   */
+  headExtras?: () => string | undefined;
 }
 
 interface CompiledRoute {
@@ -380,6 +405,7 @@ function createAdminSiteHooks(
     {
       beforeRequest: options.beforeRequest,
       onError: options.onError,
+      headExtras: options.headExtras,
       intl: {
         locales,
         defaultLocale,
@@ -440,6 +466,8 @@ export interface ServerHooksOutput {
     req: Request,
     ctx: { traceId: string; locale?: string }
   ) => void | Promise<void>;
+  /** 注入 `<head>` 末尾的 raw HTML —— 详见 SiteHooksConfig.headExtras 注释 */
+  headExtras?: () => string | undefined;
   __configureRuntime?: (runtime: SiteRuntimeConfig) => ServerHooksOutput;
 }
 
@@ -652,6 +680,7 @@ function createSiteHooks(config: SiteHooksConfig, runtime: SiteRuntimeConfig): S
     siteBaseUrl: site || undefined,
     apiBaseUrl: api || undefined,
     intl: config.intl,
+    headExtras: config.headExtras,
     async beforeRequest(req, _engineCtx) {
       const locale = detectLocale(req);
       const userExt = config.beforeRequest ? await config.beforeRequest(req) : {};

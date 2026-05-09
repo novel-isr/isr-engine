@@ -35,6 +35,7 @@ import '@app/_routes';
 
 import { parseRenderRequest } from './request';
 import { type IntlPayload, type PageSeoMeta, injectSeoMeta, mergePageSeoMeta } from './seo-runtime';
+import { injectHeadExtras } from './head-extras-runtime';
 import { runWithI18n } from './i18n-server';
 import { resolvePageSeoMeta } from '../../runtime/routes';
 import { getRequestContext } from '../../context/RequestContext';
@@ -192,12 +193,22 @@ export function defineServerEntry<C extends ServerCtx = ServerCtx>(
         });
         if (seoMeta) (ctx as ServerCtx).seoMeta = seoMeta;
 
+        // headExtras hook 容错：抛错不应阻塞 SSR（业务侧返回值类型 unknown 时安全降级）
+        let headExtras: string | undefined;
+        try {
+          const raw = hooks.headExtras?.();
+          if (typeof raw === 'string' && raw.length > 0) headExtras = raw;
+        } catch {
+          // 业务 hook 异常 → 当作没有 headExtras，继续渲染
+        }
+
         const response = await runWithI18n(intl, () =>
           runRscPipeline(request, {
             intl,
             seoMeta,
             siteBaseUrl: hooks.siteBaseUrl,
             apiBaseUrl: hooks.apiBaseUrl,
+            headExtras,
           })
         );
 
@@ -230,6 +241,8 @@ interface PipelineExtras {
   seoMeta: PageSeoMeta | null | undefined;
   siteBaseUrl?: string;
   apiBaseUrl?: string;
+  /** 注入 `<head>` 末尾的 raw HTML（业务侧 site-hooks.headExtras() 的返回值） */
+  headExtras?: string;
 }
 
 /** 内部固化的 RSC + SSR 协议流水线 —— 用户不可见 */
@@ -318,17 +331,20 @@ async function runRscPipeline(request: Request, extras: PipelineExtras): Promise
     responseHeaders.set('x-fallback-target', 'client createRoot fallback shell');
   }
 
-  // 仅当用户提供 seoMeta 且非 csr-shell 兜底时注入；csr-shell 的 head 已固化
-  // 把 siteBaseUrl 传给 injectSeoMeta，让相对路径 (image/canonical) 解析为绝对 URL
-  // 注：theme 不再由 engine 注入 ——
-  // 业界 (shadcn / next-themes / Tailwind) 标准做法是 head 里塞一个内联阻塞 <script>，
-  // 同步读 localStorage 把 data-theme 写到 documentElement，这样首屏前就生效，
-  // 跟客户端 ThemeProvider 用同一个 storage key 不会打架。engine 拿不到 localStorage，
-  // 不该也无法做这件事 —— 业务侧自己在 layout.tsx <head> 里塞脚本。
-  const finalStream =
-    extras.seoMeta && !ssrResult.csrShellFallback
-      ? injectSeoMeta(ssrResult.stream, extras.seoMeta, extras.siteBaseUrl)
-      : ssrResult.stream;
+  // SSR HTML stream pipeline —— 仅在非 csr-shell 兜底时注入（csr-shell 的 head 已固化）：
+  //   1. SEO meta 抢首位（紧跟 `<head>` 开标签）—— 浏览器对 `<title>` 单值标签只取第一个
+  //   2. headExtras 末尾插入（`</head>` 之前）—— 业务侧 site-hooks.headExtras() 返回的
+  //      raw HTML，典型是 theme init inline blocking script、GA snippet 等
+  // 两者都脱离 React 树，不进 client RSC payload，不会触发 hydration mismatch。
+  let finalStream = ssrResult.stream;
+  if (!ssrResult.csrShellFallback) {
+    if (extras.seoMeta) {
+      finalStream = injectSeoMeta(finalStream, extras.seoMeta, extras.siteBaseUrl);
+    }
+    if (extras.headExtras) {
+      finalStream = injectHeadExtras(finalStream, extras.headExtras);
+    }
+  }
 
   return new Response(finalStream, {
     status: ssrResult.status,
