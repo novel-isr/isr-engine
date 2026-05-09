@@ -31,25 +31,27 @@ import { LRUCache } from 'lru-cache';
 import { logger } from '../logger';
 import type { RuntimeRateLimitConfig, RuntimeRedisConfig } from '../types/ISRConfig';
 import { hasRuntimeRedisConnection, resolveRuntimeRedisConfig } from '@/config/resolveRuntimeRedis';
-import {
-  createUserAwareKeyGenerator,
-  extractClientIp,
-  type CreateUserAwareKeyGeneratorOptions,
-} from './rate-limit-key';
+import { buildKeyGenerator, extractClientIp, type UserBucketConfig } from './rate-limit-key';
 
-// 给业务侧旧 import 路径保留 re-export —— 真正的实现搬到 ./rate-limit-key
-// （新文件零重依赖，专门给 ssr.config.ts 那种"消费方 vite 不能被牵连进 LRU /
-// Redis 客户端"的入口用）。
-export { createUserAwareKeyGenerator, extractClientIp };
-export type { CreateUserAwareKeyGeneratorOptions };
+// extractClientIp 仍对外暴露（小型自定义场景仍可能直接用）；buildKeyGenerator
+// 是 engine 内部装配，业务侧用 RuntimeRateLimitConfig.userBucket 数据驱动配置即可。
+export { extractClientIp };
+export type { UserBucketConfig };
 
 export interface RateLimitOptions {
   /** 窗口毫秒；默认 60_000（1 分钟） */
   windowMs?: number;
   /** 每窗口最大请求数；默认 100 */
   max?: number;
-  /** 限流 key 生成（默认按 IP：`extractClientIp(req, trustProxy)`） */
-  keyGenerator?: (req: Request) => string;
+  /**
+   * 已登录用户维度 key 配置 —— 数据驱动，不再传 function。
+   * 配了 → 桶 key 形如 `u:<userId>`；未登录 / 没配 → `ip:<addr>`。
+   */
+  userBucket?: UserBucketConfig;
+  /** 桶 key 加 `t:<tenantId>:` 前缀（多租户独立 quota） */
+  useTenantPrefix?: boolean;
+  /** 桶 key 加 `s:<segment>:` 前缀（按 segment 独立 quota） */
+  useSegmentPrefix?: boolean;
   /** 返回 true 则跳过限流（如 /health） */
   skip?: (req: Request) => boolean;
   /** 精确跳过的 path；默认已跳过 /health、/metrics */
@@ -385,13 +387,20 @@ export interface RateLimiterHandle {
 export function createRateLimiter(options: RateLimitOptions = {}): RateLimiterHandle {
   const trustProxy = options.trustProxy === true;
   const {
-    keyGenerator = (req: Request) => extractClientIp(req, trustProxy),
     skip,
     statusCode = 429,
     message = { error: 'Too Many Requests' },
     store = createMemoryRateLimitStore(options.lruMax),
     sendHeaders = true,
   } = options;
+
+  // engine 内部根据数据配置装 keyGenerator —— 业务侧不再传 function
+  const keyGenerator = buildKeyGenerator({
+    trustProxy,
+    userBucket: options.userBucket,
+    useTenantPrefix: options.useTenantPrefix === true,
+    useSegmentPrefix: options.useSegmentPrefix === true,
+  });
 
   // 可变 config 包成对象 —— 闭包持有引用，setConfig 改 .max / .windowMs 即刻生效
   const liveConfig = {

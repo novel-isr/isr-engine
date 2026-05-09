@@ -14,7 +14,6 @@ const baseConfig = {
     services: { api: undefined, telemetry: undefined },
     redis: undefined,
     rateLimit: false,
-    traceDebug: undefined,
     experiments: {},
     i18n: undefined,
     seo: undefined,
@@ -76,6 +75,7 @@ describe('defineConfig helpers', () => {
           webVitals: false,
           exporters: [],
           integrations: { sentry: undefined },
+          traceDebug: undefined,
         },
       },
     } as const;
@@ -93,7 +93,6 @@ describe('defineConfig helpers', () => {
       services: { api: undefined, telemetry: undefined },
       redis: undefined,
       rateLimit: false,
-      traceDebug: undefined,
       experiments: {},
       i18n: undefined,
       seo: undefined,
@@ -116,6 +115,7 @@ describe('defineConfig helpers', () => {
             release: undefined,
           },
         },
+        traceDebug: undefined,
       },
     });
 

@@ -53,11 +53,17 @@ interface TraceSnapshot {
   status: number;
   durationMs: number;
   startedAt: string;
-  // RequestContext 摘要 —— 不写 cookies 全量（敏感）；只标记关键 cookie 是否存在
+  // RequestContext 摘要 —— 业务 beforeRequest 写入的字段在这里展示
+  // 安全策略：sessionToken **不写**（敏感，token 泄露 = 账号被盗用）；
+  // sessionUser 只写 displayName/handle 子集（不写邮箱 / 手机号等 PII）
   context: {
     locale?: string;
     theme?: string;
     tenantId?: string;
+    requestSegment?: string;
+    userId?: string;
+    /** sessionUser 摘要（只列 displayName / handle，其它字段脱敏） */
+    sessionUser?: { displayName?: string; handle?: string };
     cookieKeys: string[];
     flags?: Record<string, boolean | string>;
     forceMode?: string;
@@ -76,6 +82,15 @@ interface TraceSnapshot {
   strategy?: string;
   /** ISR cache 命中状态：HIT / MISS / STALE 等 —— engine 内部 plugin/isrCacheMiddleware 写 X-Cache 头 */
   cacheStatus?: string;
+}
+
+function summarizeSessionUser(raw: unknown): { displayName?: string; handle?: string } | undefined {
+  if (!raw || typeof raw !== 'object') return undefined;
+  const u = raw as Record<string, unknown>;
+  const out: { displayName?: string; handle?: string } = {};
+  if (typeof u.displayName === 'string') out.displayName = u.displayName;
+  if (typeof u.handle === 'string') out.handle = u.handle;
+  return out.displayName || out.handle ? out : undefined;
 }
 
 export interface TraceSnapshotWriter {
@@ -152,6 +167,9 @@ export async function createTraceSnapshotWriter(
           locale: typeof ctx['locale'] === 'string' ? (ctx['locale'] as string) : undefined,
           theme: typeof ctx['theme'] === 'string' ? (ctx['theme'] as string) : undefined,
           tenantId: ctx.tenantId,
+          requestSegment: ctx.requestSegment,
+          userId: ctx.userId,
+          sessionUser: summarizeSessionUser(ctx.sessionUser),
           cookieKeys: Object.keys(ctx.cookies ?? {}),
           flags: ctx.flags,
           forceMode: ctx.forceMode,

@@ -249,11 +249,13 @@ export async function startProductionServer(options: StartOptions): Promise<void
       skipPaths: runtime.rateLimit.skipPaths,
       skipPathPrefixes: runtime.rateLimit.skipPathPrefixes,
       skipExtensions: runtime.rateLimit.skipExtensions,
-      keyGenerator: runtime.rateLimit.keyGenerator,
+      userBucket: runtime.rateLimit.userBucket,
+      useTenantPrefix: runtime.rateLimit.useTenantPrefix,
+      useSegmentPrefix: runtime.rateLimit.useSegmentPrefix,
       skip: req => req.path === '/health' || req.path === '/metrics',
     });
     app.use(rateLimiterHandle);
-    const keyMode = runtime.rateLimit.keyGenerator ? 'user-aware' : 'IP';
+    const keyMode = runtime.rateLimit.userBucket ? 'user-aware' : 'IP';
     logger.info(
       `🚦 限流已启用：${runtime.rateLimit.max} req / ${runtime.rateLimit.windowMs / 1000}s per ${keyMode} (store=${resolvedRateLimitStore.backend})`
     );
@@ -280,20 +282,22 @@ export async function startProductionServer(options: StartOptions): Promise<void
 
   // Trace 快照写入 —— 给 admin dashboard /operations/trace 提供请求级元数据。
   // 默认 5% 采样 + 错误 100% + x-debug-trace 头 100%。需要 REDIS_URL。
-  if (runtime?.traceDebug && runtime.redis?.url) {
+  // 配置位置：runtime.telemetry.traceDebug（跟 events / errors / webVitals 兄弟级 observability）
+  const traceDebug = runtime?.telemetry !== false ? runtime?.telemetry?.traceDebug : undefined;
+  if (traceDebug && runtime?.redis?.url) {
     const { createTraceSnapshotWriter } = await import('@/middlewares/TraceSnapshotWriter');
     const writer = await createTraceSnapshotWriter({
       redisUrl: runtime.redis.url,
-      appName: runtime.traceDebug.appName,
-      sampleRate: runtime.traceDebug.sampleRate,
-      ttlMs: runtime.traceDebug.ttlMs,
-      recentMax: runtime.traceDebug.recentMax,
-      keyPrefix: runtime.traceDebug.keyPrefix,
+      appName: traceDebug.appName,
+      sampleRate: traceDebug.sampleRate,
+      ttlMs: traceDebug.ttlMs,
+      recentMax: traceDebug.recentMax,
+      keyPrefix: traceDebug.keyPrefix,
     });
     if (writer) {
       app.use(writer.middleware);
       logger.info(
-        `🔍 trace 快照已启用 (app='${runtime.traceDebug.appName}', sampleRate=${runtime.traceDebug.sampleRate})`
+        `🔍 trace 快照已启用 (app='${traceDebug.appName}', sampleRate=${traceDebug.sampleRate})`
       );
     }
   }

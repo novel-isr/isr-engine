@@ -14,7 +14,6 @@ function runtime(overrides: Record<string, unknown> = {}): ISRConfig['runtime'] 
     site: undefined,
     redis: undefined,
     rateLimit: false,
-    traceDebug: undefined,
     experiments: {},
     i18n: undefined,
     seo: undefined,
@@ -163,6 +162,7 @@ describe('resolveClientObservabilityOptions', () => {
           webVitals: { enabled: true },
           exporters: [],
           integrations: { sentry: undefined },
+          traceDebug: undefined,
         },
       }),
     });
@@ -209,6 +209,7 @@ describe('resolveClientObservabilityOptions', () => {
           webVitals: false,
           exporters: [],
           integrations: { sentry: undefined },
+          traceDebug: undefined,
         },
       }),
     });

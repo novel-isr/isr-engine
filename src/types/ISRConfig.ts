@@ -127,11 +127,29 @@ export interface RuntimeRateLimitConfig {
   /** 额外静态资源扩展名，例如 ['.wasm']；默认已覆盖 js/css/image/font/map 等常见资源 */
   skipExtensions: readonly string[];
   /**
-   * 自定义 key 生成 —— 默认按 IP（extractClientIp(req, trustProxy)）。
-   * 业务建议用 `createUserAwareKeyGenerator()` 出来的函数：已登录走 user 桶，
-   * 未登录走 IP 桶，防 NAT / mobile carrier 共享 IP 被某用户挤爆。
+   * 已登录用户维度的 key 配置（数据驱动；之前用 function 现在改成纯数据）。
+   *
+   * 配了之后桶 key 变成：
+   *   - 已登录：`u:<userId>` —— 从 cookie JSON 里抠 field
+   *   - 未登录：`ip:<addr>`  —— extractClientIp(req, trustProxy)
+   *
+   * 模式跟 Cloudflare / Stripe / GitHub API 一致：防 NAT / 公司网 / mobile
+   * carrier 后面成千用户共享一个 IP，被某高频用户挤爆所有人桶。
+   *
+   * undefined → 不分用户维度，纯 IP 分桶（适合 anonymous-only 站点）。
    */
-  keyGenerator?: (req: import('express').Request) => string;
+  userBucket: { cookie?: string; field?: string; header?: string } | undefined;
+  /**
+   * 桶 key 加 `t:<tenantId>:` 前缀。RequestContext.tenantId 由业务侧
+   * createServerRequestContext 写入；SaaS 多租户给每个租户独立配额。
+   * 单租户站点保持 false，避免每个 key 都多个 `t:public:` 前缀的无用噪音。
+   */
+  useTenantPrefix: boolean;
+  /**
+   * 桶 key 加 `s:<segment>:` 前缀。RequestContext.requestSegment 来自业务侧
+   * 请求级标记（'premium' / 'free' / 'default'），让不同 segment 独立 quota。
+   */
+  useSegmentPrefix: boolean;
 }
 
 export interface RuntimeI18nConfig {
@@ -347,6 +365,17 @@ export interface RuntimeTelemetryConfig {
   exporters: readonly RuntimeTelemetryExporterConfig[];
   /** 第三方平台集成，和第一方 endpoint telemetry 并列挂在 telemetry 下面 */
   integrations: RuntimeTelemetryIntegrationsConfig;
+  /**
+   * 服务端请求级 trace 快照。每请求把 RequestContext + 协商出的 locale / theme /
+   * cache 命中 / 状态码 / 用时写到 Redis（key=<keyPrefix><traceId>，TTL 1h），
+   * admin dashboard 通过 traceId 拉来排障。
+   *
+   * 跟 events / errors / webVitals 并列在 telemetry 下：都是 observability。
+   * 区别：events/errors/webVitals 是浏览器侧采集；traceDebug 是 Node 侧采集。
+   *
+   * undefined → 关闭。要全开设 sampleRate=1.0；默认建议 0.05（错误强制 100%）。
+   */
+  traceDebug: RuntimeTraceDebugConfig | undefined;
 }
 
 /**
@@ -371,12 +400,6 @@ export interface RuntimeConfig {
    * 多实例生产环境仍应优先使用 CDN/WAF/API Gateway 做第一层限流。
    */
   rateLimit: false | RuntimeRateLimitConfig;
-  /**
-   * 每请求 trace 快照写入。需要 runtime.redis 已配置。
-   * 设为 undefined / 不写关闭；默认采样 5% + 错误强制 100% + x-debug-trace 头强制 100%。
-   * admin dashboard 通过 GET /api/ops/trace/<traceId> 查具体快照。
-   */
-  traceDebug: RuntimeTraceDebugConfig | undefined;
   /** A/B testing / experimentation 定义，供 getVariant() 在 Server Component 中读取 */
   experiments: Record<string, RuntimeExperimentConfig>;
   /** i18n 字典源配置；请求期加载由 engine 默认 SiteHooks 消费 */

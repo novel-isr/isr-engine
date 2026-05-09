@@ -176,11 +176,13 @@ async function initServerContext(config?: ISRConfig): Promise<ServerContext> {
       skipPaths: config.runtime.rateLimit.skipPaths,
       skipPathPrefixes: config.runtime.rateLimit.skipPathPrefixes,
       skipExtensions: config.runtime.rateLimit.skipExtensions,
-      keyGenerator: config.runtime.rateLimit.keyGenerator,
+      userBucket: config.runtime.rateLimit.userBucket,
+      useTenantPrefix: config.runtime.rateLimit.useTenantPrefix,
+      useSegmentPrefix: config.runtime.rateLimit.useSegmentPrefix,
       skip: req => req.path === '/health' || req.path === '/metrics',
     });
     serverContext.requestHandler.use(rateLimiterHandle);
-    const keyMode = config.runtime.rateLimit.keyGenerator ? 'user-aware' : 'IP';
+    const keyMode = config.runtime.rateLimit.userBucket ? 'user-aware' : 'IP';
     logger.info(
       `🚦 限流已启用：${config.runtime.rateLimit.max} req / ${config.runtime.rateLimit.windowMs / 1000}s per ${keyMode} (store=${resolvedRateLimitStore.backend})`
     );
@@ -203,21 +205,23 @@ async function initServerContext(config?: ISRConfig): Promise<ServerContext> {
     }
   }
 
-  // Trace 快照写入 —— 同 cli/start.ts；仅在 REDIS_URL 配置 + traceDebug 开启时启用
-  if (config?.runtime?.traceDebug && config.runtime.redis?.url) {
+  // Trace 快照写入 —— 同 cli/start.ts；位置：runtime.telemetry.traceDebug
+  const traceDebug =
+    config?.runtime?.telemetry !== false ? config?.runtime?.telemetry?.traceDebug : undefined;
+  if (traceDebug && config?.runtime?.redis?.url) {
     const { createTraceSnapshotWriter } = await import('@/middlewares/TraceSnapshotWriter');
     const writer = await createTraceSnapshotWriter({
       redisUrl: config.runtime.redis.url,
-      appName: config.runtime.traceDebug.appName,
-      sampleRate: config.runtime.traceDebug.sampleRate,
-      ttlMs: config.runtime.traceDebug.ttlMs,
-      recentMax: config.runtime.traceDebug.recentMax,
-      keyPrefix: config.runtime.traceDebug.keyPrefix,
+      appName: traceDebug.appName,
+      sampleRate: traceDebug.sampleRate,
+      ttlMs: traceDebug.ttlMs,
+      recentMax: traceDebug.recentMax,
+      keyPrefix: traceDebug.keyPrefix,
     });
     if (writer) {
       serverContext.requestHandler.use(writer.middleware);
       logger.info(
-        `🔍 trace 快照已启用 (app='${config.runtime.traceDebug.appName}', sampleRate=${config.runtime.traceDebug.sampleRate})`
+        `🔍 trace 快照已启用 (app='${traceDebug.appName}', sampleRate=${traceDebug.sampleRate})`
       );
     }
   }

@@ -42,7 +42,6 @@ function makeConfig(overrides: Partial<ISRConfig> = {}): ISRConfig {
       services: { api: undefined, telemetry: undefined },
       redis: undefined,
       rateLimit: false,
-      traceDebug: undefined,
       experiments: {},
       i18n: undefined,
       seo: undefined,

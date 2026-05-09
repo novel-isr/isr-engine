@@ -34,10 +34,9 @@ export default defineConfig({
         'image/index': resolve(__dirname, 'src/runtime/Image.tsx'),
         // ssr.config.ts 专用轻量入口。不要从根入口导入 config helper，否则会把
         // CLI/plugin/esbuild 等 Node 工具链带进消费方 RSC/SSG bundle。
+        // 注：rate-limit-key 在 v2.4 收回 engine 内部 —— 业务侧改用数据驱动
+        // RuntimeRateLimitConfig.userBucket，不再需要 import function。
         'config/defineConfig': resolve(__dirname, 'src/config/defineConfig.ts'),
-        // ssr.config.ts 也常常需要 createUserAwareKeyGenerator 拼 rateLimit.keyGenerator
-        // —— 同样走轻量入口（纯函数 + Express 类型，无 LRU/Redis 客户端依赖）
-        'middlewares/rate-limit-key': resolve(__dirname, 'src/middlewares/rate-limit-key.ts'),
         // ─── 消费方加载的辅助入口（无 'use client' / plugin-rsc 依赖） ────────
         // defineSiteHooks / auto-observability 是纯逻辑模块，预打包成 ESM JS
         // 让消费方 Vite scanner 能正常发现 React 等依赖（不再 alias 到源文件）。

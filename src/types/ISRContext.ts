@@ -8,12 +8,35 @@ export interface ISRContextData {
   traceId: string;
   requestId: string;
   /**
-   * 多租户：当前请求归属的租户 ID（可选）
+   * 多租户：当前请求归属的租户 ID（可选）。
    *
-   * 当前 engine 自身不消费此字段 —— 由用户中间件按需写入（解析子域名 / 头部 / cookie）。
-   * 未来如果支持多租户缓存隔离，会使用此字段作为 cache key 前缀。
+   * 由业务侧 beforeRequest hook 写入（解析子域名 / 头部 / cookie）。
+   * Engine 在以下两处消费：
+   *   1. rate-limit.useTenantPrefix=true 时给桶 key 加 `t:<tenantId>:` 前缀
+   *   2. TraceSnapshotWriter 写到快照里供 admin 排障
    */
   tenantId?: string;
+  /**
+   * 请求级 segment 标记（'premium' / 'free' / 'default' / 自定义）。
+   * 由业务侧 beforeRequest hook 写入，用于：
+   *   1. rate-limit.useSegmentPrefix=true 时给桶 key 加 `s:<segment>:` 前缀
+   *      —— admin 可以给同一个 app 的不同 segment 配不同 quota
+   *   2. TraceSnapshotWriter 写到快照里供 admin 排障
+   */
+  requestSegment?: string;
+  /** 已登录用户 ID（业务侧 beforeRequest 写入；engine 在 trace 快照里展示） */
+  userId?: string;
+  /**
+   * 鉴权 token（cookie / header 解出）；engine 不读不写，业务侧 Server Action
+   * 透传给后端 API 做鉴权。**绝不写到 trace 快照（敏感）**。
+   */
+  sessionToken?: string;
+  /**
+   * 用户 session 摘要（displayName / handle / avatar 等）。业务侧 Server Component
+   * 直接读这里来拼 UI，避免每个 RSC 重新拉一次 user info。
+   * Engine 在 trace 快照里只写 displayName / handle 字段，其它脱敏。
+   */
+  sessionUser?: { userId?: string; displayName?: string; handle?: string; [key: string]: unknown };
   /** 请求层强制模式（主要用于开发 / 调试） */
   forceMode?: string;
   /** 请求层 fallback 提示 */

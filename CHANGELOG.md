@@ -6,6 +6,51 @@
 
 ## [Unreleased]
 
+### Changed — BREAKING：rate-limit 数据驱动 + traceDebug 收编
+
+- **`runtime.rateLimit.keyGenerator` (function) 被移除**，改为数据驱动配置：
+  - 新字段：`userBucket: { cookie?, field?, header? } | undefined`
+  - 新字段：`useTenantPrefix: boolean` —— 桶 key 前缀 `t:<tenantId>:`，从 `x-tenant-id` 读
+  - 新字段：`useSegmentPrefix: boolean` —— 桶 key 前缀 `s:<segment>:`，从 `x-segment` 读
+- **`./rate-limit-key` package.json 子入口被移除** —— 业务侧 ssr.config.ts 不再 import
+  `createUserAwareKeyGenerator`，零 function 引用 = 零 SSG bundle 风险。
+- **`runtime.rateLimit.trustProxy` 不再重复** —— 之前 keyGenerator 工厂参数也写一遍，
+  现在统一只在 `runtime.rateLimit.trustProxy` 一处声明。
+- **`runtime.traceDebug` 移到 `runtime.telemetry.traceDebug`**：跟 events / errors /
+  webVitals 兄弟级 observability 字段，逻辑归类一致。
+- **trace 快照新增字段**：`context.userId / requestSegment / sessionUser{displayName,handle}`
+  —— 业务侧 beforeRequest 写入 RequestContext 的字段会自动出现在 admin /operations/trace 详情。
+  sessionToken **永远不写**（敏感）；sessionUser 只展示 displayName / handle 两个字段（PII 脱敏）。
+
+迁移指引：
+```ts
+// 旧（v2.3.x）
+import { createUserAwareKeyGenerator } from '@novel-isr/engine/rate-limit-key';
+runtime: {
+  rateLimit: {
+    trustProxy: process.env.TRUST_PROXY === '1',
+    keyGenerator: createUserAwareKeyGenerator({
+      userIdCookie: 'novel_session_user',
+      trustProxy: process.env.TRUST_PROXY === '1',
+    }),
+  },
+  traceDebug: { appName: 'x', sampleRate: 0.05, ... },
+}
+
+// 新（v2.4）
+runtime: {
+  rateLimit: {
+    trustProxy: process.env.TRUST_PROXY === '1',
+    userBucket: { cookie: 'novel_session_user', field: 'userId' },
+    useTenantPrefix: false,
+    useSegmentPrefix: false,
+  },
+  telemetry: {
+    traceDebug: { appName: 'x', sampleRate: 0.05, ... },
+  },
+}
+```
+
 ### Added — Trace 快照写入（请求级排障）
 
 - **`runtime.traceDebug`**：新增字段。每请求把 RequestContext + locale / theme /

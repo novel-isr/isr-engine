@@ -209,17 +209,18 @@ export {
 } from './plugin';
 
 // ========== 限流（per-IP / per-key fixed-window）==========
+// 注：keyGenerator 装配已收回 engine 内部（v2.4 起改用 RuntimeRateLimitConfig.userBucket
+// 数据驱动）；业务侧不再需要 import createUserAwareKeyGenerator。
 export {
   createRateLimiter,
   createRateLimitStoreFromRuntime,
   createMemoryRateLimitStore,
   createRedisRateLimitStore,
-  createUserAwareKeyGenerator,
   extractClientIp,
   type RateLimitOptions,
   type ResolvedRateLimitStore,
   type RateLimitStore,
-  type CreateUserAwareKeyGeneratorOptions,
+  type UserBucketConfig,
 } from './middlewares/RateLimiter';
 
 // ========== A/B 变体（cookie-sticky + RequestContext 注入）==========
