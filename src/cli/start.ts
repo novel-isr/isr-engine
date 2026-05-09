@@ -188,11 +188,6 @@ export async function startProductionServer(options: StartOptions): Promise<void
   const { randomUUID } = await import('node:crypto');
   app.use((req, _res, next) => {
     const headerReqId = req.headers['x-request-id'];
-    const acceptLanguage =
-      typeof req.headers['accept-language'] === 'string'
-        ? req.headers['accept-language']
-        : undefined;
-    const referer = typeof req.headers['referer'] === 'string' ? req.headers['referer'] : undefined;
     const rawCookie = req.headers['cookie'];
     const cookieHeader = Array.isArray(rawCookie)
       ? rawCookie.join('; ')
@@ -200,6 +195,8 @@ export async function startProductionServer(options: StartOptions): Promise<void
         ? rawCookie
         : '';
     const cookies = parseCookieHeader(cookieHeader);
+    // 只放跨中间件需要共享的字段；acceptLanguage / referer 一次性的，需要时
+    // 从 req.headers 直读（i18n 协商、trace 快照都已经这么做）。
     requestContext.run(
       {
         traceId:
@@ -207,8 +204,6 @@ export async function startProductionServer(options: StartOptions): Promise<void
             ? req.headers['traceparent']
             : randomUUID(),
         requestId: typeof headerReqId === 'string' ? headerReqId : randomUUID(),
-        acceptLanguage,
-        referer,
         cookies,
       },
       () => next()
@@ -277,23 +272,17 @@ export async function startProductionServer(options: StartOptions): Promise<void
   }
 
   // Trace 快照写入 —— 给 admin dashboard /operations/trace 提供请求级元数据。
-  // 错误 100% + x-debug-trace 头 100% + sampleRate 概率采样。需要 REDIS_URL。
-  // 配置位置：runtime.telemetry.traceDebug（observability 兄弟字段）；
-  // appName 从 runtime.telemetry.app 读，跟 events/errors/webVitals 共用同一个 app 名。
+  // 100% 全采（含错误和 x-debug-trace 头）。需要 REDIS_URL + telemetry.app。
   const telemetry = runtime?.telemetry !== false ? runtime?.telemetry : undefined;
-  const traceDebug = telemetry?.traceDebug;
-  if (traceDebug && runtime?.redis?.url && telemetry?.app) {
+  if (telemetry?.traceDebug === true && runtime?.redis?.url && telemetry.app) {
     const { createTraceSnapshotWriter } = await import('@/middlewares/TraceSnapshotWriter');
     const writer = await createTraceSnapshotWriter({
       redisUrl: runtime.redis.url,
       appName: telemetry.app,
-      sampleRate: traceDebug.sampleRate,
     });
     if (writer) {
       app.use(writer.middleware);
-      logger.info(
-        `🔍 trace 快照已启用 (app='${telemetry.app}', sampleRate=${traceDebug.sampleRate})`
-      );
+      logger.info(`🔍 trace 快照已启用 (app='${telemetry.app}')`);
     }
   }
 

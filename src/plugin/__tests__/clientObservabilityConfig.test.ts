@@ -24,6 +24,16 @@ function runtime(overrides: Record<string, unknown> = {}): ISRConfig['runtime'] 
   } as ISRConfig['runtime'];
 }
 
+// SDK 内部参数现在固化在 engine 里 —— 不再是业务决策，跟 Sentry/Datadog SDK 同档默认。
+// 这些是 clientObservabilityConfig.ts 内部常量，业务侧不能再调，所以测试里直接断言固定值。
+const ENGINE_ANALYTICS_BATCH = 20;
+const ENGINE_ERRORS_BATCH = 10;
+const ENGINE_FLUSH_MS = 3_000;
+const ENGINE_ANALYTICS_QUEUE = 500;
+const ENGINE_ERRORS_QUEUE = 200;
+const ENGINE_RETRY_BASE = 1_000;
+const ENGINE_RETRY_MAX = 30_000;
+
 describe('resolveClientObservabilityOptions', () => {
   afterEach(async () => {
     await Promise.all(roots.splice(0).map(root => rm(root, { recursive: true, force: true })));
@@ -67,22 +77,12 @@ describe('resolveClientObservabilityOptions', () => {
           includeQueryString: false,
           events: {
             endpoint: '/ingest/events',
-            sampleRate: undefined,
-            batchSize: 12,
-            flushIntervalMs: undefined,
-            maxQueueSize: 120,
-            retryBaseDelayMs: 500,
-            retryMaxDelayMs: 5000,
-            trackInitialPage: undefined,
+            sampleRate: 1,
+            trackInitialPage: true,
           },
           errors: {
             endpoint: '/ingest/errors',
             sampleRate: 0.5,
-            batchSize: undefined,
-            flushIntervalMs: undefined,
-            maxQueueSize: 80,
-            retryBaseDelayMs: 1000,
-            retryMaxDelayMs: 10000,
             captureResourceErrors: true,
           },
           webVitals: { enabled: true },
@@ -96,6 +96,7 @@ describe('resolveClientObservabilityOptions', () => {
               release: undefined,
             },
           },
+          traceDebug: false,
         },
       }),
     });
@@ -107,23 +108,23 @@ describe('resolveClientObservabilityOptions', () => {
       includeQueryString: false,
       analytics: {
         endpoint: 'https://rum.example.com/ingest/events',
-        sampleRate: undefined,
-        batchSize: 12,
-        flushIntervalMs: undefined,
-        maxQueueSize: 120,
-        retryBaseDelayMs: 500,
-        retryMaxDelayMs: 5000,
+        sampleRate: 1,
+        batchSize: ENGINE_ANALYTICS_BATCH,
+        flushIntervalMs: ENGINE_FLUSH_MS,
+        maxQueueSize: ENGINE_ANALYTICS_QUEUE,
+        retryBaseDelayMs: ENGINE_RETRY_BASE,
+        retryMaxDelayMs: ENGINE_RETRY_MAX,
         webVitals: true,
-        trackInitialPage: undefined,
+        trackInitialPage: true,
       },
       errorReporting: {
         endpoint: 'https://rum.example.com/ingest/errors',
         sampleRate: 0.5,
-        batchSize: undefined,
-        flushIntervalMs: undefined,
-        maxQueueSize: 80,
-        retryBaseDelayMs: 1000,
-        retryMaxDelayMs: 10000,
+        batchSize: ENGINE_ERRORS_BATCH,
+        flushIntervalMs: ENGINE_FLUSH_MS,
+        maxQueueSize: ENGINE_ERRORS_QUEUE,
+        retryBaseDelayMs: ENGINE_RETRY_BASE,
+        retryMaxDelayMs: ENGINE_RETRY_MAX,
         captureResourceErrors: true,
       },
     });
@@ -141,28 +142,18 @@ describe('resolveClientObservabilityOptions', () => {
           includeQueryString: false,
           events: {
             endpoint: undefined,
-            sampleRate: undefined,
-            batchSize: undefined,
-            flushIntervalMs: undefined,
-            maxQueueSize: undefined,
-            retryBaseDelayMs: undefined,
-            retryMaxDelayMs: undefined,
-            trackInitialPage: undefined,
+            sampleRate: 1,
+            trackInitialPage: true,
           },
           errors: {
             endpoint: undefined,
-            sampleRate: undefined,
-            batchSize: undefined,
-            flushIntervalMs: undefined,
-            maxQueueSize: undefined,
-            retryBaseDelayMs: undefined,
-            retryMaxDelayMs: undefined,
+            sampleRate: 1,
             captureResourceErrors: true,
           },
           webVitals: { enabled: true },
           exporters: [],
           integrations: { sentry: undefined },
-          traceDebug: undefined,
+          traceDebug: false,
         },
       }),
     });
@@ -188,28 +179,18 @@ describe('resolveClientObservabilityOptions', () => {
           includeQueryString: false,
           events: {
             endpoint: '/api/telemetry/events',
-            sampleRate: undefined,
-            batchSize: undefined,
-            flushIntervalMs: undefined,
-            maxQueueSize: undefined,
-            retryBaseDelayMs: undefined,
-            retryMaxDelayMs: undefined,
-            trackInitialPage: undefined,
+            sampleRate: 1,
+            trackInitialPage: true,
           },
           errors: {
             endpoint: '/api/telemetry/errors',
-            sampleRate: undefined,
-            batchSize: undefined,
-            flushIntervalMs: undefined,
-            maxQueueSize: undefined,
-            retryBaseDelayMs: undefined,
-            retryMaxDelayMs: undefined,
+            sampleRate: 1,
             captureResourceErrors: true,
           },
           webVitals: false,
           exporters: [],
           integrations: { sentry: undefined },
-          traceDebug: undefined,
+          traceDebug: false,
         },
       }),
     });

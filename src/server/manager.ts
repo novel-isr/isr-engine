@@ -125,11 +125,6 @@ async function initServerContext(config?: ISRConfig): Promise<ServerContext> {
 
   serverContext.requestHandler.use((req, _res, next) => {
     const headerReqId = req.headers['x-request-id'];
-    const acceptLanguage =
-      typeof req.headers['accept-language'] === 'string'
-        ? req.headers['accept-language']
-        : undefined;
-    const referer = typeof req.headers['referer'] === 'string' ? req.headers['referer'] : undefined;
     const rawCookie = req.headers['cookie'];
     const cookieHeader = Array.isArray(rawCookie)
       ? rawCookie.join('; ')
@@ -137,6 +132,7 @@ async function initServerContext(config?: ISRConfig): Promise<ServerContext> {
         ? rawCookie
         : '';
     const cookies = parseCookieHeader(cookieHeader);
+    // acceptLanguage / referer 不写到 ctx —— 一次性使用，需要时直读 req.headers。
     requestContext.run(
       {
         traceId:
@@ -144,8 +140,6 @@ async function initServerContext(config?: ISRConfig): Promise<ServerContext> {
             ? req.headers['traceparent']
             : randomUUID(),
         requestId: typeof headerReqId === 'string' ? headerReqId : randomUUID(),
-        acceptLanguage,
-        referer,
         cookies,
       },
       () => next()
@@ -201,21 +195,17 @@ async function initServerContext(config?: ISRConfig): Promise<ServerContext> {
     }
   }
 
-  // Trace 快照写入 —— 同 cli/start.ts。appName 从 runtime.telemetry.app 读。
+  // Trace 快照写入 —— 同 cli/start.ts，100% 全采。
   const telemetry = config?.runtime?.telemetry !== false ? config?.runtime?.telemetry : undefined;
-  const traceDebug = telemetry?.traceDebug;
-  if (traceDebug && config?.runtime?.redis?.url && telemetry?.app) {
+  if (telemetry?.traceDebug === true && config?.runtime?.redis?.url && telemetry.app) {
     const { createTraceSnapshotWriter } = await import('@/middlewares/TraceSnapshotWriter');
     const writer = await createTraceSnapshotWriter({
       redisUrl: config.runtime.redis.url,
       appName: telemetry.app,
-      sampleRate: traceDebug.sampleRate,
     });
     if (writer) {
       serverContext.requestHandler.use(writer.middleware);
-      logger.info(
-        `🔍 trace 快照已启用 (app='${telemetry.app}', sampleRate=${traceDebug.sampleRate})`
-      );
+      logger.info(`🔍 trace 快照已启用 (app='${telemetry.app}')`);
     }
   }
 

@@ -2,12 +2,24 @@ import type { ViteDevServer } from 'vite';
 import type { RenderModeType } from './ISRConfig';
 
 /**
- * 请求上下文数据（附加字段，engine 自身和中间件可自由扩展）
+ * 请求上下文数据 —— engine 内部 + 业务 hook 写入的字段。
+ *
+ * 设计原则：只放"被多处消费"的字段。一次性的（如 acceptLanguage / referer）engine
+ * 直接读 req.headers，不复制到 ctx；trace 快照同样直接读 req.headers，不依赖 ctx。
+ *
+ * 已删除的字段（声明但无消费者，纯死代码）：
+ *   - forceMode / forceFallback / bypassCache：dev 调试 URL 参数曾计划走这里，
+ *     现在 plugin-rsc / engine cache 都直接读 query string，没人读这三个字段
+ *   - seo：声明了但 engine SEO 路径用 PageSeoMeta（独立类型），不走这里
+ *   - acceptLanguage / referer：曾写到 ctx 给 trace 用，trace 改读 req.headers 后
+ *     这两个 ctx 字段就再无消费者
  */
 export interface ISRContextData {
+  /** W3C trace-context traceparent 或自生成 UUID；用作 cross-service 追踪 + admin 排障索引 */
   traceId: string;
+  /** 单服务的请求 ID；写到响应头 x-request-id 给客户端 / 客户端日志关联用 */
   requestId: string;
-  /** 已登录用户 ID（业务侧 beforeRequest 写入；engine 在 trace 快照里展示） */
+  /** 已登录用户 ID（业务侧 beforeRequest 写入；engine 在 rate-limit / trace 快照消费） */
   userId?: string;
   /**
    * 鉴权 token（cookie / header 解出）；engine 不读不写，业务侧 Server Action
@@ -20,32 +32,15 @@ export interface ISRContextData {
    * Engine 在 trace 快照里只写 displayName / handle 字段，其它脱敏。
    */
   sessionUser?: { userId?: string; displayName?: string; handle?: string; [key: string]: unknown };
-  /** 请求层强制模式（主要用于开发 / 调试） */
-  forceMode?: string;
-  /** 请求层 fallback 提示 */
-  forceFallback?: string;
-  /** 是否跳过缓存 */
-  bypassCache?: boolean;
-  /** Accept-Language 头（供 engine 中间件做语言分流用） */
-  acceptLanguage?: string;
-  /** Referer */
-  referer?: string;
   /**
    * 解析后的 Cookie 表 —— 由 engine 入口中间件 parseCookieHeader(req.headers.cookie)
    * 写入。Server Component 通过 `getRequestContext()?.cookies?.<name>` 读取，
-   * 让"主题 / locale / 实验位"这类需要在 SSR 首屏就决定的偏好不依赖 client mount。
+   * 让"locale / 实验位"这类 SSR 首屏就要决定的偏好不依赖 client mount。
    */
   cookies?: Record<string, string>;
-  /** AB 测试开关位 */
+  /** A/B 测试开关位（engine ABVariantMiddleware 写入；getVariant() 读） */
   flags?: Record<string, boolean | string>;
-  /** SEO 层字段（可由中间件注入） */
-  seo?: {
-    title?: string;
-    description?: string;
-    canonical?: string;
-    [key: string]: unknown;
-  };
-  /** 其它业务扩展字段 */
+  /** 其它业务扩展字段（engine 不消费） */
   [key: string]: unknown;
 }
 

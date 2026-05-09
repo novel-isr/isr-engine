@@ -2,28 +2,21 @@
  * 每请求 trace 快照写入 ——
  *
  * 出发点：线上排障最痛的一环是"用户报了一个 bug，说 X 不对"，工程师无从复现。
- * 解决方案：每请求把 RequestContext + 协商出的 locale / theme / cache 命中 + 状态码 +
- * 用时写到 Redis（key = trace:<traceId>，TTL 1h），admin dashboard 通过 traceId
- * 拉这条快照，5 分钟内还原现场。
+ * 解决方案：每请求把 RequestContext + 状态码 + 用时 + cache 命中等写到 Redis
+ * (key = isr:trace:<traceId>，TTL 1h)，admin dashboard 通过 traceId 拉这条快照
+ * 还原现场。
  *
- * 跟 Sentry / Datadog / Honeycomb 区别：
- *   - 这里只存"业务侧关心的请求级元数据"，不存 stack trace / span tree，量级不一样
- *   - 一个请求一条 JSON ≈ 1KB，1h TTL 默认采样 5% + 错误强制 100%；
- *     生产 1 万 QPS × 5% × 1h = 1.8M 条 ≈ 2GB Redis（开销可忽略）
+ * 跟 Sentry / Datadog 区别：
+ *   - 只存"业务侧关心的请求级元数据"，不存 stack trace / span tree
+ *   - 一条 JSON ≈ 1KB，1h TTL，100 QPS × 1h × 1KB ≈ 360MB Redis 可接受
  *
- * 采样策略：
- *   1. 错误（status >= 500 或抛异常） → 强制采样
- *   2. 请求头 x-debug-trace: 1 → 强制采样（QA / 排障人员明确请求时）
- *   3. 否则按 sampleRate 概率采样（默认 0.05 = 5%）
+ * 采样：100% 全采（不再分级；novel-rating 量级足以支撑，未来高流量再加）。
  *
  * 索引：
- *   - 单条快照：trace:<traceId> = JSON, TTL 1h
- *   - 最近 N 条 traceId 的环形列表：trace:recent (LIST, LPUSH + LTRIM 200)
- *     —— admin dashboard 的"最近请求"面板用这个；不带索引就只能凭 traceId 查
+ *   - 单条快照：isr:trace:<traceId> = JSON, TTL 1h
+ *   - 最近 N 条 traceId 的环形 LIST：isr:trace:recent（LPUSH + LTRIM 200）
  *
- * 跟 ssr.config 静态配置同样的"消费方什么都不需要写"原则：
- *   - REDIS_URL 没配 → 写入 no-op，不影响请求路径
- *   - sampleRate 默认 0.05；要全采样设 1.0；要关闭设 0
+ * REDIS_URL 没配 → 写入 no-op，不影响请求路径。
  */
 import type { Request, Response, NextFunction } from 'express';
 import { logger } from '../logger';
@@ -31,17 +24,18 @@ import { getRequestContext } from '../context/RequestContext';
 
 export interface TraceSnapshotWriterOptions {
   redisUrl: string;
-  /** 应用名，写到快照里方便多 app 共享 Redis 时区分（消费方用 runtime.telemetry.app） */
+  /** 应用名（消费方用 runtime.telemetry.app） */
   appName: string;
-  /** 0..1；错误请求强制 1.0；x-debug-trace=1 头强制 1.0 */
-  sampleRate: number;
 }
 
 /**
- * engine 内置常量 —— 不是业务决策，没必要让消费方写：
- *   - TTL 1h：trace 是排障辅助，1h 内不查就过期；要 30 分钟还是 2 小时无业务区别
- *   - 最近索引 200 条：dashboard 一页够看；多了反而难找
- *   - key prefix 'isr:trace:'：跟 engine 其它 key 同 namespace，无业务意义
+ * engine 内置常量 —— 不是业务决策：
+ *   - TTL 1h：排障辅助 + Redis 内存控制
+ *   - 最近索引 200 条：dashboard 翻页够用
+ *   - key prefix 'isr:trace:'：engine namespace
+ *
+ * 采样：100% 全采（错误 / debug 头一直走这个路径，不再分级）。要分层采样
+ * 是高流量场景的需求，YAGNI；novel-rating 量级 1h × 1KB × 100 QPS ≈ 360MB Redis 可接受。
  */
 const TRACE_TTL_MS = 60 * 60 * 1000;
 const TRACE_RECENT_MAX = 200;
@@ -114,8 +108,6 @@ interface MinimalRedis {
   quit(): Promise<unknown>;
 }
 
-const ALWAYS_DEBUG_HEADER = 'x-debug-trace';
-
 export async function createTraceSnapshotWriter(
   options: TraceSnapshotWriterOptions
 ): Promise<TraceSnapshotWriter | null> {
@@ -145,16 +137,8 @@ export async function createTraceSnapshotWriter(
 
   const middleware = (req: Request, res: Response, next: NextFunction): void => {
     const start = Date.now();
-    const debugForced = req.headers[ALWAYS_DEBUG_HEADER] === '1';
 
     res.on('finish', () => {
-      // 决定要不要采样
-      const status = res.statusCode;
-      const isError = status >= 500;
-      const sampled =
-        isError || debugForced || (options.sampleRate > 0 && Math.random() < options.sampleRate);
-      if (!sampled) return;
-
       const ctx = getRequestContext();
       if (!ctx?.traceId) return;
 
@@ -165,7 +149,7 @@ export async function createTraceSnapshotWriter(
         method: req.method,
         path: req.path,
         query: typeof req.url === 'string' ? (req.url.split('?')[1] ?? '') : '',
-        status,
+        status: res.statusCode,
         durationMs: Date.now() - start,
         startedAt: new Date(start).toISOString(),
         context: {
@@ -177,8 +161,11 @@ export async function createTraceSnapshotWriter(
         request: {
           userAgent:
             typeof req.headers['user-agent'] === 'string' ? req.headers['user-agent'] : undefined,
-          referer: ctx.referer,
-          acceptLanguage: ctx.acceptLanguage,
+          referer: typeof req.headers['referer'] === 'string' ? req.headers['referer'] : undefined,
+          acceptLanguage:
+            typeof req.headers['accept-language'] === 'string'
+              ? req.headers['accept-language']
+              : undefined,
           ip: req.ip,
         },
         cacheStatus:

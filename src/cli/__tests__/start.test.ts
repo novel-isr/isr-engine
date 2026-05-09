@@ -50,7 +50,7 @@ function sentryTelemetry(
     webVitals: false,
     exporters: [],
     integrations: { sentry },
-    traceDebug: undefined,
+    traceDebug: false,
   };
 }
 
@@ -167,7 +167,7 @@ describe('applyTelemetryIntegrationEnv —— Sentry integration 显式开关', 
           webVitals: false,
           exporters: [],
           integrations: { sentry: undefined },
-          traceDebug: undefined,
+          traceDebug: false,
         })
       );
       expect(process.env.DD_SERVICE).toBeUndefined();
@@ -198,7 +198,7 @@ describe('applyTelemetryIntegrationEnv —— Sentry integration 显式开关', 
             },
           ],
           integrations: { sentry: undefined },
-          traceDebug: undefined,
+          traceDebug: false,
         })
       );
 

@@ -62,20 +62,11 @@ export interface RuntimeExperimentConfig {
   weights: readonly number[] | undefined;
 }
 
-/**
- * 每请求 trace 快照写入 Redis，admin dashboard 通过 traceId 拉来排障。
- *
- * 业务侧只决定 sampleRate（采样率 = 成本 vs 可见度的真业务决策）。
- * 其它都是 engine 内置常量（TTL 1h、最近索引 200 条、key prefix 'isr:trace:'）—— 不是
- * 业务决策，没必要让消费方写。app 名直接读 runtime.telemetry.app（不再重复声明）。
- *
- * 设为 undefined / 不写即关闭。
- * 错误强制 100% 采样、`x-debug-trace: 1` 头强制 100% 采样（QA 排障）。
- */
-export interface RuntimeTraceDebugConfig {
-  /** 0..1；推荐 0.05（5% 采样 + 错误 100%）。设 1 全采，0 仅采样错误 / debug 头 */
-  sampleRate: number;
-}
+// traceDebug 现在就是个 on/off 开关，无 RuntimeTraceDebugConfig 类型。
+// 启用后行为：100% 错误 + 100% `x-debug-trace: 1` 头 + 100% 普通请求。
+//   - 单 app 单实例 < 100 QPS：100% 一小时 ≈ 360MB Redis，可接受
+//   - 真要分级采样（高流量场景）再加 sampleRate 字段，YAGNI
+// app 名读 runtime.telemetry.app；其它都是 engine 常量（TTL 1h、recent 200、prefix 'isr:trace:'）。
 
 /**
  * 限流配置 ——
@@ -235,21 +226,23 @@ export interface RuntimeServicesConfig {
   telemetry: string | undefined;
 }
 
+/**
+ * 浏览器侧 telemetry endpoint 公共配置 ——
+ *
+ * 业务真正需要决定的只有两件事：
+ *   - endpoint：往哪发（每个 app 自己的 admin / collector 地址）
+ *   - sampleRate：采多少（成本 vs 可见度）
+ *
+ * 砍掉的 batchSize / flushIntervalMs / maxQueueSize / retryBaseDelayMs / retryMaxDelayMs：
+ * 不是业务决策，是 SDK 内部参数。engine 在 client serializer 里给业界默认值
+ * （batch=20/10、flush=3s、queue=500/200、retry=1s..30s 指数退避），跟 Sentry /
+ * Datadog SDK 同档；要调整这些非业务侧关心，应该是 SDK 层面而不是 ssr.config.ts。
+ */
 export interface RuntimeTelemetryEndpointOptions {
   /** 远端上报地址；相对路径会拼到 services.telemetry/api 上 */
   endpoint: string | undefined;
-  /** 采样率，0..1；默认 1 */
+  /** 采样率，0..1；1 = 全采 */
   sampleRate: number;
-  /** 批量上报条数；analytics 默认 20，error-reporting 默认 10 */
-  batchSize: number;
-  /** 定时 flush 间隔，毫秒；默认 3000 */
-  flushIntervalMs: number;
-  /** 失败后内存队列上限；analytics 默认 500，error-reporting 默认 200 */
-  maxQueueSize: number;
-  /** 失败重试初始退避，毫秒；默认 1000 */
-  retryBaseDelayMs: number;
-  /** 失败重试最大退避，毫秒；默认 30000 */
-  retryMaxDelayMs: number;
 }
 
 export interface RuntimeTelemetryEventsConfig extends RuntimeTelemetryEndpointOptions {
@@ -335,16 +328,16 @@ export interface RuntimeTelemetryConfig {
   /** 第三方平台集成，和第一方 endpoint telemetry 并列挂在 telemetry 下面 */
   integrations: RuntimeTelemetryIntegrationsConfig;
   /**
-   * 服务端请求级 trace 快照。每请求把 RequestContext + 协商出的 locale / theme /
-   * cache 命中 / 状态码 / 用时写到 Redis（key=<keyPrefix><traceId>，TTL 1h），
-   * admin dashboard 通过 traceId 拉来排障。
+   * 服务端请求级 trace 快照写入 Redis（key='isr:trace:<traceId>'，TTL 1h）。
+   * admin dashboard /operations/trace 用 traceId 直接查这条快照排障。
    *
-   * 跟 events / errors / webVitals 并列在 telemetry 下：都是 observability。
-   * 区别：events/errors/webVitals 是浏览器侧采集；traceDebug 是 Node 侧采集。
+   * 跟 events/errors/webVitals 同属 observability；区别：那三个是浏览器侧采集，
+   * traceDebug 是 Node 侧采集（locale 协商、cache 命中、render strategy 等）。
    *
-   * undefined → 关闭。要全开设 sampleRate=1.0；默认建议 0.05（错误强制 100%）。
+   * 启用：true。关闭：false。
+   * 启用后 100% 采样所有请求 + 错误 / `x-debug-trace: 1` 头永远捕获。
    */
-  traceDebug: RuntimeTraceDebugConfig | undefined;
+  traceDebug: boolean;
 }
 
 /**

@@ -11,6 +11,16 @@ import type { BrowserObservabilityOptions } from '../defaults/runtime/browserObs
 const DEFAULT_ANALYTICS_PATH = '/api/observability/analytics';
 const DEFAULT_ERRORS_PATH = '/api/observability/errors';
 
+// SDK 内部参数 —— 不是业务决策，跟 Sentry/Datadog SDK 同档默认值。
+// 业务侧不需要在 ssr.config.ts 写这些；engine 在序列化客户端配置时统一注入。
+const ANALYTICS_BATCH_SIZE = 20;
+const ERRORS_BATCH_SIZE = 10;
+const FLUSH_INTERVAL_MS = 3_000;
+const ANALYTICS_MAX_QUEUE = 500;
+const ERRORS_MAX_QUEUE = 200;
+const RETRY_BASE_DELAY_MS = 1_000;
+const RETRY_MAX_DELAY_MS = 30_000;
+
 export interface ResolveClientObservabilityOptionsInput {
   runtime?: RuntimeConfig;
   root?: string;
@@ -51,15 +61,15 @@ function resolveAnalyticsConfig(
   serviceOrigin: string
 ): BrowserObservabilityOptions['analytics'] {
   if (config.events === false) return false;
-  const events = config.events ?? {};
+  const events = config.events;
   return {
     endpoint: resolveEndpoint(events, serviceOrigin, DEFAULT_ANALYTICS_PATH),
     sampleRate: events.sampleRate,
-    batchSize: events.batchSize,
-    flushIntervalMs: events.flushIntervalMs,
-    maxQueueSize: events.maxQueueSize,
-    retryBaseDelayMs: events.retryBaseDelayMs,
-    retryMaxDelayMs: events.retryMaxDelayMs,
+    batchSize: ANALYTICS_BATCH_SIZE,
+    flushIntervalMs: FLUSH_INTERVAL_MS,
+    maxQueueSize: ANALYTICS_MAX_QUEUE,
+    retryBaseDelayMs: RETRY_BASE_DELAY_MS,
+    retryMaxDelayMs: RETRY_MAX_DELAY_MS,
     webVitals: config.webVitals === false ? false : (config.webVitals?.enabled ?? true),
     trackInitialPage: events.trackInitialPage,
   };
@@ -70,16 +80,16 @@ function resolveErrorReportingConfig(
   serviceOrigin: string
 ): BrowserObservabilityOptions['errorReporting'] {
   if (config.errors === false) return false;
-  const errors = config.errors ?? {};
+  const errors = config.errors;
   return {
     endpoint: resolveEndpoint(errors, serviceOrigin, DEFAULT_ERRORS_PATH),
     sampleRate: errors.sampleRate,
-    batchSize: errors.batchSize,
-    flushIntervalMs: errors.flushIntervalMs,
-    maxQueueSize: errors.maxQueueSize,
-    retryBaseDelayMs: errors.retryBaseDelayMs,
-    retryMaxDelayMs: errors.retryMaxDelayMs,
-    captureResourceErrors: errors.captureResourceErrors ?? true,
+    batchSize: ERRORS_BATCH_SIZE,
+    flushIntervalMs: FLUSH_INTERVAL_MS,
+    maxQueueSize: ERRORS_MAX_QUEUE,
+    retryBaseDelayMs: RETRY_BASE_DELAY_MS,
+    retryMaxDelayMs: RETRY_MAX_DELAY_MS,
+    captureResourceErrors: errors.captureResourceErrors,
   };
 }
 

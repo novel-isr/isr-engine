@@ -55,27 +55,17 @@ describe('defineConfig helpers', () => {
           events: {
             endpoint: '/events',
             sampleRate: 1,
-            batchSize: 20,
-            flushIntervalMs: 3000,
-            maxQueueSize: 500,
-            retryBaseDelayMs: 1000,
-            retryMaxDelayMs: 30000,
             trackInitialPage: true,
           },
           errors: {
             endpoint: '/errors',
             sampleRate: 1,
-            batchSize: 10,
-            flushIntervalMs: 3000,
-            maxQueueSize: 200,
-            retryBaseDelayMs: 1000,
-            retryMaxDelayMs: 30000,
             captureResourceErrors: true,
           },
           webVitals: false,
           exporters: [],
           integrations: { sentry: undefined },
-          traceDebug: undefined,
+          traceDebug: false,
         },
       },
     } as const;
@@ -115,7 +105,7 @@ describe('defineConfig helpers', () => {
             release: undefined,
           },
         },
-        traceDebug: undefined,
+        traceDebug: false,
       },
     });
 
