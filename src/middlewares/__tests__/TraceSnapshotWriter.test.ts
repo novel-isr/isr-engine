@@ -1,8 +1,10 @@
 /**
- * TraceSnapshotWriter —— 100% 全采写入行为
+ * TraceSnapshotWriter —— sampleRate 采样行为
  *
  * 关键不变量：
- *   - 任何请求都写入（成功 / 错误一视同仁，100% 全采）
+ *   - 错误请求（status >= 400）始终写入，不受 sampleRate 影响
+ *   - `x-debug-trace: 1` 头始终写入，不受 sampleRate 影响（强制采样，便于排障）
+ *   - 普通请求按 sampleRate 概率写入；sampleRate=0 全不写，sampleRate=1 全写
  *   - 写入：isr:trace:<traceId> JSON + LPUSH 到 isr:trace:recent
  *   - 读 RequestContext.userId / sessionUser；referer / acceptLanguage 直读 req.headers
  *   - 没有 RequestContext.traceId → 不写入（business middleware 没初始化 ctx 时跳过）
@@ -31,10 +33,11 @@ afterEach(async () => {
   vi.restoreAllMocks();
 });
 
-async function buildApp(opts: { status?: number; setCtx?: boolean } = {}) {
+async function buildApp(opts: { status?: number; setCtx?: boolean; sampleRate?: number } = {}) {
   const writer = await createTraceSnapshotWriter({
     redisUrl: 'redis://localhost:6379',
     appName: 'test-app',
+    sampleRate: opts.sampleRate ?? 1,
   });
   if (!writer) throw new Error('writer null');
 
@@ -145,6 +148,46 @@ describe('TraceSnapshotWriter', () => {
     const direct = new IoRedisMock();
     const raw = await direct.get('isr:trace:trace-test-id');
     expect(raw).toBeNull();
+
+    await direct.quit();
+    await writer.close();
+  });
+
+  it('sampleRate=0 + 普通请求 → 跳过写入', async () => {
+    const { app, writer } = await buildApp({ sampleRate: 0 });
+    await call(app);
+    await wait(50);
+
+    const direct = new IoRedisMock();
+    const raw = await direct.get('isr:trace:trace-test-id');
+    expect(raw).toBeNull();
+
+    await direct.quit();
+    await writer.close();
+  });
+
+  it('sampleRate=0 + 错误请求 → 仍写入（错误证据不能丢）', async () => {
+    const { app, writer } = await buildApp({ sampleRate: 0, status: 500 });
+    await call(app);
+    await wait(50);
+
+    const direct = new IoRedisMock();
+    const raw = await direct.get('isr:trace:trace-test-id');
+    expect(raw).toBeTruthy();
+    expect(JSON.parse(raw as string).status).toBe(500);
+
+    await direct.quit();
+    await writer.close();
+  });
+
+  it('sampleRate=0 + x-debug-trace: 1 头 → 强制写入（按需 single-trace）', async () => {
+    const { app, writer } = await buildApp({ sampleRate: 0 });
+    await call(app, { 'x-debug-trace': '1' });
+    await wait(50);
+
+    const direct = new IoRedisMock();
+    const raw = await direct.get('isr:trace:trace-test-id');
+    expect(raw).toBeTruthy();
 
     await direct.quit();
     await writer.close();

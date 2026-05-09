@@ -195,17 +195,21 @@ async function initServerContext(config?: ISRConfig): Promise<ServerContext> {
     }
   }
 
-  // Trace 快照写入 —— 同 cli/start.ts，100% 全采。
+  // Trace 快照写入 —— sampleRate 控制普通请求采样比例；错误 + 强制头永远 100% 采。
   const telemetry = config?.runtime?.telemetry !== false ? config?.runtime?.telemetry : undefined;
-  if (telemetry?.traceDebug === true && config?.runtime?.redis?.url && telemetry.app) {
+  const traceDebug = telemetry?.traceDebug;
+  if (traceDebug && config?.runtime?.redis?.url && telemetry?.app) {
     const { createTraceSnapshotWriter } = await import('@/middlewares/TraceSnapshotWriter');
     const writer = await createTraceSnapshotWriter({
       redisUrl: config.runtime.redis.url,
       appName: telemetry.app,
+      sampleRate: traceDebug.sampleRate,
     });
     if (writer) {
       serverContext.requestHandler.use(writer.middleware);
-      logger.info(`🔍 trace 快照已启用 (app='${telemetry.app}')`);
+      logger.info(
+        `🔍 trace 快照已启用 (app='${telemetry.app}', sampleRate=${traceDebug.sampleRate})`
+      );
     }
   }
 

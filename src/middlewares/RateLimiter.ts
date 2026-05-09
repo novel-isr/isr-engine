@@ -67,12 +67,15 @@ export interface RateLimitOptions {
    */
   store?: RateLimitStore;
   /**
-   * 是否信任上游代理头（默认 false）。
-   * true → 按 CF-Connecting-IP > X-Real-IP > X-Forwarded-For(首个) > req.ip 的顺序取真实 IP。
-   * 仅当部署拓扑保证所有请求过可信代理（Nginx/CDN/LB）时启用，否则客户端可伪造头绕过限流。
-   * Express 同时应设 `app.set('trust proxy', <hops>)`。
+   * 信任上游代理头（默认 false）。
+   *   - false：直连公网，只用 req.ip
+   *   - true：盲信代理头（不推荐生产）
+   *   - 数字 N：信任最右 N 跳代理（推荐，hop count 跟部署拓扑对齐）
+   *
+   * 业务侧在 ssr.config.ts 配 `runtime.rateLimit.trustProxy`；
+   * cli/start.ts 把数值透传给 Express `app.set('trust proxy', N)`。
    */
-  trustProxy?: boolean;
+  trustProxy?: boolean | number;
 }
 
 // engine 内置（非业务决策，无需暴露给 ssr.config.ts）：
@@ -383,7 +386,8 @@ export interface RateLimiterHandle {
 }
 
 export function createRateLimiter(options: RateLimitOptions = {}): RateLimiterHandle {
-  const trustProxy = options.trustProxy === true;
+  // 透传给 keyGenerator —— number > 0 跟 boolean true 走同一条信任路径
+  const trustProxy = options.trustProxy ?? false;
   const {
     skip,
     statusCode = 429,

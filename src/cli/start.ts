@@ -166,6 +166,12 @@ export async function startProductionServer(options: StartOptions): Promise<void
 
   const app: Express = express();
   app.disable('x-powered-by');
+  // Express trust proxy —— 跟 runtime.rateLimit.trustProxy 同源真值。
+  // false / 0 不信任；true 盲信；数字 N 信任最右 N 跳代理（推荐，按部署链路 hop count 配）。
+  // 影响 req.ip 解析跟 req.protocol（X-Forwarded-Proto），整个 Express 都跟着走。
+  if (runtime?.rateLimit) {
+    app.set('trust proxy', runtime.rateLimit.trustProxy);
+  }
   app.use(express.json({ limit: '1mb' })); // 防 JSON 炸弹
   const opsConfig = resolveOpsConfig(config, 'production');
   for (const warning of opsConfig.warnings) {
@@ -272,17 +278,22 @@ export async function startProductionServer(options: StartOptions): Promise<void
   }
 
   // Trace 快照写入 —— 给 admin dashboard /operations/trace 提供请求级元数据。
-  // 100% 全采（含错误和 x-debug-trace 头）。需要 REDIS_URL + telemetry.app。
+  // sampleRate 控制普通请求采样；错误 + `x-debug-trace: 1` 头始终 100% 采。
+  // 需要 REDIS_URL + telemetry.app。
   const telemetry = runtime?.telemetry !== false ? runtime?.telemetry : undefined;
-  if (telemetry?.traceDebug === true && runtime?.redis?.url && telemetry.app) {
+  const traceDebug = telemetry?.traceDebug;
+  if (traceDebug && runtime?.redis?.url && telemetry?.app) {
     const { createTraceSnapshotWriter } = await import('@/middlewares/TraceSnapshotWriter');
     const writer = await createTraceSnapshotWriter({
       redisUrl: runtime.redis.url,
       appName: telemetry.app,
+      sampleRate: traceDebug.sampleRate,
     });
     if (writer) {
       app.use(writer.middleware);
-      logger.info(`🔍 trace 快照已启用 (app='${telemetry.app}')`);
+      logger.info(
+        `🔍 trace 快照已启用 (app='${telemetry.app}', sampleRate=${traceDebug.sampleRate})`
+      );
     }
   }
 

@@ -8,9 +8,10 @@
  *
  * 跟 Sentry / Datadog 区别：
  *   - 只存"业务侧关心的请求级元数据"，不存 stack trace / span tree
- *   - 一条 JSON ≈ 1KB，1h TTL，100 QPS × 1h × 1KB ≈ 360MB Redis 可接受
+ *   - 一条 JSON ≈ 1KB，TTL 1h
  *
- * 采样：100% 全采（不再分级；novel-rating 量级足以支撑，未来高流量再加）。
+ * 采样：sampleRate（业务配置）控制普通请求；错误 + `x-debug-trace: 1` 头
+ * 始终 100% 采，不受 sampleRate 影响——采样是为了控容量，不是为了丢错误证据。
  *
  * 索引：
  *   - 单条快照：isr:trace:<traceId> = JSON, TTL 1h
@@ -26,6 +27,8 @@ export interface TraceSnapshotWriterOptions {
   redisUrl: string;
   /** 应用名（消费方用 runtime.telemetry.app） */
   appName: string;
+  /** 普通请求采样率，0~1。错误和 `x-debug-trace: 1` 头不受此影响（始终 100%）。 */
+  sampleRate: number;
 }
 
 /**
@@ -33,13 +36,13 @@ export interface TraceSnapshotWriterOptions {
  *   - TTL 1h：排障辅助 + Redis 内存控制
  *   - 最近索引 200 条：dashboard 翻页够用
  *   - key prefix 'isr:trace:'：engine namespace
- *
- * 采样：100% 全采（错误 / debug 头一直走这个路径，不再分级）。要分层采样
- * 是高流量场景的需求，YAGNI；novel-rating 量级 1h × 1KB × 100 QPS ≈ 360MB Redis 可接受。
+ *   - 强制采样头 `x-debug-trace: 1`：跟业界 (Datadog `x-datadog-sampling-priority`,
+ *     OTel `sampled` flag) 对齐，便于排障时按需开 single-trace
  */
 const TRACE_TTL_MS = 60 * 60 * 1000;
 const TRACE_RECENT_MAX = 200;
 const TRACE_KEY_PREFIX = 'isr:trace:';
+const FORCE_TRACE_HEADER = 'x-debug-trace';
 
 /**
  * 单条快照结构 —— 只放"排障真正用得上的字段"。
@@ -134,13 +137,21 @@ export async function createTraceSnapshotWriter(
   });
 
   const indexKey = `${TRACE_KEY_PREFIX}recent`;
+  // clamp 到 [0, 1]：上层 normalize 已校验，这里防御性兜底，避免 Math.random 比较时
+  // sampleRate=NaN/负数/无穷大 触发非预期行为。
+  const sampleRate = Math.min(1, Math.max(0, options.sampleRate));
 
   const middleware = (req: Request, res: Response, next: NextFunction): void => {
     const start = Date.now();
+    const forced = req.headers[FORCE_TRACE_HEADER] === '1';
 
     res.on('finish', () => {
       const ctx = getRequestContext();
       if (!ctx?.traceId) return;
+
+      // 错误 + 强制头：100% 采。其它走 sampleRate 概率采样。
+      const isError = res.statusCode >= 400;
+      if (!forced && !isError && Math.random() >= sampleRate) return;
 
       const snapshot: TraceSnapshot = {
         traceId: ctx.traceId,

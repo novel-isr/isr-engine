@@ -1,17 +1,8 @@
 /**
  * Rate-limit key 生成 —— engine 内部模块，不对外导出。
  *
- * 历史包袱：之前给 ssr.config.ts 暴露过 './rate-limit-key' sub-entry，让业务侧 import
- * `createUserAwareKeyGenerator` 这个工厂函数 —— 三个问题：
- *   1. 暴露 engine 内部细节，破坏封装
- *   2. trustProxy 在工厂参数 + rateLimit 主配置各写一遍，重复
- *   3. ssr.config.ts 含 function 引用，序列化 / 缓存 hash / snapshot 全部出问题
- *
- * 现在：业务侧只声明 `userBucket: { cookie, field }` 数据，engine 内部装配 keyGenerator。
- *
- * 多租户 / 多 segment 维度（之前的 useTenantPrefix / useSegmentPrefix）已删除：
- * novel-rating 单租户场景永远用不到，YAGNI。SaaS 真有需要时再加，加之前 buildKeyGenerator
- * 仍可扩展（这个内部函数本来就是为未来增维度而设计的简洁结构）。
+ * 业务侧在 ssr.config.ts 声明数据（`userBucket: { cookie, field }` + `trustProxy`），
+ * engine 内部装配 keyGenerator；ssr.config.ts 不含 function 引用，配置可序列化 / 哈希。
  */
 import type { Request } from 'express';
 import { parseCookieHeader } from '../utils/cookie';
@@ -19,16 +10,20 @@ import { parseCookieHeader } from '../utils/cookie';
 /**
  * 从请求中提取"真实客户端 IP"。
  *
- * 优先级（仅在 trustProxy=true 时应用）：
+ * 信任语义（任意 truthy 值都信任代理头；hop count > 0 跟 boolean true 走同一条路径）：
  *   1) CF-Connecting-IP —— Cloudflare 的权威头，不可伪造
  *   2) X-Real-IP        —— Nginx realip 模块 / 内网 LB 常用
  *   3) X-Forwarded-For  —— RFC 7239 标准，取最左一跳（原始客户端）
- *   4) req.ip           —— Express 解析后的 socket IP（需 trust proxy 配置）
+ *   4) req.ip           —— Express 按 trust proxy 跳数解析后的 IP
  *
- * trustProxy=false 时只用 req.ip，保证 Internet 直连场景不会被伪造头欺骗。
+ * 不信任（false / 0）时只用 req.ip，保证直连公网场景不会被伪造头欺骗。
+ *
+ * trustProxy 是数字时由 cli/start.ts 把跳数透传给 `app.set('trust proxy', N)`，
+ * Express 内部 req.ip 解析自动跟着走（这里只关心"信不信"二元）。
  */
-export function extractClientIp(req: Request, trustProxy: boolean): string {
-  if (trustProxy) {
+export function extractClientIp(req: Request, trustProxy: boolean | number): string {
+  const trust = trustProxy === true || (typeof trustProxy === 'number' && trustProxy > 0);
+  if (trust) {
     const cf = req.headers['cf-connecting-ip'];
     if (cf) return Array.isArray(cf) ? cf[0] : String(cf).trim();
     const real = req.headers['x-real-ip'];
@@ -56,7 +51,7 @@ export interface UserBucketConfig {
 /** 内部 keyGenerator 装配选项 */
 export interface BuildKeyGeneratorOptions {
   /** 跟 rate-limit middleware 主配置共用的 trustProxy；不再单独传一遍 */
-  trustProxy: boolean;
+  trustProxy: boolean | number;
   /** 已登录用户维度配置；undefined → 仅按 IP 分桶（anonymous-only 站点） */
   userBucket: UserBucketConfig | undefined;
 }

@@ -62,27 +62,33 @@ export interface RuntimeExperimentConfig {
   weights: readonly number[] | undefined;
 }
 
-// traceDebug 现在就是个 on/off 开关，无 RuntimeTraceDebugConfig 类型。
-// 启用后行为：100% 错误 + 100% `x-debug-trace: 1` 头 + 100% 普通请求。
-//   - 单 app 单实例 < 100 QPS：100% 一小时 ≈ 360MB Redis，可接受
-//   - 真要分级采样（高流量场景）再加 sampleRate 字段，YAGNI
-// app 名读 runtime.telemetry.app；其它都是 engine 常量（TTL 1h、recent 200、prefix 'isr:trace:'）。
+/**
+ * 服务端请求级 trace 快照采样配置。
+ *
+ * sampleRate：普通请求按概率采样，行业标准 10%（Datadog APM / OTel collector
+ * 默认就是 0.1）。错误请求和带 `x-debug-trace: 1` 头的请求永远 100% 采，不受
+ * sampleRate 影响——采样是为了控制 Redis 容量，不是为了丢错误证据。
+ *
+ * 容量预估（key='isr:trace:<traceId>'，TTL = engine 常量 1h）：
+ *   - 1 万 QPS × 0.1 采样 × 3.6 KB/条 ≈ 13 GB/h（够用）
+ *   - 真高流量（10 万 QPS）调到 0.01 即可
+ *   - 单实例 < 100 QPS 调到 1.0 全采也只有 360 MB
+ *
+ * 0 = 关闭普通请求采样（错误 + 强制头仍 100% 采）；1 = 全采。
+ */
+export interface RuntimeTraceDebugConfig {
+  sampleRate: number;
+}
 
 /**
- * 限流配置 ——
- *
- * 全部字段都 required（ssr.config.ts 不允许隐藏默认值；不需要的字段写 undefined / 空数组）。
- *
- * 已经从公开 API 砍掉的字段（engine 内部仍按业界标准做，没有业务决策意义）：
- *   - sendHeaders   —— 始终发 RateLimit-* 标准头（RFC IETF draft）
- *   - lruMax        —— memory backend 默认 10_000，无业务意义
- *   - useTenantPrefix / useSegmentPrefix —— novel-rating 单租户场景永远用不到（YAGNI）
- *
- * appName + windowMs + max + userBucket + trustProxy 是真正的业务决策：
- *   - appName     hot-reload 配置桶 ID
+ * 限流配置 —— 业务决策字段：
+ *   - appName     hot-reload 配置桶 ID（admin 控制面下发用）
  *   - windowMs+max 限流强度
- *   - userBucket  哪个 cookie 装着 userId（每个 app 的 auth 后端不一样，无法 engine 内置）
- *   - trustProxy  部署拓扑（默认 false 防 X-Forwarded-For 伪造；只有 CDN/LB 后开 true）
+ *   - userBucket  哪个 cookie 装着 userId（每个 app 的 auth 后端不一样）
+ *   - trustProxy  部署拓扑（false / hop-count；详见字段注释）
+ *
+ * 全部字段 required，不暴露隐藏默认值；不需要的字段写 undefined / 空数组。
+ * RateLimit-* 标准头、memory backend LRU 上限是 engine 内部常量。
  */
 export interface RuntimeRateLimitConfig {
   /**
@@ -107,17 +113,21 @@ export interface RuntimeRateLimitConfig {
    */
   userBucket: { cookie: string; field: string } | undefined;
   /**
-   * 是否信任上游代理头提取真实客户端 IP。
+   * 信任上游代理头提取真实客户端 IP。语义跟 Express `app.set('trust proxy', value)` 对齐。
    *
-   * **默认 false 是安全选择**，不能默认 true：
-   *   - 直接暴露在公网（dev / 自建小规模 prod）：开 true 会被客户端伪造
-   *     `X-Forwarded-For: 1.2.3.4` 绕过 IP 限流，单 IP 攻击者就能耗光所有桶。
-   *   - 部署在可信 CDN/LB/Nginx 后面：开 true 才能拿到真实客户端 IP，
-   *     否则所有请求都从 LB 内网 IP 进来，等于把整站当一个桶。
+   *   - false：不信任任何代理头，只用 socket peer IP（直连公网场景）
+   *   - true：盲信所有 X-Forwarded-For —— **不推荐生产**，客户端可伪造 XFF 绕限流
+   *   - 数字 N：信任最右 N 跳代理（**推荐**），按部署链路 hop count 配
    *
-   * 跟"app 在哪部署"强相关，必须显式声明，无法 engine 默认。
+   * 部署对照：
+   *   - 直连公网（dev / 小规模自建）：false
+   *   - 1 层 LB / Ingress（K8s NodePort + ALB）：1
+   *   - CDN + Ingress 双层（CloudFront / Cloudflare → ALB → pod）：2
+   *   - 边缘 + 区域 + LB 三层：3
+   *
+   * 必须前提：CDN/Ingress 那一层要剥掉客户端伪造的 X-Forwarded-For（业界标准做法）。
    */
-  trustProxy: boolean;
+  trustProxy: boolean | number;
   /**
    * 限流状态存储。'auto'：检测到 runtime.redis.url 配置 → redis backend；
    * 否则进程内 memory。'memory' / 'redis' 是强制覆盖（local burn-in / fail-fast）。
@@ -328,16 +338,16 @@ export interface RuntimeTelemetryConfig {
   /** 第三方平台集成，和第一方 endpoint telemetry 并列挂在 telemetry 下面 */
   integrations: RuntimeTelemetryIntegrationsConfig;
   /**
-   * 服务端请求级 trace 快照写入 Redis（key='isr:trace:<traceId>'，TTL 1h）。
+   * 服务端请求级 trace 快照写入 Redis（key='isr:trace:<traceId>'，TTL = engine 常量 1h）。
    * admin dashboard /operations/trace 用 traceId 直接查这条快照排障。
    *
    * 跟 events/errors/webVitals 同属 observability；区别：那三个是浏览器侧采集，
    * traceDebug 是 Node 侧采集（locale 协商、cache 命中、render strategy 等）。
    *
-   * 启用：true。关闭：false。
-   * 启用后 100% 采样所有请求 + 错误 / `x-debug-trace: 1` 头永远捕获。
+   * 关闭：false。启用：{ sampleRate: 0~1 }。
+   * 错误请求 + `x-debug-trace: 1` 头始终 100% 采，sampleRate 只控制普通请求。
    */
-  traceDebug: boolean;
+  traceDebug: false | RuntimeTraceDebugConfig;
 }
 
 /**
