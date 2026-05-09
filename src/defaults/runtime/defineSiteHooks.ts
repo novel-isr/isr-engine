@@ -670,10 +670,14 @@ function createSiteHooks(config: SiteHooksConfig, runtime: SiteRuntimeConfig): S
     },
     async loadSeoMeta(req) {
       const path = new URL(req.url).pathname;
+      // 把 locale 也喂进 params —— 让 SEO endpoint 模板 `?path={pathname}&locale={locale}`
+      // 能拿到当前请求的 locale，否则 admin 总返回 defaultLocale 的 SEO（前台 /en-US/
+      // 路由依然显示中文 SEO 就是这个根因）
+      const locale = detectLocale(req);
       for (const { re, paramNames, resolver } of seoRoutes) {
         const m = path.match(re);
         if (m) {
-          const params: Record<string, string> = { pathname: path };
+          const params: Record<string, string> = { pathname: path, locale };
           paramNames.forEach((n, i) => (params[n] = m[i + 1] ?? ''));
           return await resolver(params);
         }
