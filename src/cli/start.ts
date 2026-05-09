@@ -250,11 +250,13 @@ export async function startProductionServer(options: StartOptions): Promise<void
         skipPaths: runtime.rateLimit.skipPaths,
         skipPathPrefixes: runtime.rateLimit.skipPathPrefixes,
         skipExtensions: runtime.rateLimit.skipExtensions,
+        keyGenerator: runtime.rateLimit.keyGenerator,
         skip: req => req.path === '/health' || req.path === '/metrics',
       })
     );
+    const keyMode = runtime.rateLimit.keyGenerator ? 'user-aware' : 'IP';
     logger.info(
-      `🚦 限流已启用：${runtime.rateLimit.max} req / ${runtime.rateLimit.windowMs / 1000}s per IP (store=${resolvedRateLimitStore.backend})`
+      `🚦 限流已启用：${runtime.rateLimit.max} req / ${runtime.rateLimit.windowMs / 1000}s per ${keyMode} (store=${resolvedRateLimitStore.backend})`
     );
   }
 

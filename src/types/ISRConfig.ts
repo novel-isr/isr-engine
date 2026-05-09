@@ -99,6 +99,12 @@ export interface RuntimeRateLimitConfig {
   skipPathPrefixes: readonly string[];
   /** 额外静态资源扩展名，例如 ['.wasm']；默认已覆盖 js/css/image/font/map 等常见资源 */
   skipExtensions: readonly string[];
+  /**
+   * 自定义 key 生成 —— 默认按 IP（extractClientIp(req, trustProxy)）。
+   * 业务建议用 `createUserAwareKeyGenerator()` 出来的函数：已登录走 user 桶，
+   * 未登录走 IP 桶，防 NAT / mobile carrier 共享 IP 被某用户挤爆。
+   */
+  keyGenerator?: (req: import('express').Request) => string;
 }
 
 export interface RuntimeI18nConfig {

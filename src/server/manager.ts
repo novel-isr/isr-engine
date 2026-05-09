@@ -177,11 +177,13 @@ async function initServerContext(config?: ISRConfig): Promise<ServerContext> {
         skipPaths: config.runtime.rateLimit.skipPaths,
         skipPathPrefixes: config.runtime.rateLimit.skipPathPrefixes,
         skipExtensions: config.runtime.rateLimit.skipExtensions,
+        keyGenerator: config.runtime.rateLimit.keyGenerator,
         skip: req => req.path === '/health' || req.path === '/metrics',
       })
     );
+    const keyMode = config.runtime.rateLimit.keyGenerator ? 'user-aware' : 'IP';
     logger.info(
-      `🚦 限流已启用：${config.runtime.rateLimit.max} req / ${config.runtime.rateLimit.windowMs / 1000}s per IP (store=${resolvedRateLimitStore.backend})`
+      `🚦 限流已启用：${config.runtime.rateLimit.max} req / ${config.runtime.rateLimit.windowMs / 1000}s per ${keyMode} (store=${resolvedRateLimitStore.backend})`
     );
   }
 
