@@ -129,8 +129,7 @@ async function initServerContext(config?: ISRConfig): Promise<ServerContext> {
       typeof req.headers['accept-language'] === 'string'
         ? req.headers['accept-language']
         : undefined;
-    const referer =
-      typeof req.headers['referer'] === 'string' ? req.headers['referer'] : undefined;
+    const referer = typeof req.headers['referer'] === 'string' ? req.headers['referer'] : undefined;
     const rawCookie = req.headers['cookie'];
     const cookieHeader = Array.isArray(rawCookie)
       ? rawCookie.join('; ')

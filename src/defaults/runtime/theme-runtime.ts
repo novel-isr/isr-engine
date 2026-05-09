@@ -40,10 +40,7 @@ export interface ResolveThemeInput {
  * 决议主题：cookie 命中 values 优先；否则看 Sec-CH-Prefers-Color-Scheme client hint；
  * 都没命中回 fallback。返回字符串，而不是固定 'light' | 'dark'，让消费方自定义 values。
  */
-export function resolveTheme(
-  input: ResolveThemeInput,
-  cfg: Required<RuntimeThemeConfig>
-): string {
+export function resolveTheme(input: ResolveThemeInput, cfg: Required<RuntimeThemeConfig>): string {
   const cookieVal = input.cookies?.[cfg.cookieName];
   if (cookieVal && cfg.values.includes(cookieVal)) return cookieVal;
 
@@ -71,10 +68,7 @@ export function injectHtmlTheme(
   const encoder = new TextEncoder();
   const decoder = new TextDecoder('utf-8', { fatal: false });
   const attrName = cfg.attribute;
-  const attrPresentRe = new RegExp(
-    `\\s${escapeRegex(attrName)}\\s*=`,
-    'i'
-  );
+  const attrPresentRe = new RegExp(`\\s${escapeRegex(attrName)}\\s*=`, 'i');
 
   let buffer = '';
   let injected = false;

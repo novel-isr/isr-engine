@@ -192,8 +192,7 @@ export async function startProductionServer(options: StartOptions): Promise<void
       typeof req.headers['accept-language'] === 'string'
         ? req.headers['accept-language']
         : undefined;
-    const referer =
-      typeof req.headers['referer'] === 'string' ? req.headers['referer'] : undefined;
+    const referer = typeof req.headers['referer'] === 'string' ? req.headers['referer'] : undefined;
     const rawCookie = req.headers['cookie'];
     const cookieHeader = Array.isArray(rawCookie)
       ? rawCookie.join('; ')
@@ -221,9 +220,7 @@ export async function startProductionServer(options: StartOptions): Promise<void
   // 必须早于 ISR 缓存 / 静态托管 —— 否则 /books 命中缓存的 default-locale 渲染，
   // 永远拿不到 redirect 机会。
   if (runtime?.i18n?.prefixDefault) {
-    const { createLocaleRedirectMiddleware } = await import(
-      '@/middlewares/LocaleRedirect'
-    );
+    const { createLocaleRedirectMiddleware } = await import('@/middlewares/LocaleRedirect');
     const { resolveI18nConfig } = await import('@/runtime/i18n');
     const middleware = createLocaleRedirectMiddleware({
       i18n: resolveI18nConfig(runtime.i18n),

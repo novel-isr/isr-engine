@@ -34,8 +34,8 @@ const FRAMEWORK_SKIP_PREFIXES = [
   // ─── Vite dev server internal paths（绝对不能加 locale 前缀）─────────
   // vite 在 dev 时通过这些 URL 服务 module graph / HMR client / virtual modules
   // / 用户源文件 / pre-bundled deps；任何重写都会 404 或拿不到 module。
-  '/@',           // /@id/、/@vite/client、/@vite/env、/@fs/、/@react-refresh
-  '/src/',        // dev 期 vite 直接服务用户源文件
+  '/@', // /@id/、/@vite/client、/@vite/env、/@fs/、/@react-refresh
+  '/src/', // dev 期 vite 直接服务用户源文件
   '/node_modules/',
 ] as const;
 
@@ -83,15 +83,12 @@ export function createLocaleRedirectMiddleware(
     }
 
     // 决议目标 locale：cookie 'locale' → Accept-Language → defaultLocale
-    const cookieHeader =
-      typeof req.headers['cookie'] === 'string' ? req.headers['cookie'] : '';
+    const cookieHeader = typeof req.headers['cookie'] === 'string' ? req.headers['cookie'] : '';
     const cookieLocale = readCookieLocale(cookieHeader);
     const target =
       (cookieLocale && localeSet.has(cookieLocale) ? cookieLocale : null) ||
       negotiateLocale(
-        typeof req.headers['accept-language'] === 'string'
-          ? req.headers['accept-language']
-          : null,
+        typeof req.headers['accept-language'] === 'string' ? req.headers['accept-language'] : null,
         i18n
       );
 

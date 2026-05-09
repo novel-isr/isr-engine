@@ -36,11 +36,7 @@ import '@app/_routes';
 import { parseRenderRequest } from './request';
 import { type IntlPayload, type PageSeoMeta, injectSeoMeta, mergePageSeoMeta } from './seo-runtime';
 import { runWithI18n } from './i18n-server';
-import {
-  injectHtmlTheme,
-  resolveTheme,
-  resolveThemeConfig,
-} from './theme-runtime';
+import { injectHtmlTheme, resolveTheme, resolveThemeConfig } from './theme-runtime';
 import type { RuntimeThemeConfig } from '../../types/ISRConfig';
 import { resolvePageSeoMeta } from '../../runtime/routes';
 import { getRequestContext } from '../../context/RequestContext';
@@ -343,9 +339,7 @@ async function runRscPipeline(request: Request, extras: PipelineExtras): Promise
     const theme = resolveTheme(
       {
         cookies: ctx?.cookies,
-        headers: headerHint
-          ? { 'sec-ch-prefers-color-scheme': headerHint }
-          : undefined,
+        headers: headerHint ? { 'sec-ch-prefers-color-scheme': headerHint } : undefined,
       },
       cfg
     );
