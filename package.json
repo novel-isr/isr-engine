@@ -63,6 +63,11 @@
       "import": "./dist/config/defineConfig.js",
       "require": "./dist/config/defineConfig.cjs"
     },
+    "./rate-limit-key": {
+      "types": "./dist/middlewares/rate-limit-key.d.ts",
+      "import": "./dist/middlewares/rate-limit-key.js",
+      "require": "./dist/middlewares/rate-limit-key.cjs"
+    },
     "./adapters/observability": {
       "import": "./dist/adapters/observability/index.js",
       "require": "./dist/adapters/observability/index.cjs",
