@@ -27,6 +27,7 @@ function runtime(overrides: Record<string, unknown> = {}): ISRConfig['runtime'] 
     site: undefined,
     redis: undefined,
     rateLimit: false,
+    traceDebug: undefined,
     experiments: {},
     i18n: undefined,
     seo: undefined,

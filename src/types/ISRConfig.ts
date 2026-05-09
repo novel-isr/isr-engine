@@ -62,6 +62,25 @@ export interface RuntimeExperimentConfig {
   weights: readonly number[] | undefined;
 }
 
+/**
+ * 每请求 trace 快照写入 Redis，admin dashboard 通过 traceId 拉来排障。
+ *
+ * 默认采样 5% + 错误强制采样 + `x-debug-trace: 1` 头强制采样，量级可控。
+ * 设为 undefined / 不写即关闭。
+ */
+export interface RuntimeTraceDebugConfig {
+  /** 应用名 —— 多 app 共享 Redis 时区分，跟 rateLimit.appName 用同一个值即可 */
+  appName: string;
+  /** 0..1，默认 0.05；错误请求强制 1.0；x-debug-trace=1 头强制 1.0 */
+  sampleRate: number;
+  /** 单条快照 TTL（毫秒），默认 1h */
+  ttlMs: number;
+  /** 最近 traceId 索引上限（环形 LIST），默认 200 */
+  recentMax: number;
+  /** Redis key 前缀；默认 'isr:trace:' */
+  keyPrefix: string;
+}
+
 export interface RuntimeRateLimitConfig {
   /**
    * 应用标识，用于 admin-server 在 Redis 上下发 hot-reload 配置时定位本应用。
@@ -352,6 +371,12 @@ export interface RuntimeConfig {
    * 多实例生产环境仍应优先使用 CDN/WAF/API Gateway 做第一层限流。
    */
   rateLimit: false | RuntimeRateLimitConfig;
+  /**
+   * 每请求 trace 快照写入。需要 runtime.redis 已配置。
+   * 设为 undefined / 不写关闭；默认采样 5% + 错误强制 100% + x-debug-trace 头强制 100%。
+   * admin dashboard 通过 GET /api/ops/trace/<traceId> 查具体快照。
+   */
+  traceDebug: RuntimeTraceDebugConfig | undefined;
   /** A/B testing / experimentation 定义，供 getVariant() 在 Server Component 中读取 */
   experiments: Record<string, RuntimeExperimentConfig>;
   /** i18n 字典源配置；请求期加载由 engine 默认 SiteHooks 消费 */

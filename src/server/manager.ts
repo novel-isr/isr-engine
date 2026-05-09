@@ -203,6 +203,25 @@ async function initServerContext(config?: ISRConfig): Promise<ServerContext> {
     }
   }
 
+  // Trace 快照写入 —— 同 cli/start.ts；仅在 REDIS_URL 配置 + traceDebug 开启时启用
+  if (config?.runtime?.traceDebug && config.runtime.redis?.url) {
+    const { createTraceSnapshotWriter } = await import('@/middlewares/TraceSnapshotWriter');
+    const writer = await createTraceSnapshotWriter({
+      redisUrl: config.runtime.redis.url,
+      appName: config.runtime.traceDebug.appName,
+      sampleRate: config.runtime.traceDebug.sampleRate,
+      ttlMs: config.runtime.traceDebug.ttlMs,
+      recentMax: config.runtime.traceDebug.recentMax,
+      keyPrefix: config.runtime.traceDebug.keyPrefix,
+    });
+    if (writer) {
+      serverContext.requestHandler.use(writer.middleware);
+      logger.info(
+        `🔍 trace 快照已启用 (app='${config.runtime.traceDebug.appName}', sampleRate=${config.runtime.traceDebug.sampleRate})`
+      );
+    }
+  }
+
   if (config?.runtime?.experiments && Object.keys(config.runtime.experiments).length > 0) {
     serverContext.requestHandler.use(
       createABVariantMiddleware({ experiments: config.runtime.experiments })

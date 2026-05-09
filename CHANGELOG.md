@@ -6,6 +6,20 @@
 
 ## [Unreleased]
 
+### Added — Trace 快照写入（请求级排障）
+
+- **`runtime.traceDebug`**：新增字段。每请求把 RequestContext + locale / theme /
+  cache 命中 / 状态码 / 用时 / cookies key 名等元数据快照写到 Redis
+  `<keyPrefix><traceId>`，TTL 1h。admin dashboard `/operations/trace` 通过
+  traceId 拉来排障，5 分钟内还原现场。
+- **采样策略**：`status >= 500` 强制采样、请求头 `x-debug-trace: 1` 强制采样、
+  否则按 `sampleRate`（默认 0.05 = 5%）概率采样。生产 1 万 QPS × 5% × 1h
+  ≈ 1.8M 条 ≈ 2GB Redis，可忽略。
+- **环形索引**：`<keyPrefix>recent` LIST，最近 N 条 traceId（LPUSH + LTRIM N=200），
+  方便 dashboard 显示"最近请求"列表。
+- 跟 Sentry / Datadog 区别：只存"业务侧关心的请求级元数据"，不存 stack trace /
+  span tree，量级和成本完全不同。
+
 ### Added — 限流配置 hot-reload (admin → engine)
 
 - **`runtime.rateLimit.appName`**：新增字段。配置后 engine 启动时订阅 Redis 频道

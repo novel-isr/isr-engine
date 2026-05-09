@@ -31,7 +31,17 @@ export function normalizeEngineConfig(config: ISRConfig): ISRConfig {
   }
   requireOwnProperties(
     config.runtime,
-    ['site', 'services', 'redis', 'rateLimit', 'experiments', 'i18n', 'seo', 'telemetry'],
+    [
+      'site',
+      'services',
+      'redis',
+      'rateLimit',
+      'traceDebug',
+      'experiments',
+      'i18n',
+      'seo',
+      'telemetry',
+    ],
     'runtime'
   );
   if (!isRecord(config.runtime.services)) {

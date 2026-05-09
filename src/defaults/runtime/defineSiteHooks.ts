@@ -64,6 +64,7 @@ function createEmptyRuntimeConfig(): SiteRuntimeConfig {
     services: { api: undefined, telemetry: undefined },
     redis: undefined,
     rateLimit: false,
+    traceDebug: undefined,
     experiments: {},
     i18n: undefined,
     seo: undefined,
