@@ -36,6 +36,12 @@ import '@app/_routes';
 import { parseRenderRequest } from './request';
 import { type IntlPayload, type PageSeoMeta, injectSeoMeta, mergePageSeoMeta } from './seo-runtime';
 import { runWithI18n } from './i18n-server';
+import {
+  injectHtmlTheme,
+  resolveTheme,
+  resolveThemeConfig,
+} from './theme-runtime';
+import type { RuntimeThemeConfig } from '../../types/ISRConfig';
 import { resolvePageSeoMeta } from '../../runtime/routes';
 import { getRequestContext } from '../../context/RequestContext';
 
@@ -198,6 +204,7 @@ export function defineServerEntry<C extends ServerCtx = ServerCtx>(
             seoMeta,
             siteBaseUrl: hooks.siteBaseUrl,
             apiBaseUrl: hooks.apiBaseUrl,
+            theme: (hooks as { theme?: RuntimeThemeConfig }).theme,
           })
         );
 
@@ -226,6 +233,7 @@ export function defineServerEntry<C extends ServerCtx = ServerCtx>(
 }
 
 interface PipelineExtras {
+  theme?: RuntimeThemeConfig;
   intl: IntlPayload | null | undefined;
   seoMeta: PageSeoMeta | null | undefined;
   siteBaseUrl?: string;
@@ -320,10 +328,31 @@ async function runRscPipeline(request: Request, extras: PipelineExtras): Promise
 
   // 仅当用户提供 seoMeta 且非 csr-shell 兜底时注入；csr-shell 的 head 已固化
   // 把 siteBaseUrl 传给 injectSeoMeta，让相对路径 (image/canonical) 解析为绝对 URL
-  const finalStream =
+  let finalStream =
     extras.seoMeta && !ssrResult.csrShellFallback
       ? injectSeoMeta(ssrResult.stream, extras.seoMeta, extras.siteBaseUrl)
       : ssrResult.stream;
+
+  // 主题自动注入 —— ssr.config.ts runtime.theme 设了就开。读 RequestContext 里
+  // engine 入口中间件已经解好的 cookies，不重复 parse；csr-shell 兜底的 head 已固化，
+  // 同样跳过避免误改。同时回 Accept-CH 让浏览器下次带 Sec-CH-Prefers-Color-Scheme。
+  if (extras.theme && !ssrResult.csrShellFallback) {
+    const cfg = resolveThemeConfig(extras.theme);
+    const ctx = getRequestContext();
+    const headerHint = request.headers.get('sec-ch-prefers-color-scheme');
+    const theme = resolveTheme(
+      {
+        cookies: ctx?.cookies,
+        headers: headerHint
+          ? { 'sec-ch-prefers-color-scheme': headerHint }
+          : undefined,
+      },
+      cfg
+    );
+    finalStream = injectHtmlTheme(finalStream, theme, cfg);
+    responseHeaders.append('Accept-CH', 'Sec-CH-Prefers-Color-Scheme');
+    responseHeaders.append('Vary', 'Cookie, Sec-CH-Prefers-Color-Scheme');
+  }
 
   return new Response(finalStream, {
     status: ssrResult.status,

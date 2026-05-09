@@ -24,6 +24,12 @@ export interface ISRContextData {
   acceptLanguage?: string;
   /** Referer */
   referer?: string;
+  /**
+   * 解析后的 Cookie 表 —— 由 engine 入口中间件 parseCookieHeader(req.headers.cookie)
+   * 写入。Server Component 通过 `getRequestContext()?.cookies?.<name>` 读取，
+   * 让"主题 / locale / 实验位"这类需要在 SSR 首屏就决定的偏好不依赖 client mount。
+   */
+  cookies?: Record<string, string>;
   /** AB 测试开关位 */
   flags?: Record<string, boolean | string>;
   /** SEO 层字段（可由中间件注入） */

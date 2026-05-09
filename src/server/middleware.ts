@@ -65,6 +65,11 @@ export function createSecurityMiddleware(
   };
   return helmet({
     contentSecurityPolicy: { directives },
+    // dev 关掉 HSTS —— helmet 默认会发 `Strict-Transport-Security: max-age=15552000;
+    // includeSubDomains`，浏览器对 localhost 也照吃。一旦缓存上 HSTS，后续即使
+    // 用户输 http://localhost:3000 也被强制升级到 https，dev 服务器又不发 TLS
+    // → ERR_SSL_PROTOCOL_ERROR。生产留 helmet 默认（站点必须上 HTTPS）。
+    strictTransportSecurity: isDev ? false : undefined,
   });
 }
 

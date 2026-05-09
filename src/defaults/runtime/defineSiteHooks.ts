@@ -37,6 +37,7 @@ import type {
   ISRConfig,
   RuntimeI18nConfig,
   RuntimeSeoConfig,
+  RuntimeThemeConfig,
 } from '../../types';
 import { readCookie } from '../../utils/cookie';
 
@@ -65,6 +66,7 @@ function createEmptyRuntimeConfig(): SiteRuntimeConfig {
     experiments: {},
     i18n: undefined,
     seo: undefined,
+    theme: undefined,
     telemetry: false,
   };
 }
@@ -428,6 +430,11 @@ export interface ServerHooksOutput {
    * —— 让 i18n 配置只声明一次，不需要单独 i18n.config.ts
    */
   intl?: IntlConfig;
+  /**
+   * 主题配置 —— 设置后 engine 在 SSR 流里自动给 `<html>` 注入 data-theme，
+   * 业务零代码。来源是 ssr.config.ts runtime.theme（applyRuntimeToServerHooks 透传）。
+   */
+  theme?: RuntimeThemeConfig;
   beforeRequest: (
     req: Request,
     engineCtx: { traceId: string; startedAt: number }
@@ -486,6 +493,7 @@ export function applyRuntimeToServerHooks<T extends object>(
       siteBaseUrl,
       apiBaseUrl,
       intl: runtimeHooks.intl,
+      theme: runtime.theme,
       beforeRequest: runtimeHooks.beforeRequest,
       loadIntl: runtimeHooks.loadIntl,
       loadSeoMeta: runtimeHooks.loadSeoMeta,
@@ -497,6 +505,7 @@ export function applyRuntimeToServerHooks<T extends object>(
     ...hooks,
     siteBaseUrl,
     apiBaseUrl,
+    theme: runtime.theme,
   } as T;
 }
 

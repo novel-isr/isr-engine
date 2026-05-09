@@ -184,6 +184,30 @@ export interface RuntimeSeoConfig {
   dynamicResolvers: readonly DynamicSeoResolver[] | undefined;
 }
 
+/**
+ * 主题运行时配置 —— 决议 + 注入由 engine 一手包办。
+ *
+ * 决议优先级（高 → 低）：
+ *   1. cookie[cookieName] 显式命中 values 之一
+ *   2. Sec-CH-Prefers-Color-Scheme client hint（要求 `<meta http-equiv="Accept-CH" ...>` 或响应头）
+ *   3. fallback
+ *
+ * 注入策略：
+ *   - SSR 响应流里匹配 `<html ...>` 开标签，没有 attribute 就追加 `data-theme="..."`
+ *   - 业务已经手写了 `data-theme` 就**不动**（手动赋值优先）
+ *   - 同时响应头 `Accept-CH: Sec-CH-Prefers-Color-Scheme` —— 浏览器下次自动带 hint
+ */
+export interface RuntimeThemeConfig {
+  /** Cookie 名，默认 'theme' */
+  cookieName?: string;
+  /** HTML attribute 名，默认 'data-theme' —— Tailwind/UI 库通常监听 [data-theme=...] */
+  attribute?: string;
+  /** cookie / hint 都没命中时的兜底值，默认 'dark' */
+  fallback?: string;
+  /** 合法值白名单，默认 ['light', 'dark']；cookie / hint 不在白名单内回 fallback */
+  values?: readonly string[];
+}
+
 export interface RuntimeServicesConfig {
   /** 默认后端 API origin；业务数据、配置中心、mock fixture 都走这里 */
   api: string | undefined;
@@ -320,6 +344,13 @@ export interface RuntimeConfig {
   i18n: RuntimeI18nConfig | undefined;
   /** 页面 SEO 元数据源配置；站点 canonical/sitemap base URL 统一来自 runtime.site */
   seo: RuntimeSeoConfig | undefined;
+  /**
+   * 主题（深浅色）自动决议 + 注入 ——
+   * 设置为对象（即便空 `{}`）即开启；engine 会在 SSR 响应流里把 cookie / client hint
+   * 决议出的值写到 `<html>` 上。业务侧 Layout 不需要任何主题代码。
+   * 设为 `undefined` / 不写即关闭，业务自行处理。
+   */
+  theme: RuntimeThemeConfig | undefined;
   /**
    * telemetry 上报配置。engine 会把浏览器安全子集序列化到 client entry，
    * 自动接入 page_view、Web Vitals、全局错误、资源加载失败、Server Action 错误；

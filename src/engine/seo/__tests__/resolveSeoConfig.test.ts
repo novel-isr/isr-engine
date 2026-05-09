@@ -29,7 +29,7 @@ function config(extra: DeepPartial<ISRConfig> = {}): ISRConfig {
     experiments: {},
     i18n: undefined,
     seo: undefined,
-    telemetry: false,
+    theme: undefined,    telemetry: false,
     ...(extra.runtime as Partial<ISRConfig['runtime']> | undefined),
   };
 

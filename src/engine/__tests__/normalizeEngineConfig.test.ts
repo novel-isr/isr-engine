@@ -30,7 +30,7 @@ const defaults: ISRConfig = {
     experiments: {},
     i18n: undefined,
     seo: undefined,
-    telemetry: false,
+    theme: undefined,    telemetry: false,
   },
   server: {
     port: 3000,

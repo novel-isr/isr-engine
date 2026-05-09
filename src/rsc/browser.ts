@@ -98,6 +98,14 @@ export function getVariant(): string | undefined {
   return undefined;
 }
 
+// 浏览器/客户端不持有 AsyncLocalStorage 请求上下文 —— 任何业务在 'use client'
+// 树里走到 getRequestContext() 都拿 undefined，跟 Server Component 里没有
+// 命中作用域时一致。空 stub 让 plugin-rsc 的 client/browser bundle 链不至于
+// 因为符号缺失炸开。
+export function getRequestContext(): undefined {
+  return undefined;
+}
+
 export function getI18n(key: string, _params?: Record<string, unknown>, fallback = key): string {
   return fallback;
 }

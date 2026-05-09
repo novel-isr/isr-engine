@@ -17,7 +17,7 @@ const baseConfig = {
     experiments: {},
     i18n: undefined,
     seo: undefined,
-    telemetry: false,
+    theme: undefined,    telemetry: false,
   },
   server: {
     port: 3000,
@@ -94,7 +94,7 @@ describe('defineConfig helpers', () => {
       experiments: {},
       i18n: undefined,
       seo: undefined,
-      telemetry: {
+      theme: undefined,      telemetry: {
         app: undefined,
         release: undefined,
         environment: undefined,

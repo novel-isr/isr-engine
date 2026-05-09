@@ -16,8 +16,11 @@ import { createViteDevServer, closeViteDevServer } from './viteDevServer';
 import { applyBaseMiddlewaresWithOptions, mountViteOrStatic } from './middleware';
 import { startServer, closeServer } from './httpServer';
 import { requestContext } from '@/context/RequestContext';
+import { parseCookieHeader } from '@/utils/cookie';
 import { createRateLimiter, createRateLimitStoreFromRuntime } from '@/middlewares/RateLimiter';
 import { createABVariantMiddleware } from '@/middlewares/ABVariantMiddleware';
+import { createLocaleRedirectMiddleware } from '@/middlewares/LocaleRedirect';
+import { resolveI18nConfig } from '@/runtime/i18n';
 
 const logger = Logger.getInstance();
 
@@ -122,6 +125,19 @@ async function initServerContext(config?: ISRConfig): Promise<ServerContext> {
 
   serverContext.requestHandler.use((req, _res, next) => {
     const headerReqId = req.headers['x-request-id'];
+    const acceptLanguage =
+      typeof req.headers['accept-language'] === 'string'
+        ? req.headers['accept-language']
+        : undefined;
+    const referer =
+      typeof req.headers['referer'] === 'string' ? req.headers['referer'] : undefined;
+    const rawCookie = req.headers['cookie'];
+    const cookieHeader = Array.isArray(rawCookie)
+      ? rawCookie.join('; ')
+      : typeof rawCookie === 'string'
+        ? rawCookie
+        : '';
+    const cookies = parseCookieHeader(cookieHeader);
     requestContext.run(
       {
         traceId:
@@ -129,10 +145,22 @@ async function initServerContext(config?: ISRConfig): Promise<ServerContext> {
             ? req.headers['traceparent']
             : randomUUID(),
         requestId: typeof headerReqId === 'string' ? headerReqId : randomUUID(),
+        acceptLanguage,
+        referer,
+        cookies,
       },
       () => next()
     );
   });
+
+  // Locale redirect —— runtime.i18n.prefixDefault=true 时挂上，让裸 URL 302 到带前缀
+  // 形式（详见 middlewares/LocaleRedirect）；必须早于 ISR cache / 静态。
+  if (config?.runtime?.i18n?.prefixDefault) {
+    const localeRedirect = createLocaleRedirectMiddleware({
+      i18n: resolveI18nConfig(config.runtime.i18n),
+    });
+    if (localeRedirect) serverContext.requestHandler.use(localeRedirect);
+  }
 
   if (config?.runtime?.rateLimit) {
     const resolvedRateLimitStore = await createRateLimitStoreFromRuntime(

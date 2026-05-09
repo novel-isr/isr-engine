@@ -46,7 +46,7 @@ function fullConfigSource(
     experiments: {},
     i18n: undefined,
     seo: undefined,
-    telemetry: false,
+    theme: undefined,    telemetry: false,
   }`;
 
   return `
@@ -251,7 +251,7 @@ export const runtime = {
   experiments: {},
   i18n: undefined,
   seo: undefined,
-  telemetry: false,
+  theme: undefined,  telemetry: false,
 };
 ${fullConfigSource({ runtime: 'runtime' })}
 `

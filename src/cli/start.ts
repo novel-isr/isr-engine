@@ -184,9 +184,23 @@ export async function startProductionServer(options: StartOptions): Promise<void
   // 建立 RequestContext (AsyncLocalStorage) —— 让 RSC 渲染期能用 getRequestContext()
   // 必须在所有读/写 context 的中间件（A/B、Trace、Logger）之前
   const { requestContext } = await import('@/context/RequestContext');
+  const { parseCookieHeader } = await import('@/utils/cookie');
   const { randomUUID } = await import('node:crypto');
   app.use((req, _res, next) => {
     const headerReqId = req.headers['x-request-id'];
+    const acceptLanguage =
+      typeof req.headers['accept-language'] === 'string'
+        ? req.headers['accept-language']
+        : undefined;
+    const referer =
+      typeof req.headers['referer'] === 'string' ? req.headers['referer'] : undefined;
+    const rawCookie = req.headers['cookie'];
+    const cookieHeader = Array.isArray(rawCookie)
+      ? rawCookie.join('; ')
+      : typeof rawCookie === 'string'
+        ? rawCookie
+        : '';
+    const cookies = parseCookieHeader(cookieHeader);
     requestContext.run(
       {
         traceId:
@@ -194,10 +208,31 @@ export async function startProductionServer(options: StartOptions): Promise<void
             ? req.headers['traceparent']
             : randomUUID(),
         requestId: typeof headerReqId === 'string' ? headerReqId : randomUUID(),
+        acceptLanguage,
+        referer,
+        cookies,
       },
       () => next()
     );
   });
+
+  // Locale redirect —— runtime.i18n.prefixDefault=true 时，无 locale 前缀的 URL
+  // 一律 302 到 /{negotiated}/path（cookie > Accept-Language > defaultLocale）。
+  // 必须早于 ISR 缓存 / 静态托管 —— 否则 /books 命中缓存的 default-locale 渲染，
+  // 永远拿不到 redirect 机会。
+  if (runtime?.i18n?.prefixDefault) {
+    const { createLocaleRedirectMiddleware } = await import(
+      '@/middlewares/LocaleRedirect'
+    );
+    const { resolveI18nConfig } = await import('@/runtime/i18n');
+    const middleware = createLocaleRedirectMiddleware({
+      i18n: resolveI18nConfig(runtime.i18n),
+    });
+    if (middleware) {
+      app.use(middleware);
+      logger.info(`🌐 Locale redirect 已启用 (prefixDefault=true)`);
+    }
+  }
 
   // Rate limiting —— ssr.config.ts runtime.rateLimit
   if (runtime?.rateLimit) {
