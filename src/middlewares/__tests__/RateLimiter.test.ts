@@ -4,6 +4,7 @@ import {
   createRateLimitStoreFromRuntime,
   createMemoryRateLimitStore,
   createRedisRateLimitStore,
+  createUserAwareKeyGenerator,
   extractClientIp,
   type RedisLikeClient,
 } from '../RateLimiter';
@@ -527,5 +528,118 @@ describe('RateLimiter —— runtime store 解析', () => {
     } finally {
       vi.doUnmock('ioredis');
     }
+  });
+});
+
+/**
+ * createUserAwareKeyGenerator —— 已登录走 user, 未登录走 IP, 防 NAT 共桶被打满。
+ *
+ * 测试覆盖：
+ *   1. header 优先级最高（trusted gateway 写）
+ *   2. cookie 解 JSON 拿 userId
+ *   3. cookie 不是 JSON / 字段缺失 → 回 IP
+ *   4. 都没配 → 回 IP
+ *   5. trustProxy 影响 IP fallback 但不影响 user 命中
+ *   6. 前缀 `u:` / `ip:` 让 dashboard 能区分两类桶
+ */
+describe('createUserAwareKeyGenerator', () => {
+  function mkReq(opts: {
+    cookie?: string;
+    headers?: Record<string, string | string[]>;
+    ip?: string;
+  }): Request {
+    return {
+      headers: { cookie: opts.cookie, ...(opts.headers ?? {}) },
+      ip: opts.ip ?? '10.0.0.1',
+    } as unknown as Request;
+  }
+
+  it('userIdHeader 命中 → u:<id>', () => {
+    const gen = createUserAwareKeyGenerator({ userIdHeader: 'x-user-id' });
+    expect(gen(mkReq({ headers: { 'x-user-id': 'alice' } }))).toBe('u:alice');
+  });
+
+  it('userIdCookie JSON 命中 → u:<id>', () => {
+    const gen = createUserAwareKeyGenerator({
+      userIdCookie: 'novel_session_user',
+    });
+    const cookie = `novel_session_user=${JSON.stringify({ userId: 'bob', name: 'Bob' })}`;
+    expect(gen(mkReq({ cookie }))).toBe('u:bob');
+  });
+
+  it('userIdCookie 自定义 field（默认 userId, 可改 sub / id 之类）', () => {
+    const gen = createUserAwareKeyGenerator({
+      userIdCookie: 'sess',
+      userIdField: 'sub',
+    });
+    const cookie = `sess=${JSON.stringify({ sub: 'user-123' })}`;
+    expect(gen(mkReq({ cookie }))).toBe('u:user-123');
+  });
+
+  it('header 优先于 cookie', () => {
+    const gen = createUserAwareKeyGenerator({
+      userIdHeader: 'x-user-id',
+      userIdCookie: 'sess',
+    });
+    const req = mkReq({
+      headers: { 'x-user-id': 'from-header' },
+      cookie: `sess=${JSON.stringify({ userId: 'from-cookie' })}`,
+    });
+    expect(gen(req)).toBe('u:from-header');
+  });
+
+  it('cookie 不是 JSON → 回 IP（不当 userId 用）', () => {
+    const gen = createUserAwareKeyGenerator({ userIdCookie: 'sess' });
+    expect(gen(mkReq({ cookie: 'sess=not-json' }))).toBe('ip:10.0.0.1');
+  });
+
+  it('cookie JSON 但缺 userId field → 回 IP', () => {
+    const gen = createUserAwareKeyGenerator({ userIdCookie: 'sess' });
+    const cookie = `sess=${JSON.stringify({ name: 'Alice' })}`;
+    expect(gen(mkReq({ cookie }))).toBe('ip:10.0.0.1');
+  });
+
+  it('userId 是空字符串 → 回 IP（trim 后空也算无效）', () => {
+    const gen = createUserAwareKeyGenerator({ userIdCookie: 'sess' });
+    const cookie = `sess=${JSON.stringify({ userId: '   ' })}`;
+    expect(gen(mkReq({ cookie }))).toBe('ip:10.0.0.1');
+  });
+
+  it('header 为字符串数组 → 取第一项', () => {
+    const gen = createUserAwareKeyGenerator({ userIdHeader: 'x-user-id' });
+    expect(gen(mkReq({ headers: { 'x-user-id': ['multi-1', 'multi-2'] } }))).toBe('u:multi-1');
+  });
+
+  it('user 命中时 trustProxy 不影响（user > IP, IP 链路不参与）', () => {
+    const gen = createUserAwareKeyGenerator({
+      userIdHeader: 'x-user-id',
+      trustProxy: true,
+    });
+    const req = mkReq({
+      headers: {
+        'x-user-id': 'alice',
+        'cf-connecting-ip': '203.0.113.1',
+        'x-forwarded-for': '203.0.113.5',
+      },
+      ip: '127.0.0.1',
+    });
+    expect(gen(req)).toBe('u:alice');
+  });
+
+  it('未配置 cookie 也未配置 header → 永远走 IP（兼容默认）', () => {
+    const gen = createUserAwareKeyGenerator();
+    expect(gen(mkReq({ ip: '198.51.100.7' }))).toBe('ip:198.51.100.7');
+  });
+
+  it('trustProxy=true 时 IP fallback 解 X-Forwarded-For', () => {
+    const gen = createUserAwareKeyGenerator({
+      userIdCookie: 'sess',
+      trustProxy: true,
+    });
+    const req = mkReq({
+      headers: { 'x-forwarded-for': '203.0.113.5, 10.0.0.1' },
+      ip: '10.0.0.1',
+    });
+    expect(gen(req)).toBe('ip:203.0.113.5');
   });
 });

@@ -214,9 +214,12 @@ export {
   createRateLimitStoreFromRuntime,
   createMemoryRateLimitStore,
   createRedisRateLimitStore,
+  createUserAwareKeyGenerator,
+  extractClientIp,
   type RateLimitOptions,
   type ResolvedRateLimitStore,
   type RateLimitStore,
+  type CreateUserAwareKeyGeneratorOptions,
 } from './middlewares/RateLimiter';
 
 // ========== A/B 变体（cookie-sticky + RequestContext 注入）==========

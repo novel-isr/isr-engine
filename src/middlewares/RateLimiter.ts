@@ -31,6 +31,7 @@ import { LRUCache } from 'lru-cache';
 import { logger } from '../logger';
 import type { RuntimeRateLimitConfig, RuntimeRedisConfig } from '../types/ISRConfig';
 import { hasRuntimeRedisConnection, resolveRuntimeRedisConfig } from '@/config/resolveRuntimeRedis';
+import { parseCookieHeader } from '@/utils/cookie';
 
 export interface RateLimitOptions {
   /** 窗口毫秒；默认 60_000（1 分钟） */
@@ -99,6 +100,76 @@ export function extractClientIp(req: Request, trustProxy: boolean): string {
     }
   }
   return req.ip ?? 'unknown';
+}
+
+/**
+ * 用户感知的 rate-limit key 生成 ——
+ *
+ * 跟 Cloudflare / Stripe / GitHub API 一致的"已登录走 user，未登录走 IP"模式。
+ * 防止 NAT / 公司网 / 移动 carrier 后面成千用户共享一个 IP，被某一个频繁请求
+ * 的用户挤爆所有人的桶。
+ *
+ * 优先级（高 → 低）：
+ *   1. userIdHeader 命中（trusted gateway 解了 JWT 后写在头里）   → `u:<id>`
+ *   2. userIdCookie 解 JSON、读 userIdField 命中（cookie-based session）→ `u:<id>`
+ *   3. IP 兜底（未登录访客 / 爬虫）                                 → `ip:<addr>`
+ *
+ * key 加 `u:` / `ip:` 前缀可以让 ops dashboard 一眼区分用户桶 vs IP 桶
+ * （admin /operations/rate-limit 面板会按前缀分组统计）。
+ */
+export interface CreateUserAwareKeyGeneratorOptions {
+  /**
+   * Cookie 名 —— 通常是 sessionUser JSON cookie（业务侧写的）。
+   * cookie 值期望是 `JSON.stringify({ userId, ... })` 形态。
+   */
+  userIdCookie?: string;
+  /** JSON 里的 userId 字段名，默认 'userId' */
+  userIdField?: string;
+  /**
+   * Header 名 —— 通常是上游 gateway / BFF 解 JWT 后注入的。
+   * 例：`x-user-id`。trustProxy=false 时不要用这条（客户端可伪造）。
+   */
+  userIdHeader?: string;
+  /** 跟 extractClientIp 共用同一个 trustProxy 标志位 */
+  trustProxy?: boolean;
+}
+
+export function createUserAwareKeyGenerator(
+  options: CreateUserAwareKeyGeneratorOptions = {}
+): (req: Request) => string {
+  const { userIdCookie, userIdField = 'userId', userIdHeader, trustProxy = false } = options;
+  const headerLower = userIdHeader?.toLowerCase();
+
+  return (req: Request): string => {
+    if (headerLower) {
+      const raw = req.headers[headerLower];
+      const v = Array.isArray(raw) ? raw[0] : raw;
+      if (typeof v === 'string') {
+        const trimmed = v.trim();
+        if (trimmed) return `u:${trimmed}`;
+      }
+    }
+
+    if (userIdCookie) {
+      const cookieHeader = typeof req.headers.cookie === 'string' ? req.headers.cookie : '';
+      const cookies = parseCookieHeader(cookieHeader);
+      const raw = cookies[userIdCookie];
+      if (raw) {
+        try {
+          const parsed = JSON.parse(raw) as Record<string, unknown>;
+          const id = parsed?.[userIdField];
+          if (typeof id === 'string') {
+            const trimmed = id.trim();
+            if (trimmed) return `u:${trimmed}`;
+          }
+        } catch {
+          // cookie 不是 JSON —— 不当 userId 用，落到 IP 兜底
+        }
+      }
+    }
+
+    return `ip:${extractClientIp(req, trustProxy)}`;
+  };
 }
 
 export interface RateLimitStore {
