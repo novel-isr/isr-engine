@@ -48,10 +48,6 @@ export interface RateLimitOptions {
    * 配了 → 桶 key 形如 `u:<userId>`；未登录 / 没配 → `ip:<addr>`。
    */
   userBucket?: UserBucketConfig;
-  /** 桶 key 加 `t:<tenantId>:` 前缀（多租户独立 quota） */
-  useTenantPrefix?: boolean;
-  /** 桶 key 加 `s:<segment>:` 前缀（按 segment 独立 quota） */
-  useSegmentPrefix?: boolean;
   /** 返回 true 则跳过限流（如 /health） */
   skip?: (req: Request) => boolean;
   /** 精确跳过的 path；默认已跳过 /health、/metrics */
@@ -70,10 +66,6 @@ export interface RateLimitOptions {
    * createRateLimitStoreFromRuntime(runtime.rateLimit, runtime.redis)。
    */
   store?: RateLimitStore;
-  /** 是否发 RateLimit-* 响应头（默认 true） */
-  sendHeaders?: boolean;
-  /** 缓存最大条目数（memory backend）；默认 10_000 */
-  lruMax?: number;
   /**
    * 是否信任上游代理头（默认 false）。
    * true → 按 CF-Connecting-IP > X-Real-IP > X-Forwarded-For(首个) > req.ip 的顺序取真实 IP。
@@ -82,6 +74,12 @@ export interface RateLimitOptions {
    */
   trustProxy?: boolean;
 }
+
+// engine 内置（非业务决策，无需暴露给 ssr.config.ts）：
+//   - 始终发 RateLimit-* / Retry-After 标准头（RFC IETF draft，业界惯例）
+//   - memory backend LRU 上限 10_000（每条 ~40 字节，约 400KB；瓶颈不在这）
+const ALWAYS_SEND_HEADERS = true;
+const DEFAULT_LRU_MAX = 10_000;
 
 export interface ResolvedRateLimitStore {
   store: RateLimitStore;
@@ -292,7 +290,7 @@ export async function createRateLimitStoreFromRuntime(
 
   if (!shouldUseRedis) {
     return {
-      store: createMemoryRateLimitStore(rateLimit.lruMax),
+      store: createMemoryRateLimitStore(DEFAULT_LRU_MAX),
       backend: 'memory',
     };
   }
@@ -303,7 +301,7 @@ export async function createRateLimitStoreFromRuntime(
       "runtime.rateLimit.store='redis' 但未检测到 runtime.redis.url/host，回退到 memory"
     );
     return {
-      store: createMemoryRateLimitStore(rateLimit.lruMax),
+      store: createMemoryRateLimitStore(DEFAULT_LRU_MAX),
       backend: 'memory',
     };
   }
@@ -342,7 +340,7 @@ export async function createRateLimitStoreFromRuntime(
   } catch (err) {
     logger.warn('[rate-limit]', 'Redis store 初始化失败，回退到 memory', err);
     return {
-      store: createMemoryRateLimitStore(rateLimit.lruMax),
+      store: createMemoryRateLimitStore(DEFAULT_LRU_MAX),
       backend: 'memory',
     };
   }
@@ -390,16 +388,13 @@ export function createRateLimiter(options: RateLimitOptions = {}): RateLimiterHa
     skip,
     statusCode = 429,
     message = { error: 'Too Many Requests' },
-    store = createMemoryRateLimitStore(options.lruMax),
-    sendHeaders = true,
+    store = createMemoryRateLimitStore(DEFAULT_LRU_MAX),
   } = options;
 
   // engine 内部根据数据配置装 keyGenerator —— 业务侧不再传 function
   const keyGenerator = buildKeyGenerator({
     trustProxy,
     userBucket: options.userBucket,
-    useTenantPrefix: options.useTenantPrefix === true,
-    useSegmentPrefix: options.useSegmentPrefix === true,
   });
 
   // 可变 config 包成对象 —— 闭包持有引用，setConfig 改 .max / .windowMs 即刻生效
@@ -429,14 +424,14 @@ export function createRateLimiter(options: RateLimitOptions = {}): RateLimiterHa
       return next();
     }
 
-    if (sendHeaders) {
+    if (ALWAYS_SEND_HEADERS) {
       res.setHeader('RateLimit-Limit', String(liveConfig.max));
       res.setHeader('RateLimit-Remaining', String(Math.max(0, liveConfig.max - count)));
       res.setHeader('RateLimit-Reset', String(Math.ceil(resetMs / 1000)));
     }
 
     if (count > liveConfig.max) {
-      if (sendHeaders) res.setHeader('Retry-After', String(Math.ceil(resetMs / 1000)));
+      if (ALWAYS_SEND_HEADERS) res.setHeader('Retry-After', String(Math.ceil(resetMs / 1000)));
       res.status(statusCode);
       if (typeof message === 'string') {
         res.type('text').send(message);

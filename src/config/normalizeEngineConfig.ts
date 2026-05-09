@@ -46,23 +46,21 @@ export function normalizeEngineConfig(config: ISRConfig): ISRConfig {
     );
   }
   if (config.runtime.rateLimit !== false) {
+    // 全字段 required（ssr.config.ts 显式声明，无隐藏默认）。
+    // 不需要的字段写 undefined / 空数组而不是省略。
     requireOwnProperties(
       config.runtime.rateLimit as unknown as Record<string, unknown>,
       [
         'appName',
-        'store',
         'windowMs',
         'max',
-        'lruMax',
+        'userBucket',
         'trustProxy',
-        'sendHeaders',
+        'store',
         'keyPrefix',
         'skipPaths',
         'skipPathPrefixes',
         'skipExtensions',
-        'userBucket',
-        'useTenantPrefix',
-        'useSegmentPrefix',
       ],
       'runtime.rateLimit'
     );

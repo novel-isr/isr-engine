@@ -7,23 +7,6 @@ import type { RenderModeType } from './ISRConfig';
 export interface ISRContextData {
   traceId: string;
   requestId: string;
-  /**
-   * 多租户：当前请求归属的租户 ID（可选）。
-   *
-   * 由业务侧 beforeRequest hook 写入（解析子域名 / 头部 / cookie）。
-   * Engine 在以下两处消费：
-   *   1. rate-limit.useTenantPrefix=true 时给桶 key 加 `t:<tenantId>:` 前缀
-   *   2. TraceSnapshotWriter 写到快照里供 admin 排障
-   */
-  tenantId?: string;
-  /**
-   * 请求级 segment 标记（'premium' / 'free' / 'default' / 自定义）。
-   * 由业务侧 beforeRequest hook 写入，用于：
-   *   1. rate-limit.useSegmentPrefix=true 时给桶 key 加 `s:<segment>:` 前缀
-   *      —— admin 可以给同一个 app 的不同 segment 配不同 quota
-   *   2. TraceSnapshotWriter 写到快照里供 admin 排障
-   */
-  requestSegment?: string;
   /** 已登录用户 ID（业务侧 beforeRequest 写入；engine 在 trace 快照里展示） */
   userId?: string;
   /**

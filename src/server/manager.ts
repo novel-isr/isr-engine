@@ -170,15 +170,11 @@ async function initServerContext(config?: ISRConfig): Promise<ServerContext> {
       windowMs: config.runtime.rateLimit.windowMs,
       max: config.runtime.rateLimit.max,
       store: resolvedRateLimitStore.store,
-      lruMax: config.runtime.rateLimit.lruMax,
       trustProxy: config.runtime.rateLimit.trustProxy,
-      sendHeaders: config.runtime.rateLimit.sendHeaders,
       skipPaths: config.runtime.rateLimit.skipPaths,
       skipPathPrefixes: config.runtime.rateLimit.skipPathPrefixes,
       skipExtensions: config.runtime.rateLimit.skipExtensions,
       userBucket: config.runtime.rateLimit.userBucket,
-      useTenantPrefix: config.runtime.rateLimit.useTenantPrefix,
-      useSegmentPrefix: config.runtime.rateLimit.useSegmentPrefix,
       skip: req => req.path === '/health' || req.path === '/metrics',
     });
     serverContext.requestHandler.use(rateLimiterHandle);

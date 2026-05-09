@@ -43,6 +43,18 @@ export interface TraceSnapshotWriterOptions {
   keyPrefix: string;
 }
 
+/**
+ * 单条快照结构 —— 只放"排障真正用得上的字段"。
+ *
+ * 砍掉的（之前写过但价值低）：
+ *   - tenantId / requestSegment：novel-rating 单租户，永远是 'public'/'default'，纯噪音
+ *   - flags / forceMode / forceFallback / bypassCache：dev-only 调试开关，
+ *     undefined 时不出现，但类型字段就是噪音
+ *
+ * 安全策略：
+ *   - sessionToken **永不写**（token 泄露 = 账号被盗）
+ *   - sessionUser 只展示 displayName / handle 两个字段（PII 脱敏：不写邮箱 / 手机号）
+ */
 interface TraceSnapshot {
   traceId: string;
   requestId: string;
@@ -53,22 +65,12 @@ interface TraceSnapshot {
   status: number;
   durationMs: number;
   startedAt: string;
-  // RequestContext 摘要 —— 业务 beforeRequest 写入的字段在这里展示
-  // 安全策略：sessionToken **不写**（敏感，token 泄露 = 账号被盗用）；
-  // sessionUser 只写 displayName/handle 子集（不写邮箱 / 手机号等 PII）
   context: {
     locale?: string;
     theme?: string;
-    tenantId?: string;
-    requestSegment?: string;
     userId?: string;
-    /** sessionUser 摘要（只列 displayName / handle，其它字段脱敏） */
     sessionUser?: { displayName?: string; handle?: string };
     cookieKeys: string[];
-    flags?: Record<string, boolean | string>;
-    forceMode?: string;
-    forceFallback?: string;
-    bypassCache?: boolean;
   };
   request: {
     userAgent?: string;
@@ -80,7 +82,7 @@ interface TraceSnapshot {
   error?: { message: string; stack?: string };
   /** ISR 渲染策略命中（cached / regenerate / static / server / csr-shell） */
   strategy?: string;
-  /** ISR cache 命中状态：HIT / MISS / STALE 等 —— engine 内部 plugin/isrCacheMiddleware 写 X-Cache 头 */
+  /** ISR cache 命中状态：HIT / MISS / STALE —— engine 内部 plugin/isrCacheMiddleware 写 X-Cache 头 */
   cacheStatus?: string;
 }
 
@@ -166,15 +168,9 @@ export async function createTraceSnapshotWriter(
         context: {
           locale: typeof ctx['locale'] === 'string' ? (ctx['locale'] as string) : undefined,
           theme: typeof ctx['theme'] === 'string' ? (ctx['theme'] as string) : undefined,
-          tenantId: ctx.tenantId,
-          requestSegment: ctx.requestSegment,
           userId: ctx.userId,
           sessionUser: summarizeSessionUser(ctx.sessionUser),
           cookieKeys: Object.keys(ctx.cookies ?? {}),
-          flags: ctx.flags,
-          forceMode: ctx.forceMode,
-          forceFallback: ctx.forceFallback,
-          bypassCache: ctx.bypassCache,
         },
         request: {
           userAgent:

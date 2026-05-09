@@ -532,16 +532,12 @@ describe('RateLimiter —— runtime store 解析', () => {
 });
 
 /**
- * buildKeyGenerator —— 数据驱动的桶 key 装配（不再传 function）。
+ * buildKeyGenerator —— 数据驱动的桶 key 装配。
  *
- * 测试覆盖：
- *   1. userBucket.header 命中（仅 trustProxy=true 才认；不可信场景客户端可伪造）
- *   2. userBucket.cookie 解 JSON 拿 userId
- *   3. cookie 不是 JSON / 字段缺失 → 回 IP
- *   4. userBucket=undefined → 仅按 IP 分桶
- *   5. tenant / segment 前缀拼装（仅 trustProxy=true）
- *   6. trustProxy=false 时忽略 tenant/segment 头（防 client 伪造夺桶）
- *   7. trim / 空字符串 / 数组形 header 都按业界惯例处理
+ * 业务侧只声明 cookie + field，engine 内部自动解 JSON、抠 userId、回退 IP。
+ * 桶 key 形态：
+ *   - 已登录：`u:<userId>`
+ *   - 未登录 / userBucket=undefined：`ip:<addr>`
  */
 describe('buildKeyGenerator', () => {
   function mkReq(opts: {
@@ -555,32 +551,16 @@ describe('buildKeyGenerator', () => {
     } as unknown as Request;
   }
 
-  it('userBucket.header 命中（trustProxy=true）→ u:<id>', () => {
-    const gen = buildKeyGenerator({
-      trustProxy: true,
-      userBucket: { header: 'x-user-id' },
-    });
-    expect(gen(mkReq({ headers: { 'x-user-id': 'alice' } }))).toBe('u:alice');
-  });
-
-  it('trustProxy=false 时 header 被忽略（防客户端伪造）→ 落 IP', () => {
-    const gen = buildKeyGenerator({
-      trustProxy: false,
-      userBucket: { header: 'x-user-id' },
-    });
-    expect(gen(mkReq({ headers: { 'x-user-id': 'alice' } }))).toBe('ip:10.0.0.1');
-  });
-
   it('userBucket.cookie JSON 命中 → u:<id>', () => {
     const gen = buildKeyGenerator({
       trustProxy: false,
-      userBucket: { cookie: 'novel_session_user' },
+      userBucket: { cookie: 'novel_session_user', field: 'userId' },
     });
     const cookie = `novel_session_user=${JSON.stringify({ userId: 'bob' })}`;
     expect(gen(mkReq({ cookie }))).toBe('u:bob');
   });
 
-  it('userBucket.field 自定义（默认 userId, 可改 sub / id）', () => {
+  it('userBucket.field 可定制（默认约定 userId, 不同 auth 后端可改 sub / id）', () => {
     const gen = buildKeyGenerator({
       trustProxy: false,
       userBucket: { cookie: 'sess', field: 'sub' },
@@ -589,101 +569,58 @@ describe('buildKeyGenerator', () => {
     expect(gen(mkReq({ cookie }))).toBe('u:user-123');
   });
 
-  it('header 优先于 cookie（仅 trustProxy=true）', () => {
-    const gen = buildKeyGenerator({
-      trustProxy: true,
-      userBucket: { header: 'x-user-id', cookie: 'sess' },
-    });
-    const req = mkReq({
-      headers: { 'x-user-id': 'from-header' },
-      cookie: `sess=${JSON.stringify({ userId: 'from-cookie' })}`,
-    });
-    expect(gen(req)).toBe('u:from-header');
-  });
-
-  it('cookie 不是 JSON → 回 IP（不当 userId 用）', () => {
+  it('cookie 不是 JSON → 回 IP（fail-safe，不抛错）', () => {
     const gen = buildKeyGenerator({
       trustProxy: false,
-      userBucket: { cookie: 'sess' },
+      userBucket: { cookie: 'sess', field: 'userId' },
     });
     expect(gen(mkReq({ cookie: 'sess=not-json' }))).toBe('ip:10.0.0.1');
   });
 
-  it('userBucket=undefined → 永远 ip:<addr>（anonymous-only 站点）', () => {
-    const gen = buildKeyGenerator({ trustProxy: false });
-    expect(gen(mkReq({ ip: '198.51.100.7' }))).toBe('ip:198.51.100.7');
-  });
-
-  it('useTenantPrefix + trustProxy=true → t:<tenant>:u:<id>', () => {
-    const gen = buildKeyGenerator({
-      trustProxy: true,
-      useTenantPrefix: true,
-      userBucket: { cookie: 'sess' },
-    });
-    const cookie = `sess=${JSON.stringify({ userId: 'bob' })}`;
-    const req = mkReq({ cookie, headers: { 'x-tenant-id': 'acme' } });
-    expect(gen(req)).toBe('t:acme:u:bob');
-  });
-
-  it('useSegmentPrefix → s:<seg>:u:<id>', () => {
-    const gen = buildKeyGenerator({
-      trustProxy: true,
-      useSegmentPrefix: true,
-      userBucket: { cookie: 'sess' },
-    });
-    const cookie = `sess=${JSON.stringify({ userId: 'bob' })}`;
-    const req = mkReq({ cookie, headers: { 'x-segment': 'premium' } });
-    expect(gen(req)).toBe('s:premium:u:bob');
-  });
-
-  it('useTenantPrefix + useSegmentPrefix 都开 → t:<tenant>:s:<seg>:u:<id>', () => {
-    const gen = buildKeyGenerator({
-      trustProxy: true,
-      useTenantPrefix: true,
-      useSegmentPrefix: true,
-      userBucket: { cookie: 'sess' },
-    });
-    const cookie = `sess=${JSON.stringify({ userId: 'bob' })}`;
-    const req = mkReq({
-      cookie,
-      headers: { 'x-tenant-id': 'acme', 'x-segment': 'premium' },
-    });
-    expect(gen(req)).toBe('t:acme:s:premium:u:bob');
-  });
-
-  it('trustProxy=false 时 tenant/segment 头被忽略（防客户端夺桶）', () => {
+  it('cookie JSON 但缺 field → 回 IP', () => {
     const gen = buildKeyGenerator({
       trustProxy: false,
-      useTenantPrefix: true,
-      useSegmentPrefix: true,
-      userBucket: { cookie: 'sess' },
+      userBucket: { cookie: 'sess', field: 'userId' },
     });
-    const cookie = `sess=${JSON.stringify({ userId: 'bob' })}`;
-    const req = mkReq({
-      cookie,
-      headers: { 'x-tenant-id': 'evil-tenant', 'x-segment': 'admin' },
-    });
-    expect(gen(req)).toBe('u:bob');
+    const cookie = `sess=${JSON.stringify({ name: 'Alice' })}`;
+    expect(gen(mkReq({ cookie }))).toBe('ip:10.0.0.1');
+  });
+
+  it('userBucket=undefined → 永远 ip:<addr>（anonymous-only 站点）', () => {
+    const gen = buildKeyGenerator({ trustProxy: false, userBucket: undefined });
+    expect(gen(mkReq({ ip: '198.51.100.7' }))).toBe('ip:198.51.100.7');
   });
 
   it('userId 是空 / 全空白 → 回 IP', () => {
     const gen = buildKeyGenerator({
       trustProxy: false,
-      userBucket: { cookie: 'sess' },
+      userBucket: { cookie: 'sess', field: 'userId' },
     });
     const cookie = `sess=${JSON.stringify({ userId: '   ' })}`;
     expect(gen(mkReq({ cookie }))).toBe('ip:10.0.0.1');
   });
 
-  it('trustProxy=true 时 IP fallback 解 X-Forwarded-For', () => {
+  it('trustProxy=true 时 IP fallback 解 X-Forwarded-For（gateway 注入）', () => {
     const gen = buildKeyGenerator({
       trustProxy: true,
-      userBucket: { cookie: 'sess' },
+      userBucket: { cookie: 'sess', field: 'userId' },
     });
     const req = mkReq({
       headers: { 'x-forwarded-for': '203.0.113.5, 10.0.0.1' },
       ip: '10.0.0.1',
     });
     expect(gen(req)).toBe('ip:203.0.113.5');
+  });
+
+  it('trustProxy=false 时 X-Forwarded-For 被忽略（防客户端伪造夺桶）', () => {
+    const gen = buildKeyGenerator({
+      trustProxy: false,
+      userBucket: { cookie: 'sess', field: 'userId' },
+    });
+    const req = mkReq({
+      headers: { 'x-forwarded-for': '1.2.3.4' },
+      ip: '10.0.0.1',
+    });
+    expect(gen(req)).toBe('ip:10.0.0.1');
   });
 });

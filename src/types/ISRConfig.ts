@@ -81,75 +81,72 @@ export interface RuntimeTraceDebugConfig {
   keyPrefix: string;
 }
 
+/**
+ * 限流配置 ——
+ *
+ * 全部字段都 required（ssr.config.ts 不允许隐藏默认值；不需要的字段写 undefined / 空数组）。
+ *
+ * 已经从公开 API 砍掉的字段（engine 内部仍按业界标准做，没有业务决策意义）：
+ *   - sendHeaders   —— 始终发 RateLimit-* 标准头（RFC IETF draft）
+ *   - lruMax        —— memory backend 默认 10_000，无业务意义
+ *   - useTenantPrefix / useSegmentPrefix —— novel-rating 单租户场景永远用不到（YAGNI）
+ *
+ * appName + windowMs + max + userBucket + trustProxy 是真正的业务决策：
+ *   - appName     hot-reload 配置桶 ID
+ *   - windowMs+max 限流强度
+ *   - userBucket  哪个 cookie 装着 userId（每个 app 的 auth 后端不一样，无法 engine 内置）
+ *   - trustProxy  部署拓扑（默认 false 防 X-Forwarded-For 伪造；只有 CDN/LB 后开 true）
+ */
 export interface RuntimeRateLimitConfig {
   /**
-   * 应用标识，用于 admin-server 在 Redis 上下发 hot-reload 配置时定位本应用。
+   * 应用标识 —— admin-server 在 Redis 上下发 hot-reload 配置时定位本应用。
    * 跟 admin 控制台 PATCH /api/ops/rate-limit/config body 的 `app` 字段一致。
-   * 配置为 undefined 时不订阅，沿用 ssr.config.ts 静态值。
-   *
-   * 多实例部署里所有 pod 应该用同一个 appName（同一个限流配置桶）。
+   * 设为 undefined → 不订阅 hot-reload，使用静态 windowMs/max。
    */
   appName: string | undefined;
-  /**
-   * 限流状态存储。**默认 'auto'：开箱即用**——
-   * 已配置 runtime.redis.url/host 就自动用 Redis，
-   * 否则进程内 memory。消费方一般无需显式设置 store。
-   *
-   * - 'auto'（默认）：检测到 Redis 配置 → redis backend；否则 memory backend。
-   * - 'memory'：强制进程内 LRU。重启清空，不跨 pod 共享。本地 burn-in / 单实例适用。
-   * - 'redis'：强制使用 runtime.redis 配置的 Redis；缺配置时 warn + 回落 memory（fail-open）。
-   *
-   * 非法值（拼错 / 类型错）engine 会 warn 一次并按 'auto' 处理，不静默吞。
-   */
-  store: 'memory' | 'redis' | 'auto';
-  /** 固定窗口长度（毫秒）；默认 60_000 */
+  /** 固定窗口长度（毫秒） */
   windowMs: number;
-  /** 每个 key 在窗口内允许的最大请求数；默认 100 */
+  /** 每个 key 在窗口内允许的最大请求数 */
   max: number;
-  /** memory store 最大 key 数；默认 10_000 */
-  lruMax: number;
   /**
-   * 是否信任上游代理头来提取真实客户端 IP。
-   * 只有部署在可信 CDN/LB/Nginx 后面时才开启，否则客户端可伪造 X-Forwarded-For。
+   * 已登录用户维度 key 配置。
+   *
+   * 为什么不在 engine 内置：每个 app 的 auth 后端 cookie 名不一样（next-auth 用
+   * `next-auth.session-token`；clerk 用 `__session`；novel-rating 用
+   * `novel_session_user`）。engine 没法替业务决定。
+   *
+   * 配置 → 桶 key `u:<userId>`；未登录回 `ip:<addr>`。
+   * 设 undefined → 站点没有用户系统，纯 IP 分桶。
+   */
+  userBucket: { cookie: string; field: string } | undefined;
+  /**
+   * 是否信任上游代理头提取真实客户端 IP。
+   *
+   * **默认 false 是安全选择**，不能默认 true：
+   *   - 直接暴露在公网（dev / 自建小规模 prod）：开 true 会被客户端伪造
+   *     `X-Forwarded-For: 1.2.3.4` 绕过 IP 限流，单 IP 攻击者就能耗光所有桶。
+   *   - 部署在可信 CDN/LB/Nginx 后面：开 true 才能拿到真实客户端 IP，
+   *     否则所有请求都从 LB 内网 IP 进来，等于把整站当一个桶。
+   *
+   * 跟"app 在哪部署"强相关，必须显式声明，无法 engine 默认。
    */
   trustProxy: boolean;
-  /** 是否发送 RateLimit-* / Retry-After 响应头；默认 true */
-  sendHeaders: boolean;
-  /** Redis rate-limit key 前缀；默认基于 runtime.redis.keyPrefix 拼接 rate-limit 命名空间 */
+  /**
+   * 限流状态存储。'auto'：检测到 runtime.redis.url 配置 → redis backend；
+   * 否则进程内 memory。'memory' / 'redis' 是强制覆盖（local burn-in / fail-fast）。
+   */
+  store: 'memory' | 'redis' | 'auto';
+  /** Redis rate-limit key 前缀；undefined 走 engine 默认（runtime.redis.keyPrefix + 'rate-limit:'） */
   keyPrefix: string | undefined;
   /**
-   * 精确跳过的请求 path。engine 默认已跳过 /health、/metrics、OPTIONS、静态资源扩展名；
-   * 业务只在确有内部探针或自定义资源路径时补充。
+   * 精确跳过的请求 path。engine 默认已跳过 /health、/metrics、OPTIONS、静态资源
+   * 扩展名（js/css/png/...）和 dev 资源前缀；空数组 [] 表示无补充。
    */
   skipPaths: readonly string[];
-  /** 按 path 前缀跳过限流，例如 ['/internal/static/'] */
+  /** 按 path 前缀跳过限流，例如 ['/internal/static/']；空数组 [] 无补充 */
   skipPathPrefixes: readonly string[];
-  /** 额外静态资源扩展名，例如 ['.wasm']；默认已覆盖 js/css/image/font/map 等常见资源 */
+  /** 额外静态资源扩展名，例如 ['.wasm']；空数组 [] 无补充 */
   skipExtensions: readonly string[];
-  /**
-   * 已登录用户维度的 key 配置（数据驱动；之前用 function 现在改成纯数据）。
-   *
-   * 配了之后桶 key 变成：
-   *   - 已登录：`u:<userId>` —— 从 cookie JSON 里抠 field
-   *   - 未登录：`ip:<addr>`  —— extractClientIp(req, trustProxy)
-   *
-   * 模式跟 Cloudflare / Stripe / GitHub API 一致：防 NAT / 公司网 / mobile
-   * carrier 后面成千用户共享一个 IP，被某高频用户挤爆所有人桶。
-   *
-   * undefined → 不分用户维度，纯 IP 分桶（适合 anonymous-only 站点）。
-   */
-  userBucket: { cookie?: string; field?: string; header?: string } | undefined;
-  /**
-   * 桶 key 加 `t:<tenantId>:` 前缀。RequestContext.tenantId 由业务侧
-   * createServerRequestContext 写入；SaaS 多租户给每个租户独立配额。
-   * 单租户站点保持 false，避免每个 key 都多个 `t:public:` 前缀的无用噪音。
-   */
-  useTenantPrefix: boolean;
-  /**
-   * 桶 key 加 `s:<segment>:` 前缀。RequestContext.requestSegment 来自业务侧
-   * 请求级标记（'premium' / 'free' / 'default'），让不同 segment 独立 quota。
-   */
-  useSegmentPrefix: boolean;
 }
 
 export interface RuntimeI18nConfig {

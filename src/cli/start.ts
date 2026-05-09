@@ -243,15 +243,11 @@ export async function startProductionServer(options: StartOptions): Promise<void
       windowMs: runtime.rateLimit.windowMs,
       max: runtime.rateLimit.max,
       store: resolvedRateLimitStore.store,
-      lruMax: runtime.rateLimit.lruMax,
       trustProxy: runtime.rateLimit.trustProxy,
-      sendHeaders: runtime.rateLimit.sendHeaders,
       skipPaths: runtime.rateLimit.skipPaths,
       skipPathPrefixes: runtime.rateLimit.skipPathPrefixes,
       skipExtensions: runtime.rateLimit.skipExtensions,
       userBucket: runtime.rateLimit.userBucket,
-      useTenantPrefix: runtime.rateLimit.useTenantPrefix,
-      useSegmentPrefix: runtime.rateLimit.useSegmentPrefix,
       skip: req => req.path === '/health' || req.path === '/metrics',
     });
     app.use(rateLimiterHandle);
