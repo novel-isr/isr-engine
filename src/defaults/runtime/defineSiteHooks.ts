@@ -40,6 +40,7 @@ import type {
   RuntimeThemeConfig,
 } from '../../types';
 import { readCookie } from '../../utils/cookie';
+import { parseLocale, type I18nConfig } from '../../runtime/i18n';
 
 export { getCookieHeader, parseCookieHeader, readCookie } from '../../utils/cookie';
 
@@ -669,15 +670,31 @@ function createSiteHooks(config: SiteHooksConfig, runtime: SiteRuntimeConfig): S
       return intlLoader(detectLocale(req));
     },
     async loadSeoMeta(req) {
-      const path = new URL(req.url).pathname;
-      // 把 locale 也喂进 params —— 让 SEO endpoint 模板 `?path={pathname}&locale={locale}`
-      // 能拿到当前请求的 locale，否则 admin 总返回 defaultLocale 的 SEO（前台 /en-US/
-      // 路由依然显示中文 SEO 就是这个根因）
+      const url = new URL(req.url);
       const locale = detectLocale(req);
+      // SEO 表是按"业务规范路径"（'/' / '/books' / '/about'）入库的，
+      // 不带 locale 前缀。请求 URL 是带前缀的（'/en-US/'、'/zh-CN/books'），
+      // 直接喂给 admin 查不到。先用 parseLocale 把 locale 段剥掉，
+      // 再去 seoRoutes 里匹配 + 调 admin endpoint。
+      // 同时 locale 单独传到 resolver params，让 endpoint 模板里 {locale}
+      // 占位符能填对应语言（之前那个 fix 留着，跟 strip 配合一起才完整）。
+      const intlConfig = config.intl;
+      const cleanPath =
+        intlConfig?.locales && intlConfig.locales.length > 0
+          ? parseLocale(url.pathname, {
+              locales: intlConfig.locales,
+              defaultLocale: intlConfig.defaultLocale ?? intlConfig.locales[0]!,
+              prefixDefault: intlConfig.prefixDefault,
+            } satisfies I18nConfig).pathname
+          : url.pathname;
+
       for (const { re, paramNames, resolver } of seoRoutes) {
-        const m = path.match(re);
+        const m = cleanPath.match(re);
         if (m) {
-          const params: Record<string, string> = { pathname: path, locale };
+          const params: Record<string, string> = {
+            pathname: cleanPath,
+            locale,
+          };
           paramNames.forEach((n, i) => (params[n] = m[i + 1] ?? ''));
           return await resolver(params);
         }
