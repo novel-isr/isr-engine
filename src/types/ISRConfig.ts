@@ -64,6 +64,14 @@ export interface RuntimeExperimentConfig {
 
 export interface RuntimeRateLimitConfig {
   /**
+   * 应用标识，用于 admin-server 在 Redis 上下发 hot-reload 配置时定位本应用。
+   * 跟 admin 控制台 PATCH /api/ops/rate-limit/config body 的 `app` 字段一致。
+   * 配置为 undefined 时不订阅，沿用 ssr.config.ts 静态值。
+   *
+   * 多实例部署里所有 pod 应该用同一个 appName（同一个限流配置桶）。
+   */
+  appName: string | undefined;
+  /**
    * 限流状态存储。**默认 'auto'：开箱即用**——
    * 已配置 runtime.redis.url/host 就自动用 Redis，
    * 否则进程内 memory。消费方一般无需显式设置 store。

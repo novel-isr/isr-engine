@@ -6,6 +6,19 @@
 
 ## [Unreleased]
 
+### Added — 限流配置 hot-reload (admin → engine)
+
+- **`runtime.rateLimit.appName`**：新增字段。配置后 engine 启动时订阅 Redis 频道
+  `rate-limit:config:updated`，admin 控制面 PATCH 配置后下一次请求即生效，
+  无需重启业务前台。pod 启动期还会主动 `GET rate-limit:config:<appName>` 拉一次
+  快照，故障恢复 / 滚动发布都不丢配置。
+- **`createRateLimiter` 现在返回 `RateLimiterHandle`**：除了原来的中间件签名，
+  新增 `setConfig({ max?, windowMs? })` 和 `getConfig()`。前者由内部
+  `RateLimitConfigSubscriber` 调用，业务一般不直接用；类型保持 backwards-compat。
+- 业务侧只需在 `ssr.config.ts` 加一行 `appName: 'novel-rating'`，
+  其它现有 `windowMs / max` 仍作为 Redis 配置缺失时的兜底默认值。
+- 全部走 `optionalDependencies` 的 `ioredis`，REDIS_URL 没配 → 静默退化为静态配置。
+
 ### Changed — 行为收口（轻量 BREAKING / 默认值变更）
 
 - **`runtime.rateLimit.store` 默认从 `'memory'` 改为 `'auto'`**。已配置 `runtime.redis.url/host`

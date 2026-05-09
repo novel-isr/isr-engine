@@ -237,6 +237,7 @@ export const runtime = {
     invalidationChannel: undefined,
   },
   rateLimit: {
+    appName: undefined,
     store: 'auto',
     windowMs: 60000,
     max: 200,

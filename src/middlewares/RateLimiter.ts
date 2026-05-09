@@ -369,11 +369,22 @@ if (isBenchBypassActive()) {
   );
 }
 
-export function createRateLimiter(options: RateLimitOptions = {}) {
+/**
+ * Hot-reload patch —— admin 控制面通过 Redis pub/sub 改 max/windowMs 时调。
+ * 不持久化，仅修改当前进程内 closure 引用。下一次 store.incr 立即用新值。
+ */
+export interface RateLimiterHandle {
+  /** Express middleware 本体 */
+  (req: Request, res: Response, next: NextFunction): Promise<void>;
+  /** 改 max / windowMs，下一次请求即生效。其它 options 不可热改。 */
+  setConfig(patch: { max?: number; windowMs?: number }): void;
+  /** 当前生效配置快照（admin 控制台展示用） */
+  getConfig(): { max: number; windowMs: number };
+}
+
+export function createRateLimiter(options: RateLimitOptions = {}): RateLimiterHandle {
   const trustProxy = options.trustProxy === true;
   const {
-    windowMs = 60_000,
-    max = 100,
     keyGenerator = (req: Request) => extractClientIp(req, trustProxy),
     skip,
     statusCode = 429,
@@ -382,7 +393,13 @@ export function createRateLimiter(options: RateLimitOptions = {}) {
     sendHeaders = true,
   } = options;
 
-  return async function rateLimitMiddleware(
+  // 可变 config 包成对象 —— 闭包持有引用，setConfig 改 .max / .windowMs 即刻生效
+  const liveConfig = {
+    max: options.max ?? 100,
+    windowMs: options.windowMs ?? 60_000,
+  };
+
+  const middleware = async function rateLimitMiddleware(
     req: Request,
     res: Response,
     next: NextFunction
@@ -396,7 +413,7 @@ export function createRateLimiter(options: RateLimitOptions = {}) {
     let count: number;
     let resetMs: number;
     try {
-      ({ count, resetMs } = await store.incr(key, windowMs));
+      ({ count, resetMs } = await store.incr(key, liveConfig.windowMs));
     } catch (err) {
       // 后端出错 → fail-open（不因限流组件挂掉拖垮业务）
       logger.warn('[rate-limit]', 'store.incr 失败，放行本次请求', err);
@@ -404,12 +421,12 @@ export function createRateLimiter(options: RateLimitOptions = {}) {
     }
 
     if (sendHeaders) {
-      res.setHeader('RateLimit-Limit', String(max));
-      res.setHeader('RateLimit-Remaining', String(Math.max(0, max - count)));
+      res.setHeader('RateLimit-Limit', String(liveConfig.max));
+      res.setHeader('RateLimit-Remaining', String(Math.max(0, liveConfig.max - count)));
       res.setHeader('RateLimit-Reset', String(Math.ceil(resetMs / 1000)));
     }
 
-    if (count > max) {
+    if (count > liveConfig.max) {
       if (sendHeaders) res.setHeader('Retry-After', String(Math.ceil(resetMs / 1000)));
       res.status(statusCode);
       if (typeof message === 'string') {
@@ -421,5 +438,18 @@ export function createRateLimiter(options: RateLimitOptions = {}) {
     }
 
     next();
+  } as RateLimiterHandle;
+
+  middleware.setConfig = (patch: { max?: number; windowMs?: number }) => {
+    if (typeof patch.max === 'number' && patch.max > 0) liveConfig.max = patch.max;
+    if (typeof patch.windowMs === 'number' && patch.windowMs > 0) {
+      liveConfig.windowMs = patch.windowMs;
+    }
+    logger.info(
+      `[rate-limit] config updated: max=${liveConfig.max}, windowMs=${liveConfig.windowMs}`
+    );
   };
+  middleware.getConfig = () => ({ ...liveConfig });
+
+  return middleware;
 }

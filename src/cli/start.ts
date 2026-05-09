@@ -239,25 +239,43 @@ export async function startProductionServer(options: StartOptions): Promise<void
       runtime.rateLimit,
       runtime.redis
     );
-    app.use(
-      createRateLimiter({
-        windowMs: runtime.rateLimit.windowMs,
-        max: runtime.rateLimit.max,
-        store: resolvedRateLimitStore.store,
-        lruMax: runtime.rateLimit.lruMax,
-        trustProxy: runtime.rateLimit.trustProxy,
-        sendHeaders: runtime.rateLimit.sendHeaders,
-        skipPaths: runtime.rateLimit.skipPaths,
-        skipPathPrefixes: runtime.rateLimit.skipPathPrefixes,
-        skipExtensions: runtime.rateLimit.skipExtensions,
-        keyGenerator: runtime.rateLimit.keyGenerator,
-        skip: req => req.path === '/health' || req.path === '/metrics',
-      })
-    );
+    const rateLimiterHandle = createRateLimiter({
+      windowMs: runtime.rateLimit.windowMs,
+      max: runtime.rateLimit.max,
+      store: resolvedRateLimitStore.store,
+      lruMax: runtime.rateLimit.lruMax,
+      trustProxy: runtime.rateLimit.trustProxy,
+      sendHeaders: runtime.rateLimit.sendHeaders,
+      skipPaths: runtime.rateLimit.skipPaths,
+      skipPathPrefixes: runtime.rateLimit.skipPathPrefixes,
+      skipExtensions: runtime.rateLimit.skipExtensions,
+      keyGenerator: runtime.rateLimit.keyGenerator,
+      skip: req => req.path === '/health' || req.path === '/metrics',
+    });
+    app.use(rateLimiterHandle);
     const keyMode = runtime.rateLimit.keyGenerator ? 'user-aware' : 'IP';
     logger.info(
       `🚦 限流已启用：${runtime.rateLimit.max} req / ${runtime.rateLimit.windowMs / 1000}s per ${keyMode} (store=${resolvedRateLimitStore.backend})`
     );
+
+    // 监听 admin 控制面在 Redis pub/sub 上的 'rate-limit:config:updated' —— 实时
+    // 改 max / windowMs，业务无需重启。仅当配了 REDIS_URL（共享 Redis）时启用；
+    // ssr.config.ts runtime.rateLimit.appName 决定订阅哪个 app 的配置。
+    const redisUrl = runtime.redis?.url;
+    const appName = runtime.rateLimit.appName;
+    if (redisUrl && appName) {
+      const { startRateLimitConfigSubscriber } =
+        await import('@/middlewares/RateLimitConfigSubscriber');
+      startRateLimitConfigSubscriber({
+        appName,
+        handle: rateLimiterHandle,
+        redisUrl,
+      })
+        .then(sub => {
+          if (sub) logger.info(`🔁 限流配置订阅已启动 (app='${appName}')`);
+        })
+        .catch(err => logger.warn('[rate-limit-config]', 'subscriber 启动失败', err));
+    }
   }
 
   // A/B variant —— ssr.config.ts runtime.experiments

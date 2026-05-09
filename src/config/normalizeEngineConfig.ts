@@ -49,6 +49,7 @@ export function normalizeEngineConfig(config: ISRConfig): ISRConfig {
     requireOwnProperties(
       config.runtime.rateLimit as unknown as Record<string, unknown>,
       [
+        'appName',
         'store',
         'windowMs',
         'max',
