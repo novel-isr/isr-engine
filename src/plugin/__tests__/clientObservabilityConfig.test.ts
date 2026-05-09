@@ -17,7 +17,7 @@ function runtime(overrides: Record<string, unknown> = {}): ISRConfig['runtime'] 
     experiments: {},
     i18n: undefined,
     seo: undefined,
-    theme: undefined,
+
     telemetry: false,
     ...overrides,
     services: { api: undefined, telemetry: undefined, ...services },

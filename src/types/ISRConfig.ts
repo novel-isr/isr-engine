@@ -65,20 +65,16 @@ export interface RuntimeExperimentConfig {
 /**
  * 每请求 trace 快照写入 Redis，admin dashboard 通过 traceId 拉来排障。
  *
- * 默认采样 5% + 错误强制采样 + `x-debug-trace: 1` 头强制采样，量级可控。
+ * 业务侧只决定 sampleRate（采样率 = 成本 vs 可见度的真业务决策）。
+ * 其它都是 engine 内置常量（TTL 1h、最近索引 200 条、key prefix 'isr:trace:'）—— 不是
+ * 业务决策，没必要让消费方写。app 名直接读 runtime.telemetry.app（不再重复声明）。
+ *
  * 设为 undefined / 不写即关闭。
+ * 错误强制 100% 采样、`x-debug-trace: 1` 头强制 100% 采样（QA 排障）。
  */
 export interface RuntimeTraceDebugConfig {
-  /** 应用名 —— 多 app 共享 Redis 时区分，跟 rateLimit.appName 用同一个值即可 */
-  appName: string;
-  /** 0..1，默认 0.05；错误请求强制 1.0；x-debug-trace=1 头强制 1.0 */
+  /** 0..1；推荐 0.05（5% 采样 + 错误 100%）。设 1 全采，0 仅采样错误 / debug 头 */
   sampleRate: number;
-  /** 单条快照 TTL（毫秒），默认 1h */
-  ttlMs: number;
-  /** 最近 traceId 索引上限（环形 LIST），默认 200 */
-  recentMax: number;
-  /** Redis key 前缀；默认 'isr:trace:' */
-  keyPrefix: string;
 }
 
 /**
@@ -232,30 +228,6 @@ export interface RuntimeSeoConfig {
   dynamicResolvers: readonly DynamicSeoResolver[] | undefined;
 }
 
-/**
- * 主题运行时配置 —— 决议 + 注入由 engine 一手包办。
- *
- * 决议优先级（高 → 低）：
- *   1. cookie[cookieName] 显式命中 values 之一
- *   2. Sec-CH-Prefers-Color-Scheme client hint（要求 `<meta http-equiv="Accept-CH" ...>` 或响应头）
- *   3. fallback
- *
- * 注入策略：
- *   - SSR 响应流里匹配 `<html ...>` 开标签，没有 attribute 就追加 `data-theme="..."`
- *   - 业务已经手写了 `data-theme` 就**不动**（手动赋值优先）
- *   - 同时响应头 `Accept-CH: Sec-CH-Prefers-Color-Scheme` —— 浏览器下次自动带 hint
- */
-export interface RuntimeThemeConfig {
-  /** Cookie 名，默认 'theme' */
-  cookieName?: string;
-  /** HTML attribute 名，默认 'data-theme' —— Tailwind/UI 库通常监听 [data-theme=...] */
-  attribute?: string;
-  /** cookie / hint 都没命中时的兜底值，默认 'dark' */
-  fallback?: string;
-  /** 合法值白名单，默认 ['light', 'dark']；cookie / hint 不在白名单内回 fallback */
-  values?: readonly string[];
-}
-
 export interface RuntimeServicesConfig {
   /** 默认后端 API origin；业务数据、配置中心、mock fixture 都走这里 */
   api: string | undefined;
@@ -403,13 +375,6 @@ export interface RuntimeConfig {
   i18n: RuntimeI18nConfig | undefined;
   /** 页面 SEO 元数据源配置；站点 canonical/sitemap base URL 统一来自 runtime.site */
   seo: RuntimeSeoConfig | undefined;
-  /**
-   * 主题（深浅色）自动决议 + 注入 ——
-   * 设置为对象（即便空 `{}`）即开启；engine 会在 SSR 响应流里把 cookie / client hint
-   * 决议出的值写到 `<html>` 上。业务侧 Layout 不需要任何主题代码。
-   * 设为 `undefined` / 不写即关闭，业务自行处理。
-   */
-  theme: RuntimeThemeConfig | undefined;
   /**
    * telemetry 上报配置。engine 会把浏览器安全子集序列化到 client entry，
    * 自动接入 page_view、Web Vitals、全局错误、资源加载失败、Server Action 错误；

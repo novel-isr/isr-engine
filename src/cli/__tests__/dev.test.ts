@@ -45,7 +45,7 @@ function makeConfig(overrides: Partial<ISRConfig> = {}): ISRConfig {
       experiments: {},
       i18n: undefined,
       seo: undefined,
-      theme: undefined,
+
       telemetry: false,
     },
     server: {

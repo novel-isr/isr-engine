@@ -37,9 +37,6 @@ async function buildApp(opts: { sampleRate: number; status?: number; debugHeader
     redisUrl: 'redis://localhost:6379',
     appName: 'test-app',
     sampleRate: opts.sampleRate,
-    ttlMs: 60_000,
-    recentMax: 10,
-    keyPrefix: 'isr:trace:',
   });
   if (!writer) throw new Error('writer null');
 

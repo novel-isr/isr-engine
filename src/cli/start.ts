@@ -277,23 +277,22 @@ export async function startProductionServer(options: StartOptions): Promise<void
   }
 
   // Trace 快照写入 —— 给 admin dashboard /operations/trace 提供请求级元数据。
-  // 默认 5% 采样 + 错误 100% + x-debug-trace 头 100%。需要 REDIS_URL。
-  // 配置位置：runtime.telemetry.traceDebug（跟 events / errors / webVitals 兄弟级 observability）
-  const traceDebug = runtime?.telemetry !== false ? runtime?.telemetry?.traceDebug : undefined;
-  if (traceDebug && runtime?.redis?.url) {
+  // 错误 100% + x-debug-trace 头 100% + sampleRate 概率采样。需要 REDIS_URL。
+  // 配置位置：runtime.telemetry.traceDebug（observability 兄弟字段）；
+  // appName 从 runtime.telemetry.app 读，跟 events/errors/webVitals 共用同一个 app 名。
+  const telemetry = runtime?.telemetry !== false ? runtime?.telemetry : undefined;
+  const traceDebug = telemetry?.traceDebug;
+  if (traceDebug && runtime?.redis?.url && telemetry?.app) {
     const { createTraceSnapshotWriter } = await import('@/middlewares/TraceSnapshotWriter');
     const writer = await createTraceSnapshotWriter({
       redisUrl: runtime.redis.url,
-      appName: traceDebug.appName,
+      appName: telemetry.app,
       sampleRate: traceDebug.sampleRate,
-      ttlMs: traceDebug.ttlMs,
-      recentMax: traceDebug.recentMax,
-      keyPrefix: traceDebug.keyPrefix,
     });
     if (writer) {
       app.use(writer.middleware);
       logger.info(
-        `🔍 trace 快照已启用 (app='${traceDebug.appName}', sampleRate=${traceDebug.sampleRate})`
+        `🔍 trace 快照已启用 (app='${telemetry.app}', sampleRate=${traceDebug.sampleRate})`
       );
     }
   }

@@ -31,17 +31,21 @@ import { getRequestContext } from '../context/RequestContext';
 
 export interface TraceSnapshotWriterOptions {
   redisUrl: string;
-  /** 应用名，写到快照里方便多 app 共享 Redis 时区分 */
+  /** 应用名，写到快照里方便多 app 共享 Redis 时区分（消费方用 runtime.telemetry.app） */
   appName: string;
-  /** 0..1，默认 0.05；错误强制 1.0 */
+  /** 0..1；错误请求强制 1.0；x-debug-trace=1 头强制 1.0 */
   sampleRate: number;
-  /** 单条快照 TTL（毫秒），默认 1h */
-  ttlMs: number;
-  /** 最近 N 条 traceId 索引上限，默认 200 */
-  recentMax: number;
-  /** Redis key 前缀；默认 'isr:trace:' */
-  keyPrefix: string;
 }
+
+/**
+ * engine 内置常量 —— 不是业务决策，没必要让消费方写：
+ *   - TTL 1h：trace 是排障辅助，1h 内不查就过期；要 30 分钟还是 2 小时无业务区别
+ *   - 最近索引 200 条：dashboard 一页够看；多了反而难找
+ *   - key prefix 'isr:trace:'：跟 engine 其它 key 同 namespace，无业务意义
+ */
+const TRACE_TTL_MS = 60 * 60 * 1000;
+const TRACE_RECENT_MAX = 200;
+const TRACE_KEY_PREFIX = 'isr:trace:';
 
 /**
  * 单条快照结构 —— 只放"排障真正用得上的字段"。
@@ -67,7 +71,6 @@ interface TraceSnapshot {
   startedAt: string;
   context: {
     locale?: string;
-    theme?: string;
     userId?: string;
     sessionUser?: { displayName?: string; handle?: string };
     cookieKeys: string[];
@@ -138,7 +141,7 @@ export async function createTraceSnapshotWriter(
     logger.warn('[trace-snapshot]', `Redis 写入失败，trace 快照将丢失：${err.message}`);
   });
 
-  const indexKey = `${options.keyPrefix}recent`;
+  const indexKey = `${TRACE_KEY_PREFIX}recent`;
 
   const middleware = (req: Request, res: Response, next: NextFunction): void => {
     const start = Date.now();
@@ -167,7 +170,6 @@ export async function createTraceSnapshotWriter(
         startedAt: new Date(start).toISOString(),
         context: {
           locale: typeof ctx['locale'] === 'string' ? (ctx['locale'] as string) : undefined,
-          theme: typeof ctx['theme'] === 'string' ? (ctx['theme'] as string) : undefined,
           userId: ctx.userId,
           sessionUser: summarizeSessionUser(ctx.sessionUser),
           cookieKeys: Object.keys(ctx.cookies ?? {}),
@@ -189,15 +191,15 @@ export async function createTraceSnapshotWriter(
             : undefined,
       };
 
-      const key = `${options.keyPrefix}${ctx.traceId}`;
+      const key = `${TRACE_KEY_PREFIX}${ctx.traceId}`;
       const json = JSON.stringify(snapshot);
 
       // fire-and-forget：写失败不影响下次请求；上面 client.on('error') 已经 warn 一次
       Promise.resolve()
         .then(async () => {
-          await client.set(key, json, 'PX', options.ttlMs);
+          await client.set(key, json, 'PX', TRACE_TTL_MS);
           await client.lpush(indexKey, ctx.traceId);
-          await client.ltrim(indexKey, 0, options.recentMax - 1);
+          await client.ltrim(indexKey, 0, TRACE_RECENT_MAX - 1);
         })
         .catch(() => {
           // 已 warn 过（client.on('error')），不再重复

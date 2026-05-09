@@ -32,7 +32,7 @@ function runtime(telemetry: RuntimeConfig['telemetry']): RuntimeConfig {
     experiments: {},
     i18n: undefined,
     seo: undefined,
-    theme: undefined,
+
     telemetry,
   };
 }

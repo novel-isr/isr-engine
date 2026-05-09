@@ -201,23 +201,20 @@ async function initServerContext(config?: ISRConfig): Promise<ServerContext> {
     }
   }
 
-  // Trace 快照写入 —— 同 cli/start.ts；位置：runtime.telemetry.traceDebug
-  const traceDebug =
-    config?.runtime?.telemetry !== false ? config?.runtime?.telemetry?.traceDebug : undefined;
-  if (traceDebug && config?.runtime?.redis?.url) {
+  // Trace 快照写入 —— 同 cli/start.ts。appName 从 runtime.telemetry.app 读。
+  const telemetry = config?.runtime?.telemetry !== false ? config?.runtime?.telemetry : undefined;
+  const traceDebug = telemetry?.traceDebug;
+  if (traceDebug && config?.runtime?.redis?.url && telemetry?.app) {
     const { createTraceSnapshotWriter } = await import('@/middlewares/TraceSnapshotWriter');
     const writer = await createTraceSnapshotWriter({
       redisUrl: config.runtime.redis.url,
-      appName: traceDebug.appName,
+      appName: telemetry.app,
       sampleRate: traceDebug.sampleRate,
-      ttlMs: traceDebug.ttlMs,
-      recentMax: traceDebug.recentMax,
-      keyPrefix: traceDebug.keyPrefix,
     });
     if (writer) {
       serverContext.requestHandler.use(writer.middleware);
       logger.info(
-        `🔍 trace 快照已启用 (app='${traceDebug.appName}', sampleRate=${traceDebug.sampleRate})`
+        `🔍 trace 快照已启用 (app='${telemetry.app}', sampleRate=${traceDebug.sampleRate})`
       );
     }
   }
