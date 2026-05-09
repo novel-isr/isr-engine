@@ -759,9 +759,27 @@ function normalizeMessages(messages: Record<string, unknown>): Record<string, un
   return messages;
 }
 
+/**
+ * 逐层剥 envelope —— admin 在不同分支返回三种 shape：
+ *   - flat：`{ title, description, ... }`（admin no-locale fast path）
+ *   - 单层：`{ data: { title, ... } }`（旧版本）
+ *   - 双层：`{ status, code, data: { data: { title, ... }, version } }`
+ *     （api-envelope plugin 包了一层，resolvePublic 自己又是 `{ data, version }`，
+ *      所以 locale-aware 路径会双层 wrap）
+ *
+ * 停止条件：候选对象有 `title` / `description`（SEO 形状），或没有 `data` 字段可剥。
+ */
 function extractSeoMetaOrNull(data: unknown): PageSeoMeta | null {
-  if (!isRecord(data)) return null;
-  const candidate = 'data' in data ? data.data : data;
+  let candidate: unknown = data;
+  for (let i = 0; i < 4; i++) {
+    if (!isRecord(candidate)) return null;
+    if ('title' in candidate || 'description' in candidate) break;
+    if ('data' in candidate) {
+      candidate = candidate.data;
+      continue;
+    }
+    return null;
+  }
   if (!isRecord(candidate)) return null;
   return candidate as PageSeoMeta;
 }
