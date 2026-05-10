@@ -47,6 +47,9 @@ const FRAMEWORK_SKIP_EXACT = new Set([
   '/favicon.ico',
 ]);
 
+// 跟 defaults/runtime/request.tsx 保持一致 —— RSC client navigation 用这个后缀
+const RSC_POSTFIX = '_.rsc';
+
 export function createLocaleRedirectMiddleware(
   options: CreateLocaleRedirectOptions
 ): ((req: Request, res: Response, next: NextFunction) => void) | null {
@@ -60,13 +63,25 @@ export function createLocaleRedirectMiddleware(
 
   return function localeRedirectMiddleware(req, res, next) {
     if (req.method !== 'GET' && req.method !== 'HEAD') return next();
-    const path = req.path;
+    const rawPath = req.path;
 
-    if (FRAMEWORK_SKIP_EXACT.has(path)) return next();
-    for (const p of FRAMEWORK_SKIP_PREFIXES) if (path.startsWith(p)) return next();
-    for (const p of skipPathPrefixes) if (path.startsWith(p)) return next();
+    if (FRAMEWORK_SKIP_EXACT.has(rawPath)) return next();
+    for (const p of FRAMEWORK_SKIP_PREFIXES) if (rawPath.startsWith(p)) return next();
+    for (const p of skipPathPrefixes) if (rawPath.startsWith(p)) return next();
 
-    // 静态资源（含点号判定 —— /assets/foo.css、/logo.svg、/manifest.webmanifest）
+    // RSC client navigation 用 `_.rsc` 后缀（详见 defaults/runtime/request.tsx）。
+    // 这是 engine 自有的"逻辑路由后缀"，不是真静态资源 —— 必须跟 HTML 请求走同
+    // 一套 redirect 规则，不然客户端导航 pushState('/') 拉到的 RSC 永远不带 locale
+    // 前缀，URL 永远跟 /zh-CN 不同步。剥后缀做路由判定，redirect 目标拼回去。
+    let path = rawPath;
+    let rscSuffix = '';
+    if (path.endsWith(RSC_POSTFIX)) {
+      rscSuffix = RSC_POSTFIX;
+      path = path.slice(0, -RSC_POSTFIX.length) || '/';
+    }
+
+    // 真静态资源（含点号判定 —— /assets/foo.css、/logo.svg、/manifest.webmanifest）
+    // 注意：这一步在剥 _.rsc 之后；rsc 后缀已经去掉，剩下的点号才是真资源。
     if (path.includes('.')) return next();
 
     // 已带合法 locale 前缀就放行（对 BCP 47 大小写不敏感：/zh-cn/books → /zh-CN/books 也走这里）
@@ -77,7 +92,8 @@ export function createLocaleRedirectMiddleware(
       if (ci) {
         const rest = path.slice(first.length + 1) || '/';
         const search = req.url.includes('?') ? req.url.slice(req.url.indexOf('?')) : '';
-        res.redirect(308, `/${ci}${rest === '/' ? '' : rest}${search}`);
+        const finalRest = rest === '/' ? '' : rest;
+        res.redirect(308, `/${ci}${finalRest}${rscSuffix}${search}`);
         return;
       }
     }
@@ -93,7 +109,7 @@ export function createLocaleRedirectMiddleware(
       );
 
     const search = req.url.includes('?') ? req.url.slice(req.url.indexOf('?')) : '';
-    res.redirect(302, withLocale(path, target, i18n) + search);
+    res.redirect(302, withLocale(path, target, i18n) + rscSuffix + search);
   };
 }
 
