@@ -2,7 +2,7 @@
 
 成熟项目建议把配置分成两层：
 
-- `ssr.config.ts`：启动期 / 部署期 / 平台级配置，例如 `runtime.site`、`runtime.services`、`runtime.i18n`、`runtime.seo`、Redis、telemetry endpoint、限流、A/B testing、路由渲染模式。
+- `ssr.config.ts`：启动期 / 部署期 / 平台级配置，例如 `runtime.site`、`runtime.services`、`runtime.i18n`、`runtime.seo`、Redis、telemetry endpoint、A/B testing、路由渲染模式。
 - `src/entry.server.tsx`：请求期 hooks，例如用户、租户、灰度上下文、`beforeRequest`、`onError`。
 
 第一性原则是：会影响整个运行时拓扑的东西放配置文件；会依赖本次请求的东西放 server entry。
@@ -115,7 +115,7 @@ export default defineAdminSiteHooks({
 });
 ```
 
-`defineSiteHooks` 不接收 Redis、Sentry、限流或 A/B testing 配置。这些能力只从
+`defineSiteHooks` 不接收 Redis、Sentry 或 A/B testing 配置。这些能力只从
 `ssr.config.ts runtime` 读取。`runtime.site/services/i18n/seo` 也由 engine 注入到默认
 server entry，业务不需要在 `entry.server.tsx` 里 import `ssr.config.ts`。
 
@@ -220,7 +220,7 @@ HTTP request
 
 它不适合放：
 
-- i18n / SEO endpoint、TTL、Redis、Sentry、限流、A/B testing 定义，这些属于 `ssr.config.ts runtime`。
+- i18n / SEO endpoint、TTL、Redis、Sentry、A/B testing 定义，这些属于 `ssr.config.ts runtime`。
 - 数据库查询、慢 API 查询、复杂鉴权。`beforeRequest` 在首屏关键路径上，应保持 O(1) 的 header/cookie 解析。
 - 页面业务渲染逻辑。页面逻辑应该在 Server Component 内消费 `getRequestContext()`。
 - 自己解析 A/B cookie。A/B variant 由 engine middleware 注入，页面用 `getVariant()` 读取。

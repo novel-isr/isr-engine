@@ -28,7 +28,7 @@
 cd bench/fixture
 pnpm install --no-frozen-lockfile
 pnpm run build
-BENCH_DISABLE_RATE_LIMIT=1 PORT=3000 pnpm start
+PORT=3000 pnpm start
 # 另一终端
 cd ../..
 BENCH_TIERS=10,100,1000 pnpm run bench

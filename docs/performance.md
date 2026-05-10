@@ -3,7 +3,7 @@
 ## Bench 数据
 
 测试环境：MacBook M-series · Node 22 · 单进程 · 多档并发（10 / 100 / 1000 / 10000）·
-3s warmup / 8s per tier / 2s cooldown · `BENCH_DISABLE_RATE_LIMIT=1`：
+3s warmup / 8s per tier / 2s cooldown：
 
 | 路径 | 模式 | QPS @ 10c | QPS @ 10000c | P95 @ 10c | P95 @ 10000c |
 |---|---|---|---|---|---|

@@ -156,7 +156,7 @@ export default defineIsrConfig({
 });
 ```
 
-`ssr.config.ts` 是启动期单一配置入口。路由渲染模式、Redis、Sentry、限流、A/B、站点 URL 都放这里。
+`ssr.config.ts` 是启动期单一配置入口。路由渲染模式、Redis、Sentry、A/B、站点 URL 都放这里。
 页面缓存后端不由业务配置；engine 自动选择 memory / Redis，TTL 放在 `routes[*].ttl` 或 `revalidate`。
 
 ## 6. `src/entry.server.ts` —— 请求期 SiteHooks
@@ -289,7 +289,7 @@ export default function PublishBookForm() {
 详细模式语义：[render-modes.md](./render-modes.md)。
 缓存与失效：[caching.md](./caching.md)。
 
-## 扩展平台配置（Redis / Telemetry / 限流 / A/B）
+## 扩展平台配置（Redis / Telemetry / A/B）
 
 继续写在 `ssr.config.ts` 的 `runtime`：
 

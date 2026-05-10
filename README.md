@@ -361,7 +361,7 @@ export default {
 │    • SEO sitemap / robots / OG image                  │
 │    • page-level SEO + API SEO 下发                    │
 │    • i18n URL 路由 + 字典缓存 + getI18n()              │
-│    • A/B testing、限流                                 │
+│    • A/B testing                                       │
 │    • csr-shell fallback（server 崩溃自救）            │
 │    • dev render inspector（开发态渲染模式浮层）        │
 │    • browser analytics / error-reporting 生命周期桥接 │
@@ -375,7 +375,7 @@ export default {
 - 单 Express 进程，可 hack 中间件链
 - SEO 在 page export + runtime.seo 下发层分层收口，不散落到组件渲染树
 - L1+L2 hybrid cache（进程内 LRU + 可选 Redis 写穿）
-- A/B 变体、限流内建
+- A/B 变体内建
 - 显式 `RenderModeType = 'ssg' | 'isr' | 'ssr'`，不靠隐式 segment config
 
 ## 性能 benchmark
@@ -386,9 +386,9 @@ baseline：[`bench/baseline.json`](./bench/baseline.json) —— 由 [`bench/fix
 raw QPS/P95 退化比较；否则只做当前结果健康检查并提示重新播种 baseline。
 
 当前基线协议：Node 22 · 单进程 · 3s warmup · 8s/tier · 2s cooldown ·
-`BENCH_DISABLE_RATE_LIMIT=1` · tiers 10/100/1000。
+tiers 10/100/1000。
 
-复现：`cd bench/fixture && pnpm run build && BENCH_DISABLE_RATE_LIMIT=1 pnpm start`，
+复现：`cd bench/fixture && pnpm run build && pnpm start`，
 另一终端跑 `BENCH_TIERS=10,100,1000 BENCH_DURATION=8 pnpm bench`。bench 退化
 追踪走 [`.github/workflows/bench.yml`](./.github/workflows/bench.yml)。GitHub hosted
 runner 跨次硬件不一致时必须重新播种同一 runner class 的 baseline，不能把本地

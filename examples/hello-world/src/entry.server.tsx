@@ -6,7 +6,7 @@
  *   - onError：补充业务日志或审计
  *   - seo/intl：只有在不使用 ssr.config.ts runtime 默认 loader 时才自定义
  *
- * 部署地址、Redis、限流、telemetry、A/B 定义都放 ssr.config.ts runtime。
+ * 部署地址、Redis、telemetry、A/B 定义都放 ssr.config.ts runtime。
  */
 import { defineSiteHooks } from '@novel-isr/engine/site-hooks';
 

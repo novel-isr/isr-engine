@@ -97,9 +97,6 @@ jobs:
       - name: Start bench-fixture in background
         working-directory: bench/fixture
         env:
-          # 关键：关掉限流 —— autocannon 单 IP 模拟高并发会被 200/min 限流压成 99% 429
-          # 这是 bench fixture 专用 env，生产部署绝不带
-          BENCH_DISABLE_RATE_LIMIT: '1'
           PORT: '3000'
           NODE_ENV: 'production'
           SITE_URL: 'http://localhost:3000'
