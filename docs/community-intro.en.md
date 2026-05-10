@@ -38,12 +38,11 @@ Specific things I'd like opinions on:
 2. The `csr-shell` fallback concept (is there prior art?)
 3. Subpath exports that ship as raw `.tsx` because plugin-rsc needs to see
    `'use client'` directives — is there a recommended pattern?
-4. Where config validation belongs. v2.3.x earlier asked consumers to write
-   their own `resolveRateLimitStore()`-style env sanitizer; engine silently
-   fell back to `'memory'` on bad values. Just moved validation into the
-   engine boundary (engine owns the `'memory' | 'redis' | 'auto'` union, so
-   it should validate). Are there other config knobs in this codebase that
-   I'm still leaking validation responsibility for?
+4. Where config validation belongs. Earlier versions asked consumers to write
+   their own env sanitizers for engine-owned union types; engine silently
+   fell back on bad values. Recently moved validation into the engine boundary
+   (engine owns the union, so engine validates). Are there other config knobs
+   in this codebase that I'm still leaking validation responsibility for?
 
 Repo: <link>
 Not pitching a Next.js replacement. Honestly looking for pushback.

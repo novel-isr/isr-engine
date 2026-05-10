@@ -6,32 +6,6 @@
 
 ## [Unreleased]
 
-### Removed — BREAKING：rate-limit + 服务端 trace 快照（业界框架不做这些）
-
-业界共识（Next.js / Remix / Astro / SvelteKit / Nuxt 全部不做）：渲染框架不应承担
-rate limiting 跟服务端 trace。Rate limit 走 CDN/WAF/Gateway（Cloudflare / AWS WAF /
-Vercel Edge / Kong / Envoy），trace + 错误走 OpenTelemetry → Sentry / Honeycomb /
-Datadog。框架做这些会引入不必要的依赖（Redis）、增加业务配置面、且效果远不如
-专业工具。
-
-**删除清单**：
-- `runtime.rateLimit` 整块 + `RuntimeRateLimitConfig` 类型
-- `runtime.telemetry.traceDebug` + `RuntimeTraceDebugConfig` 类型
-- `RateLimiter` / `RateLimitConfigSubscriber`（hot-reload 订阅器） /
-  `rate-limit-key` 三个 middleware
-- `TraceSnapshotWriter` middleware
-- `createRateLimiter` / `createRateLimitStoreFromRuntime` /
-  `createMemoryRateLimitStore` / `createRedisRateLimitStore` /
-  `extractClientIp` / `RateLimitOptions` / `RateLimitStore` /
-  `UserBucketConfig` 等 8 个 export
-
-**业务侧迁移**：
-- `ssr.config.ts` 删 `runtime.rateLimit` 整块、`runtime.telemetry.traceDebug` 字段
-- 应用层兜底 rate-limit 真有需要 → 用 `express-rate-limit` 独立 middleware
-- 错误追踪 → Sentry SDK
-- Trace → OpenTelemetry SDK + collector
-- 业务事件埋点 → 仍走 `runtime.telemetry.events`（保留）
-
 ---
 
 ## [2.3.1] - 2026-04-29
