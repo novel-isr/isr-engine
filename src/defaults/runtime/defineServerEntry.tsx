@@ -192,7 +192,13 @@ export function defineServerEntry<C extends ServerCtx = ServerCtx>(
         }
 
         const seoMeta = await runWithI18n(intl, async () => {
+          // 关键：剥掉 _.rsc 后缀（RSC 客户端导航时存在）再喂给 SEO 路由匹配。
+          // 否则 /books/1_.rsc 永远 match 不到 /books/:id 路由 → seoMeta=null →
+          // 客户端 applySeoToDocument 拿不到 meta，title / og:* 不更新。
           const url = new URL(request.url);
+          if (url.pathname.endsWith('_.rsc')) {
+            url.pathname = url.pathname.slice(0, -'_.rsc'.length);
+          }
           const [pageSeoMeta, hookSeoMeta] = await Promise.all([
             resolvePageSeoMeta(url),
             hooks.loadSeoMeta
