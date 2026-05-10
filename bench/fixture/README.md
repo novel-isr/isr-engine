@@ -18,8 +18,8 @@
 1. **零远端依赖**：所有"动态数据"内联，避免上游 API 抖动污染 bench 数据
 2. **依赖 engine 自家入口**：`createIsrPlugin` + `defineSiteHooks` —— bench 路径
    与生产用户路径一致，不走简化版 mock 服务器
-3. **故意不挂 rateLimit / experiments / 远端 SEO**：这些 hook 会写 Set-Cookie
-   或触发远端 fetch，让 ISR 中间件按设计 skip 缓存或引入网络抖动，污染 bench 数据。
+3. **故意不挂 experiments / 远端 SEO**：这些 hook 会写 Set-Cookie 或触发远端
+   fetch，让 ISR 中间件按设计 skip 缓存或引入网络抖动，污染 bench 数据。
    它们的正确性由 `src/middlewares/__tests__/` 单元测试覆盖。
 
 ## 用法（CI 自动跑；手动也能跑）

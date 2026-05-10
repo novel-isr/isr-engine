@@ -2,12 +2,12 @@
  * Bench fixture 服务端 entry —— 最小化的 defineSiteHooks 配置
  *
  * 故意不挂任何会写 Set-Cookie / 触发远端 fetch 的 hook
- * (i18n endpoint / SEO 远端 / Sentry / Redis / experiments / rateLimit)
+ * (i18n endpoint / SEO 远端 / Sentry / Redis / experiments)
  * —— bench 只测 engine 自身的中间件链路 + ISR cache 命中路径性能.
  *
- * 注：experiments / rateLimit 这些 hook 的正确性由 src/middlewares/__tests__/
- * 的单元测试覆盖, 不需要在 bench fixture 里再做集成测试 (那只会把响应弄成
- * 带 Set-Cookie, 从而被 ISR 中间件按设计 skip 缓存, 污染 bench 数).
+ * 注：experiments 这种 hook 的正确性由 src/middlewares/__tests__/ 的单元测试
+ * 覆盖, 不需要在 bench fixture 里再做集成测试 (那只会把响应弄成带 Set-Cookie,
+ * 从而被 ISR 中间件按设计 skip 缓存, 污染 bench 数).
  */
 import { defineSiteHooks } from '@novel-isr/engine/site-hooks';
 

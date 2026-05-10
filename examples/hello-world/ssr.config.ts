@@ -39,7 +39,6 @@ export default {
           invalidationChannel: 'hello-world:isr:invalidate',
         }
       : undefined,
-    rateLimit: false,
     experiments: {},
     i18n: undefined,
     seo: undefined,

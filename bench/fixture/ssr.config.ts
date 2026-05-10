@@ -30,7 +30,6 @@ const config: ISRConfig = {
           invalidationChannel: 'bench:isr:invalidate',
         }
       : undefined,
-    rateLimit: false,
     experiments: {},
     i18n: undefined,
     seo: undefined,
