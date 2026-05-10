@@ -192,12 +192,24 @@ export function defineServerEntry<C extends ServerCtx = ServerCtx>(
         }
 
         const seoMeta = await runWithI18n(intl, async () => {
-          // 关键：剥掉 _.rsc 后缀（RSC 客户端导航时存在）再喂给 SEO 路由匹配。
-          // 否则 /books/1_.rsc 永远 match 不到 /books/:id 路由 → seoMeta=null →
-          // 客户端 applySeoToDocument 拿不到 meta，title / og:* 不更新。
+          // 双 strip：
+          // 1) _.rsc 后缀（RSC 客户端导航 URL 携带）—— 不剥的话 /books/1_.rsc
+          //    永远 match 不到 /books/:id 路由 → seoMeta=null → applySeoToDocument
+          //    no-op，客户端导航后 head 不更新。
+          // 2) locale 前缀（i18n.prefixDefault=true 时所有 URL 都带）—— pages 注册的
+          //    route 是业务规范路径（'/'、'/books/:id'），不含 locale；不剥的话
+          //    /zh-CN/books/1 也匹配不到。
           const url = new URL(request.url);
           if (url.pathname.endsWith('_.rsc')) {
             url.pathname = url.pathname.slice(0, -'_.rsc'.length);
+          }
+          if (intl?.locale) {
+            const localePrefix = `/${intl.locale}`;
+            if (url.pathname === localePrefix) {
+              url.pathname = '/';
+            } else if (url.pathname.startsWith(`${localePrefix}/`)) {
+              url.pathname = url.pathname.slice(localePrefix.length);
+            }
           }
           const [pageSeoMeta, hookSeoMeta] = await Promise.all([
             resolvePageSeoMeta(url),

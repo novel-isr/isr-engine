@@ -691,6 +691,13 @@ function createSiteHooks(config: SiteHooksConfig, runtime: SiteRuntimeConfig): S
     async loadSeoMeta(req) {
       const url = new URL(req.url);
       const locale = detectLocale(req);
+      // 客户端 RSC 导航 fetch 的 URL 带 _.rsc 后缀（详见 defaults/runtime/request.tsx）。
+      // 先剥后缀，否则 /zh-CN/books/1_.rsc 永远 match 不到 /books/:id route → seoMeta=null →
+      // 客户端导航后 head 不更新。HTML 请求没这个后缀，原行为不变。
+      let pathForRouting = url.pathname;
+      if (pathForRouting.endsWith('_.rsc')) {
+        pathForRouting = pathForRouting.slice(0, -'_.rsc'.length) || '/';
+      }
       // SEO 表是按"业务规范路径"（'/' / '/books' / '/about'）入库的，
       // 不带 locale 前缀。请求 URL 是带前缀的（'/en-US/'、'/zh-CN/books'），
       // 直接喂给 admin 查不到。先用 parseLocale 把 locale 段剥掉，
@@ -700,12 +707,12 @@ function createSiteHooks(config: SiteHooksConfig, runtime: SiteRuntimeConfig): S
       const intlConfig = config.intl;
       const cleanPath =
         intlConfig?.locales && intlConfig.locales.length > 0
-          ? parseLocale(url.pathname, {
+          ? parseLocale(pathForRouting, {
               locales: intlConfig.locales,
               defaultLocale: intlConfig.defaultLocale ?? intlConfig.locales[0]!,
               prefixDefault: intlConfig.prefixDefault,
             } satisfies I18nConfig).pathname
-          : url.pathname;
+          : pathForRouting;
 
       for (const { re, paramNames, resolver } of seoRoutes) {
         const m = cleanPath.match(re);
