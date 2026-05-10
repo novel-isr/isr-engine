@@ -166,12 +166,6 @@ export async function startProductionServer(options: StartOptions): Promise<void
 
   const app: Express = express();
   app.disable('x-powered-by');
-  // Express trust proxy —— 跟 runtime.rateLimit.trustProxy 同源真值。
-  // false / 0 不信任；true 盲信；数字 N 信任最右 N 跳代理（推荐，按部署链路 hop count 配）。
-  // 影响 req.ip 解析跟 req.protocol（X-Forwarded-Proto），整个 Express 都跟着走。
-  if (runtime?.rateLimit) {
-    app.set('trust proxy', runtime.rateLimit.trustProxy);
-  }
   app.use(express.json({ limit: '1mb' })); // 防 JSON 炸弹
   const opsConfig = resolveOpsConfig(config, 'production');
   for (const warning of opsConfig.warnings) {
@@ -232,70 +226,9 @@ export async function startProductionServer(options: StartOptions): Promise<void
     }
   }
 
-  // Rate limiting —— ssr.config.ts runtime.rateLimit
-  if (runtime?.rateLimit) {
-    const { createRateLimiter, createRateLimitStoreFromRuntime } =
-      await import('@/middlewares/RateLimiter');
-    const resolvedRateLimitStore = await createRateLimitStoreFromRuntime(
-      runtime.rateLimit,
-      runtime.redis
-    );
-    const rateLimiterHandle = createRateLimiter({
-      windowMs: runtime.rateLimit.windowMs,
-      max: runtime.rateLimit.max,
-      store: resolvedRateLimitStore.store,
-      trustProxy: runtime.rateLimit.trustProxy,
-      skipPaths: runtime.rateLimit.skipPaths,
-      skipPathPrefixes: runtime.rateLimit.skipPathPrefixes,
-      skipExtensions: runtime.rateLimit.skipExtensions,
-      userBucket: runtime.rateLimit.userBucket,
-      skip: req => req.path === '/health' || req.path === '/metrics',
-    });
-    app.use(rateLimiterHandle);
-    const keyMode = runtime.rateLimit.userBucket ? 'user-aware' : 'IP';
-    logger.info(
-      `🚦 限流已启用：${runtime.rateLimit.max} req / ${runtime.rateLimit.windowMs / 1000}s per ${keyMode} (store=${resolvedRateLimitStore.backend})`
-    );
-
-    // 监听 admin 控制面在 Redis pub/sub 上的 'rate-limit:config:updated' —— 实时
-    // 改 max / windowMs，业务无需重启。仅当配了 REDIS_URL（共享 Redis）时启用；
-    // ssr.config.ts runtime.rateLimit.appName 决定订阅哪个 app 的配置。
-    const redisUrl = runtime.redis?.url;
-    const appName = runtime.rateLimit.appName;
-    if (redisUrl && appName) {
-      const { startRateLimitConfigSubscriber } =
-        await import('@/middlewares/RateLimitConfigSubscriber');
-      startRateLimitConfigSubscriber({
-        appName,
-        handle: rateLimiterHandle,
-        redisUrl,
-      })
-        .then(sub => {
-          if (sub) logger.info(`🔁 限流配置订阅已启动 (app='${appName}')`);
-        })
-        .catch(err => logger.warn('[rate-limit-config]', 'subscriber 启动失败', err));
-    }
-  }
-
-  // Trace 快照写入 —— 给 admin dashboard /operations/trace 提供请求级元数据。
-  // sampleRate 控制普通请求采样；错误 + `x-debug-trace: 1` 头始终 100% 采。
-  // 需要 REDIS_URL + telemetry.app。
-  const telemetry = runtime?.telemetry !== false ? runtime?.telemetry : undefined;
-  const traceDebug = telemetry?.traceDebug;
-  if (traceDebug && runtime?.redis?.url && telemetry?.app) {
-    const { createTraceSnapshotWriter } = await import('@/middlewares/TraceSnapshotWriter');
-    const writer = await createTraceSnapshotWriter({
-      redisUrl: runtime.redis.url,
-      appName: telemetry.app,
-      sampleRate: traceDebug.sampleRate,
-    });
-    if (writer) {
-      app.use(writer.middleware);
-      logger.info(
-        `🔍 trace 快照已启用 (app='${telemetry.app}', sampleRate=${traceDebug.sampleRate})`
-      );
-    }
-  }
+  // Rate limiting / trace snapshot 已从 engine 移除 —— 业界共识（Next.js / Remix /
+  // Astro 都不做）：rate-limit 应该走 CDN/WAF/Gateway（Cloudflare / Kong / Vercel
+  // Edge），trace 应该走 OTel + Sentry / Honeycomb / Datadog。框架不该承担这些职责。
 
   // A/B variant —— ssr.config.ts runtime.experiments
   if (runtime?.experiments && Object.keys(runtime.experiments).length > 0) {

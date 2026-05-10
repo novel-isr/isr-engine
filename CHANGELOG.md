@@ -6,98 +6,31 @@
 
 ## [Unreleased]
 
-### Changed — BREAKING：rate-limit 数据驱动 + traceDebug 收编
+### Removed — BREAKING：rate-limit + 服务端 trace 快照（业界框架不做这些）
 
-- **`runtime.rateLimit.keyGenerator` (function) 被移除**，改为数据驱动配置：
-  - 新字段：`userBucket: { cookie?, field?, header? } | undefined`
-  - 新字段：`useTenantPrefix: boolean` —— 桶 key 前缀 `t:<tenantId>:`，从 `x-tenant-id` 读
-  - 新字段：`useSegmentPrefix: boolean` —— 桶 key 前缀 `s:<segment>:`，从 `x-segment` 读
-- **`./rate-limit-key` package.json 子入口被移除** —— 业务侧 ssr.config.ts 不再 import
-  `createUserAwareKeyGenerator`，零 function 引用 = 零 SSG bundle 风险。
-- **`runtime.rateLimit.trustProxy` 不再重复** —— 之前 keyGenerator 工厂参数也写一遍，
-  现在统一只在 `runtime.rateLimit.trustProxy` 一处声明。
-- **`runtime.traceDebug` 移到 `runtime.telemetry.traceDebug`**：跟 events / errors /
-  webVitals 兄弟级 observability 字段，逻辑归类一致。
-- **trace 快照新增字段**：`context.userId / requestSegment / sessionUser{displayName,handle}`
-  —— 业务侧 beforeRequest 写入 RequestContext 的字段会自动出现在 admin /operations/trace 详情。
-  sessionToken **永远不写**（敏感）；sessionUser 只展示 displayName / handle 两个字段（PII 脱敏）。
+业界共识（Next.js / Remix / Astro / SvelteKit / Nuxt 全部不做）：渲染框架不应承担
+rate limiting 跟服务端 trace。Rate limit 走 CDN/WAF/Gateway（Cloudflare / AWS WAF /
+Vercel Edge / Kong / Envoy），trace + 错误走 OpenTelemetry → Sentry / Honeycomb /
+Datadog。框架做这些会引入不必要的依赖（Redis）、增加业务配置面、且效果远不如
+专业工具。
 
-迁移指引：
-```ts
-// 旧（v2.3.x）
-import { createUserAwareKeyGenerator } from '@novel-isr/engine/rate-limit-key';
-runtime: {
-  rateLimit: {
-    trustProxy: process.env.TRUST_PROXY === '1',
-    keyGenerator: createUserAwareKeyGenerator({
-      userIdCookie: 'novel_session_user',
-      trustProxy: process.env.TRUST_PROXY === '1',
-    }),
-  },
-  traceDebug: { appName: 'x', sampleRate: 0.05, ... },
-}
+**删除清单**：
+- `runtime.rateLimit` 整块 + `RuntimeRateLimitConfig` 类型
+- `runtime.telemetry.traceDebug` + `RuntimeTraceDebugConfig` 类型
+- `RateLimiter` / `RateLimitConfigSubscriber`（hot-reload 订阅器） /
+  `rate-limit-key` 三个 middleware
+- `TraceSnapshotWriter` middleware
+- `createRateLimiter` / `createRateLimitStoreFromRuntime` /
+  `createMemoryRateLimitStore` / `createRedisRateLimitStore` /
+  `extractClientIp` / `RateLimitOptions` / `RateLimitStore` /
+  `UserBucketConfig` 等 8 个 export
 
-// 新（v2.4）
-runtime: {
-  rateLimit: {
-    trustProxy: process.env.TRUST_PROXY === '1',
-    userBucket: { cookie: 'novel_session_user', field: 'userId' },
-    useTenantPrefix: false,
-    useSegmentPrefix: false,
-  },
-  telemetry: {
-    traceDebug: { appName: 'x', sampleRate: 0.05, ... },
-  },
-}
-```
-
-### Added — Trace 快照写入（请求级排障）
-
-- **`runtime.traceDebug`**：新增字段。每请求把 RequestContext + locale / theme /
-  cache 命中 / 状态码 / 用时 / cookies key 名等元数据快照写到 Redis
-  `<keyPrefix><traceId>`，TTL 1h。admin dashboard `/operations/trace` 通过
-  traceId 拉来排障，5 分钟内还原现场。
-- **采样策略**：`status >= 500` 强制采样、请求头 `x-debug-trace: 1` 强制采样、
-  否则按 `sampleRate`（默认 0.05 = 5%）概率采样。生产 1 万 QPS × 5% × 1h
-  ≈ 1.8M 条 ≈ 2GB Redis，可忽略。
-- **环形索引**：`<keyPrefix>recent` LIST，最近 N 条 traceId（LPUSH + LTRIM N=200），
-  方便 dashboard 显示"最近请求"列表。
-- 跟 Sentry / Datadog 区别：只存"业务侧关心的请求级元数据"，不存 stack trace /
-  span tree，量级和成本完全不同。
-
-### Added — 限流配置 hot-reload (admin → engine)
-
-- **`runtime.rateLimit.appName`**：新增字段。配置后 engine 启动时订阅 Redis 频道
-  `rate-limit:config:updated`，admin 控制面 PATCH 配置后下一次请求即生效，
-  无需重启业务前台。pod 启动期还会主动 `GET rate-limit:config:<appName>` 拉一次
-  快照，故障恢复 / 滚动发布都不丢配置。
-- **`createRateLimiter` 现在返回 `RateLimiterHandle`**：除了原来的中间件签名，
-  新增 `setConfig({ max?, windowMs? })` 和 `getConfig()`。前者由内部
-  `RateLimitConfigSubscriber` 调用，业务一般不直接用；类型保持 backwards-compat。
-- 业务侧只需在 `ssr.config.ts` 加一行 `appName: 'novel-rating'`，
-  其它现有 `windowMs / max` 仍作为 Redis 配置缺失时的兜底默认值。
-- 全部走 `optionalDependencies` 的 `ioredis`，REDIS_URL 没配 → 静默退化为静态配置。
-
-### Changed — 行为收口（轻量 BREAKING / 默认值变更）
-
-- **`runtime.rateLimit.store` 默认从 `'memory'` 改为 `'auto'`**。已配置 `runtime.redis.url/host`
-  时，限流自动切到 Redis backend；否则
-  仍用 memory。**消费方一般不再需要显式声明 `store`** —— Redis 配置即统一真值源。
-  > 旧行为「不因 redis 存在而隐式切换」是为了避免惊喜，但实际上让每个消费方都得
-  > 重复写 `store: 'redis'`。新行为更符合 engine 「开箱即用」的第一性原则。
-  > 如果你确实希望即使 Redis 已配置仍用 memory（罕见，例如本地 burn-in），显式
-  > 写 `rateLimit: { store: 'memory' }` 即可。
-
-### Fixed — 配置边界校验
-
-- **`runtime.rateLimit.store` 接到非法值（拼错 / 类型错）时不再静默吞**。engine
-  现在在边界做校验：合法值 (`'memory'` / `'redis'` / `'auto'`) 直通；非法值
-  warn 一次并按 `'auto'` 处理。
-  > 原来 `store: 'mem'` 这类拼写错误会被 `mode === 'redis' || mode === 'auto'`
-  > 这两个布尔判断同时落空，最终静默回落到 memory，运维永远不知道环境变量打错。
-  > 新行为遵循「校验在边界，类型拥有方负责」原则：engine 拥有 `RateLimitStore`
-  > 这个 union type，校验就在 engine 这层。消费方不再需要写本地的
-  > `resolveRateLimitStore()` 之类 sanitizer 函数。
+**业务侧迁移**：
+- `ssr.config.ts` 删 `runtime.rateLimit` 整块、`runtime.telemetry.traceDebug` 字段
+- 应用层兜底 rate-limit 真有需要 → 用 `express-rate-limit` 独立 middleware
+- 错误追踪 → Sentry SDK
+- Trace → OpenTelemetry SDK + collector
+- 业务事件埋点 → 仍走 `runtime.telemetry.events`（保留）
 
 ---
 

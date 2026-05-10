@@ -17,7 +17,6 @@ import { applyBaseMiddlewaresWithOptions, mountViteOrStatic } from './middleware
 import { startServer, closeServer } from './httpServer';
 import { requestContext } from '@/context/RequestContext';
 import { parseCookieHeader } from '@/utils/cookie';
-import { createRateLimiter, createRateLimitStoreFromRuntime } from '@/middlewares/RateLimiter';
 import { createABVariantMiddleware } from '@/middlewares/ABVariantMiddleware';
 import { createLocaleRedirectMiddleware } from '@/middlewares/LocaleRedirect';
 import { resolveI18nConfig } from '@/runtime/i18n';
@@ -155,63 +154,8 @@ async function initServerContext(config?: ISRConfig): Promise<ServerContext> {
     if (localeRedirect) serverContext.requestHandler.use(localeRedirect);
   }
 
-  if (config?.runtime?.rateLimit) {
-    const resolvedRateLimitStore = await createRateLimitStoreFromRuntime(
-      config.runtime.rateLimit,
-      config.runtime.redis
-    );
-    const rateLimiterHandle = createRateLimiter({
-      windowMs: config.runtime.rateLimit.windowMs,
-      max: config.runtime.rateLimit.max,
-      store: resolvedRateLimitStore.store,
-      trustProxy: config.runtime.rateLimit.trustProxy,
-      skipPaths: config.runtime.rateLimit.skipPaths,
-      skipPathPrefixes: config.runtime.rateLimit.skipPathPrefixes,
-      skipExtensions: config.runtime.rateLimit.skipExtensions,
-      userBucket: config.runtime.rateLimit.userBucket,
-      skip: req => req.path === '/health' || req.path === '/metrics',
-    });
-    serverContext.requestHandler.use(rateLimiterHandle);
-    const keyMode = config.runtime.rateLimit.userBucket ? 'user-aware' : 'IP';
-    logger.info(
-      `🚦 限流已启用：${config.runtime.rateLimit.max} req / ${config.runtime.rateLimit.windowMs / 1000}s per ${keyMode} (store=${resolvedRateLimitStore.backend})`
-    );
-
-    // 同 cli/start.ts —— 监听 admin 控制面在 Redis pub/sub 上的 hot-reload 广播
-    const redisUrl = config.runtime.redis?.url;
-    const appName = config.runtime.rateLimit.appName;
-    if (redisUrl && appName) {
-      const { startRateLimitConfigSubscriber } =
-        await import('@/middlewares/RateLimitConfigSubscriber');
-      startRateLimitConfigSubscriber({
-        appName,
-        handle: rateLimiterHandle,
-        redisUrl,
-      })
-        .then(sub => {
-          if (sub) logger.info(`🔁 限流配置订阅已启动 (app='${appName}')`);
-        })
-        .catch(err => logger.warn('[rate-limit-config]', 'subscriber 启动失败', err));
-    }
-  }
-
-  // Trace 快照写入 —— sampleRate 控制普通请求采样比例；错误 + 强制头永远 100% 采。
-  const telemetry = config?.runtime?.telemetry !== false ? config?.runtime?.telemetry : undefined;
-  const traceDebug = telemetry?.traceDebug;
-  if (traceDebug && config?.runtime?.redis?.url && telemetry?.app) {
-    const { createTraceSnapshotWriter } = await import('@/middlewares/TraceSnapshotWriter');
-    const writer = await createTraceSnapshotWriter({
-      redisUrl: config.runtime.redis.url,
-      appName: telemetry.app,
-      sampleRate: traceDebug.sampleRate,
-    });
-    if (writer) {
-      serverContext.requestHandler.use(writer.middleware);
-      logger.info(
-        `🔍 trace 快照已启用 (app='${telemetry.app}', sampleRate=${traceDebug.sampleRate})`
-      );
-    }
-  }
+  // Rate limiting / trace snapshot 已从 engine 移除 —— 业界共识（Next.js / Remix /
+  // Astro 都不做）：rate-limit 走 CDN/WAF/Gateway，trace 走 OTel + Sentry/Honeycomb。
 
   if (config?.runtime?.experiments && Object.keys(config.runtime.experiments).length > 0) {
     serverContext.requestHandler.use(

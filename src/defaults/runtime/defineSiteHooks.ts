@@ -2,7 +2,7 @@
  * defineSiteHooks —— 高阶 FaaS hooks 工厂（声明式配置 → 完整 ServerEntryHooks）
  *
  * 让用户的 src/entry.server.tsx 收紧到「只写请求期 hooks」。
- * 部署/平台配置（api/site/redis/rateLimit/experiments/i18n/seo/telemetry）放
+ * 部署/平台配置（api/site/redis/experiments/i18n/seo/telemetry）放
  * ssr.config.ts 的 runtime 字段；entry.server.tsx 只保留 beforeRequest / onError。
  * 注：experiments 是 experimentation platform 的通用字段名，业务侧可理解为 A/B testing。
  * 内部固化：
@@ -62,7 +62,6 @@ function createEmptyRuntimeConfig(): SiteRuntimeConfig {
     site: undefined,
     services: { api: undefined, telemetry: undefined },
     redis: undefined,
-    rateLimit: false,
     experiments: {},
     i18n: undefined,
     seo: undefined,

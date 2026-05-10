@@ -28,7 +28,6 @@ function runtime(telemetry: RuntimeConfig['telemetry']): RuntimeConfig {
     site: undefined,
     services: { api: undefined, telemetry: undefined },
     redis: undefined,
-    rateLimit: false,
     experiments: {},
     i18n: undefined,
     seo: undefined,
@@ -50,7 +49,6 @@ function sentryTelemetry(
     webVitals: false,
     exporters: [],
     integrations: { sentry },
-    traceDebug: false,
   };
 }
 
@@ -167,7 +165,6 @@ describe('applyTelemetryIntegrationEnv —— Sentry integration 显式开关', 
           webVitals: false,
           exporters: [],
           integrations: { sentry: undefined },
-          traceDebug: false,
         })
       );
       expect(process.env.DD_SERVICE).toBeUndefined();
@@ -198,7 +195,6 @@ describe('applyTelemetryIntegrationEnv —— Sentry integration 显式开关', 
             },
           ],
           integrations: { sentry: undefined },
-          traceDebug: false,
         })
       );
 

@@ -62,90 +62,6 @@ export interface RuntimeExperimentConfig {
   weights: readonly number[] | undefined;
 }
 
-/**
- * 服务端请求级 trace 快照采样配置。
- *
- * sampleRate：普通请求按概率采样，行业标准 10%（Datadog APM / OTel collector
- * 默认就是 0.1）。错误请求和带 `x-debug-trace: 1` 头的请求永远 100% 采，不受
- * sampleRate 影响——采样是为了控制 Redis 容量，不是为了丢错误证据。
- *
- * 容量预估（key='isr:trace:<traceId>'，TTL = engine 常量 1h）：
- *   - 1 万 QPS × 0.1 采样 × 3.6 KB/条 ≈ 13 GB/h（够用）
- *   - 真高流量（10 万 QPS）调到 0.01 即可
- *   - 单实例 < 100 QPS 调到 1.0 全采也只有 360 MB
- *
- * 0 = 关闭普通请求采样（错误 + 强制头仍 100% 采）；1 = 全采。
- */
-export interface RuntimeTraceDebugConfig {
-  sampleRate: number;
-}
-
-/**
- * 限流配置 —— 业务决策字段：
- *   - appName     hot-reload 配置桶 ID（admin 控制面下发用）
- *   - windowMs+max 限流强度
- *   - userBucket  哪个 cookie 装着 userId（每个 app 的 auth 后端不一样）
- *   - trustProxy  部署拓扑（false / hop-count；详见字段注释）
- *
- * 全部字段 required，不暴露隐藏默认值；不需要的字段写 undefined / 空数组。
- * RateLimit-* 标准头、memory backend LRU 上限是 engine 内部常量。
- */
-export interface RuntimeRateLimitConfig {
-  /**
-   * 应用标识 —— admin-server 在 Redis 上下发 hot-reload 配置时定位本应用。
-   * 跟 admin 控制台 PATCH /api/ops/rate-limit/config body 的 `app` 字段一致。
-   * 设为 undefined → 不订阅 hot-reload，使用静态 windowMs/max。
-   */
-  appName: string | undefined;
-  /** 固定窗口长度（毫秒） */
-  windowMs: number;
-  /** 每个 key 在窗口内允许的最大请求数 */
-  max: number;
-  /**
-   * 已登录用户维度 key 配置。
-   *
-   * 为什么不在 engine 内置：每个 app 的 auth 后端 cookie 名不一样（next-auth 用
-   * `next-auth.session-token`；clerk 用 `__session`；novel-rating 用
-   * `novel_session_user`）。engine 没法替业务决定。
-   *
-   * 配置 → 桶 key `u:<userId>`；未登录回 `ip:<addr>`。
-   * 设 undefined → 站点没有用户系统，纯 IP 分桶。
-   */
-  userBucket: { cookie: string; field: string } | undefined;
-  /**
-   * 信任上游代理头提取真实客户端 IP。语义跟 Express `app.set('trust proxy', value)` 对齐。
-   *
-   *   - false：不信任任何代理头，只用 socket peer IP（直连公网场景）
-   *   - true：盲信所有 X-Forwarded-For —— **不推荐生产**，客户端可伪造 XFF 绕限流
-   *   - 数字 N：信任最右 N 跳代理（**推荐**），按部署链路 hop count 配
-   *
-   * 部署对照：
-   *   - 直连公网（dev / 小规模自建）：false
-   *   - 1 层 LB / Ingress（K8s NodePort + ALB）：1
-   *   - CDN + Ingress 双层（CloudFront / Cloudflare → ALB → pod）：2
-   *   - 边缘 + 区域 + LB 三层：3
-   *
-   * 必须前提：CDN/Ingress 那一层要剥掉客户端伪造的 X-Forwarded-For（业界标准做法）。
-   */
-  trustProxy: boolean | number;
-  /**
-   * 限流状态存储。'auto'：检测到 runtime.redis.url 配置 → redis backend；
-   * 否则进程内 memory。'memory' / 'redis' 是强制覆盖（local burn-in / fail-fast）。
-   */
-  store: 'memory' | 'redis' | 'auto';
-  /** Redis rate-limit key 前缀；undefined 走 engine 默认（runtime.redis.keyPrefix + 'rate-limit:'） */
-  keyPrefix: string | undefined;
-  /**
-   * 精确跳过的请求 path。engine 默认已跳过 /health、/metrics、OPTIONS、静态资源
-   * 扩展名（js/css/png/...）和 dev 资源前缀；空数组 [] 表示无补充。
-   */
-  skipPaths: readonly string[];
-  /** 按 path 前缀跳过限流，例如 ['/internal/static/']；空数组 [] 无补充 */
-  skipPathPrefixes: readonly string[];
-  /** 额外静态资源扩展名，例如 ['.wasm']；空数组 [] 无补充 */
-  skipExtensions: readonly string[];
-}
-
 export interface RuntimeI18nConfig {
   /** 支持的 locale 列表，用于 URL locale 前缀解析和请求协商 */
   locales: readonly string[];
@@ -337,17 +253,6 @@ export interface RuntimeTelemetryConfig {
   exporters: readonly RuntimeTelemetryExporterConfig[];
   /** 第三方平台集成，和第一方 endpoint telemetry 并列挂在 telemetry 下面 */
   integrations: RuntimeTelemetryIntegrationsConfig;
-  /**
-   * 服务端请求级 trace 快照写入 Redis（key='isr:trace:<traceId>'，TTL = engine 常量 1h）。
-   * admin dashboard /operations/trace 用 traceId 直接查这条快照排障。
-   *
-   * 跟 events/errors/webVitals 同属 observability；区别：那三个是浏览器侧采集，
-   * traceDebug 是 Node 侧采集（locale 协商、cache 命中、render strategy 等）。
-   *
-   * 关闭：false。启用：{ sampleRate: 0~1 }。
-   * 错误请求 + `x-debug-trace: 1` 头始终 100% 采，sampleRate 只控制普通请求。
-   */
-  traceDebug: false | RuntimeTraceDebugConfig;
 }
 
 /**
@@ -364,14 +269,6 @@ export interface RuntimeConfig {
   services: RuntimeServicesConfig;
   /** 分布式 ISR 缓存与跨实例失效广播 */
   redis: RuntimeRedisConfig | undefined;
-  /**
-   * 站点入口限流。
-   *
-   * 默认 store='auto'：检测到 Redis 连接时自动用 Redis 做分布式限流，
-   * 否则用进程内 memory。消费方一般无需显式设置 store。
-   * 多实例生产环境仍应优先使用 CDN/WAF/API Gateway 做第一层限流。
-   */
-  rateLimit: false | RuntimeRateLimitConfig;
   /** A/B testing / experimentation 定义，供 getVariant() 在 Server Component 中读取 */
   experiments: Record<string, RuntimeExperimentConfig>;
   /** i18n 字典源配置；请求期加载由 engine 默认 SiteHooks 消费 */

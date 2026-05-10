@@ -31,7 +31,7 @@ export function normalizeEngineConfig(config: ISRConfig): ISRConfig {
   }
   requireOwnProperties(
     config.runtime,
-    ['site', 'services', 'redis', 'rateLimit', 'experiments', 'i18n', 'seo', 'telemetry'],
+    ['site', 'services', 'redis', 'experiments', 'i18n', 'seo', 'telemetry'],
     'runtime'
   );
   if (!isRecord(config.runtime.services)) {
@@ -43,26 +43,6 @@ export function normalizeEngineConfig(config: ISRConfig): ISRConfig {
       config.runtime.redis as unknown as Record<string, unknown>,
       ['url', 'host', 'port', 'password', 'keyPrefix', 'invalidationChannel'],
       'runtime.redis'
-    );
-  }
-  if (config.runtime.rateLimit !== false) {
-    // 全字段 required（ssr.config.ts 显式声明，无隐藏默认）。
-    // 不需要的字段写 undefined / 空数组而不是省略。
-    requireOwnProperties(
-      config.runtime.rateLimit as unknown as Record<string, unknown>,
-      [
-        'appName',
-        'windowMs',
-        'max',
-        'userBucket',
-        'trustProxy',
-        'store',
-        'keyPrefix',
-        'skipPaths',
-        'skipPathPrefixes',
-        'skipExtensions',
-      ],
-      'runtime.rateLimit'
     );
   }
   if (!isRecord(config.server)) {

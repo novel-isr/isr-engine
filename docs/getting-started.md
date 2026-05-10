@@ -108,18 +108,6 @@ export default defineIsrConfig({
       exporters: [],
       integrations: { sentry: undefined },
     },
-    rateLimit: {
-      store: 'auto',
-      windowMs: 60_000,
-      max: 200,
-      lruMax: 10_000,
-      trustProxy: false,
-      sendHeaders: true,
-      keyPrefix: 'isr:rate-limit:',
-      skipPaths: [],
-      skipPathPrefixes: [],
-      skipExtensions: [],
-    },
     experiments: {},
     i18n: {
       locales: fallbackLocal.site.locales,
@@ -351,25 +339,13 @@ export const runtime = {
     exporters: [],
     integrations: { sentry: undefined },
   },
-  rateLimit: {
-    store: 'auto',
-    windowMs: 60_000,
-    max: 200,
-    lruMax: 10_000,
-    trustProxy: false,
-    sendHeaders: true,
-    keyPrefix: 'isr:rate-limit:',
-    skipPaths: [],
-    skipPathPrefixes: [],
-    skipExtensions: [],
-  },
   experiments: {
     'hero-style': { variants: ['classic', 'bold'], weights: [50, 50] },
   },
 };
 ```
 
-完整字段说明：[site-hooks.md](./site-hooks.md)。Redis、Sentry、限流、A/B 只写在
+完整字段说明：[site-hooks.md](./site-hooks.md)。Redis、Sentry、A/B 只写在
 `ssr.config.ts runtime`，不要写进 `entry.server.ts`。
 
 页面模块可以声明默认 SEO，API 下发值会覆盖：

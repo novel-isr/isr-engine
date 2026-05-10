@@ -19,17 +19,16 @@ export interface ISRContextData {
   traceId: string;
   /** 单服务的请求 ID；写到响应头 x-request-id 给客户端 / 客户端日志关联用 */
   requestId: string;
-  /** 已登录用户 ID（业务侧 beforeRequest 写入；engine 在 rate-limit / trace 快照消费） */
+  /** 已登录用户 ID（业务侧 beforeRequest 写入，Server Component / Server Action 消费） */
   userId?: string;
   /**
    * 鉴权 token（cookie / header 解出）；engine 不读不写，业务侧 Server Action
-   * 透传给后端 API 做鉴权。**绝不写到 trace 快照（敏感）**。
+   * 透传给后端 API 做鉴权。
    */
   sessionToken?: string;
   /**
    * 用户 session 摘要（displayName / handle / avatar 等）。业务侧 Server Component
    * 直接读这里来拼 UI，避免每个 RSC 重新拉一次 user info。
-   * Engine 在 trace 快照里只写 displayName / handle 字段，其它脱敏。
    */
   sessionUser?: { userId?: string; displayName?: string; handle?: string; [key: string]: unknown };
   /**

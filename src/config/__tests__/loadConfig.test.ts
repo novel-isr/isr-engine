@@ -42,7 +42,6 @@ function fullConfigSource(
     site: undefined,
     services: { api: undefined, telemetry: undefined },
     redis: undefined,
-    rateLimit: false,
     experiments: {},
     i18n: undefined,
     seo: undefined,
@@ -236,22 +235,10 @@ export const runtime = {
     keyPrefix: 'app:',
     invalidationChannel: undefined,
   },
-  rateLimit: {
-    appName: undefined,
-    windowMs: 60000,
-    max: 200,
-    userBucket: undefined,
-    trustProxy: false,
-    store: 'auto',
-    keyPrefix: undefined,
-    skipPaths: [],
-    skipPathPrefixes: [],
-    skipExtensions: [],
-  },
   experiments: {},
   i18n: undefined,
   seo: undefined,
-    telemetry: false,
+  telemetry: false,
 };
 ${fullConfigSource({ runtime: 'runtime' })}
 `
@@ -261,7 +248,6 @@ ${fullConfigSource({ runtime: 'runtime' })}
       expect(config.runtime.services.api).toBe('https://api.example.com');
       expect(config.runtime.services.telemetry).toBe('https://telemetry.example.com');
       expect(config.runtime.redis?.keyPrefix).toBe('app:');
-      expect(config.runtime.rateLimit && config.runtime.rateLimit.max).toBe(200);
     } finally {
       await rmTmp(cwd);
     }
