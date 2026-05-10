@@ -52,6 +52,36 @@ interface DefaultRscPayload {
   returnValue?: { ok: boolean; data: unknown };
 }
 
+const RSC_POSTFIX = '_.rsc';
+
+/**
+ * 把 RSC fetch 的 final URL（跟过 302/308 redirect）同步回浏览器地址栏。
+ * Next.js / Remix 同款做法：客户端 router 必须感知 server redirect，否则
+ * 出现"URL 没变但内容已经换"的错位。
+ *
+ * 失败兜底（非 http(s) URL / 解析异常）静默跳过 —— 不影响主流程。
+ */
+function syncBrowserUrlToFinalRedirect(response: Response): void {
+  if (typeof window === 'undefined') return;
+  const finalUrl = response.url;
+  if (!finalUrl) return;
+  let parsed: URL;
+  try {
+    parsed = new URL(finalUrl);
+  } catch {
+    return;
+  }
+  // RSC 后缀剥掉，得到业务路径（locale-redirect / canonical-redirect 命中后这里
+  // 会跟当前 window.location.pathname 不同）
+  const finalPath = parsed.pathname.endsWith(RSC_POSTFIX)
+    ? parsed.pathname.slice(0, -RSC_POSTFIX.length)
+    : parsed.pathname;
+  if (finalPath === window.location.pathname) return;
+  // replaceState 不触发 popstate / 不进 history stack —— 跟 next/router 同款，
+  // 用户按 Back 仍然回到点击前的页面而不是 redirect 中间态
+  window.history.replaceState(null, '', finalPath + window.location.search + window.location.hash);
+}
+
 /**
  * csr-shell 友好降级页 —— 服务端崩溃时给用户的最终页面
  *
@@ -215,7 +245,9 @@ async function main(hooks: ClientEntryHooks): Promise<void> {
 
     async function fetchRscPayload(): Promise<void> {
       const renderRequest = createRscRenderRequest(window.location.href);
-      const payload = await createFromFetch<DefaultRscPayload>(fetch(renderRequest));
+      const fetchPromise = fetch(renderRequest);
+      const payload = await createFromFetch<DefaultRscPayload>(fetchPromise);
+      syncBrowserUrlToFinalRedirect(await fetchPromise);
       setClientI18n(payload.intl);
       applySeoToDocument(payload.seoMeta, payload.siteBaseUrl ?? undefined);
       setPayload(payload);
@@ -326,7 +358,13 @@ async function main(hooks: ClientEntryHooks): Promise<void> {
 
   async function fetchRscPayload(): Promise<void> {
     const renderRequest = createRscRenderRequest(window.location.href);
-    const payload = await createFromFetch<DefaultRscPayload>(fetch(renderRequest));
+    const fetchPromise = fetch(renderRequest);
+    const payload = await createFromFetch<DefaultRscPayload>(fetchPromise);
+    // 同步 server 302 / 308 redirect 后的 URL 到浏览器地址栏。
+    // 例：用户从 /zh-CN/books 点 logo 链 href="/"，pushState('/') 后 RSC fetch
+    // 命中 LocaleRedirect → /zh-CN，response.url 是带 /zh-CN 前缀的最终 URL。
+    // 不修齐就出现"地址栏 / + 内容是 /zh-CN 首页"的错位，刷新后才纠正。
+    syncBrowserUrlToFinalRedirect(await fetchPromise);
     setClientI18n(payload.intl);
     applySeoToDocument(payload.seoMeta, payload.siteBaseUrl ?? undefined);
     setPayload(payload);
