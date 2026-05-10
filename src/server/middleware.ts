@@ -21,6 +21,11 @@ const DEV_CSP = {
   objectSrc: ["'none'"],
   mediaSrc: ["'self'", 'https:', 'data:'],
   frameSrc: ["'self'"],
+  // dev 关掉 upgrade-insecure-requests（helmet 默认开）—— 不然浏览器把所有
+  // http://localhost:3000/* 子请求强制升级到 https，dev server 无 TLS 直接
+  // ERR_SSL_PROTOCOL_ERROR。生产留默认（生产必须 HTTPS）。
+  // helmet 用 null 禁用单条 directive。
+  upgradeInsecureRequests: null,
 };
 
 /**
