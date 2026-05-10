@@ -43,6 +43,16 @@ import { getRequestContext } from '../../context/RequestContext';
 interface DefaultRscPayload {
   root: React.ReactNode;
   intl?: IntlPayload | null;
+  /**
+   * 页面 SEO meta —— 与 intl 对齐的客户端 head 同步通道。
+   * 首屏 SSR 通过 injectSeoMeta 把 meta 注入到 HTML 流；客户端 RSC 导航时
+   * 单独从 payload 读出来调用 applySeoToDocument 同步 document.title / meta /
+   * canonical / og:* / jsonLd —— 不然点链接进新页面 title 不变（hint：上次
+   * SSR 注入的 head 不会跟着 React 树重渲染）。
+   */
+  seoMeta?: PageSeoMeta | null;
+  /** 客户端 applySeoToDocument 用来把 canonical / og:image 转绝对 URL */
+  siteBaseUrl?: string | null;
   returnValue?: { ok: boolean; data: unknown };
   formState?: ReactFormState;
 }
@@ -286,6 +296,8 @@ async function runRscPipeline(request: Request, extras: PipelineExtras): Promise
   const rscPayload: DefaultRscPayload = {
     root: <App url={renderRequest.url} intl={extras.intl ?? undefined} />,
     intl: extras.intl ?? null,
+    seoMeta: extras.seoMeta ?? null,
+    siteBaseUrl: extras.siteBaseUrl ?? null,
     formState,
     returnValue,
   };

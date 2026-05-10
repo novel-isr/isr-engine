@@ -34,7 +34,7 @@ import { HydrationShell } from './hydration-shell';
 import { createRscRenderRequest } from './request';
 import { installDevRenderInspector } from './dev-render-inspector';
 import { setClientI18n } from '../../runtime/i18n-store';
-import type { IntlPayload } from './seo-runtime';
+import { applySeoToDocument, type IntlPayload, type PageSeoMeta } from './seo-runtime';
 import {
   installBrowserObservability,
   type BrowserObservabilityHandle,
@@ -44,6 +44,10 @@ import {
 interface DefaultRscPayload {
   root: React.ReactNode;
   intl?: IntlPayload | null;
+  /** 与 server entry 对齐 —— 客户端 RSC 导航时把 meta 同步到 document.head */
+  seoMeta?: PageSeoMeta | null;
+  /** canonical / og:image 转绝对 URL 用 */
+  siteBaseUrl?: string | null;
   formState?: import('react-dom/client').ReactFormState;
   returnValue?: { ok: boolean; data: unknown };
 }
@@ -213,6 +217,7 @@ async function main(hooks: ClientEntryHooks): Promise<void> {
       const renderRequest = createRscRenderRequest(window.location.href);
       const payload = await createFromFetch<DefaultRscPayload>(fetch(renderRequest));
       setClientI18n(payload.intl);
+      applySeoToDocument(payload.seoMeta, payload.siteBaseUrl ?? undefined);
       setPayload(payload);
     }
 
@@ -262,6 +267,7 @@ async function main(hooks: ClientEntryHooks): Promise<void> {
         temporaryReferences,
       });
       setClientI18n(payload.intl);
+      applySeoToDocument(payload.seoMeta, payload.siteBaseUrl ?? undefined);
       setPayload(payload);
       const { ok, data } = payload.returnValue!;
       if (!ok) {
@@ -322,6 +328,7 @@ async function main(hooks: ClientEntryHooks): Promise<void> {
     const renderRequest = createRscRenderRequest(window.location.href);
     const payload = await createFromFetch<DefaultRscPayload>(fetch(renderRequest));
     setClientI18n(payload.intl);
+    applySeoToDocument(payload.seoMeta, payload.siteBaseUrl ?? undefined);
     setPayload(payload);
   }
 
@@ -335,6 +342,7 @@ async function main(hooks: ClientEntryHooks): Promise<void> {
       temporaryReferences,
     });
     setClientI18n(payload.intl);
+    applySeoToDocument(payload.seoMeta, payload.siteBaseUrl ?? undefined);
     setPayload(payload);
     const { ok, data } = payload.returnValue!;
     if (!ok) {

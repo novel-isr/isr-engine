@@ -75,38 +75,47 @@ export function renderPageSeoMeta(meta: PageSeoMeta, baseUrl?: string): string {
   const esc = (s: string) =>
     s.replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 
+  // 所有 engine 注入的 head 节点都打 data-isr-seo 标，客户端导航时按 marker 精准替换，
+  // 不动业务/插件自己加的 meta（详见 applySeoToDocument 注释）。
+  // <title> 是单值元素由 document.title 直接管理，不打标。
   if (meta.title) tags.push(`<title>${esc(meta.title)}</title>`);
-  if (meta.description) tags.push(`<meta name="description" content="${esc(meta.description)}">`);
-  if (meta.keywords?.length) {
-    tags.push(`<meta name="keywords" content="${esc(meta.keywords.join(', '))}">`);
+  if (meta.description) {
+    tags.push(`<meta data-isr-seo name="description" content="${esc(meta.description)}">`);
   }
-  if (meta.noindex) tags.push(`<meta name="robots" content="noindex, nofollow">`);
+  if (meta.keywords?.length) {
+    tags.push(`<meta data-isr-seo name="keywords" content="${esc(meta.keywords.join(', '))}">`);
+  }
+  if (meta.noindex) {
+    tags.push(`<meta data-isr-seo name="robots" content="noindex, nofollow">`);
+  }
   if (meta.canonical || baseUrl) {
     const href = toAbsolute(meta.canonical || '', baseUrl) || baseUrl || '';
-    if (href) tags.push(`<link rel="canonical" href="${esc(href)}">`);
+    if (href) tags.push(`<link data-isr-seo rel="canonical" href="${esc(href)}">`);
   }
   if (meta.alternates?.length) {
     for (const a of meta.alternates) {
       tags.push(
-        `<link rel="alternate" hreflang="${esc(a.hreflang)}" href="${esc(toAbsolute(a.href, baseUrl))}">`
+        `<link data-isr-seo rel="alternate" hreflang="${esc(a.hreflang)}" href="${esc(toAbsolute(a.href, baseUrl))}">`
       );
     }
   }
-  if (meta.title) tags.push(`<meta property="og:title" content="${esc(meta.title)}">`);
-  if (meta.description) {
-    tags.push(`<meta property="og:description" content="${esc(meta.description)}">`);
+  if (meta.title) {
+    tags.push(`<meta data-isr-seo property="og:title" content="${esc(meta.title)}">`);
   }
-  tags.push(`<meta property="og:type" content="${meta.ogType ?? 'website'}">`);
+  if (meta.description) {
+    tags.push(`<meta data-isr-seo property="og:description" content="${esc(meta.description)}">`);
+  }
+  tags.push(`<meta data-isr-seo property="og:type" content="${meta.ogType ?? 'website'}">`);
   if (meta.image) {
     const abs = toAbsolute(meta.image, baseUrl);
-    tags.push(`<meta property="og:image" content="${esc(abs)}">`);
-    tags.push(`<meta name="twitter:image" content="${esc(abs)}">`);
+    tags.push(`<meta data-isr-seo property="og:image" content="${esc(abs)}">`);
+    tags.push(`<meta data-isr-seo name="twitter:image" content="${esc(abs)}">`);
   }
   if (meta.jsonLd) {
     const arr = Array.isArray(meta.jsonLd) ? meta.jsonLd : [meta.jsonLd];
     for (const obj of arr) {
       const json = JSON.stringify(obj).replace(/<\/script/gi, '<\\/script');
-      tags.push(`<script type="application/ld+json">${json}</script>`);
+      tags.push(`<script data-isr-seo="jsonld" type="application/ld+json">${json}</script>`);
     }
   }
   return tags.join('\n    ');
@@ -163,4 +172,86 @@ export function injectSeoMeta(
   });
 
   return source.pipeThrough(transform);
+}
+
+// ─── 客户端导航后同步 <head> ──────────────────────────────────────────────
+//
+// 首屏 SSR 走 injectSeoMeta（HTML 流注入 <title> / <meta>）。
+// 但 RSC 客户端导航（pushState + 拉新 RSC payload）只换 React 树，<head> 不会自动跟。
+// Next.js / Remix / Astro 同样的问题，做法都是把页面的 metadata 序列化进 RSC payload，
+// 客户端在每次 setPayload 之后把 metadata 应用到 document（title / meta / link / jsonLd）。
+//
+// 本函数只在浏览器调用：业务侧通常不直接 import，engine 客户端 entry 自动调用。
+//
+// 关键点：
+//   - 用 `data-isr-seo` 标记本函数管理的 <head> 节点，避免误删用户/插件加的 meta
+//   - 先按 `data-isr-seo` 抓出旧节点，再按 meta 重建写回（删→建，避免顺序漂移）
+//   - jsonLd 也一并管，按 data-isr-seo='jsonld' 标记 + 全删全建
+//   - 初次调用（即 SSR 注入的初始 head）首先把已有的 <title> / <meta> / <link> / 含
+//     SSR injection marker 的节点打 data-isr-seo 标，让后续导航能精准替换
+export function applySeoToDocument(meta: PageSeoMeta | null | undefined, baseUrl?: string): void {
+  if (typeof document === 'undefined') return;
+  if (!meta) return;
+  const head = document.head;
+  if (!head) return;
+
+  // 1. 删除上一次本函数写入的所有 SEO 节点（按 marker）
+  head.querySelectorAll('[data-isr-seo]').forEach(el => el.remove());
+
+  // 2. title 单独管 —— 只用 document.title 赋值（不创建第二个 <title>）
+  if (meta.title) document.title = meta.title;
+
+  // 3. 用与 renderPageSeoMeta 相同的逻辑重建 head 节点（保持 SSR / 客户端语义一致）
+  const fragments: HTMLElement[] = [];
+  const tag = (name: 'meta' | 'link' | 'script', attrs: Record<string, string>): HTMLElement => {
+    const el = document.createElement(name);
+    el.setAttribute('data-isr-seo', '');
+    for (const [k, v] of Object.entries(attrs)) el.setAttribute(k, v);
+    return el;
+  };
+
+  if (meta.description) {
+    fragments.push(tag('meta', { name: 'description', content: meta.description }));
+  }
+  if (meta.keywords?.length) {
+    fragments.push(tag('meta', { name: 'keywords', content: meta.keywords.join(', ') }));
+  }
+  if (meta.noindex) {
+    fragments.push(tag('meta', { name: 'robots', content: 'noindex, nofollow' }));
+  }
+  if (meta.canonical || baseUrl) {
+    const href = toAbsolute(meta.canonical || '', baseUrl) || baseUrl || '';
+    if (href) fragments.push(tag('link', { rel: 'canonical', href }));
+  }
+  if (meta.alternates?.length) {
+    for (const a of meta.alternates) {
+      fragments.push(
+        tag('link', { rel: 'alternate', hreflang: a.hreflang, href: toAbsolute(a.href, baseUrl) })
+      );
+    }
+  }
+  if (meta.title) {
+    fragments.push(tag('meta', { property: 'og:title', content: meta.title }));
+  }
+  if (meta.description) {
+    fragments.push(tag('meta', { property: 'og:description', content: meta.description }));
+  }
+  fragments.push(tag('meta', { property: 'og:type', content: meta.ogType ?? 'website' }));
+  if (meta.image) {
+    const abs = toAbsolute(meta.image, baseUrl);
+    fragments.push(tag('meta', { property: 'og:image', content: abs }));
+    fragments.push(tag('meta', { name: 'twitter:image', content: abs }));
+  }
+  if (meta.jsonLd) {
+    const arr = Array.isArray(meta.jsonLd) ? meta.jsonLd : [meta.jsonLd];
+    for (const obj of arr) {
+      const script = document.createElement('script');
+      script.setAttribute('data-isr-seo', 'jsonld');
+      script.type = 'application/ld+json';
+      script.textContent = JSON.stringify(obj).replace(/<\/script/gi, '<\\/script');
+      fragments.push(script);
+    }
+  }
+
+  for (const el of fragments) head.appendChild(el);
 }

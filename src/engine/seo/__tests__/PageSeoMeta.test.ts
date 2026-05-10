@@ -1,15 +1,23 @@
 /**
- * PageSeoMeta + injectSeoMeta 单元测试
+ * @vitest-environment happy-dom
+ *
+ * PageSeoMeta + injectSeoMeta + applySeoToDocument 单元测试
  *
  * 覆盖：
  *   - renderPageSeoMeta：title/desc/keywords/canonical/og/twitter/jsonLd 输出
  *   - HTML 转义防 XSS
  *   - alternates hreflang 多语言链接
  *   - injectSeoMeta：在 </head> 前插入；保持流式；跨 chunk 边界正确
+ *   - applySeoToDocument：客户端 RSC 导航后 head 节点同步（按 marker 精准替换）
+ *
+ * 这个文件用 happy-dom env（不是默认 node）—— applySeoToDocument 必须在 DOM 环境
+ * 测试。renderPageSeoMeta / injectSeoMeta 是纯字符串 / Stream 处理，多带一份 DOM
+ * 上下文不影响。
  */
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, beforeEach } from 'vitest';
 import { renderPageSeoMeta, type PageSeoMeta } from '../PageSeoMeta';
 import { injectSeoMeta } from '../injectSeoMeta';
+import { applySeoToDocument } from '../../../defaults/runtime/seo-runtime';
 
 describe('renderPageSeoMeta', () => {
   it('输出 title / description / keywords', () => {
@@ -19,8 +27,8 @@ describe('renderPageSeoMeta', () => {
       keywords: ['a', 'b'],
     });
     expect(html).toContain('<title>Hello</title>');
-    expect(html).toContain('<meta name="description" content="desc">');
-    expect(html).toContain('<meta name="keywords" content="a, b">');
+    expect(html).toContain('<meta data-isr-seo name="description" content="desc">');
+    expect(html).toContain('<meta data-isr-seo name="keywords" content="a, b">');
   });
 
   it('转义 < > " & 防 XSS', () => {
@@ -36,7 +44,7 @@ describe('renderPageSeoMeta', () => {
 
   it('noindex 输出 robots meta', () => {
     const html = renderPageSeoMeta({ noindex: true });
-    expect(html).toContain('<meta name="robots" content="noindex, nofollow">');
+    expect(html).toContain('<meta data-isr-seo name="robots" content="noindex, nofollow">');
   });
 
   it('canonical 优先于 baseUrl', () => {
@@ -96,8 +104,12 @@ describe('renderPageSeoMeta', () => {
         { hreflang: 'zh-CN', href: 'https://x.com/zh' },
       ],
     });
-    expect(html).toContain('<link rel="alternate" hreflang="en" href="https://x.com/en">');
-    expect(html).toContain('<link rel="alternate" hreflang="zh-CN" href="https://x.com/zh">');
+    expect(html).toContain(
+      '<link data-isr-seo rel="alternate" hreflang="en" href="https://x.com/en">'
+    );
+    expect(html).toContain(
+      '<link data-isr-seo rel="alternate" hreflang="zh-CN" href="https://x.com/zh">'
+    );
   });
 
   it('og:title / og:description / og:image 输出', () => {
@@ -106,10 +118,14 @@ describe('renderPageSeoMeta', () => {
       description: 'D',
       image: 'https://img.com/a.png',
     });
-    expect(html).toContain('<meta property="og:title" content="T">');
-    expect(html).toContain('<meta property="og:description" content="D">');
-    expect(html).toContain('<meta property="og:image" content="https://img.com/a.png">');
-    expect(html).toContain('<meta name="twitter:image" content="https://img.com/a.png">');
+    expect(html).toContain('<meta data-isr-seo property="og:title" content="T">');
+    expect(html).toContain('<meta data-isr-seo property="og:description" content="D">');
+    expect(html).toContain(
+      '<meta data-isr-seo property="og:image" content="https://img.com/a.png">'
+    );
+    expect(html).toContain(
+      '<meta data-isr-seo name="twitter:image" content="https://img.com/a.png">'
+    );
   });
 
   it('og:type 默认 website，可覆盖', () => {
@@ -121,7 +137,7 @@ describe('renderPageSeoMeta', () => {
     const html = renderPageSeoMeta({
       jsonLd: { '@type': 'Article', name: 'X' },
     });
-    expect(html).toContain('<script type="application/ld+json">');
+    expect(html).toContain('<script data-isr-seo="jsonld" type="application/ld+json">');
     expect(html).toContain('"@type":"Article"');
     expect(html).toContain('"name":"X"');
   });
@@ -130,7 +146,9 @@ describe('renderPageSeoMeta', () => {
     const html = renderPageSeoMeta({
       jsonLd: [{ a: 1 }, { b: 2 }],
     });
-    expect(html.match(/<script type="application\/ld\+json">/g)?.length).toBe(2);
+    expect(html.match(/<script data-isr-seo="jsonld" type="application\/ld\+json">/g)?.length).toBe(
+      2
+    );
   });
 
   it('jsonLd 内的 </script> 被转义', () => {
@@ -201,5 +219,103 @@ describe('injectSeoMeta', () => {
     const src = htmlStream(['<head></head><head></head>']);
     const out = await streamToString(injectSeoMeta(src, meta));
     expect(out.match(/<title>INJ<\/title>/g)?.length).toBe(1);
+  });
+});
+
+// ─── applySeoToDocument（客户端导航 head 同步）────────────────────────
+//
+// jsdom 提供的 document API 足以验证：title 改写、meta 节点替换、jsonLd
+// 重建、节点 marker 精准。覆盖客户端 RSC 导航后 SEO 不更新的回归。
+describe('applySeoToDocument', () => {
+  beforeEach(() => {
+    document.head.innerHTML = '';
+    document.title = '';
+  });
+
+  it('设置 document.title', () => {
+    applySeoToDocument({ title: 'NEW' });
+    expect(document.title).toBe('NEW');
+  });
+
+  it('插入 description / og:title / og:description / og:type meta', () => {
+    applySeoToDocument({ title: 'T', description: 'D' });
+    expect(
+      document.head.querySelector('meta[data-isr-seo][name="description"]')?.getAttribute('content')
+    ).toBe('D');
+    expect(
+      document.head
+        .querySelector('meta[data-isr-seo][property="og:title"]')
+        ?.getAttribute('content')
+    ).toBe('T');
+    expect(
+      document.head
+        .querySelector('meta[data-isr-seo][property="og:description"]')
+        ?.getAttribute('content')
+    ).toBe('D');
+    expect(
+      document.head.querySelector('meta[data-isr-seo][property="og:type"]')?.getAttribute('content')
+    ).toBe('website');
+  });
+
+  it('再次调用替换上次的节点（不堆叠），保证导航后 head 干净', () => {
+    applySeoToDocument({ title: 'A', description: 'first' });
+    applySeoToDocument({ title: 'B', description: 'second' });
+
+    expect(document.title).toBe('B');
+    const descs = document.head.querySelectorAll('meta[data-isr-seo][name="description"]');
+    expect(descs.length).toBe(1);
+    expect(descs[0]?.getAttribute('content')).toBe('second');
+  });
+
+  it('不动业务 / 浏览器扩展加的 meta（无 data-isr-seo marker）', () => {
+    const userMeta = document.createElement('meta');
+    userMeta.setAttribute('name', 'theme-color');
+    userMeta.setAttribute('content', '#fff');
+    document.head.appendChild(userMeta);
+
+    applySeoToDocument({ title: 'X' });
+
+    expect(document.head.querySelector('meta[name="theme-color"]')).toBe(userMeta);
+  });
+
+  it('canonical 相对路径用 baseUrl resolve 成绝对 URL', () => {
+    applySeoToDocument({ canonical: '/books/1' }, 'https://novel.example.com');
+    expect(
+      document.head.querySelector('link[data-isr-seo][rel="canonical"]')?.getAttribute('href')
+    ).toBe('https://novel.example.com/books/1');
+  });
+
+  it('jsonLd 重建 script，旧的全删', () => {
+    applySeoToDocument({ jsonLd: [{ a: 1 }, { b: 2 }] });
+    let scripts = document.head.querySelectorAll('script[data-isr-seo="jsonld"]');
+    expect(scripts.length).toBe(2);
+
+    applySeoToDocument({ jsonLd: { c: 3 } });
+    scripts = document.head.querySelectorAll('script[data-isr-seo="jsonld"]');
+    expect(scripts.length).toBe(1);
+    expect(scripts[0]?.textContent).toContain('"c":3');
+  });
+
+  it('alternates 输出多个 link[hreflang]', () => {
+    applySeoToDocument(
+      {
+        alternates: [
+          { hreflang: 'zh-CN', href: '/books/1' },
+          { hreflang: 'en', href: '/en/books/1' },
+        ],
+      },
+      'https://novel.example.com'
+    );
+    const links = document.head.querySelectorAll('link[data-isr-seo][rel="alternate"]');
+    expect(links.length).toBe(2);
+    expect(links[0]?.getAttribute('hreflang')).toBe('zh-CN');
+    expect(links[0]?.getAttribute('href')).toBe('https://novel.example.com/books/1');
+  });
+
+  it('seoMeta 为 null / undefined 时 no-op（不抛错）', () => {
+    document.title = 'KEEP';
+    applySeoToDocument(null);
+    applySeoToDocument(undefined);
+    expect(document.title).toBe('KEEP');
   });
 });
