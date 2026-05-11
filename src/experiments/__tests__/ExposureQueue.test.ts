@@ -1,7 +1,9 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { createExposureQueue, resolveExposureQueue } from '../ExposureQueue';
 
-function makeEvent(overrides: Partial<Parameters<ReturnType<typeof createExposureQueue>['push']>[0]> = {}) {
+function makeEvent(
+  overrides: Partial<Parameters<ReturnType<typeof createExposureQueue>['push']>[0]> = {}
+) {
   return {
     anonId: 'anon-1',
     userId: null,
@@ -124,13 +126,30 @@ describe('ExposureQueue', () => {
 describe('resolveExposureQueue', () => {
   it('config 缺 endpoint → null', () => {
     expect(resolveExposureQueue(undefined, 'http://x')).toBeNull();
-    expect(resolveExposureQueue({ endpoint: '', batchSize: undefined, flushIntervalMs: undefined, sampleRate: undefined, enabled: undefined }, 'http://x')).toBeNull();
+    expect(
+      resolveExposureQueue(
+        {
+          endpoint: '',
+          batchSize: undefined,
+          flushIntervalMs: undefined,
+          sampleRate: undefined,
+          enabled: undefined,
+        },
+        'http://x'
+      )
+    ).toBeNull();
   });
 
   it('enabled=false → null', () => {
     expect(
       resolveExposureQueue(
-        { endpoint: '/api', enabled: false, batchSize: undefined, flushIntervalMs: undefined, sampleRate: undefined },
+        {
+          endpoint: '/api',
+          enabled: false,
+          batchSize: undefined,
+          flushIntervalMs: undefined,
+          sampleRate: undefined,
+        },
         'http://x'
       )
     ).toBeNull();
@@ -139,7 +158,13 @@ describe('resolveExposureQueue', () => {
   it('相对路径无 baseOrigin → null', () => {
     expect(
       resolveExposureQueue(
-        { endpoint: '/api', batchSize: undefined, flushIntervalMs: undefined, sampleRate: undefined, enabled: undefined },
+        {
+          endpoint: '/api',
+          batchSize: undefined,
+          flushIntervalMs: undefined,
+          sampleRate: undefined,
+          enabled: undefined,
+        },
         undefined
       )
     ).toBeNull();
@@ -147,7 +172,13 @@ describe('resolveExposureQueue', () => {
 
   it('相对路径 + baseOrigin → 拼接成绝对 URL', () => {
     const q = resolveExposureQueue(
-      { endpoint: '/api/x', batchSize: undefined, flushIntervalMs: undefined, sampleRate: undefined, enabled: undefined },
+      {
+        endpoint: '/api/x',
+        batchSize: undefined,
+        flushIntervalMs: undefined,
+        sampleRate: undefined,
+        enabled: undefined,
+      },
       'http://localhost:8080/'
     );
     expect(q).not.toBeNull();

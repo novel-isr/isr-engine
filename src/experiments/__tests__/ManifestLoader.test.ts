@@ -50,14 +50,15 @@ describe('ManifestLoader', () => {
   });
 
   it('init 同步拉一次 + getCurrent 返回最新', async () => {
-    const fetcher = vi
-      .fn()
-      .mockResolvedValue(
-        new Response(JSON.stringify(manifest({ hero: { variants: ['a', 'b'], weights: [50, 50] } })), {
+    const fetcher = vi.fn().mockResolvedValue(
+      new Response(
+        JSON.stringify(manifest({ hero: { variants: ['a', 'b'], weights: [50, 50] } })),
+        {
           status: 200,
           headers: { etag: 'v1' },
-        })
-      );
+        }
+      )
+    );
     const loader = createManifestLoader({ endpoint: 'http://x', fetcher });
     await loader.init();
     expect(fetcher).toHaveBeenCalledTimes(1);
@@ -69,10 +70,13 @@ describe('ManifestLoader', () => {
     const fetcher = vi
       .fn()
       .mockResolvedValueOnce(
-        new Response(JSON.stringify(manifest({ hero: { variants: ['a', 'b'], weights: [10, 90] } })), {
-          status: 200,
-          headers: { etag: 'v1' },
-        })
+        new Response(
+          JSON.stringify(manifest({ hero: { variants: ['a', 'b'], weights: [10, 90] } })),
+          {
+            status: 200,
+            headers: { etag: 'v1' },
+          }
+        )
       )
       .mockResolvedValueOnce(new Response(null, { status: 304 }));
     const loader = createManifestLoader({
@@ -95,9 +99,12 @@ describe('ManifestLoader', () => {
     const fetcher = vi
       .fn()
       .mockResolvedValueOnce(
-        new Response(JSON.stringify(manifest({ hero: { variants: ['a', 'b'], weights: [10, 90] } })), {
-          status: 200,
-        })
+        new Response(
+          JSON.stringify(manifest({ hero: { variants: ['a', 'b'], weights: [10, 90] } })),
+          {
+            status: 200,
+          }
+        )
       )
       .mockRejectedValueOnce(new Error('net'));
     const loader = createManifestLoader({
@@ -141,9 +148,7 @@ describe('ManifestLoader', () => {
   it('authHeader 注入请求头', async () => {
     const fetcher = vi
       .fn()
-      .mockResolvedValue(
-        new Response(JSON.stringify(manifest({})), { status: 200 })
-      );
+      .mockResolvedValue(new Response(JSON.stringify(manifest({})), { status: 200 }));
     const loader = createManifestLoader({
       endpoint: 'http://x',
       authHeader: { name: 'authorization', value: 'Bearer xyz' },
@@ -163,7 +168,12 @@ describe('resolveManifestLoader', () => {
   it('相对路径无 baseOrigin → null', () => {
     expect(
       resolveManifestLoader(
-        { endpoint: '/api', refreshIntervalMs: undefined, fallbackOnError: undefined, authHeader: undefined },
+        {
+          endpoint: '/api',
+          refreshIntervalMs: undefined,
+          fallbackOnError: undefined,
+          authHeader: undefined,
+        },
         {},
         undefined
       )
@@ -172,7 +182,12 @@ describe('resolveManifestLoader', () => {
 
   it('相对路径 + baseOrigin → 创建实例', () => {
     const loader = resolveManifestLoader(
-      { endpoint: '/api/exp', refreshIntervalMs: undefined, fallbackOnError: undefined, authHeader: undefined },
+      {
+        endpoint: '/api/exp',
+        refreshIntervalMs: undefined,
+        fallbackOnError: undefined,
+        authHeader: undefined,
+      },
       {},
       'http://localhost:8080'
     );

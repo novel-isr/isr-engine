@@ -127,9 +127,7 @@ export function createManifestLoader(options: ManifestLoaderOptions) {
 
       // admin-server 默认把响应包成 { status, code, data: {...} } envelope；
       // 直接返回 {experiments} 顶层的也支持。两种形态都能 parse
-      const rawJson = (await res.json()) as
-        | ExperimentManifest
-        | { data?: ExperimentManifest };
+      const rawJson = (await res.json()) as ExperimentManifest | { data?: ExperimentManifest };
       const json: ExperimentManifest | undefined =
         rawJson && typeof rawJson === 'object' && 'data' in rawJson && rawJson.data
           ? (rawJson.data as ExperimentManifest)
