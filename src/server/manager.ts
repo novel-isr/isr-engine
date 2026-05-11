@@ -17,6 +17,8 @@ import { startServer, closeServer } from './httpServer';
 import { requestContext } from '@/context/RequestContext';
 import { createServerRequestContext, applyAnonCookie } from '@/context/createServerRequestContext';
 import { createABVariantMiddleware } from '@/middlewares/ABVariantMiddleware';
+import { resolveManifestLoader } from '@/experiments/ManifestLoader';
+import { resolveExposureQueue } from '@/experiments/ExposureQueue';
 import { createLocaleRedirectMiddleware } from '@/middlewares/LocaleRedirect';
 import { resolveI18nConfig } from '@/runtime/i18n';
 
@@ -141,11 +143,34 @@ async function initServerContext(config?: ISRConfig): Promise<ServerContext> {
   // Rate limiting / trace snapshot 已从 engine 移除 —— 业界共识（Next.js / Remix /
   // Astro 都不做）：rate-limit 走 CDN/WAF/Gateway，trace 走 OTel + Sentry/Honeycomb。
 
-  if (config?.runtime?.experiments && Object.keys(config.runtime.experiments).length > 0) {
-    serverContext.requestHandler.use(
-      createABVariantMiddleware({ experiments: config.runtime.experiments })
+  // A/B variant —— 同 cli/start.ts：manifest > static + exposure tracking
+  const hasStaticExps =
+    config?.runtime?.experiments && Object.keys(config.runtime.experiments).length > 0;
+  const hasManifest = !!config?.runtime?.experimentManifest?.endpoint;
+  if (hasStaticExps || hasManifest) {
+    const baseOrigin = config?.runtime?.services?.api;
+    const manifestLoader = resolveManifestLoader(
+      config?.runtime?.experimentManifest,
+      config?.runtime?.experiments ?? {},
+      baseOrigin
     );
-    logger.info(`🧪 A/B testing 已启用：${Object.keys(config.runtime.experiments).join(', ')}`);
+    if (manifestLoader) await manifestLoader.init();
+    const exposureQueue = resolveExposureQueue(config?.runtime?.experimentTracking, baseOrigin);
+
+    serverContext.requestHandler.use(
+      createABVariantMiddleware({
+        experiments: config?.runtime?.experiments ?? {},
+        manifestLoader,
+        exposureQueue,
+      })
+    );
+
+    const expKeys = manifestLoader
+      ? Object.keys(manifestLoader.getCurrent())
+      : Object.keys(config?.runtime?.experiments ?? {});
+    logger.info(
+      `🧪 A/B testing 已启用：${expKeys.join(', ') || '(empty)'}${manifestLoader ? ' [manifest]' : ' [static]'}${exposureQueue ? ' + exposure tracking' : ''}`
+    );
   }
 
   logger.info(`✅ 服务器上下文已初始化 (${isDev() ? '开发' : '生产'}模式)`);

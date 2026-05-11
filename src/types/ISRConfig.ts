@@ -62,6 +62,42 @@ export interface RuntimeExperimentConfig {
   weights: readonly number[] | undefined;
 }
 
+/**
+ * 实验定义动态拉取（manifest）
+ *
+ * admin-server 暴露 GET /api/experiments/manifest，返回 { version, experiments }
+ * engine 启动 + 60s 轮询，运营改 weights/status 不重启 server 即生效。
+ *
+ * fallbackOnError 三档：
+ *   'cache'  → 用上一次拉成功的快照（默认；推荐）
+ *   'static' → 退回 runtime.experiments 静态配置
+ *   'empty'  → 关闭所有实验，回 control
+ *
+ * 不配 endpoint → 完全跳过 manifest 拉取，仅用静态 experiments；行为同当前。
+ */
+export interface RuntimeExperimentManifestConfig {
+  endpoint: string;
+  refreshIntervalMs: number | undefined;
+  fallbackOnError: 'cache' | 'static' | 'empty' | undefined;
+  authHeader: { name: string; value: string } | undefined;
+}
+
+/**
+ * 曝光上报（exposure tracking）
+ *
+ * engine ABVariantMiddleware 算完变体之后异步入队，批量 POST 给 admin-server。
+ * 完全 fire-and-forget，业务渲染不等。失败丢弃 + 日志，不影响业务。
+ *
+ * 不配 endpoint → 完全跳过上报；本地开发 / 不需要数据时省心。
+ */
+export interface RuntimeExperimentTrackingConfig {
+  endpoint: string;
+  batchSize: number | undefined;
+  flushIntervalMs: number | undefined;
+  sampleRate: number | undefined;
+  enabled: boolean | undefined;
+}
+
 export interface RuntimeI18nConfig {
   /** 支持的 locale 列表，用于 URL locale 前缀解析和请求协商 */
   locales: readonly string[];
@@ -271,6 +307,10 @@ export interface RuntimeConfig {
   redis: RuntimeRedisConfig | undefined;
   /** A/B testing / experimentation 定义，供 getVariant() 在 Server Component 中读取 */
   experiments: Record<string, RuntimeExperimentConfig>;
+  /** 实验定义从 admin-server 动态拉取（manifest）；不配则只用 experiments 静态配置 */
+  experimentManifest?: RuntimeExperimentManifestConfig;
+  /** 曝光事件上报（server-side fire-and-forget）；不配则不上报 */
+  experimentTracking?: RuntimeExperimentTrackingConfig;
   /** i18n 字典源配置；请求期加载由 engine 默认 SiteHooks 消费 */
   i18n: RuntimeI18nConfig | undefined;
   /** 页面 SEO 元数据源配置；站点 canonical/sitemap base URL 统一来自 runtime.site */

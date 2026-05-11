@@ -1,17 +1,24 @@
 /**
  * A/B Variant Middleware —— anonId 确定性 hash 分桶（自研 ISR 原生实现）
  *
- * 设计原则（跟前一版的根本区别）：
- *   - **不再把变体编码进 cookie**（旧版：`ab=hero=bold|pricing=control`，每次写 cookie
- *     → 响应带 Set-Cookie → ISR 缓存全站失效）
- *   - 用 RequestContext 里的 anonId（engine 入口已经保证存在 + 写 Set-Cookie 是入口
- *     middleware 的事，跟变体决策完全解耦）做确定性 hash 分桶：
+ * 设计原则：
+ *   - **不再把变体编码进 cookie**（旧版每次写 cookie → Set-Cookie → ISR 缓存失效）
+ *   - 用 RequestContext.anonId（engine 入口保证存在）做确定性 hash 分桶：
  *
  *       variant = pickByBucket(exp.variants, exp.weights,
  *                              fnv1a(anonId + ':' + expKey) % 10000)
  *
- *     同一 anonId × 同一 experiment 永远拿同一 variant；engine 升级实验也不需要
+ *     同一 anonId × 同一 experiment 永远拿同一 variant，engine 升级实验也不需要
  *     rewrite cookie。
+ *
+ * 数据源优先级（manifest > static）：
+ *   - 如果 ManifestLoader 接上 → 从 manifest 拿 effective experiments（admin-server
+ *     运营 60s 内可改），manifest 拉失败时 loader 内部按 fallbackOnError 策略回退
+ *   - 没接 manifest → 用构造时传入的 static experiments
+ *
+ * 曝光上报：
+ *   - 如果 ExposureQueue 接上 → 算完 ctx.experiments 后 fire-and-forget push 一条
+ *   - 没接 queue → 跳过；A/B 仅在内存里跑（本地开发 / 不需要数据时的默认）
  *
  * 一致性 + 缓存：ctx.experiments 由本 middleware 写入；ISR cache 把它的 stable
  * digest 拼进 cache key —— 不同变体走不同 cache entry，同变体多用户共享 entry。
@@ -23,8 +30,9 @@
  *   app.use(createABVariantMiddleware({
  *     experiments: {
  *       'home-hero': { variants: ['classic', 'hero-v2'], weights: [50, 50] },
- *       'pricing-page': { variants: ['control', 'discount-banner'], weights: [70, 30] },
  *     },
+ *     manifestLoader, // 可选：admin-server 拉取
+ *     exposureQueue,  // 可选：曝光上报
  *   }));
  *
  *   // Server Component：
@@ -37,6 +45,8 @@
 import type { Request, Response, NextFunction } from 'express';
 import { getRequestContext } from '../context/RequestContext';
 import { fnv1a32 } from '../utils/hash';
+import type { ExposureQueueInstance } from '../experiments/ExposureQueue';
+import type { ManifestLoaderInstance } from '../experiments/ManifestLoader';
 
 export { getVariant } from './abVariantContext';
 
@@ -48,13 +58,22 @@ export interface ExperimentConfig {
 }
 
 export interface ABVariantOptions {
-  /** A/B testing 定义：testName → { variants, weights } */
+  /** A/B testing 静态定义；manifestLoader 接上时仅作 fallback */
   experiments: Record<string, ExperimentConfig>;
   /**
    * 自定义分桶逻辑（覆盖默认 fnv1a(anonId + ':' + name)）；如按 userId / geo / device。
    * 必须是 **确定性函数**（同输入永远同输出），否则 ISR cache 会反复 MISS。
    */
   assigner?: (anonId: string, name: string, exp: ExperimentConfig) => string;
+  /**
+   * 实验定义动态拉取实例。接上时每请求从 loader 读 effective experiments；
+   * 不接则用 options.experiments 静态配置。
+   */
+  manifestLoader?: ManifestLoaderInstance | null;
+  /**
+   * 曝光上报队列实例。接上时每请求 fire-and-forget push 一条 exposure 事件。
+   */
+  exposureQueue?: ExposureQueueInstance | null;
 }
 
 /** 总桶数；10000 给到 0.01% 权重精度，业界通行做法 */
@@ -88,10 +107,16 @@ function defaultAssigner(anonId: string, name: string, exp: ExperimentConfig): s
   return pickByBucket(exp.variants, exp.weights, bucket);
 }
 
-export function createABVariantMiddleware(options: ABVariantOptions) {
-  const { experiments, assigner = defaultAssigner } = options;
+function stripQuery(url: string): string {
+  const i = url.indexOf('?');
+  return i === -1 ? url : url.slice(0, i);
+}
 
-  return function abMiddleware(_req: Request, _res: Response, next: NextFunction): void {
+export function createABVariantMiddleware(options: ABVariantOptions) {
+  const { experiments: staticExperiments, assigner = defaultAssigner } = options;
+  const { manifestLoader, exposureQueue } = options;
+
+  return function abMiddleware(req: Request, _res: Response, next: NextFunction): void {
     const ctx = getRequestContext();
     if (!ctx) {
       // 没有 RequestContext → engine 入口没接上，跳过实验（不破坏渲染）
@@ -99,15 +124,30 @@ export function createABVariantMiddleware(options: ABVariantOptions) {
       return;
     }
 
+    // manifest > static：manifest 拉成功时用它，否则回静态
+    const effectiveExperiments = manifestLoader ? manifestLoader.getCurrent() : staticExperiments;
+
     const anonId = ctx.anonId;
     const assignments: Record<string, string> = {};
-    for (const [name, exp] of Object.entries(experiments)) {
+    for (const [name, exp] of Object.entries(effectiveExperiments)) {
       assignments[name] = assigner(anonId, name, exp);
     }
 
     // 写到两个字段：experiments 是 SST，flags 是 getVariant() 历史 API 的兼容路径
     ctx.experiments = { ...(ctx.experiments ?? {}), ...assignments };
     ctx.flags = { ...(ctx.flags ?? {}), ...assignments };
+
+    // 曝光上报：fire-and-forget，永远不阻塞渲染
+    if (exposureQueue && Object.keys(assignments).length > 0) {
+      exposureQueue.push({
+        anonId,
+        userId: ctx.userId ?? null,
+        requestId: ctx.requestId,
+        experiments: assignments,
+        path: stripQuery(req.url ?? '/'),
+        ts: Date.now(),
+      });
+    }
 
     next();
   };

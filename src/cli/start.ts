@@ -217,11 +217,42 @@ export async function startProductionServer(options: StartOptions): Promise<void
   // Astro 都不做）：rate-limit 应该走 CDN/WAF/Gateway（Cloudflare / Kong / Vercel
   // Edge），trace 应该走 OTel + Sentry / Honeycomb / Datadog。框架不该承担这些职责。
 
-  // A/B variant —— ssr.config.ts runtime.experiments
-  if (runtime?.experiments && Object.keys(runtime.experiments).length > 0) {
+  // A/B variant —— ssr.config.ts runtime.experiments + experimentManifest + experimentTracking
+  // 优先级：manifest（admin-server 动态拉）> experiments 静态配置
+  // 曝光上报：experimentTracking.endpoint 配上 → engine 异步 fire-and-forget POST
+  const hasStaticExps = runtime?.experiments && Object.keys(runtime.experiments).length > 0;
+  const hasManifest = !!runtime?.experimentManifest?.endpoint;
+  if (hasStaticExps || hasManifest) {
+    const baseOrigin = runtime?.services?.api;
     const { createABVariantMiddleware } = await import('@/middlewares/ABVariantMiddleware');
-    app.use(createABVariantMiddleware({ experiments: runtime.experiments }));
-    logger.info(`🧪 A/B testing 已启用：${Object.keys(runtime.experiments).join(', ')}`);
+    const { resolveManifestLoader } = await import('@/experiments/ManifestLoader');
+    const { resolveExposureQueue } = await import('@/experiments/ExposureQueue');
+
+    const manifestLoader = resolveManifestLoader(
+      runtime?.experimentManifest,
+      runtime?.experiments ?? {},
+      baseOrigin
+    );
+    if (manifestLoader) {
+      await manifestLoader.init();
+    }
+
+    const exposureQueue = resolveExposureQueue(runtime?.experimentTracking, baseOrigin);
+
+    app.use(
+      createABVariantMiddleware({
+        experiments: runtime?.experiments ?? {},
+        manifestLoader,
+        exposureQueue,
+      })
+    );
+
+    const expKeys = manifestLoader
+      ? Object.keys(manifestLoader.getCurrent())
+      : Object.keys(runtime?.experiments ?? {});
+    logger.info(
+      `🧪 A/B testing 已启用：${expKeys.join(', ') || '(empty)'}${manifestLoader ? ' [manifest]' : ' [static]'}${exposureQueue ? ' + exposure tracking' : ''}`
+    );
   }
 
   // ops 路由：先于 ISR 缓存 + 静态 + 动态 handler
