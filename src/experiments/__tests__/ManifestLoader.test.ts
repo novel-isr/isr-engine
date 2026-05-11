@@ -130,7 +130,7 @@ describe('ManifestLoader', () => {
     const loader = createManifestLoader({
       endpoint: 'http://x',
       fallbackOnError: 'empty',
-      staticExperiments: { hero: { variants: ['a', 'b'] } },
+      staticExperiments: { hero: { variants: ['a', 'b'], weights: undefined } },
       fetcher,
     });
     await loader.init();

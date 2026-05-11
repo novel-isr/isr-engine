@@ -125,7 +125,15 @@ export function createManifestLoader(options: ManifestLoaderOptions) {
       const newEtag = res.headers.get('etag');
       if (newEtag) state.etag = newEtag;
 
-      const json = (await res.json()) as ExperimentManifest;
+      // admin-server 默认把响应包成 { status, code, data: {...} } envelope；
+      // 直接返回 {experiments} 顶层的也支持。两种形态都能 parse
+      const rawJson = (await res.json()) as
+        | ExperimentManifest
+        | { data?: ExperimentManifest };
+      const json: ExperimentManifest | undefined =
+        rawJson && typeof rawJson === 'object' && 'data' in rawJson && rawJson.data
+          ? (rawJson.data as ExperimentManifest)
+          : (rawJson as ExperimentManifest);
       if (!json || typeof json !== 'object' || !json.experiments) {
         applyFallback('响应缺 experiments 字段');
         return;
