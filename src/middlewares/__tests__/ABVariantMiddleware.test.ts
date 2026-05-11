@@ -3,8 +3,8 @@ import { createABVariantMiddleware, getVariant } from '../ABVariantMiddleware';
 import { requestContext } from '@/context/RequestContext';
 import type { Request, Response } from 'express';
 
-function mockReq(cookie?: string): Request {
-  return { headers: { cookie } } as Request;
+function mockReq(): Request {
+  return { headers: {} } as Request;
 }
 
 function mockRes() {
@@ -19,93 +19,111 @@ function mockRes() {
   } as unknown as Response & { headers: Record<string, string[]> };
 }
 
-describe('ABVariantMiddleware', () => {
-  it('首访分配 + 写 cookie + getVariant 返回值', async () => {
-    const mw = createABVariantMiddleware({
-      experiments: {
-        hero: { variants: ['classic', 'v2'], weights: [50, 50] },
-      },
-    });
-
-    let assigned: string | undefined;
-    await new Promise<void>(resolve => {
-      requestContext.run({ traceId: 't', requestId: 'r' }, () => {
-        const req = mockReq();
-        const res = mockRes();
-        mw(req, res, () => {
-          assigned = getVariant('hero');
-          // cookie 写出去
-          expect(res.headers['Set-Cookie']?.[0]).toMatch(/^ab=/);
-          resolve();
+/**
+ * 在 RequestContext 里运行一次 middleware，返回 getVariant 结果 + 收集到的 Set-Cookie。
+ * 新版 ABVariantMiddleware 完全不写 cookie —— Set-Cookie 数组应该永远为空。
+ */
+function runWithCtx(
+  anonId: string,
+  mw: ReturnType<typeof createABVariantMiddleware>,
+  expKey: string
+) {
+  return new Promise<{ variant: string | undefined; setCookies: string[] }>(resolve => {
+    requestContext.run({ traceId: 't', requestId: 'r', anonId }, () => {
+      const res = mockRes();
+      mw(mockReq(), res, () => {
+        resolve({
+          variant: getVariant(expKey),
+          setCookies: res.headers['Set-Cookie'] ?? [],
         });
       });
     });
-
-    expect(assigned).toMatch(/^(classic|v2)$/);
   });
+}
 
-  it('已有 cookie → sticky 不重新分配', async () => {
+describe('ABVariantMiddleware (anonId-hash)', () => {
+  it('同一 anonId 同一实验 → 永远同一 variant（确定性）', async () => {
     const mw = createABVariantMiddleware({
-      experiments: { hero: { variants: ['classic', 'v2'] } },
+      experiments: { hero: { variants: ['classic', 'v2'], weights: [50, 50] } },
     });
+    const anonId = 'fixed-anon-id-12345';
 
-    let v: string | undefined;
-    await new Promise<void>(resolve => {
-      requestContext.run({ traceId: 't', requestId: 'r' }, () => {
-        const req = mockReq('ab=hero%3Dv2');
-        const res = mockRes();
-        mw(req, res, () => {
-          v = getVariant('hero');
-          // cookie 没变 → 不应再 Set-Cookie
-          expect(res.headers['Set-Cookie']).toBeUndefined();
-          resolve();
-        });
-      });
-    });
-
-    expect(v).toBe('v2');
+    const runs = await Promise.all([
+      runWithCtx(anonId, mw, 'hero'),
+      runWithCtx(anonId, mw, 'hero'),
+      runWithCtx(anonId, mw, 'hero'),
+    ]);
+    expect(new Set(runs.map(r => r.variant)).size).toBe(1);
+    expect(['classic', 'v2']).toContain(runs[0].variant);
   });
 
-  it('cookie 里的 variant 已不在 variants 列表 → 重新分配', async () => {
+  it('不同 anonId 在 50/50 实验上能分散到两个 variant', async () => {
     const mw = createABVariantMiddleware({
-      experiments: { hero: { variants: ['v3', 'v4'] } },
+      experiments: { hero: { variants: ['classic', 'v2'], weights: [50, 50] } },
     });
-    let v: string | undefined;
-    await new Promise<void>(resolve => {
-      requestContext.run({ traceId: 't', requestId: 'r' }, () => {
-        const req = mockReq('ab=hero%3Dvold'); // vold 已下线
-        const res = mockRes();
-        mw(req, res, () => {
-          v = getVariant('hero');
-          // 重新 Set-Cookie
-          expect(res.headers['Set-Cookie']).toBeDefined();
-          resolve();
-        });
-      });
-    });
-    expect(['v3', 'v4']).toContain(v);
+    const seen = new Set<string>();
+    for (let i = 0; i < 50; i++) {
+      const r = await runWithCtx(`anon-${i}`, mw, 'hero');
+      if (r.variant) seen.add(r.variant);
+    }
+    expect(seen.has('classic')).toBe(true);
+    expect(seen.has('v2')).toBe(true);
   });
 
-  it('weights 100/0 → 永远命中 v2', async () => {
+  it('weights 0/100 → 永远 v2，跟 anonId 无关', async () => {
     const mw = createABVariantMiddleware({
       experiments: { hero: { variants: ['v1', 'v2'], weights: [0, 100] } },
     });
-
     for (let i = 0; i < 20; i++) {
-      let v: string | undefined;
-      await new Promise<void>(resolve => {
-        requestContext.run({ traceId: 't', requestId: String(i) }, () => {
-          mw(mockReq(), mockRes(), () => {
-            v = getVariant('hero');
-            resolve();
-          });
-        });
-      });
-      expect(v).toBe('v2');
+      const r = await runWithCtx(`a-${i}`, mw, 'hero');
+      expect(r.variant).toBe('v2');
     }
   });
 
-  it('getVariant 在中间件外 → undefined', () => {
+  it('完全不写 cookie —— ISR cache 友好的核心不变量', async () => {
+    const mw = createABVariantMiddleware({
+      experiments: { hero: { variants: ['a', 'b'] }, pricing: { variants: ['x', 'y'] } },
+    });
+    for (let i = 0; i < 10; i++) {
+      const r = await runWithCtx(`anon-${i}`, mw, 'hero');
+      expect(r.setCookies).toEqual([]);
+    }
+  });
+
+  it('多个实验在同一 anonId 上独立分配 + 写到 ctx.experiments', async () => {
+    const mw = createABVariantMiddleware({
+      experiments: {
+        hero: { variants: ['a', 'b'] },
+        pricing: { variants: ['x', 'y'] },
+      },
+    });
+    await new Promise<void>(resolve => {
+      requestContext.run({ traceId: 't', requestId: 'r', anonId: 'anon-7' }, () => {
+        mw(mockReq(), mockRes(), () => {
+          const ctx = requestContext.getStore();
+          expect(ctx?.experiments).toBeDefined();
+          expect(['a', 'b']).toContain(ctx?.experiments?.hero);
+          expect(['x', 'y']).toContain(ctx?.experiments?.pricing);
+          // flags 也同步写入，向后兼容旧 getVariant 路径
+          expect(ctx?.flags?.hero).toBe(ctx?.experiments?.hero);
+          resolve();
+        });
+      });
+    });
+  });
+
+  it('自定义 assigner 覆盖默认 hash', async () => {
+    const mw = createABVariantMiddleware({
+      experiments: { hero: { variants: ['a', 'b'] } },
+      assigner: () => 'a',
+    });
+    for (let i = 0; i < 5; i++) {
+      const r = await runWithCtx(`anon-${i}`, mw, 'hero');
+      expect(r.variant).toBe('a');
+    }
+  });
+
+  it('getVariant 在 RequestContext 外 → undefined', () => {
     expect(getVariant('hero')).toBeUndefined();
   });
 });

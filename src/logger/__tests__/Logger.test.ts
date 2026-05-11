@@ -204,9 +204,12 @@ describe('Logger.logFile —— 文件持久化', () => {
 describe('Logger 与 RequestContext 集成（traceId / requestId）', () => {
   it('在 ALS 作用域内 → 日志包含 traceId + requestId', () => {
     const logger = Logger.getInstance({ verbose: true });
-    requestContext.run({ traceId: 'trace-abc-123', requestId: 'req-xyz-456' }, () => {
-      logger.info('with-trace');
-    });
+    requestContext.run(
+      { traceId: 'trace-abc-123', requestId: 'req-xyz-456', anonId: 'anon-test' },
+      () => {
+        logger.info('with-trace');
+      }
+    );
     const msgs = getLoggedMessages().join('\n');
     expect(msgs).toContain('trace-abc-123');
     expect(msgs).toContain('req-xyz-456');

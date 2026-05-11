@@ -19,6 +19,20 @@ export interface ISRContextData {
   traceId: string;
   /** 单服务的请求 ID；写到响应头 x-request-id 给客户端 / 客户端日志关联用 */
   requestId: string;
+  /**
+   * 浏览器 / 设备维度的稳定 ID —— 由 engine 入口中间件保证非空：
+   *   - cookie `anon` 存在 → 读取作 anonId
+   *   - 缺失 → randomUUID() 生成，并通过 res.appendHeader('Set-Cookie', ...) 落 cookie
+   *
+   * 作用：
+   *   1. A/B 实验确定性分桶（hash(anonId + expKey) → variant，无需 sticky 变体 cookie）
+   *   2. telemetry / error reporting 按用户聚合（跨 session、跨设备唯一）
+   *   3. 个性化推荐 / 浏览历史等 lightweight 场景的 server-side 锚点
+   *
+   * 不是 session token、不是 userId、不识别身份；GDPR 语境下属于"persistent identifier"，
+   * 业务侧若要 EU 合规需在 cookie consent 前不写。
+   */
+  anonId: string;
   /** 已登录用户 ID（业务侧 beforeRequest 写入，Server Component / Server Action 消费） */
   userId?: string;
   /**
@@ -39,6 +53,16 @@ export interface ISRContextData {
   cookies?: Record<string, string>;
   /** A/B 测试开关位（engine ABVariantMiddleware 写入；getVariant() 读） */
   flags?: Record<string, boolean | string>;
+  /**
+   * 本次请求生效的实验变体表 —— `{ 'hero-style': 'bold' }`。由 ABVariantMiddleware
+   * 在每次请求时基于 anonId + 实验配置确定性算出（hash(anonId+expKey)），不进 cookie。
+   * ISR cache key 拼这一份的 digest，保证「不同变体走不同 cache entry」+「同一 anonId
+   * 同一实验配置永远 HIT 同一份缓存」。
+   *
+   * 与 flags 区别：experiments 只承载实验变体；flags 是更宽泛的 boolean/string 开关位
+   * （比如 feature toggle，dark launch）。getVariant() 历史上读 flags，本字段是它的 sst。
+   */
+  experiments?: Record<string, string>;
   /** 其它业务扩展字段（engine 不消费） */
   [key: string]: unknown;
 }

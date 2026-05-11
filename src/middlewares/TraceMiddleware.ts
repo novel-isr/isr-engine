@@ -49,15 +49,21 @@ export const traceMiddleware: Middleware = async (context, next) => {
 
   const traceId = upstreamTraceId || `trace-${randomUUID()}`;
   const requestId = (context.data?.requestId as string) || `req-${randomUUID()}`;
+  // anonId 正常路径由 engine express 入口 createServerRequestContext 写入；走到这里
+  // 还为空，说明是 dev / 测试 / 直接走 MiddlewareComposer 的场景，兜底生成一个 UUID，
+  // 保证 RequestContext 的 anonId 不变量「永远非空」。
+  const anonId = (context.data?.anonId as string) || randomUUID();
 
   if (!context.data) {
     context.data = {
       traceId,
       requestId,
+      anonId,
     };
   } else {
     context.data.traceId = traceId;
     context.data.requestId = requestId;
+    context.data.anonId = anonId;
   }
 
   await requestContext.run(context.data, async () => {

@@ -9,6 +9,7 @@ describe('i18n-server', () => {
       {
         traceId: 't-i18n',
         requestId: 'r-i18n',
+        anonId: 'a-i18n',
         intl: {
           locale: 'zh',
           messages: { home: { title: '首页' } },
@@ -27,6 +28,7 @@ describe('i18n-server', () => {
       {
         traceId: 't-i18n',
         requestId: 'r-i18n',
+        anonId: 'a-i18n',
         intl: {
           locale: 'zh',
           messages: { home: { title: '首页' } },

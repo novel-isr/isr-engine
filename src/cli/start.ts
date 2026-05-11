@@ -182,32 +182,19 @@ export async function startProductionServer(options: StartOptions): Promise<void
   }
 
   // 建立 RequestContext (AsyncLocalStorage) —— 让 RSC 渲染期能用 getRequestContext()
-  // 必须在所有读/写 context 的中间件（A/B、Trace、Logger）之前
+  // 必须在所有读/写 context 的中间件（A/B、Trace、Logger）之前。
+  //
+  // 工厂 createServerRequestContext 负责三个 ID 的生成 + anonId cookie 缺失检测；
+  // applyAnonCookie 在缺失时把 Set-Cookie 写到响应头（live 客户端可收到，cache 层
+  // 在 captureAndStore 阶段会剥掉这一条 Set-Cookie 才入缓存，保证 cache entry
+  // user-agnostic）。详见 src/context/createServerRequestContext.ts。
   const { requestContext } = await import('@/context/RequestContext');
-  const { parseCookieHeader } = await import('@/utils/cookie');
-  const { randomUUID } = await import('node:crypto');
-  app.use((req, _res, next) => {
-    const headerReqId = req.headers['x-request-id'];
-    const rawCookie = req.headers['cookie'];
-    const cookieHeader = Array.isArray(rawCookie)
-      ? rawCookie.join('; ')
-      : typeof rawCookie === 'string'
-        ? rawCookie
-        : '';
-    const cookies = parseCookieHeader(cookieHeader);
-    // 只放跨中间件需要共享的字段；acceptLanguage / referer 一次性的，需要时
-    // 从 req.headers 直读（i18n 协商、trace 快照都已经这么做）。
-    requestContext.run(
-      {
-        traceId:
-          typeof req.headers['traceparent'] === 'string'
-            ? req.headers['traceparent']
-            : randomUUID(),
-        requestId: typeof headerReqId === 'string' ? headerReqId : randomUUID(),
-        cookies,
-      },
-      () => next()
-    );
+  const { createServerRequestContext, applyAnonCookie } =
+    await import('@/context/createServerRequestContext');
+  app.use((req, res, next) => {
+    const { data, needsAnonCookie } = createServerRequestContext(req);
+    if (needsAnonCookie) applyAnonCookie(res, data.anonId);
+    requestContext.run(data, () => next());
   });
 
   // Locale redirect —— runtime.i18n.prefixDefault=true 时，无 locale 前缀的 URL

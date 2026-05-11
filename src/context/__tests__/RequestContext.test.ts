@@ -12,6 +12,7 @@ describe('RequestContext', () => {
       {
         traceId: 'trace-ab',
         requestId: 'req-ab',
+        anonId: 'anon-ab',
         flags: { 'hero-style': 'bold' },
       },
       async () => {

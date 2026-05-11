@@ -6,7 +6,6 @@
 
 import path from 'path';
 import fs from 'fs';
-import { randomUUID } from 'node:crypto';
 import express, { type Express } from 'express';
 import type { ISRConfig } from '@/types';
 import { Logger } from '@/logger/Logger';
@@ -16,7 +15,7 @@ import { createViteDevServer, closeViteDevServer } from './viteDevServer';
 import { applyBaseMiddlewaresWithOptions, mountViteOrStatic } from './middleware';
 import { startServer, closeServer } from './httpServer';
 import { requestContext } from '@/context/RequestContext';
-import { parseCookieHeader } from '@/utils/cookie';
+import { createServerRequestContext, applyAnonCookie } from '@/context/createServerRequestContext';
 import { createABVariantMiddleware } from '@/middlewares/ABVariantMiddleware';
 import { createLocaleRedirectMiddleware } from '@/middlewares/LocaleRedirect';
 import { resolveI18nConfig } from '@/runtime/i18n';
@@ -122,27 +121,12 @@ async function initServerContext(config?: ISRConfig): Promise<ServerContext> {
   // Vite / 静态资源中间件将在 setupRoutes 之后挂载，确保 ops 路由能先于 Vite 匹配
   applyBaseMiddlewaresWithOptions(serverContext);
 
-  serverContext.requestHandler.use((req, _res, next) => {
-    const headerReqId = req.headers['x-request-id'];
-    const rawCookie = req.headers['cookie'];
-    const cookieHeader = Array.isArray(rawCookie)
-      ? rawCookie.join('; ')
-      : typeof rawCookie === 'string'
-        ? rawCookie
-        : '';
-    const cookies = parseCookieHeader(cookieHeader);
-    // acceptLanguage / referer 不写到 ctx —— 一次性使用，需要时直读 req.headers。
-    requestContext.run(
-      {
-        traceId:
-          typeof req.headers['traceparent'] === 'string'
-            ? req.headers['traceparent']
-            : randomUUID(),
-        requestId: typeof headerReqId === 'string' ? headerReqId : randomUUID(),
-        cookies,
-      },
-      () => next()
-    );
+  // 详见 src/context/createServerRequestContext.ts —— 三个 ID 的生成 + anonId
+  // cookie 缺失检测都收口在这一处。
+  serverContext.requestHandler.use((req, res, next) => {
+    const { data, needsAnonCookie } = createServerRequestContext(req);
+    if (needsAnonCookie) applyAnonCookie(res, data.anonId);
+    requestContext.run(data, () => next());
   });
 
   // Locale redirect —— runtime.i18n.prefixDefault=true 时挂上，让裸 URL 302 到带前缀

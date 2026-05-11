@@ -1,44 +1,42 @@
 /**
- * A/B Variant Middleware —— 服务端实验分组（OKX/字节同款 cookie-sticky 模式）
+ * A/B Variant Middleware —— anonId 确定性 hash 分桶（自研 ISR 原生实现）
  *
- * 设计取舍：
- *   - **不**做完整 A/B 平台（用 GrowthBook/Statsig/Optimizely 那种）
- *     → 那是数据团队的 SaaS / 后端服务的工作
- *   - 只做 engine 该做的事：
- *     1. 首次访问：根据 weights 选 variant + 写 cookie
- *     2. 后续访问：从 cookie 读取（sticky session，避免 SEO/分析数据被搞乱）
- *     3. 把 variant 暴露到 RSC 渲染 context（Server Component 用 getVariant 读取）
+ * 设计原则（跟前一版的根本区别）：
+ *   - **不再把变体编码进 cookie**（旧版：`ab=hero=bold|pricing=control`，每次写 cookie
+ *     → 响应带 Set-Cookie → ISR 缓存全站失效）
+ *   - 用 RequestContext 里的 anonId（engine 入口已经保证存在 + 写 Set-Cookie 是入口
+ *     middleware 的事，跟变体决策完全解耦）做确定性 hash 分桶：
  *
- * 一致性：同一 user 同一 experiment 永远拿到同一 variant（cookie 或 hash(uid+exp)）。
+ *       variant = pickByBucket(exp.variants, exp.weights,
+ *                              fnv1a(anonId + ':' + expKey) % 10000)
+ *
+ *     同一 anonId × 同一 experiment 永远拿同一 variant；engine 升级实验也不需要
+ *     rewrite cookie。
+ *
+ * 一致性 + 缓存：ctx.experiments 由本 middleware 写入；ISR cache 把它的 stable
+ * digest 拼进 cache key —— 不同变体走不同 cache entry，同变体多用户共享 entry。
  *
  * 用法：
  *
  *   import { createABVariantMiddleware, getVariant } from '@novel-isr/engine';
  *
- *   // 在 server.ts / cli/start.ts 注册（engine 默认已经接好；用户传 experiments 即可）
  *   app.use(createABVariantMiddleware({
  *     experiments: {
  *       'home-hero': { variants: ['classic', 'hero-v2'], weights: [50, 50] },
  *       'pricing-page': { variants: ['control', 'discount-banner'], weights: [70, 30] },
  *     },
- *     cookieName: 'ab',
- *     cookieMaxAge: 30 * 86400_000,  // 30 days
  *   }));
  *
- *   // Server Component 里读：
+ *   // Server Component：
  *   import { getVariant } from '@novel-isr/engine';
- *   export async function HomePage() {
- *     const v = getVariant('home-hero');   // → 'classic' | 'hero-v2'
- *     return v === 'hero-v2' ? <HeroV2/> : <HeroClassic/>;
- *   }
+ *   const v = getVariant('home-hero');
  *
- * 缓存：配置 runtime.experiments 后，ISR cache 默认把 ab cookie 摘要纳入 key；
- *      同一路径不同 variant 各自缓存，避免 A 组拿到 B 组 HTML。
- *      若显式关闭 variantIsolation，必须保证实验不影响 HTML/SEO。
+ * 注意：本 middleware **完全不写 cookie**。anonId cookie 由 engine 入口 middleware
+ * （createServerRequestContext + applyAnonCookie）落，跟实验配置变化解耦。
  */
 import type { Request, Response, NextFunction } from 'express';
 import { getRequestContext } from '../context/RequestContext';
-import { readCookie } from '../utils/cookie';
+import { fnv1a32 } from '../utils/hash';
 
 export { getVariant } from './abVariantContext';
 
@@ -52,75 +50,64 @@ export interface ExperimentConfig {
 export interface ABVariantOptions {
   /** A/B testing 定义：testName → { variants, weights } */
   experiments: Record<string, ExperimentConfig>;
-  /** cookie 名；默认 'ab' */
-  cookieName?: string;
-  /** cookie 有效期（毫秒）；默认 30 天 */
-  cookieMaxAge?: number;
-  /** 自定义分组逻辑（覆盖默认随机）；如按 userId hash */
-  assigner?: (req: Request, name: string, exp: ExperimentConfig) => string;
+  /**
+   * 自定义分桶逻辑（覆盖默认 fnv1a(anonId + ':' + name)）；如按 userId / geo / device。
+   * 必须是 **确定性函数**（同输入永远同输出），否则 ISR cache 会反复 MISS。
+   */
+  assigner?: (anonId: string, name: string, exp: ExperimentConfig) => string;
 }
 
-function pickWeighted(variants: readonly string[], weights?: readonly number[]): string {
-  if (!weights || weights.length !== variants.length) {
-    return variants[Math.floor(Math.random() * variants.length)];
-  }
-  const total = weights.reduce((a, b) => a + b, 0);
-  let r = Math.random() * total;
+/** 总桶数；10000 给到 0.01% 权重精度，业界通行做法 */
+const BUCKET_SPACE = 10000;
+
+/**
+ * 按权重 + bucket 索引选 variant。
+ * 把 weights 累加得到分段边界，bucket 落在哪段就选哪个 variant。
+ * 同一 (variants, weights, bucket) → 永远同一结果（确定性）。
+ */
+function pickByBucket(
+  variants: readonly string[],
+  weights: readonly number[] | undefined,
+  bucket: number
+): string {
+  // 默认平均分
+  const w = weights && weights.length === variants.length ? weights : variants.map(() => 1);
+  const total = w.reduce((a, b) => a + b, 0);
+  // bucket ∈ [0, BUCKET_SPACE)；按 weights 比例切片
+  let cursor = 0;
   for (let i = 0; i < variants.length; i++) {
-    r -= weights[i];
-    if (r <= 0) return variants[i];
+    cursor += (w[i] / total) * BUCKET_SPACE;
+    if (bucket < cursor) return variants[i];
   }
   return variants[variants.length - 1];
 }
 
-/** cookie 编码：'home-hero=hero-v2|pricing-page=control' */
-function parseCookie(raw: string): Record<string, string> {
-  const out: Record<string, string> = {};
-  for (const pair of raw.split('|')) {
-    const [k, v] = pair.split('=');
-    if (k && v) out[k] = v;
-  }
-  return out;
-}
-
-function encodeCookie(map: Record<string, string>): string {
-  return Object.entries(map)
-    .map(([k, v]) => `${k}=${v}`)
-    .join('|');
+/** 默认分桶：fnv1a(anonId + ':' + experimentKey) % BUCKET_SPACE。稳定、无外部依赖 */
+function defaultAssigner(anonId: string, name: string, exp: ExperimentConfig): string {
+  const bucket = fnv1a32(`${anonId}:${name}`) % BUCKET_SPACE;
+  return pickByBucket(exp.variants, exp.weights, bucket);
 }
 
 export function createABVariantMiddleware(options: ABVariantOptions) {
-  const { experiments, cookieName = 'ab', cookieMaxAge = 30 * 86400_000, assigner } = options;
+  const { experiments, assigner = defaultAssigner } = options;
 
-  return function abMiddleware(req: Request, res: Response, next: NextFunction): void {
-    const existingRaw = readCookie(req, cookieName);
-    const existing = existingRaw ? parseCookie(existingRaw) : {};
-    const assignments: Record<string, string> = { ...existing };
-
-    let mutated = false;
-    for (const [name, exp] of Object.entries(experiments)) {
-      const current = existing[name];
-      // 已有 + 仍在 variants 列表里 → sticky；否则重新分配
-      if (current && exp.variants.includes(current)) {
-        assignments[name] = current;
-        continue;
-      }
-      const picked = assigner ? assigner(req, name, exp) : pickWeighted(exp.variants, exp.weights);
-      assignments[name] = picked;
-      mutated = true;
-    }
-
-    if (mutated) {
-      const value = encodeURIComponent(encodeCookie(assignments));
-      const flags = `Max-Age=${Math.floor(cookieMaxAge / 1000)}; Path=/; SameSite=Lax`;
-      res.appendHeader('Set-Cookie', `${cookieName}=${value}; ${flags}`);
-    }
-
-    // 注入 RequestContext.flags，让 Server Component 用 getVariant() 读取
+  return function abMiddleware(_req: Request, _res: Response, next: NextFunction): void {
     const ctx = getRequestContext();
-    if (ctx) {
-      ctx.flags = { ...(ctx.flags ?? {}), ...assignments };
+    if (!ctx) {
+      // 没有 RequestContext → engine 入口没接上，跳过实验（不破坏渲染）
+      next();
+      return;
     }
+
+    const anonId = ctx.anonId;
+    const assignments: Record<string, string> = {};
+    for (const [name, exp] of Object.entries(experiments)) {
+      assignments[name] = assigner(anonId, name, exp);
+    }
+
+    // 写到两个字段：experiments 是 SST，flags 是 getVariant() 历史 API 的兼容路径
+    ctx.experiments = { ...(ctx.experiments ?? {}), ...assignments };
+    ctx.flags = { ...(ctx.flags ?? {}), ...assignments };
 
     next();
   };

@@ -77,7 +77,7 @@ describe('traceMiddleware —— 优先级', () => {
     const context: ISRContext = {
       url: '/',
       renderModeType: 'isr',
-      data: { traceId: '', requestId: '' },
+      data: { traceId: '', requestId: '', anonId: '' },
       req: {
         headers: headers as Record<string, string | string[] | undefined>,
         cookies: {},

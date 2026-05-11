@@ -54,6 +54,9 @@ import { createAutoCacheStore } from '@/cache/createAutoCacheStore';
 import { RedisInvalidationBus } from '@/cache/RedisInvalidationBus';
 import { hasRuntimeRedisConnection, resolveRuntimeRedisConfig } from '@/config/resolveRuntimeRedis';
 import { readCookie } from '@/utils/cookie';
+import { ANON_COOKIE_NAME } from '@/context/createServerRequestContext';
+import { getRequestContext } from '@/context/RequestContext';
+import { fnv1a32Base36 } from '@/utils/hash';
 
 const logger = Logger.getInstance();
 
@@ -711,7 +714,15 @@ function runMissPath(
 
       // 用户态响应禁止缓存：含 Set-Cookie 的响应意味着服务端在给本次请求者下发
       // session/CSRF token/身份识别。若入缓存，后续 HIT 回放会把 cookie 发给其他用户，
-      // 等同于跨账号会话泄露（高危）。这里严格拒绝入缓存，记一行 info。
+      // 等同于跨账号会话泄露（高危）。
+      //
+      // 例外：bootstrap `anon` cookie（A/B 分桶用的浏览器维度 UUID）—— engine 入口
+      // 在 cookie 缺失时落一次，cookie 本身只是 identity anchor，跟用户身份 / 鉴权
+      // 解耦。从 captured.headers 里把 anon 这一条 Set-Cookie 剥掉再存：
+      //   - live 响应到 client 仍然带 Set-Cookie（浏览器收到 cookie）
+      //   - cached body + headers 不带 anon Set-Cookie（多用户共享 cache entry 安全）
+      // cache key 走 ctx.experiments digest 隔离不同变体，保证不会跨变体串货。
+      stripBootstrapAnonCookie(captured.headers);
       if (hasSetCookie(captured.headers)) {
         logger.info(
           `⏭️  ISR cache skip ${cacheKey} —— 响应含 Set-Cookie（用户态响应不可共享缓存）`
@@ -1157,19 +1168,31 @@ function normalizeQuery(query: string): string {
   return pairs.map(([k, v]) => `${encodeURIComponent(k)}=${encodeURIComponent(v)}`).join('&');
 }
 
+/**
+ * 变体 digest —— ISR cache key 隔离 A/B 桶的依据。
+ *
+ * 数据源：RequestContext.experiments —— ABVariantMiddleware 已经基于
+ * anonId + 实验配置确定性算出 `{ 'hero-style': 'bold', ... }`。
+ * digest 算法把 sorted key=value 列表做 fnv1a，保证：
+ *   - 同 (anonId, 实验配置) → 同 digest → cache HIT
+ *   - 跨变体 → 不同 digest → 不同 cache entry，互不串货
+ *
+ * 回退路径：cookieName 参数保留是为兼容老的 cookie 直接编码模式（业务侧自己写
+ * variant cookie 不走 engine middleware 的场景）。没人会走那条 path 时，正常的
+ * ABVariantMiddleware 已经写好了 ctx.experiments，这里直接 hash 即可。
+ */
 function extractVariantDigest(req: IncomingMessage, cookieName: string): string | null {
-  const value = readCookie(req, cookieName);
-  return value ? fnv1a(value) : null;
-}
-
-/** 32-bit FNV-1a hash；返回 base36 字符串。无 crypto 依赖，稳定、快速 */
-function fnv1a(s: string): string {
-  let h = 0x811c9dc5;
-  for (let i = 0; i < s.length; i++) {
-    h ^= s.charCodeAt(i);
-    h = Math.imul(h, 0x01000193);
+  // 优先读 RequestContext.experiments（engine ABVariantMiddleware 写入的 SST）
+  const ctx = getRequestContext();
+  const exps = ctx?.experiments;
+  if (exps && Object.keys(exps).length > 0) {
+    const sortedKeys = Object.keys(exps).sort();
+    const blob = sortedKeys.map(k => `${k}=${exps[k]}`).join('|');
+    return fnv1a32Base36(blob);
   }
-  return (h >>> 0).toString(36);
+  // 老路径：cookie 直接编码变体（业务侧自己写 ab cookie 时兜底）
+  const value = readCookie(req, cookieName);
+  return value ? fnv1a32Base36(value) : null;
 }
 
 function hasSetCookie(headers: Record<string, string | number | string[]>): boolean {
@@ -1177,6 +1200,36 @@ function hasSetCookie(headers: Record<string, string | number | string[]>): bool
   if (!sc) return false;
   if (Array.isArray(sc)) return sc.length > 0;
   return String(sc).length > 0;
+}
+
+/**
+ * 从已捕获的响应 headers 里**就地**剥掉 bootstrap anon Set-Cookie。
+ *
+ * 只剥 `anon=...` 那一条；其余 Set-Cookie（业务真正的 session / CSRF token）原样保留，
+ * 后续 hasSetCookie 检查会照常把整个响应拒之于缓存外。
+ *
+ * 实现细节：
+ *   - Set-Cookie 在 Node http 里可能是 string 或 string[]，要兼容两种形态
+ *   - 大小写两个 key（'set-cookie' / 'Set-Cookie'）都要处理
+ *   - 剥完只剩一条时降级为 string；剥光后整个 key 删掉
+ */
+function stripBootstrapAnonCookie(headers: Record<string, string | number | string[]>): void {
+  const anonPrefix = `${ANON_COOKIE_NAME}=`;
+  const isAnonCookie = (raw: string): boolean => raw.startsWith(anonPrefix);
+
+  for (const key of ['set-cookie', 'Set-Cookie']) {
+    const raw = headers[key];
+    if (raw === undefined) continue;
+
+    if (Array.isArray(raw)) {
+      const kept = raw.filter(v => !isAnonCookie(String(v)));
+      if (kept.length === 0) delete headers[key];
+      else if (kept.length === 1) headers[key] = kept[0];
+      else headers[key] = kept;
+    } else if (typeof raw === 'string' && isAnonCookie(raw)) {
+      delete headers[key];
+    }
+  }
 }
 
 /**
