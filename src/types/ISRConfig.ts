@@ -301,6 +301,18 @@ export interface RuntimeTelemetryConfig {
 export interface RuntimeConfig {
   /** 站点公网 base URL，用于 SEO canonical / sitemap / robots */
   site: string | undefined;
+  /**
+   * Cookie 跨子域共享的 Domain 属性。
+   *
+   * 用法：
+   *   - **子域分发部署**（www.x / admin.x / api.x）：设 `.your-domain.com`
+   *     —— engine 写 anon cookie 时带 `Domain=.your-domain.com`，浏览器自动
+   *     带到所有子域；SSR 在 www 写、API 在 api 读、客户端在 www 读都拿得到。
+   *   - **单一域名**（path-based routing）：留空 undefined，cookie 关联当前 host
+   *     即可，更严格的 same-origin。
+   *   - **localhost**：留空。浏览器对 `Domain=localhost` 处理不一致，反而出问题
+   */
+  cookieDomain?: string;
   /** 按职责拆开的后端服务 origin */
   services: RuntimeServicesConfig;
   /** 分布式 ISR 缓存与跨实例失效广播 */

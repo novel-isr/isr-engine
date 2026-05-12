@@ -125,9 +125,12 @@ async function initServerContext(config?: ISRConfig): Promise<ServerContext> {
 
   // 详见 src/context/createServerRequestContext.ts —— 三个 ID 的生成 + anonId
   // cookie 缺失检测都收口在这一处。
+  // cookieDomain 子域分发部署时设 `.your-domain.com`，让浏览器自动带到所有子域；
+  // 单一域名 / localhost 留空。
+  const cookieDomain = config?.runtime?.cookieDomain;
   serverContext.requestHandler.use((req, res, next) => {
     const { data, needsAnonCookie } = createServerRequestContext(req);
-    if (needsAnonCookie) applyAnonCookie(res, data.anonId);
+    if (needsAnonCookie) applyAnonCookie(res, data.anonId, cookieDomain);
     requestContext.run(data, () => next());
   });
 

@@ -191,9 +191,10 @@ export async function startProductionServer(options: StartOptions): Promise<void
   const { requestContext } = await import('@/context/RequestContext');
   const { createServerRequestContext, applyAnonCookie } =
     await import('@/context/createServerRequestContext');
+  const cookieDomain = runtime?.cookieDomain;
   app.use((req, res, next) => {
     const { data, needsAnonCookie } = createServerRequestContext(req);
-    if (needsAnonCookie) applyAnonCookie(res, data.anonId);
+    if (needsAnonCookie) applyAnonCookie(res, data.anonId, cookieDomain);
     requestContext.run(data, () => next());
   });
 

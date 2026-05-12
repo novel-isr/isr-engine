@@ -86,8 +86,19 @@ export function createServerRequestContext(req: IncomingMessage): CreatedRequest
  * 跨站跳转也带（搜索引擎结果点击进来不会丢 anonId）；Path=/ 全站共享。
  * Secure 不强制 —— dev http 也要工作；生产 HTTPS 由 reverse proxy 自动加 Secure 标记
  * 不在 engine 侧加。
+ *
+ * @param cookieDomain 可选 `Domain` 属性。子域分发部署（www.x / admin.x / api.x）
+ *   时设 `.your-domain.com`，让浏览器把 anon cookie 自动带到所有子域 ——
+ *   SSR 在 www 写、admin-server 在 api 读、客户端 SDK 在 www 读，都能拿到。
+ *   单一域名部署时留空，浏览器只把 cookie 关联到当前 host。
  */
-export function applyAnonCookie(res: ServerResponse, anonId: string): void {
-  const flags = [`Max-Age=${ANON_COOKIE_MAX_AGE_SECONDS}`, 'Path=/', 'SameSite=Lax'].join('; ');
-  res.appendHeader('Set-Cookie', `${ANON_COOKIE_NAME}=${anonId}; ${flags}`);
+export function applyAnonCookie(res: ServerResponse, anonId: string, cookieDomain?: string): void {
+  const parts = [
+    `${ANON_COOKIE_NAME}=${anonId}`,
+    `Max-Age=${ANON_COOKIE_MAX_AGE_SECONDS}`,
+    'Path=/',
+    'SameSite=Lax',
+  ];
+  if (cookieDomain) parts.push(`Domain=${cookieDomain}`);
+  res.appendHeader('Set-Cookie', parts.join('; '));
 }
