@@ -23,14 +23,13 @@ import { HydrationShell } from './runtime/hydration-shell';
 // @ts-expect-error - 虚拟模块由 plugin-rsc 注入
 import assetsManifest from 'virtual:vite-rsc/assets-manifest';
 
-/** 收集 manifest 里所有唯一的 CSS 链接（client + server 两边）。
+/** 收集 manifest 里所有唯一的 CSS 链接（client + server 两边）—— csr-shell fallback 用。
  *
- * 用途：
- *   - 正常 SSR 路径：plugin-rsc 只自动 hoist serverResources 的 CSS 到 <head>，
- *     clientReferenceDeps 的 client component CSS chunk 不会自动 link，导致
- *     Header/Footer 等 'use client' 组件的 .module.scss 样式丢失。需要这里
- *     显式注入。
- *   - csr-shell fallback：SSR 抛错时 fallback shell 也要正确样式。
+ * 正常 SSR 路径不调这里：plugin-rsc 在 `cssCodeSplit: true`（Vite 默认）下会自己把
+ * 用到的 client component CSS 通过 React 19 metadata hoisting link 到 <head>，
+ * 不需要 engine 介入。
+ *
+ * 只在 SSR 渲染抛错降级到 csr-shell 时调：那一路要无脑灌满所有 CSS，否则壳无样式。
  */
 function collectAllCss(): string[] {
   const set = new Set<string>();
@@ -178,19 +177,10 @@ export async function renderHTML(
   let status: number | undefined;
   let csrShellFallback = false;
 
-  // plugin-rsc 只自动 hoist server resource CSS（页面入口的 .scss/.css 直接 import）。
-  // 'use client' 组件被拆成独立 chunk，对应 .module.scss 在 clientReferenceDeps 里，
-  // 不会自动出现在 <head>。这里显式收集全部 CSS 注入 React 树，由 React 19 metadata
-  // hoisting 提升到 <head> 并按 href 去重，跟 server CSS 不冲突。
-  const cssHrefs = collectAllCss();
-
   try {
     if (options.forceCsrShell) throw new Error('forceCsrShell debug flag');
     htmlStream = await renderToReadableStream(
       <HydrationShell>
-        {cssHrefs.map(href => (
-          <link key={href} rel='stylesheet' href={href} precedence='default' />
-        ))}
         <SsrRoot />
       </HydrationShell>,
       {
@@ -211,12 +201,13 @@ export async function renderHTML(
       console.warn('[isr-engine] SSR render failed → falling back to csr-shell:', reason);
     }
     // 注入用户的全部 client CSS chunks 到 csr-shell —— 否则 CSR fallback 渲染丢样式
+    const cssLinks = collectAllCss();
     htmlStream = await renderToReadableStream(
       <html lang='zh-CN'>
         <head>
           <meta charSet='utf-8' />
           <title>正在加载…</title>
-          {cssHrefs.map(href => (
+          {cssLinks.map(href => (
             <link key={href} rel='stylesheet' href={href} />
           ))}
           <style dangerouslySetInnerHTML={{ __html: CSR_SHELL_STYLES }} />
