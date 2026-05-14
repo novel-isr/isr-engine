@@ -1,6 +1,6 @@
 {
   "name": "@novel-isr/engine",
-  "version": "2.3.1",
+  "version": "2.3.2",
   "description": "ISR/SSG/Fallback rendering orchestration on Vite + React 19 RSC.",
   "license": "UNLICENSED",
   "repository": {
@@ -10,7 +10,7 @@
   "homepage": "https://github.com/novel-isr/isr-engine",
   "bugs": "https://github.com/novel-isr/isr-engine/issues",
   "publishConfig": {
-    "access": "restricted",
+    "access": "public",
     "registry": "https://npm.pkg.github.com"
   },
   "type": "module",
