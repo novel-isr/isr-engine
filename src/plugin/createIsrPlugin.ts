@@ -225,7 +225,22 @@ function createBrowserShimPlugin(): Plugin {
     },
     configResolved(config) {
       // engine 契约项：消费侧 vite 配置不参与决策。静默 mutate 取胜。
-      (config.build as { cssCodeSplit: boolean }).cssCodeSplit = true;
+      //
+      // Vite 5+ 是 per-environment first-class —— 每个 env (client / ssr / rsc) 有
+      // 自己的 build 配置；消费侧 vite.config.ts 的 build.cssCodeSplit 在 resolve
+      // 阶段被复制到每个 env 的 build 里。只 mutate top-level 不够，必须把所有
+      // environments 的 build.cssCodeSplit 也一起接管。
+      const force = (b: { cssCodeSplit?: boolean } | undefined) => {
+        if (b) b.cssCodeSplit = true;
+      };
+      force(config.build);
+      const envs = (config as unknown as { environments?: Record<string, { build?: { cssCodeSplit?: boolean } }> })
+        .environments;
+      if (envs) {
+        for (const name of Object.keys(envs)) {
+          force(envs[name]?.build);
+        }
+      }
     },
   };
 }
