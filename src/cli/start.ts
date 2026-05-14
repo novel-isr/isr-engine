@@ -302,6 +302,14 @@ export async function startProductionServer(options: StartOptions): Promise<void
     })
   );
 
+  // /assets/* 404 guard —— 走到这里说明 express.static 没找到文件（fallthrough）。
+  // 资产路径绝不可走 SSR fallback：浏览器 strict MIME 检查会因拿到 text/html 拒绝
+  // 当 CSS/JS 用。客户端老 hash 资产请求（部署后 hash 变化）应当返真 404，让浏览器
+  // 知道资源不存在而不是收到错误 MIME 的 HTML 页面。
+  app.use('/assets', (_req, res) => {
+    res.status(404).set('Cache-Control', 'no-store').end();
+  });
+
   // 图片优化端点（/_/img）—— sharp 是 optionalDependency，未装时端点返回 501
   const { createImageMiddleware } = await import('@/plugin/createImagePlugin');
   app.use(createImageMiddleware({ remoteAllowlist: [] }));

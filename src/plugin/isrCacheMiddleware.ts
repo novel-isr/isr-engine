@@ -332,7 +332,10 @@ export function createIsrCacheHandler(
   const variantIsolation = options.variantIsolation ?? hasExperiments;
   const variantCookieName = options.variantCookieName ?? 'ab';
   const cacheNamespace = options.cacheNamespace ?? process.env.ISR_CACHE_NAMESPACE ?? 'default';
-  const cacheKeyPrefix = `${ENGINE_CACHE_KEY_VERSION}:${cacheNamespace}:`;
+  // build version 嵌入 cache key：每次 deploy 后 APP_VERSION 不同 → 旧 cache 自然失效（永远 miss）→ 新 build 走 fresh render
+  // CI 注入 APP_VERSION=<git sha>；本地开发不注入 → fallback 'dev'，所有 key 共享 'dev' 前缀（开发体验不受影响）
+  const buildVersion = process.env.APP_VERSION ?? 'dev';
+  const cacheKeyPrefix = `${ENGINE_CACHE_KEY_VERSION}:${cacheNamespace}:${buildVersion}:`;
 
   /** 后台重验证正在进行的 key 集合 —— 防止并发 STALE 请求重复触发多次 bg 拉取 */
   const revalidating = new Set<string>();
