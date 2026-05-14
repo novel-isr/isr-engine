@@ -234,8 +234,11 @@ function createBrowserShimPlugin(): Plugin {
         if (b) b.cssCodeSplit = true;
       };
       force(config.build);
-      const envs = (config as unknown as { environments?: Record<string, { build?: { cssCodeSplit?: boolean } }> })
-        .environments;
+      const envs = (
+        config as unknown as {
+          environments?: Record<string, { build?: { cssCodeSplit?: boolean } }>;
+        }
+      ).environments;
       if (envs) {
         for (const name of Object.keys(envs)) {
           force(envs[name]?.build);
