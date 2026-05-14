@@ -181,9 +181,32 @@ function resolveEntries(root: string): ResolvedEntries {
  * 兜底：仅对 client environment 注入 vite define，把 `process.platform` / `process.env`
  * 替换为浏览器友好的常量，避免 ReferenceError；不影响 server / rsc / ssr 环境的真实 Node 行为。
  */
+/**
+ * engine 拥有的 Vite build/define 默认值与硬约束 —— 消费侧 vite.config.ts 无权覆盖。
+ *
+ * 第一性原理：SSR/ISR 渲染正确性是 engine 的契约（开箱即用），消费侧不该有能力
+ * 通过 vite 配置打破。两类职责合并：
+ *
+ *   1. `config()` 阶段注入 browser-friendly define
+ *      CJS 库（chalk / signal-exit / supports-color 等）一旦打进 client bundle
+ *      会在浏览器报 ReferenceError: process is not defined。哪怕是死代码，
+ *      rolldown 也保留 top-level statement，浏览器加载即崩。把 process.*
+ *      替换成浏览器友好的常量。
+ *
+ *   2. `configResolved()` 阶段静默 mutate 最终合并后的关键 build 项
+ *      configResolved 是 Vite 标准生命周期最后一步，跑在所有用户/插件 config
+ *      合并之后。这里直接改 resolved config —— 消费侧任何 vite.config.ts 写法
+ *      都被无视，构建不报错不警告，engine 静默接管。
+ *
+ *      build.cssCodeSplit = true
+ *        plugin-rsc 依赖 chunk 级 CSS split 追踪每个 'use client' 组件的 CSS
+ *        chunk 依赖。关闭后 clientReferenceDeps[*].css 全空，plugin-rsc native
+ *        自动注入失效，Header / Footer / Logo / Nav 等组件 .module.scss 样式
+ *        丢失。消费侧无权决定此项。
+ */
 function createBrowserShimPlugin(): Plugin {
   return {
-    name: 'isr:browser-process-shim',
+    name: 'isr:engine-build-overrides',
     config(_, { command }) {
       if (command !== 'build') return; // dev 模式 vite 自己处理 process.env
       // 把可能在 client bundle 顶层访问的 Node 全局，全部静态替换为浏览器友好常量
@@ -200,45 +223,9 @@ function createBrowserShimPlugin(): Plugin {
         },
       };
     },
-  };
-}
-
-/**
- * engine 拥有的关键 build 配置 —— 消费侧 vite.config.ts 无权覆盖。
- *
- * 第一性原理：SSR/ISR 渲染正确性是 engine 的契约（"开箱即用"），不能让消费侧
- * 通过 vite 配置意外打破。这里 enforce 的几项都直接决定 SSR 输出是否完整：
- *
- *   build.cssCodeSplit = true
- *     plugin-rsc 依赖 chunk 级 CSS split 来追踪每个 'use client' 组件的 CSS
- *     依赖，并通过 React 19 metadata hoisting 在 SSR 期 link 到 <head>。
- *     一旦消费侧设 false，clientReferenceDeps[*].css 全为空，plugin-rsc 的
- *     native 自动注入失效，Header / Footer / Logo / Nav 等 use-client 组件
- *     样式全部丢失。这是历史踩雷，必须 fail fast 而不是 silent miss-render。
- *
- * 实现：`configResolved` 检查最终合并后的配置，发现违反约束直接 throw。
- * 不 silent 覆盖（mutate resolved config）—— 让消费侧立刻看到错误信息和原因，
- * 比构建成功但样式静默丢失更负责。
- */
-function createEngineBuildContractPlugin(): Plugin {
-  return {
-    name: 'isr:engine-build-contract',
     configResolved(config) {
-      if (config.build.cssCodeSplit === false) {
-        throw new Error(
-          [
-            '[isr-engine] build.cssCodeSplit:false 与 isr-engine 不兼容。',
-            '',
-            'plugin-rsc 依赖 cssCodeSplit:true (Vite 默认) 追踪每个 use-client',
-            '组件的 CSS chunk 依赖。关闭后 SSR 期间 plugin-rsc 无法把 use-client',
-            '组件的 CSS link 到 <head>，导致 Header / Footer / Logo / Navigation',
-            '等组件样式静默丢失。',
-            '',
-            '修法：在你的 vite.config.ts 里删除 `build.cssCodeSplit: false`。',
-            'isr-engine 默认走 Vite native cssCodeSplit:true，无需消费侧配置。',
-          ].join('\n')
-        );
-      }
+      // engine 契约项：消费侧 vite 配置不参与决策。静默 mutate 取胜。
+      (config.build as { cssCodeSplit: boolean }).cssCodeSplit = true;
     },
   };
 }
@@ -563,7 +550,6 @@ export function createIsrPlugin(options: CreateIsrPluginOptions = {}): PluginOpt
   logger.info(`   ssr    = ${fmt('ssr')}`);
 
   const plugins: PluginOption[] = [
-    createEngineBuildContractPlugin(),
     createEngineDefaultEntriesPlugin(root, userConfig),
     createAppAliasPlugin(root),
     createDevAssetRequestMiddleware(root),
