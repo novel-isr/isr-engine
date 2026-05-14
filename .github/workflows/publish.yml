@@ -1,0 +1,72 @@
+name: Publish to GitHub Packages
+
+# 触发：tag push (v1.2.3) 或手动 workflow_dispatch
+#
+# 行为：
+#   1. tag push:           读 tag 里的版本号，必须跟 package.json version 一致
+#   2. workflow_dispatch:  用 inputs.version 覆盖 package.json，本地不打 tag
+#
+# 消费方：novel-rating / 其他业务侧 通过 GitHub Packages 拉
+#   .npmrc:  @novel-isr:registry=https://npm.pkg.github.com/
+#            //npm.pkg.github.com/:_authToken=${NODE_AUTH_TOKEN}
+#   package.json:  "@novel-isr/engine": "^2.3.1"
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      version:
+        description: '要发布的版本号（semver，无 v 前缀；为空则读 package.json）'
+        required: false
+        default: ''
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@v5
+        with:
+          run_install: false
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version-file: '.nvmrc'
+          registry-url: 'https://npm.pkg.github.com'
+          scope: '@novel-isr'
+
+      - name: Bump version (if workflow_dispatch)
+        if: github.event_name == 'workflow_dispatch' && inputs.version != ''
+        run: npm version ${{ inputs.version }} --no-git-tag-version
+
+      - name: Verify tag matches package.json (if tag push)
+        if: github.event_name == 'push'
+        run: |
+          TAG_VERSION="${GITHUB_REF_NAME#v}"
+          PKG_VERSION=$(node -p "require('./package.json').version")
+          if [ "$TAG_VERSION" != "$PKG_VERSION" ]; then
+            echo "❌ tag $GITHUB_REF_NAME does not match package.json version $PKG_VERSION"
+            exit 1
+          fi
+
+      - name: Install
+        run: pnpm install --frozen-lockfile
+
+      - name: Build
+        run: pnpm run build
+
+      - name: Publish
+        run: npm publish
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
