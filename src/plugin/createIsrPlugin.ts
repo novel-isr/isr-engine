@@ -203,6 +203,46 @@ function createBrowserShimPlugin(): Plugin {
   };
 }
 
+/**
+ * engine 拥有的关键 build 配置 —— 消费侧 vite.config.ts 无权覆盖。
+ *
+ * 第一性原理：SSR/ISR 渲染正确性是 engine 的契约（"开箱即用"），不能让消费侧
+ * 通过 vite 配置意外打破。这里 enforce 的几项都直接决定 SSR 输出是否完整：
+ *
+ *   build.cssCodeSplit = true
+ *     plugin-rsc 依赖 chunk 级 CSS split 来追踪每个 'use client' 组件的 CSS
+ *     依赖，并通过 React 19 metadata hoisting 在 SSR 期 link 到 <head>。
+ *     一旦消费侧设 false，clientReferenceDeps[*].css 全为空，plugin-rsc 的
+ *     native 自动注入失效，Header / Footer / Logo / Nav 等 use-client 组件
+ *     样式全部丢失。这是历史踩雷，必须 fail fast 而不是 silent miss-render。
+ *
+ * 实现：`configResolved` 检查最终合并后的配置，发现违反约束直接 throw。
+ * 不 silent 覆盖（mutate resolved config）—— 让消费侧立刻看到错误信息和原因，
+ * 比构建成功但样式静默丢失更负责。
+ */
+function createEngineBuildContractPlugin(): Plugin {
+  return {
+    name: 'isr:engine-build-contract',
+    configResolved(config) {
+      if (config.build.cssCodeSplit === false) {
+        throw new Error(
+          [
+            '[isr-engine] build.cssCodeSplit:false 与 isr-engine 不兼容。',
+            '',
+            'plugin-rsc 依赖 cssCodeSplit:true (Vite 默认) 追踪每个 use-client',
+            '组件的 CSS chunk 依赖。关闭后 SSR 期间 plugin-rsc 无法把 use-client',
+            '组件的 CSS link 到 <head>，导致 Header / Footer / Logo / Navigation',
+            '等组件样式静默丢失。',
+            '',
+            '修法：在你的 vite.config.ts 里删除 `build.cssCodeSplit: false`。',
+            'isr-engine 默认走 Vite native cssCodeSplit:true，无需消费侧配置。',
+          ].join('\n')
+        );
+      }
+    },
+  };
+}
+
 function createReactVirtualModuleInteropPlugin(): Plugin {
   return {
     name: 'isr:react-virtual-module-interop',
@@ -523,6 +563,7 @@ export function createIsrPlugin(options: CreateIsrPluginOptions = {}): PluginOpt
   logger.info(`   ssr    = ${fmt('ssr')}`);
 
   const plugins: PluginOption[] = [
+    createEngineBuildContractPlugin(),
     createEngineDefaultEntriesPlugin(root, userConfig),
     createAppAliasPlugin(root),
     createDevAssetRequestMiddleware(root),
