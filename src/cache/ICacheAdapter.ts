@@ -30,6 +30,22 @@ export interface CacheSetOptions {
 }
 
 /**
+ * 内省（inventory）项 —— 不返回 value 本身，只返回元数据。
+ * adapter.inspect() 给 admin inventory 端点用，让它能列出当前后端持有的所有 key。
+ */
+export interface CacheInspectionItem {
+  key: string;
+  /** value 序列化后字节数（Redis 的 STRLEN / 内存 JSON.stringify 长度） */
+  sizeBytes: number;
+  /** 入缓存时间戳，没记录返回 undefined（如 Redis 已存的旧 entry 没含 storedAt） */
+  storedAt: number | undefined;
+  /** 距硬过期还剩秒数（Redis TTL / 内存 expiresAt-now），无 TTL 返回 undefined */
+  ttlSecondsRemaining: number | undefined;
+  /** entry 关联的 tags（业务声明）；某些 adapter 不存可返回 [] */
+  tags: string[];
+}
+
+/**
  * 缓存适配器接口
  * 所有实现必须保证线程安全和异步兼容
  */
@@ -65,6 +81,16 @@ export interface ICacheAdapter {
 
   /** 连接状态 */
   isConnected(): boolean;
+
+  /**
+   * 列出当前后端持有的 key 元数据 —— 给 inventory admin 端点用。
+   *
+   * 必须 bounded：实现方负责限制单次返回数量（默认 cap）+ 用 SCAN 类非阻塞游标
+   * 而不是 KEYS。Redis 实现遵守 keyPrefix 边界，不扫到别的应用的 key。
+   *
+   * @param limit 单次返回上限；实现方可以再向下截断。0 / 负数视为默认。
+   */
+  inspect(limit: number): Promise<CacheInspectionItem[]>;
 
   /** 销毁适配器，释放资源 */
   destroy(): Promise<void>;

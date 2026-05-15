@@ -6,6 +6,7 @@ type PartialOpsConfig = {
   tokenHeader?: string;
   health?: { enabled?: boolean; public?: boolean };
   metrics?: { enabled?: boolean; public?: boolean };
+  inventory?: { enabled?: boolean; public?: boolean };
 };
 
 function serverOpsConfig(
@@ -29,6 +30,11 @@ function serverOpsConfig(
           enabled: false,
           public: false,
           ...ops.metrics,
+        },
+        inventory: {
+          enabled: false,
+          public: false,
+          ...ops.inventory,
         },
       },
     },
@@ -66,6 +72,58 @@ describe('resolveOpsConfig', () => {
     expect(resolved.metrics.enabled).toBe(true);
     expect(resolved.metrics.public).toBe(true);
     expect(resolved.warnings[0]).toContain('/metrics');
+  });
+
+  it('production 默认上线 inventory + 配 token → enabled', () => {
+    // 不走 serverOpsConfig wrapper —— 它会注入 inventory:{enabled:false} 覆盖默认值。
+    // 直接给最小配置，让 PROD_DEFAULTS.inventory 生效。
+    const resolved = resolveOpsConfig(
+      {
+        server: {
+          port: 3000,
+          host: '127.0.0.1',
+          strictPort: true,
+          ops: {
+            authToken: 'secret-token',
+            tokenHeader: 'x-isr-admin-token',
+            health: { enabled: true, public: true },
+            metrics: { enabled: false, public: false },
+            // inventory 故意不传 → 走 PROD_DEFAULTS
+          },
+        },
+      } as never,
+      'production'
+    );
+    expect(resolved.inventory.enabled).toBe(true);
+    expect(resolved.inventory.public).toBe(false);
+    expect(resolved.warnings).toEqual([]);
+  });
+
+  it('production inventory 没配 token → 自动 disable + warning', () => {
+    const resolved = resolveOpsConfig(
+      {
+        server: {
+          port: 3000,
+          host: '127.0.0.1',
+          strictPort: true,
+          ops: {
+            authToken: undefined,
+            tokenHeader: 'x-isr-admin-token',
+            health: { enabled: true, public: true },
+            metrics: { enabled: false, public: false },
+          },
+        },
+      } as never,
+      'production'
+    );
+    expect(resolved.inventory.enabled).toBe(false);
+    expect(resolved.warnings.some(w => w.includes('/__isr/cache/inventory'))).toBe(true);
+  });
+
+  it('development 默认 inventory public 开放（无需 token）', () => {
+    const resolved = resolveOpsConfig({}, 'development');
+    expect(resolved.inventory.enabled).toBe(true);
+    expect(resolved.inventory.public).toBe(true);
   });
 });
 

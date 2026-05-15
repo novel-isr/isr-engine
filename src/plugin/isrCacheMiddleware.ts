@@ -34,11 +34,13 @@
  */
 
 import http from 'node:http';
+import { LRUCache } from 'lru-cache';
 import { createMemoryCacheStore, type IsrCacheStore, type IsrCachedEntry } from './isrCacheStore';
 import {
   recordHttpRequest,
   cacheEntriesGauge,
   cacheRevalidatingGauge,
+  l2ReadTimeoutsTotal,
 } from '../metrics/PromMetrics';
 import type { Plugin, Connect } from 'vite';
 import type { IncomingMessage, ServerResponse } from 'node:http';
@@ -62,6 +64,16 @@ const logger = Logger.getInstance();
 
 /** 单条缓存条目 —— 与 IsrCacheStore 对齐 */
 type CachedEntry = IsrCachedEntry;
+
+/** STALE 响应头的原因枚举 —— 让 SRE 区分 “正常 SWR” vs “bg 失败” vs “bg 进行中” */
+export type StaleReason = 'swr-fresh' | 'swr-bg-pending' | 'swr-bg-failed-recent';
+
+/** bg revalidate 失败时间戳的 LRU 上限 —— 防止失败大量唯一 key 导致内存泄漏 */
+const BG_FAILURE_TRACK_MAX = 1000;
+/** invalidation 时间戳的 LRU 上限 —— inventory 端点暴露 “target → lastInvalidatedMs” */
+const INVALIDATION_LOG_MAX = 1000;
+/** “最近失败” 窗口（毫秒）—— 在窗口内的 STALE 标记为 swr-bg-failed-recent */
+const BG_FAILURE_RECENT_WINDOW_MS = 60_000;
 
 /** 路由匹配解析结果（对应一个请求的缓存策略） */
 interface ResolvedRouteRule {
@@ -306,11 +318,83 @@ function applyModeTtlMultiplier(mode: RenderModeType, ttlSeconds: number): numbe
 
 /**
  * 框架无关的 ISR 缓存 handler —— connect-style 中间件
+ *
+ * `getCacheInspection()` / `getL2Inspection()` 给 inventory admin 端点用：
+ * 让外部可以在 *不接触内部状态* 的前提下拉一份只读快照。
+ * 拆两个方法是因为 L1 + invalidations 是同步快照（内存 Map），L2 是异步 SCAN（网络往返）。
  */
 export interface IsrCacheHandler {
   (req: IncomingMessage, res: ServerResponse, next: Connect.NextFunction): void;
   clear(): void;
   destroy(): Promise<void>;
+  getCacheInspection(): IsrCacheInspectionSnapshot;
+  /**
+   * 拉 L2（Redis）当前 SCAN 到的 key 元数据。memory 模式返回空数组。
+   * 用 onlyInL2 字段标注 “这条 key 在 Redis 但不在本 pod 的 L1 LRU”，
+   * 让 SRE 区分 “本 pod 的热数据” vs “其他 pod 写的 / 已被本 pod LRU 淘汰”。
+   */
+  getL2Inspection(limit: number): Promise<IsrCacheInspectionL2Entry[]>;
+}
+
+/** Inventory 端点用的只读快照（不暴露 body，只暴露元数据）*/
+export interface IsrCacheInspectionEntry {
+  /** 完整 cache key（含 namespace/version 前缀） */
+  key: string;
+  /** 入缓存毫秒时间戳 */
+  storedAt: number;
+  /** 进入 SWR 窗口的毫秒时间戳（旧 TTL 终点） */
+  expiresAt: number;
+  /** 硬过期毫秒时间戳（SWR 终点） */
+  hardExpiresAt: number;
+  /** 当前 entry 与 storedAt 的差（秒） */
+  ageSeconds: number;
+  /** fresh: now < expiresAt；stale: expiresAt ≤ now < hardExpiresAt；expired: now ≥ hardExpiresAt */
+  status: 'fresh' | 'stale' | 'expired';
+  /** body 字节数（不返回 body 本身） */
+  sizeBytes: number;
+  /** 业务声明的 tag 列表 */
+  tags: string[];
+}
+
+export interface IsrCacheInspectionInvalidation {
+  /** 形如 'path:/books/:id' / 'tag:books' */
+  target: string;
+  /** 最近一次失效的毫秒时间戳 */
+  lastInvalidatedMs: number;
+  /** 距今秒数 */
+  ageSeconds: number;
+}
+
+/**
+ * L2（Redis）entry 视图。Hybrid 模式下 inventory 把 L2 SCAN 出来的 key 也合并进来,
+ * 让 SRE 在 prod 不需要 redis-cli 也能看全集群缓存内容。
+ *
+ * Redis 不存 storedAt 等业务时间戳，只暴露从 Redis 直接拿到的客观信息：sizeBytes + TTL。
+ * onlyInL2=true 表示这条 key 在 Redis 但不在本 pod 的 L1 LRU（其他 pod 写的，或本 pod LRU 已淘汰）。
+ */
+export interface IsrCacheInspectionL2Entry {
+  key: string;
+  sizeBytes: number;
+  ttlSecondsRemaining: number | undefined;
+  onlyInL2: boolean;
+}
+
+export interface IsrCacheInspectionSnapshot {
+  /** 拍快照时的时间戳，inventory 端点用它统一计算 ageSeconds */
+  now: number;
+  /** L1 后端类型 —— memory 或 hybrid（L1 LRU + L2 write-through） */
+  backend: 'memory' | 'hybrid';
+  /** 当前 L1 条目数 */
+  size: number;
+  /** L1 容量上限 */
+  max: number;
+  entries: IsrCacheInspectionEntry[];
+  invalidations: IsrCacheInspectionInvalidation[];
+  /**
+   * L2 entries —— hybrid 模式有内容；memory 模式空数组。
+   * 由 inventory 端点按需异步拉取（getCacheInspection 自身只返回 L1 + invalidations 同步快照,
+   * L2 通过专门的 inspectL2() 异步入口）。
+   */
 }
 
 /**
@@ -346,12 +430,29 @@ export function createIsrCacheHandler(
   /** 最近一次预热触发时间记录，用于冷却窗口去重 */
   const prefetchCooldown = new Map<string, number>();
   /**
-   * MISS 回源 single-flight 锁 —— key 到 deferred promise；首请求开始渲染时注册，
+   * MISS 回源 single-flight 锁 —— key 到 deferred promise；首请求开始渲染时注册,
    * captureAndStore.onFinish 触发 resolve，并发 follower 通过 await 该 promise + 重读 cache 实现 HIT 回放。
    */
   const inflightRegens = new Map<string, { promise: Promise<void>; resolve: () => void }>();
+  /**
+   * bg revalidate 失败 cache key → 失败时间戳。LRU 上限防止失败 key 暴增导致内存泄漏。
+   * STALE 路径在 BG_FAILURE_RECENT_WINDOW_MS 内会把响应头标记为 'swr-bg-failed-recent'，
+   * 让 SRE 一眼区分 “正常 SWR 窗口” 和 “bg 重渲一直失败 → 用户持续看旧数据”。
+   */
+  const bgRevalidateFailures = new LRUCache<string, number>({ max: BG_FAILURE_TRACK_MAX });
+  /**
+   * target → 最近一次 invalidate 毫秒时间戳。给 inventory admin 端点暴露用。
+   * key 形如 'path:/books/:id' / 'tag:books'，与 RevalidationError target 字符串一致。
+   * LRU 上限防止 path/tag 唯一值暴增导致内存泄漏。
+   */
+  const invalidationLog = new LRUCache<string, number>({ max: INVALIDATION_LOG_MAX });
 
   const invalidateLocal = async (target: IsrInvalidationTarget): Promise<void> => {
+    // 不论清了多少条，都更新 invalidationLog —— inventory 端点能回答
+    // “这个 target 上次被 revalidate 是什么时候”，即便本进程内没有匹配条目
+    // （比如刚启动 / 或 entry 已经被 LRU 淘汰）。
+    invalidationLog.set(`${target.kind}:${target.value}`, Date.now());
+
     if (target.kind === 'path') {
       const normalized = normalizePath(target.value);
       const keys = [
@@ -406,6 +507,7 @@ export function createIsrCacheHandler(
       prefetchOnHit,
       prefetchCooldownMs,
       prefetchCooldown,
+      bgRevalidateFailures,
     }).catch(err => {
       logger.warn('ISR cache handler 异常，回退到下游处理:', err);
       if (!res.headersSent) {
@@ -420,6 +522,10 @@ export function createIsrCacheHandler(
     for (const slot of inflightRegens.values()) slot.resolve();
     inflightRegens.clear();
     cache.clear();
+    // bg 失败 / invalidation log 清空：handler.clear 是 “重置全部缓存状态” 的语义,
+    // 这两份附属状态不该残留。inventory 端点拍快照时会看到空集合。
+    bgRevalidateFailures.clear();
+    invalidationLog.clear();
   };
   handler.destroy = async () => {
     unregisterInvalidator();
@@ -427,7 +533,57 @@ export function createIsrCacheHandler(
     await options.invalidationBus?.destroy?.();
     for (const slot of inflightRegens.values()) slot.resolve();
     inflightRegens.clear();
+    bgRevalidateFailures.clear();
+    invalidationLog.clear();
     await cache.destroy();
+  };
+  handler.getCacheInspection = () => {
+    const now = Date.now();
+    const entries: IsrCacheInspectionEntry[] = [];
+    for (const [key, entry] of cache.entries()) {
+      let status: IsrCacheInspectionEntry['status'];
+      if (now < entry.expiresAt) status = 'fresh';
+      else if (now < entry.hardExpiresAt) status = 'stale';
+      else status = 'expired';
+      entries.push({
+        key,
+        storedAt: entry.storedAt,
+        expiresAt: entry.expiresAt,
+        hardExpiresAt: entry.hardExpiresAt,
+        ageSeconds: Math.max(0, Math.floor((now - entry.storedAt) / 1000)),
+        status,
+        sizeBytes: entry.body.length,
+        tags: entry.tags,
+      });
+    }
+    const invalidations: IsrCacheInspectionInvalidation[] = [];
+    for (const [target, ts] of invalidationLog.entries()) {
+      invalidations.push({
+        target,
+        lastInvalidatedMs: ts,
+        ageSeconds: Math.max(0, Math.floor((now - ts) / 1000)),
+      });
+    }
+    return {
+      now,
+      backend: cache.backend,
+      size: cache.size,
+      max: cache.max,
+      entries,
+      invalidations,
+    };
+  };
+  handler.getL2Inspection = async (limit: number) => {
+    if (cache.backend !== 'hybrid') return [];
+    const items = await cache.inspectL2(limit);
+    // 标注 onlyInL2：L2 有但本 pod L1 没有的 key（其他 pod 写的 / 本 pod LRU 已淘汰）
+    const l1Keys = new Set(cache.keys());
+    return items.map(it => ({
+      key: it.key,
+      sizeBytes: it.sizeBytes,
+      ttlSecondsRemaining: it.ttlSecondsRemaining,
+      onlyInL2: !l1Keys.has(it.key),
+    }));
   };
 
   return handler;
@@ -496,6 +652,14 @@ export function createIsrCacheMiddleware(
         next();
       });
 
+      // Inventory 端点 —— 必须在 isr cache handler 之前挂，让请求先被 inventory 截获。
+      // dev 默认 enabled=true（DEV_DEFAULTS），开箱即用排错；生产由用户显式开启。
+      if (opsConfig.inventory.enabled) {
+        const { createCacheInspectorMiddleware } = await import('./createCacheInspectorMiddleware');
+        server.middlewares.use(createCacheInspectorMiddleware(handler, opsConfig));
+        logger.info('🔍 ISR cache inventory 已启用：GET /__isr/cache/inventory');
+      }
+
       server.middlewares.use(handler);
     },
   };
@@ -516,6 +680,8 @@ interface HandleContext {
   prefetchOnHit?: (ctx: { path: string; cacheKey: string }) => string[] | Promise<string[]>;
   prefetchCooldownMs: number;
   prefetchCooldown: Map<string, number>;
+  /** bg revalidate 失败 cache key → 失败时间戳；STALE 路径计算 X-Cache-Stale-Reason 用 */
+  bgRevalidateFailures: LRUCache<string, number>;
 }
 
 /**
@@ -594,7 +760,9 @@ async function handleRequest(
   if (!entry && ctx.cache.getAsync) {
     try {
       // L2 读有硬上限：超时按 miss 处理，防止 Redis 抖动拖慢 HIT/STALE 路径
-      entry = await raceWithTimeout(ctx.cache.getAsync(cacheKey), ctx.l2ReadTimeoutMs);
+      entry = await raceWithTimeout(ctx.cache.getAsync(cacheKey), ctx.l2ReadTimeoutMs, () => {
+        l2ReadTimeoutsTotal.inc();
+      });
     } catch (err) {
       logger.warn(`ISR cache L2 read 失败 ${cacheKey}: ${(err as Error).message}`);
     }
@@ -614,7 +782,10 @@ async function handleRequest(
 
   // STALE（TTL 已过但仍在 SWR 窗口内）：回放旧内容 + 后台异步重验证
   if (entry && now < entry.hardExpiresAt) {
-    replayEntry(res, entry, cacheKey, 'STALE');
+    // reason 必须在 trigger 之前算 —— trigger 会把当前 key 加进 revalidating Set,
+    // 那样本次请求自己看自己就成了 swr-bg-pending，语义反了。
+    const reason = deriveStaleReason(cacheKey, ctx, now);
+    replayEntry(res, entry, cacheKey, 'STALE', reason);
     triggerBackgroundRevalidation(req, cacheKey, ctx);
     return;
   }
@@ -639,7 +810,9 @@ async function handleRequest(
       let recheck = ctx.cache.get(cacheKey);
       if (!recheck && ctx.cache.getAsync) {
         try {
-          recheck = await raceWithTimeout(ctx.cache.getAsync(cacheKey), ctx.l2ReadTimeoutMs);
+          recheck = await raceWithTimeout(ctx.cache.getAsync(cacheKey), ctx.l2ReadTimeoutMs, () => {
+            l2ReadTimeoutsTotal.inc();
+          });
         } catch {
           /* L2 读失败按 miss 处理 */
         }
@@ -650,7 +823,7 @@ async function handleRequest(
         return;
       }
       if (recheck && nowAfter < recheck.hardExpiresAt) {
-        replayEntry(res, recheck, cacheKey, 'STALE');
+        replayEntry(res, recheck, cacheKey, 'STALE', deriveStaleReason(cacheKey, ctx, nowAfter));
         return;
       }
       // 等不到 / 还是没有：fail-open，自己走 MISS
@@ -808,14 +981,25 @@ function triggerBackgroundRevalidation(
       (req.socket && (req.socket as unknown as { localPort?: number }).localPort) || 80;
 
   let released = false;
-  const release = (): void => {
+  /**
+   * release(success):
+   *   success=true  → 清除 bgRevalidateFailures 中的失败标记（恢复正常）
+   *   success=false → 写入失败时间戳，让后续 STALE 请求标记为 swr-bg-failed-recent
+   * 任意路径只生效一次（released flag），多 listener 重复 release 安全。
+   */
+  const release = (success: boolean): void => {
     if (released) return;
     released = true;
     ctx.revalidating.delete(cacheKey);
+    if (success) {
+      ctx.bgRevalidateFailures.delete(cacheKey);
+    } else {
+      ctx.bgRevalidateFailures.set(cacheKey, Date.now());
+    }
   };
   const safetyTimer = setTimeout(() => {
     logger.warn(`ISR bg revalidate ${cacheKey} 超时 ${ctx.bgTimeoutMs}ms，强制释放 in-flight`);
-    release();
+    release(false);
   }, ctx.bgTimeoutMs);
   if (typeof safetyTimer.unref === 'function') safetyTimer.unref();
 
@@ -837,19 +1021,23 @@ function triggerBackgroundRevalidation(
           bgRes.on('data', chunk => void chunk);
           bgRes.on('end', () => {
             clearTimeout(safetyTimer);
-            release();
-            logger.debug(`♻️ ISR bg revalidate done ${cacheKey} (status=${bgRes.statusCode})`);
+            // 5xx / 4xx 视为失败 —— cache 不会被新内容覆盖，下一个 STALE 请求应该
+            // 知道 “上游有问题，看到的旧数据可能持续显示” 而不是 “一切正常”。
+            const status = bgRes.statusCode ?? 0;
+            const ok = status >= 200 && status < 400;
+            release(ok);
+            logger.debug(`♻️ ISR bg revalidate done ${cacheKey} (status=${status}, ok=${ok})`);
           });
           bgRes.on('error', () => {
             clearTimeout(safetyTimer);
-            release();
+            release(false);
           });
         }
       );
       bgReq.on('error', err => {
         clearTimeout(safetyTimer);
         logger.warn(`ISR bg revalidate ${cacheKey} 发起失败: ${(err as Error).message}`);
-        release();
+        release(false);
       });
       bgReq.on('timeout', () => {
         logger.warn(`ISR bg revalidate ${cacheKey} socket timeout`);
@@ -859,7 +1047,7 @@ function triggerBackgroundRevalidation(
     } catch (err) {
       clearTimeout(safetyTimer);
       logger.warn(`ISR bg revalidate ${cacheKey} 调度异常`, err);
-      release();
+      release(false);
     }
   });
 }
@@ -944,12 +1132,21 @@ function triggerPrefetch(
 
 /**
  * 重放已缓存条目到响应
+ *
+ * `staleReason` 仅在 status=STALE 时使用：
+ *   - swr-fresh：刚进入 SWR 窗口，bg 还没启
+ *   - swr-bg-pending：本进程已经在跑 bg revalidate（revalidating Set 命中）
+ *   - swr-bg-failed-recent：上一次 bg revalidate 在 60s 内失败 / 超时
+ *
+ * 出参写到 X-Cache-Stale-Reason，让 SRE 在 Grafana / 浏览器 devtools 一眼区分
+ * “正常 SWR 流量” 和 “上游持续故障，用户在持续看旧数据”。
  */
 function replayEntry(
   res: ServerResponse,
   entry: CachedEntry,
   cacheKey: string,
-  status: 'HIT' | 'STALE'
+  status: 'HIT' | 'STALE',
+  staleReason?: StaleReason
 ): void {
   res.statusCode = entry.statusCode;
   for (const [name, value] of Object.entries(entry.headers)) {
@@ -958,6 +1155,7 @@ function replayEntry(
       lower === 'x-cache-status' ||
       lower === 'x-cache-key' ||
       lower === 'x-cache-age' ||
+      lower === 'x-cache-stale-reason' ||
       lower === 'content-length'
     ) {
       continue;
@@ -971,7 +1169,20 @@ function replayEntry(
   res.setHeader('X-Cache-Status', status);
   res.setHeader('X-Cache-Key', cacheKey);
   res.setHeader('X-Cache-Age', String(Math.floor((Date.now() - entry.storedAt) / 1000)));
+  if (status === 'STALE' && staleReason) {
+    res.setHeader('X-Cache-Stale-Reason', staleReason);
+  }
   res.end(entry.body);
+}
+
+/** 根据当前 ctx 状态推导 STALE 原因。同步、纯函数 —— 调一次就有答案。*/
+function deriveStaleReason(cacheKey: string, ctx: HandleContext, now: number): StaleReason {
+  if (ctx.revalidating.has(cacheKey)) return 'swr-bg-pending';
+  const lastFail = ctx.bgRevalidateFailures.get(cacheKey);
+  if (lastFail !== undefined && now - lastFail < BG_FAILURE_RECENT_WINDOW_MS) {
+    return 'swr-bg-failed-recent';
+  }
+  return 'swr-fresh';
 }
 
 interface Captured {
@@ -1238,20 +1449,42 @@ function stripBootstrapAnonCookie(headers: Record<string, string | number | stri
 /**
  * 带超时的异步读：超时返回 undefined（按 cache miss 处理），不抛错。
  * 原始 promise 的后续 resolve/reject 不会再影响流程。
+ *
+ * `onTimeout` 回调仅在 “timer 真触发，原 promise 还没 resolve” 时调用一次 ——
+ * 让上层把 “伪 miss”（L2 抖动）和 “真 miss”（数据没缓存）区分开计 metric。
+ * 原 promise 自身 resolve(undefined) / reject 不算超时，不触发回调。
  */
-function raceWithTimeout<T>(p: Promise<T>, ms: number): Promise<T | undefined> {
+function raceWithTimeout<T>(
+  p: Promise<T>,
+  ms: number,
+  onTimeout?: () => void
+): Promise<T | undefined> {
   if (!(ms > 0)) return p as Promise<T | undefined>;
   return new Promise<T | undefined>(resolve => {
-    const timer = setTimeout(() => resolve(undefined), ms);
+    let settled = false;
+    const settle = (value: T | undefined): void => {
+      if (settled) return;
+      settled = true;
+      resolve(value);
+    };
+    const timer = setTimeout(() => {
+      if (settled) return;
+      try {
+        onTimeout?.();
+      } catch {
+        /* metric 回调异常不能影响请求路径 */
+      }
+      settle(undefined);
+    }, ms);
     if (typeof timer.unref === 'function') timer.unref();
     p.then(
       value => {
         clearTimeout(timer);
-        resolve(value);
+        settle(value);
       },
       () => {
         clearTimeout(timer);
-        resolve(undefined);
+        settle(undefined);
       }
     );
   });

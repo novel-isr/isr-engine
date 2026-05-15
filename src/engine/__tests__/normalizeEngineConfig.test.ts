@@ -41,6 +41,7 @@ const defaults: ISRConfig = {
       tokenHeader: 'x-isr-admin-token',
       health: { enabled: true, public: true },
       metrics: { enabled: false, public: false },
+      inventory: { enabled: false, public: false },
     },
   },
   ssg: {
@@ -72,6 +73,10 @@ function base(extra: DeepPartial<ISRConfig> = {}): ISRConfig {
         metrics: {
           ...defaults.server.ops.metrics,
           ...extra.server?.ops?.metrics,
+        },
+        inventory: {
+          ...defaults.server.ops.inventory,
+          ...extra.server?.ops?.inventory,
         },
       },
     },

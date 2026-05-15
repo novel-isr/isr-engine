@@ -9,11 +9,18 @@
 | `x-trace-id` | 入站 `X-Request-Id` / `X-Trace-Id` 透传，否则生成 `t-{base36}-{rand}` |
 | `x-render-ms` | 服务端渲染耗时（毫秒） |
 | `X-Cache-Status` | `HIT` / `MISS` / `STALE` / `BYPASS` / `REVALIDATING` |
+| `X-Cache-Stale-Reason` | STALE 时的具体原因：`swr-fresh` / `swr-bg-pending` / `swr-bg-failed-recent` |
 | `X-Resolved-Mode` | 实际生效的 mode（`isr` / `ssr` / `ssg`） |
 | `X-Mode-Source` | `config`（来自 ssr.config）/ `query-override`（来自 `?mode=`） |
 | `X-Cache-Age` | 缓存条目年龄（秒；HIT/STALE 时） |
 | `X-Cache-Key` | 缓存键（便于排错） |
 | `X-Render-Strategy` | `csr-shell`（仅当 server 崩溃兜底时出现） |
+
+**X-Cache-Stale-Reason 三态：**
+
+- `swr-fresh` —— 刚进 SWR 窗口，bg 重渲还没启。**正常**。
+- `swr-bg-pending` —— 后台重渲正在跑。**正常**，下次请求大概率 HIT。
+- `swr-bg-failed-recent` —— 过去 60s 内 bg 重渲失败过（5xx / socket 超时 / connect error）。**不正常**，上游可能挂了，用户在持续看旧数据 → 立即查上游服务。
 
 engine request context 的 `traceId` 自动贯穿整个请求生命周期（从 `X-Request-Id`/`X-Trace-Id` 读入，无则生成），所有 hook 都能拿到。
 
@@ -264,6 +271,8 @@ export default createOtelServerHooks({ tracer: trace.getTracer('my-app') });
 - `isr_http_requests_total{method,route,status,mode,cache}` counter
 - `isr_http_request_duration_seconds{...}` histogram（桶覆盖 1ms - 5s）
 - `isr_cache_entries{backend}` / `isr_cache_revalidating_inflight` / `isr_cache_hits_total{status}`
+- `isr_invalidator_runs_total{kind,target}` / `isr_invalidator_failures_total{kind,target}` —— `target` 是归一化路径（`/books/:id`）或 tag 名，让 Grafana 能定位到具体业务对象
+- `isr_l2_read_timeouts_total` —— L2 (Redis) 读超时被降级为 miss 的次数，区分「真 miss」vs「Redis 抖动」
 - `isr_process_*` 默认采集（CPU / RSS / event loop lag）
 
 业务自家 metric 可注册到同一 registry：
@@ -279,27 +288,83 @@ const orderCounter = new Counter({
 });
 ```
 
-## ISR 缓存观测
+## ISR 缓存观测 —— 流量视角 vs 库存视角
 
-缓存 debug JSON 不作为公开端点。生产使用 `/metrics` 暴露 Prometheus 指标，例如
-`isr_cache_entries{backend}`、`isr_cache_hits_total{status}` 和请求耗时直方图。
-生产缓存失效不暴露“清空全部缓存”端点。请在 Server Action 或后台任务里调用
-`revalidatePath` / `revalidateTag`，多实例广播由 `runtime.redis` 接管。
+| 视角 | 端点 | 回答的问题 |
+|------|------|------------|
+| **流量** | `/metrics`（Prometheus）| 「过去 5min 有多少 STALE 响应、按路由分布」、「失效失败率」 |
+| **库存** | `/__isr/cache/inventory`（admin JSON）| 「**现在这一刻**缓存里有什么、哪些已经 stale 但没人请求」、「`/books/123` 上次什么时候被 revalidate」 |
 
-生产启用 `/metrics` 时建议配 `server.ops.authToken`：
+两者互补，缺一不可。冷门页 `/book/9999` 已 stale 半天没人访问 → Prometheus 看不见；inventory 一查就有。
+
+### `/__isr/cache/inventory` admin 端点
+
+dev 默认 public 开放；prod 默认上线 + 强制 token（不配 token 自动 disable + 出 warning）。
+
+```bash
+# dev：本地直查
+curl http://localhost:3000/__isr/cache/inventory | jq
+
+# prod：必须带 ops.authToken
+curl -H "Authorization: Bearer $ISR_OPS_TOKEN" \
+  https://your.site/__isr/cache/inventory?status=stale | jq
+```
+
+**查询参数：**
+
+| 参数 | 默认 | 含义 |
+|------|------|------|
+| `status` | `all` | `fresh` / `stale` / `expired` / `all` —— L1 状态过滤 |
+| `limit` | 100 | L1 返回条目上限（硬上限 1000） |
+| `l2` | `true` | 是否包含 L2（Redis）SCAN 视图。`memory` 模式下永远空 |
+| `l2Limit` | 200 | L2 SCAN 返回上限（硬上限 500）。L2 用 SCAN 非阻塞游标，不会卡集群 |
+
+**响应字段：**
+
+```json
+{
+  "now": 1715760000000,
+  "backend": "hybrid",          // memory 或 hybrid
+  "size": 234,                   // L1 当前条目数
+  "max": 1000,                   // L1 容量
+  "filtered": 12,                // L1 过滤后条目数
+  "entries": [                   // L1 条目（含 fresh/stale/expired 状态）
+    { "key": "GET:/books/1", "storedAt": ..., "expiresAt": ..., "ageSeconds": 30,
+      "status": "stale", "sizeBytes": 12450, "tags": ["books"] }
+  ],
+  "invalidations": [             // 最近 invalidate 记录（per-target lastInvalidatedMs）
+    { "target": "tag:books", "lastInvalidatedMs": ..., "ageSeconds": 12 }
+  ],
+  "l2": {                        // hybrid 模式有内容；memory 模式 items=[]
+    "scanned": 234,
+    "items": [
+      { "key": "GET:/cold-page", "sizeBytes": 800, "ttlSecondsRemaining": 7200,
+        "onlyInL2": true }     // true = 在 Redis 但不在本 pod L1（其他 pod 写的或 LRU 已淘汰）
+    ]
+  }
+}
+```
+
+`server.ops` 配置示例：
 
 ```ts
 // ssr.config.ts
 {
   server: {
-    strictPort: process.env.NODE_ENV !== 'development',
     ops: {
       authToken: process.env.ISR_OPS_TOKEN,
       tokenHeader: 'x-isr-admin-token',
       metrics: { enabled: true, public: false },
+      inventory: { enabled: true, public: false },  // prod 默认即是这个值，写出来更清晰
     },
   },
 }
 ```
 
 鉴权支持 `Authorization: Bearer <token>` 或自定义 header（默认 `x-isr-admin-token`）。
+没配 `authToken` 时，metrics 和 inventory 都会自动 disable + 启动日志 warning。
+
+### 失效不暴露公共端点
+
+生产缓存失效不暴露「清空全部缓存」端点。请在 Server Action 或后台任务里调用
+`revalidatePath` / `revalidateTag`，多实例广播由 `runtime.redis` 接管。

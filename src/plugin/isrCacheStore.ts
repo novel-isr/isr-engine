@@ -24,6 +24,22 @@ export interface IsrCachedEntry {
   tags: string[];
 }
 
+/**
+ * Inventory 端点用的 L2 视图项（不含 body）。
+ * Hybrid 模式下，inventory 把 L2（Redis）SCAN 出来的 key 也合并进来，
+ * 让 SRE 在 prod 不需要 redis-cli 也能看全集群缓存内容。
+ *
+ * Redis 不存 storedAt / expiresAt / hardExpiresAt 元数据（cache 中间件序列化前剥掉了 storedAt
+ * 之外的精确时间戳，且 RedisCacheAdapter 自己也只存 value 的 base64 + TTL），
+ * 所以 L2 entry 只暴露 ttlSecondsRemaining 这种从 Redis 直接拿到的客观信息。
+ */
+export interface IsrL2InspectionItem {
+  key: string;
+  sizeBytes: number;
+  /** Redis TTL 剩余秒数；-1（永不过期）已被映射成 undefined */
+  ttlSecondsRemaining: number | undefined;
+}
+
 export interface IsrCacheStore {
   readonly backend: 'memory' | 'hybrid';
   /** 同步读 —— 必须 O(1)，不可阻塞 */
@@ -41,6 +57,12 @@ export interface IsrCacheStore {
   keys(): IterableIterator<string>;
   size: number;
   max: number;
+  /**
+   * Inventory 端点用：列出 L2（Redis）当前持有的 key 元数据（不含 body）。
+   * 单层 memory store 没有 L2，返回空数组。
+   * Hybrid store 用 RedisCacheAdapter.inspect()（SCAN 非阻塞 + 总量上限）。
+   */
+  inspectL2(limit: number): Promise<IsrL2InspectionItem[]>;
   /** 关闭：用于 graceful shutdown 释放 redis 连接 */
   destroy(): Promise<void>;
 }
@@ -65,6 +87,10 @@ export function createMemoryCacheStore(opts: { max?: number } = {}): IsrCacheSto
     },
     get max() {
       return lru.max;
+    },
+    // memory 单层无 L2，inventory 端点会自动跳过 L2 视图
+    async inspectL2() {
+      return [];
     },
     async destroy() {
       lru.clear();
@@ -141,6 +167,16 @@ export function createHybridCacheStore(opts: HybridCacheStoreOptions): IsrCacheS
   return {
     backend: 'hybrid',
     get: k => lru.get(k),
+    async inspectL2(limit: number) {
+      // adapter.inspect 已经做了 keyPrefix 边界保护 + SCAN 非阻塞 + 总量上限。
+      // 这里再 strip 上层 prefix（'isr:resp:'）让 inventory 端点看到的 key 与 L1 同形态对齐。
+      const items = await opts.redis.inspect(limit);
+      return items.map(item => ({
+        key: item.key.startsWith(prefix) ? item.key.slice(prefix.length) : item.key,
+        sizeBytes: item.sizeBytes,
+        ttlSecondsRemaining: item.ttlSecondsRemaining,
+      }));
+    },
     getAsync: async k => {
       const l1 = lru.get(k);
       if (l1) {

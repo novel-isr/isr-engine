@@ -29,7 +29,11 @@
  */
 
 import { Logger } from '../logger/Logger';
-import { invalidatorFailuresTotal, invalidatorRunsTotal } from '../metrics/PromMetrics';
+import {
+  invalidatorFailuresTotal,
+  invalidatorRunsTotal,
+  normalizeRoute,
+} from '../metrics/PromMetrics';
 
 const logger = Logger.getInstance();
 
@@ -111,13 +115,16 @@ type RevalidateTarget = { kind: 'path'; value: string } | { kind: 'tag'; value: 
 async function dispatch(target: RevalidateTarget): Promise<void> {
   const registry = getRegistry();
   const targetLabel = `${target.kind}:${target.value}`;
+  // path 必须归一化防止动态段（/books/123 / /books/124）让 Prom 时间序列爆炸；
+  // tag 是业务定义的有限标识符（'books'、'book:123' 也是有限模式），原样保留。
+  const targetMetricValue = target.kind === 'path' ? normalizeRoute(target.value) : target.value;
 
   if (registry.size === 0) {
     logger.debug(`revalidate(${targetLabel}) —— 无 invalidator 注册，忽略`);
     return;
   }
 
-  invalidatorRunsTotal.inc({ kind: target.kind });
+  invalidatorRunsTotal.inc({ kind: target.kind, target: targetMetricValue });
 
   // 包一层 async 函数：把同步抛错也转成 Promise rejection，让 allSettled 能统一处理
   // （直接 `fn(target)` 在 fn 同步抛错时会在 `.map` 里 escape，allSettled 收不到）
@@ -136,7 +143,7 @@ async function dispatch(target: RevalidateTarget): Promise<void> {
     failureCount++;
     const err = r.reason instanceof Error ? r.reason : new Error(String(r.reason));
     causes.push(err);
-    invalidatorFailuresTotal.inc({ kind: target.kind });
+    invalidatorFailuresTotal.inc({ kind: target.kind, target: targetMetricValue });
     // 单独 log 每个失败，方便从 stack 定位是哪个 invalidator
     logger.error(`[revalidate] invalidator #${idx} failed for ${targetLabel}: ${err.message}`, err);
   });

@@ -28,6 +28,7 @@ const baseConfig = {
       tokenHeader: 'x-isr-admin-token',
       health: { enabled: true, public: true },
       metrics: { enabled: false, public: false },
+      inventory: { enabled: false, public: false },
     },
   },
   ssg: {
@@ -137,6 +138,7 @@ describe('defineConfig helpers', () => {
           tokenHeader: 'x-custom-token',
           health: { enabled: true, public: true },
           metrics: { enabled: true, public: false },
+          inventory: { enabled: false, public: false },
         },
       },
     });

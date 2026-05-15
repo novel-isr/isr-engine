@@ -2,7 +2,7 @@ import { timingSafeEqual } from 'node:crypto';
 import type { RequestHandler } from 'express';
 import type { ISRConfig } from '@/types';
 
-type OpsEndpointName = 'health' | 'metrics';
+type OpsEndpointName = 'health' | 'metrics' | 'inventory';
 
 export interface ResolvedOpsEndpointConfig {
   enabled: boolean;
@@ -14,12 +14,14 @@ export interface ResolvedOpsConfig {
   tokenHeader: string;
   health: ResolvedOpsEndpointConfig;
   metrics: ResolvedOpsEndpointConfig;
+  inventory: ResolvedOpsEndpointConfig;
   warnings: string[];
 }
 
 const OPS_ENDPOINT_PATHS: Record<OpsEndpointName, string> = {
   health: '/health',
   metrics: '/metrics',
+  inventory: '/__isr/cache/inventory',
 };
 
 const DEFAULT_TOKEN_HEADER = 'x-isr-admin-token';
@@ -27,11 +29,17 @@ const DEFAULT_TOKEN_HEADER = 'x-isr-admin-token';
 const DEV_DEFAULTS: Record<OpsEndpointName, ResolvedOpsEndpointConfig> = {
   health: { enabled: true, public: true },
   metrics: { enabled: true, public: true },
+  // dev 默认开放 inventory，方便本地排错；public=true 让 curl 不带 token 也能用
+  inventory: { enabled: true, public: true },
 };
 
 const PROD_DEFAULTS: Record<OpsEndpointName, ResolvedOpsEndpointConfig> = {
   health: { enabled: true, public: true },
   metrics: { enabled: false, public: false },
+  // 生产默认上线 + 强制 token —— 故障诊断工具事故来时才用，不能临时部署再开
+  // （等 deploy 完缓存现场已经变了）。安全靠 server.ops.authToken 锁住，不靠 disabled。
+  // 没配 token 时 resolveEndpointConfig 自动 disable + 出 warning，行为同 metrics。
+  inventory: { enabled: true, public: false },
 };
 
 function trimToUndefined(value: string | undefined): string | undefined {
@@ -84,6 +92,14 @@ export function resolveOpsConfig(
       'metrics',
       ops?.metrics,
       defaults.metrics,
+      env,
+      authToken,
+      warnings
+    ),
+    inventory: resolveEndpointConfig(
+      'inventory',
+      ops?.inventory,
+      defaults.inventory,
       env,
       authToken,
       warnings
@@ -146,7 +162,7 @@ function readOpsToken(
 }
 
 export function createOpsAuthMiddleware(
-  endpoint: 'metrics',
+  endpoint: 'metrics' | 'inventory',
   resolved: ResolvedOpsConfig
 ): RequestHandler {
   const policy = resolved[endpoint];

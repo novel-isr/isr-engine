@@ -16,10 +16,26 @@ import { invalidatorFailuresTotal, invalidatorRunsTotal } from '../../metrics/Pr
 // 这个共享状态本身是真正的产品行为（跨 Vite environments 复用注册表）——
 // 不是 test smell，是 contract 验证。
 
-async function freshCounter(label: 'path' | 'tag', counter: Counter<'kind'>): Promise<number> {
+async function freshCounter(
+  label: 'path' | 'tag',
+  counter: Counter<'kind' | 'target'>
+): Promise<number> {
+  // 自加 target 标签后，同一 kind 可能有多条 entry（每个 normalized target 一条）。
+  // 旧版 find() 只取第一条，多 target 时数据漂移导致 before/after 断言抖动。
+  // 改为对该 kind 的所有 entry 求和，恢复 “这个 kind 的总计” 语义。
   const metric = await counter.get();
-  const v = metric.values.find(x => x.labels.kind === label);
-  return v?.value ?? 0;
+  return metric.values.filter(x => x.labels.kind === label).reduce((sum, x) => sum + x.value, 0);
+}
+
+async function counterValueForLabels(
+  counter: Counter<'kind' | 'target'>,
+  labels: { kind: string; target: string }
+): Promise<number> {
+  const metric = await counter.get();
+  const entry = metric.values.find(
+    x => x.labels.kind === labels.kind && x.labels.target === labels.target
+  );
+  return entry?.value ?? 0;
 }
 
 describe('revalidate.ts —— Promise.allSettled + RevalidationError 语义', () => {
@@ -167,6 +183,62 @@ describe('revalidate.ts —— Promise.allSettled + RevalidationError 语义', (
 
     const after = await freshCounter('path', invalidatorFailuresTotal);
     expect(after).toBe(before + 2);
+  });
+
+  it('metric: invalidatorRunsTotal{target} 使用归一化路径（/books/123 → /books/:id）', async () => {
+    const before = await counterValueForLabels(invalidatorRunsTotal, {
+      kind: 'path',
+      target: '/books/:id',
+    });
+
+    cleanup.push(registerInvalidator(() => Promise.resolve()));
+    await revalidatePath('/books/123');
+    await revalidatePath('/books/456');
+
+    const after = await counterValueForLabels(invalidatorRunsTotal, {
+      kind: 'path',
+      target: '/books/:id',
+    });
+    expect(after).toBe(before + 2);
+
+    // 反证：原始路径不应该作为 label value 出现（防止动态段污染时间序列）
+    const rawPath123 = await counterValueForLabels(invalidatorRunsTotal, {
+      kind: 'path',
+      target: '/books/123',
+    });
+    expect(rawPath123).toBe(0);
+  });
+
+  it('metric: invalidatorRunsTotal{target} tag 原样保留（业务有限集合，不再归一化）', async () => {
+    const before = await counterValueForLabels(invalidatorRunsTotal, {
+      kind: 'tag',
+      target: 'book:42',
+    });
+
+    cleanup.push(registerInvalidator(() => Promise.resolve()));
+    await revalidateTag('book:42');
+
+    const after = await counterValueForLabels(invalidatorRunsTotal, {
+      kind: 'tag',
+      target: 'book:42',
+    });
+    expect(after).toBe(before + 1);
+  });
+
+  it('metric: invalidatorFailuresTotal{target} 失败时按归一化 target 计数', async () => {
+    const before = await counterValueForLabels(invalidatorFailuresTotal, {
+      kind: 'path',
+      target: '/posts/:id',
+    });
+
+    cleanup.push(registerInvalidator(() => Promise.reject(new Error('boom'))));
+    await expect(revalidatePath('/posts/789')).rejects.toBeInstanceOf(RevalidationError);
+
+    const after = await counterValueForLabels(invalidatorFailuresTotal, {
+      kind: 'path',
+      target: '/posts/:id',
+    });
+    expect(after).toBe(before + 1);
   });
 
   it('RevalidationError.message 包含 target 与首个 cause', async () => {

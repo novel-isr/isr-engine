@@ -8,6 +8,34 @@
 
 ---
 
+## [2.5.0] - 2026-05-15
+
+发布主题：**ISR 缓存可观测性 + 错误兜底 UX**。回应「能不能看到哪些页面在用过期缓存」「STALE 时上游是不是挂了」「OOM / SSR 兜底失败时用户看到什么」三个生产排错痛点。
+
+### Added — ISR 缓存可观测性
+
+- **`X-Cache-Stale-Reason` 响应头** —— STALE 拆成 `swr-fresh` / `swr-bg-pending` / `swr-bg-failed-recent` 三态，让 SRE 区分「正常 SWR 流量」vs「上游持续故障，用户在持续看旧数据」。
+- **`isr_invalidator_runs_total{kind,target}` / `isr_invalidator_failures_total{kind,target}`** —— 失效指标加 `target` label（path 走 `normalizeRoute` 归一化防基数爆炸，tag 原样保留），Grafana 能定位到具体业务对象。
+- **`isr_l2_read_timeouts_total` counter** —— L2（Redis）读超时被降级为 miss 的次数，区分「真 miss」vs「Redis 抖动」。
+- **`/__isr/cache/inventory` admin 端点** —— 库存视角，回答 Prometheus 答不了的问题：
+  - 「**现在这一刻**缓存里有什么、哪些已 stale 但没人请求」
+  - 「`/books/123` 上次什么时候被 revalidate」
+  - hybrid 模式下同时返回 L1 (in-process LRU) + L2 (Redis SCAN) 视图，`onlyInL2` 字段标注「在 Redis 但不在本 pod L1」
+  - 查询参数：`?status=fresh|stale|expired&limit=N&l2=true|false&l2Limit=N`
+  - dev 默认 public 开放；prod 默认上线 + 强制 `server.ops.authToken`，没配 token 时 opsConfig 自动 disable + 出 warning（行为同 `/metrics`）
+  - L2 走 Redis SCAN 非阻塞游标 + 总量上限保护（默认 200，硬上限 500），不会卡集群
+
+### Added — 错误兜底体验
+
+- **静态 HTML 500 兜底页** —— 替代原 `text/plain "500 Internal Server Error"`。最坏情况（rscHandler 抛 + csr-shell 兜底也失败）时返回带品牌的 HTML 页面 + 可复制的 traceId。零依赖纯字符串模板，主进程 OOM 兜底也不会再失败。
+
+### Changed
+
+- `ISRConfig.server.ops` 增加必填字段 `inventory: { enabled, public }`。dev 默认 `{enabled: true, public: true}`，prod 默认 `{enabled: true, public: false}`。升级业务需在 `ssr.config.ts` 加这一行。
+- `ICacheAdapter` 接口新增必需方法 `inspect(limit)`，自定义 cache adapter 实现需补这个方法（MemoryCacheAdapter / RedisCacheAdapter 已实现）。
+
+---
+
 ## [2.3.1] - 2026-04-29
 
 发布主题：**消费侧首跑 0 配置 / Express 5 / 入口架构清理**。修复一个会导致消费方

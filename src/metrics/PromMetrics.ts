@@ -57,18 +57,30 @@ export const cacheHitsTotal = new Counter({
 //   - revalidatePath / revalidateTag 是 Server Action 的关键路径，失败意味着用户看到旧数据
 //   - 失败率 = failures / runs，告警阈值通常设 1%
 //   - kind 标签拆 path / tag，因为这俩失败通常对应不同的根因（路由匹配 vs tag 索引）
+//   - target 标签是归一化路径或 tag 名，让 Grafana 能定位到具体业务对象（如 /books/:id）。
+//     必须走 normalizeRoute 防止 /books/123 / /books/124 各起一条时间序列导致基数爆炸；
+//     tag 本身就是业务定义的有限集合（如 'books' / 'book:123'），不再二次归一化。
 
 export const invalidatorRunsTotal = new Counter({
   name: 'isr_invalidator_runs_total',
   help: 'Total revalidate dispatches (one increment per revalidatePath/Tag call with ≥1 invalidator)',
-  labelNames: ['kind'] as const, // 'path' | 'tag'
+  labelNames: ['kind', 'target'] as const, // kind='path'|'tag'; target=normalized path or tag value
   registers: [promRegistry],
 });
 
 export const invalidatorFailuresTotal = new Counter({
   name: 'isr_invalidator_failures_total',
   help: 'Per-invalidator failures during revalidate dispatch (one increment per failing invalidator)',
-  labelNames: ['kind'] as const, // 'path' | 'tag'
+  labelNames: ['kind', 'target'] as const,
+  registers: [promRegistry],
+});
+
+// L2（Redis 等异步后端）读超时计数 —— 命中 raceWithTimeout 的兜底返回 undefined。
+// 缓存中间件把 L2 超时降级为 miss，业务侧看不到错误但 cache hit rate 会被拖低。
+// 单独 counter 让 SRE 能区分 “真 miss”（数据没缓存过）vs “伪 miss”（Redis 抖动）。
+export const l2ReadTimeoutsTotal = new Counter({
+  name: 'isr_l2_read_timeouts_total',
+  help: 'L2 cache async read timeouts (raceWithTimeout fired before underlying promise resolved)',
   registers: [promRegistry],
 });
 

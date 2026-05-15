@@ -12,6 +12,9 @@ import {
   recordHttpRequest,
   httpRequestsTotal,
   cacheHitsTotal,
+  invalidatorRunsTotal,
+  invalidatorFailuresTotal,
+  l2ReadTimeoutsTotal,
   normalizeRoute,
   addRouteNormalizeRule,
   createPrometheusMetricsMiddleware,
@@ -67,6 +70,27 @@ describe('PromMetrics', () => {
     expect(names).toContain('isr_cache_entries');
     expect(names).toContain('isr_cache_revalidating_inflight');
     expect(names).toContain('isr_cache_hits_total');
+    expect(names).toContain('isr_invalidator_runs_total');
+    expect(names).toContain('isr_invalidator_failures_total');
+    expect(names).toContain('isr_l2_read_timeouts_total');
+  });
+
+  it('invalidator counters labelNames 含 kind + target', async () => {
+    invalidatorRunsTotal.reset();
+    invalidatorFailuresTotal.reset();
+    invalidatorRunsTotal.inc({ kind: 'path', target: '/books/:id' }, 2);
+    invalidatorFailuresTotal.inc({ kind: 'tag', target: 'books' }, 1);
+    const text = await promRegistry.metrics();
+    expect(text).toMatch(/isr_invalidator_runs_total\{kind="path",target="\/books\/:id"\} 2/);
+    expect(text).toMatch(/isr_invalidator_failures_total\{kind="tag",target="books"\} 1/);
+  });
+
+  it('l2ReadTimeoutsTotal 是无 label counter，inc() 后递增', async () => {
+    l2ReadTimeoutsTotal.reset();
+    l2ReadTimeoutsTotal.inc();
+    l2ReadTimeoutsTotal.inc();
+    const text = await promRegistry.metrics();
+    expect(text).toMatch(/isr_l2_read_timeouts_total 2/);
   });
 
   it('counter labelNames 与 inc() 调用一致', async () => {

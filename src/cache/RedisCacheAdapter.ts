@@ -18,7 +18,7 @@
  */
 /* eslint-disable @typescript-eslint/no-non-null-assertion */
 
-import type { ICacheAdapter, CacheSetOptions } from './ICacheAdapter';
+import type { ICacheAdapter, CacheSetOptions, CacheInspectionItem } from './ICacheAdapter';
 import { MemoryCacheAdapter, type MemoryCacheConfig } from './MemoryCacheAdapter';
 import { Logger } from '../logger/Logger';
 
@@ -590,6 +590,69 @@ export class RedisCacheAdapter implements ICacheAdapter {
 
   isConnected(): boolean {
     return this.connected && !this.usingFallback;
+  }
+
+  async inspect(limit: number): Promise<CacheInspectionItem[]> {
+    const cap = limit > 0 ? limit : 500;
+    // 降级模式（fallback memory）→ 委托给内存 adapter
+    const fallbackAdapter = this.getActiveAdapter();
+    if (fallbackAdapter) {
+      return fallbackAdapter.inspect(cap);
+    }
+
+    const out: CacheInspectionItem[] = [];
+    try {
+      // SCAN（非阻塞游标，对比 KEYS 不会卡集群）+ 总量上限保护
+      let cursor = '0';
+      const matchedKeys: string[] = [];
+      do {
+        const [next, batch] = await this.redis!.scan(
+          cursor,
+          'MATCH',
+          `${this.config.keyPrefix}*`,
+          'COUNT',
+          100
+        );
+        cursor = next;
+        for (const k of batch) {
+          matchedKeys.push(k);
+          if (matchedKeys.length >= cap) break;
+        }
+      } while (cursor !== '0' && matchedKeys.length < cap);
+
+      if (matchedKeys.length === 0) return out;
+
+      // 批量取 TTL + STRLEN —— pipeline 一次往返
+      // ioredis 的 keyPrefix 会自动给 client 命令补前缀，所以 strlen/ttl 时要 strip 前缀
+      const stripped = matchedKeys.map(k => k.replace(this.config.keyPrefix, ''));
+      const pipeline = this.redis!.pipeline();
+      for (const k of stripped) {
+        pipeline.ttl(k);
+        pipeline.strlen(k);
+      }
+      const results = (await pipeline.exec()) as Array<[Error | null, unknown]> | null;
+      if (!results) return out;
+
+      for (let i = 0; i < stripped.length; i++) {
+        const ttlEntry = results[i * 2];
+        const lenEntry = results[i * 2 + 1];
+        const ttl = ttlEntry?.[0] === null ? Number(ttlEntry[1]) : -2;
+        const len = lenEntry?.[0] === null ? Number(lenEntry[1]) : 0;
+        out.push({
+          key: stripped[i],
+          sizeBytes: len,
+          // Redis 不存 storedAt 元数据；放 undefined，inventory 端点据此提示 “L2 来源未知 storedAt”
+          storedAt: undefined,
+          // ttl=-1 永不过期，ttl=-2 已不存在
+          ttlSecondsRemaining: ttl > 0 ? ttl : undefined,
+          // tags 存在另一组 __tag:* set 里，反查代价高 + 与 hot path 无关，inventory 不解
+          tags: [],
+        });
+      }
+    } catch (error) {
+      this.logger.warn(`⚠️ Redis SCAN inspect 失败: ${(error as Error).message}`);
+    }
+    return out;
   }
 
   async destroy(): Promise<void> {

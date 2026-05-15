@@ -340,6 +340,15 @@ export async function startProductionServer(options: StartOptions): Promise<void
         })
       : undefined,
   });
+  // Inventory 端点必须在 ISR cache 之前挂 —— 路径已在 isBypassPath 内不会被缓存,
+  // 但提前挂可以避开 cache handler 的 res.once('finish') metric 记录这次 admin 请求。
+  if (opsConfig.inventory.enabled) {
+    const { createCacheInspectorMiddleware } =
+      await import('@/plugin/createCacheInspectorMiddleware');
+    app.use(createCacheInspectorMiddleware(cache, opsConfig));
+    logger.info('🔍 ISR cache inventory 已启用：GET /__isr/cache/inventory');
+  }
+
   app.use(cache);
 
   // Prometheus 抓取端点（prom-client 文本格式）
@@ -385,6 +394,8 @@ export async function startProductionServer(options: StartOptions): Promise<void
   });
 
   // 根处理器：Express req → Web Request → handler → Response → Express res
+  const { renderError500Html } = await import('@/defaults/runtime/error500-template');
+  const { getTraceId } = await import('@/context/RequestContext');
   app.all(/.*/, async (req, res) => {
     try {
       const webRequest = nodeToWebRequest(req);
@@ -393,7 +404,10 @@ export async function startProductionServer(options: StartOptions): Promise<void
     } catch (err) {
       logger.error('[Server]', '请求处理异常', err);
       if (!res.headersSent) {
-        res.status(500).type('text/plain').send('500 Internal Server Error');
+        // RequestContext 在前置中间件已经 run() 包住整个 handler，traceId 必有值。
+        // 静态 HTML 兜底比 text/plain 强：浏览器看到品牌一致的 500 页面 + 可复制 trace。
+        const traceId = getTraceId();
+        res.status(500).type('text/html; charset=utf-8').send(renderError500Html(traceId));
       }
     }
   });

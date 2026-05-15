@@ -433,11 +433,14 @@ export interface ISRConfig {
     /**
      * 运维端点暴露策略。
      *
-     * 公开配置只保留稳定运维边界：
+     * 公开配置保留稳定运维边界：
      *   - /health：健康检查，默认启用且公开
      *   - /metrics：Prometheus 文本指标，默认关闭；生产开启时建议配置 authToken
+     *   - /__isr/cache/inventory：当前 L1 缓存条目元数据 + 最近 invalidate 时间。
+     *     dev 默认 public 开放；prod 默认 enabled + 强制 authToken（故障诊断工具
+     *     事故来时才用，常驻必要 —— 没 token 时 resolveOpsConfig 自动 disable 且出 warning）。
      *
-     * Cache debug JSON 不作为产品配置面；生产观测使用 Prometheus /metrics。
+     * 长期指标 / 报警 / 可视化由 Prometheus + Grafana 承担，engine 不做。
      */
     ops: {
       /** 共享运维口令；接受 `Authorization: Bearer <token>` 或 tokenHeader 指定 header */
@@ -449,6 +452,10 @@ export interface ISRConfig {
         public: boolean;
       };
       metrics: {
+        enabled: boolean;
+        public: boolean;
+      };
+      inventory: {
         enabled: boolean;
         public: boolean;
       };

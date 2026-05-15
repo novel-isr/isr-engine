@@ -20,6 +20,7 @@ import {
   type IsrCacheMiddlewareOptions,
 } from '../isrCacheMiddleware';
 import { createMemoryCacheStore, type IsrCacheStore, type IsrCachedEntry } from '../isrCacheStore';
+import { l2ReadTimeoutsTotal } from '../../metrics/PromMetrics';
 
 /** 下游渲染器契约 —— 每次请求返回的响应由调用方指定 */
 type RenderFn = (req: IncomingMessage, res: ServerResponse) => void;
@@ -75,6 +76,7 @@ async function httpGet(
   body: string;
   cacheStatus: string | undefined;
   cacheKey: string | undefined;
+  staleReason: string | undefined;
   setCookie: string[] | undefined;
 }> {
   return new Promise((resolve, reject) => {
@@ -87,6 +89,7 @@ async function httpGet(
           body: Buffer.concat(chunks).toString('utf8'),
           cacheStatus: header(res.headers['x-cache-status']),
           cacheKey: header(res.headers['x-cache-key']),
+          staleReason: header(res.headers['x-cache-stale-reason']),
           setCookie: res.headers['set-cookie'],
         });
       });
@@ -398,7 +401,57 @@ describe('isrCacheMiddleware —— L2 读超时', () => {
       await teardown(fx);
     }
   });
+
+  it('L2 超时触发时 isr_l2_read_timeouts_total 递增（伪 miss vs 真 miss 区分）', async () => {
+    const store = hangingStore();
+    const fx = await startFixture({ store, l2ReadTimeoutMs: 30 });
+    try {
+      fx.renderImpl.current = (_req, res) => {
+        res.setHeader('content-type', 'text/html');
+        res.statusCode = 200;
+        res.end('<html>ok</html>');
+      };
+
+      const before = await readL2TimeoutCount();
+      await httpGet(`${fx.baseUrl}/timed-out-1`);
+      await httpGet(`${fx.baseUrl}/timed-out-2`);
+      const after = await readL2TimeoutCount();
+      expect(after - before).toBe(2);
+    } finally {
+      await teardown(fx);
+    }
+  });
+
+  it('L2 正常返回（不超时）时 metric 不递增', async () => {
+    // 立即返回 undefined 的 store —— 行为上等价 “L2 没命中” 的真 miss，
+    // 这种情况绝不能被算成 timeout。
+    const store: IsrCacheStore = {
+      ...createMemoryCacheStore({ max: 10 }),
+      backend: 'hybrid',
+      getAsync: async () => undefined,
+    };
+    const fx = await startFixture({ store, l2ReadTimeoutMs: 1000 });
+    try {
+      fx.renderImpl.current = (_req, res) => {
+        res.setHeader('content-type', 'text/html');
+        res.statusCode = 200;
+        res.end('<html>ok</html>');
+      };
+
+      const before = await readL2TimeoutCount();
+      await httpGet(`${fx.baseUrl}/real-miss`);
+      const after = await readL2TimeoutCount();
+      expect(after).toBe(before);
+    } finally {
+      await teardown(fx);
+    }
+  });
 });
+
+async function readL2TimeoutCount(): Promise<number> {
+  const m = await l2ReadTimeoutsTotal.get();
+  return m.values.reduce((sum, v) => sum + v.value, 0);
+}
 
 describe('isrCacheMiddleware —— bg revalidate 安全超时', () => {
   it('STALE 触发 bg → 上游 hang → safety timer 释放 revalidating', async () => {
@@ -452,6 +505,138 @@ describe('isrCacheMiddleware —— bg revalidate 安全超时', () => {
       } finally {
         await teardown(fx2);
       }
+    } finally {
+      await teardown(fx);
+    }
+  });
+});
+
+describe('isrCacheMiddleware —— X-Cache-Stale-Reason', () => {
+  /** 注入一个 SWR 窗口内的 stale entry，并跑请求验证 reason 头 */
+  async function setupStale(opts: {
+    bgTimeoutMs?: number;
+    upstreamFails?: boolean;
+  }): Promise<{ fx: TestFixture; store: IsrCacheStore; key: string; renderCalls: { n: number } }> {
+    const store = createMemoryCacheStore({ max: 10 });
+    const fx = await startFixture({
+      store,
+      backgroundRevalidateTimeoutMs: opts.bgTimeoutMs ?? 30_000,
+    });
+    const renderCalls = { n: 0 };
+    fx.renderImpl.current = (_req, res) => {
+      renderCalls.n++;
+      if (opts.upstreamFails) {
+        res.statusCode = 500;
+        res.end('upstream broken');
+        return;
+      }
+      res.setHeader('content-type', 'text/html');
+      res.statusCode = 200;
+      res.end('<html>fresh</html>');
+    };
+    const now = Date.now();
+    const stale: IsrCachedEntry = {
+      body: Buffer.from('<html>stale-body</html>'),
+      statusCode: 200,
+      headers: { 'content-type': 'text/html' },
+      contentType: 'text/html',
+      storedAt: now - 60_000,
+      expiresAt: now - 1_000,
+      hardExpiresAt: now + 60_000,
+      tags: [],
+    };
+    const bv = process.env.APP_VERSION ?? 'dev';
+    const key = `e1:default:${bv}:GET:/reason-test`;
+    store.set(key, stale);
+    return { fx, store, key, renderCalls };
+  }
+
+  it('首次进入 SWR → reason=swr-fresh（bg 还没启）', async () => {
+    const { fx } = await setupStale({});
+    try {
+      const r = await httpGet(`${fx.baseUrl}/reason-test`);
+      expect(r.cacheStatus).toBe('STALE');
+      expect(r.staleReason).toBe('swr-fresh');
+    } finally {
+      await teardown(fx);
+    }
+  });
+
+  it('bg 进行中时第二次 STALE → reason=swr-bg-pending（同 key 并发请求）', async () => {
+    // 关键约束：r2 必须在 bg 请求处于 in-flight 时发出。
+    // 设计：bg renderer 慢响应 200ms，这段时间 revalidating.has(key)=true。
+    // r2 在 ~20ms 后发出，处在 bg 窗口内 → 应看到 swr-bg-pending。
+    // bg 完成后状态自然清掉，teardown 无须等长 safety timer。
+    const { fx } = await setupStale({ bgTimeoutMs: 1_500 });
+    try {
+      fx.renderImpl.current = (req, res) => {
+        const isBg = String(req.headers['x-isr-background-revalidate'] ?? '') === '1';
+        if (isBg) {
+          // bg 慢响应 200ms：足够 r2 看到 in-flight 状态，又不至于让 teardown 等太久
+          setTimeout(() => {
+            res.setHeader('content-type', 'text/html');
+            res.statusCode = 200;
+            res.end('<html>refreshed</html>');
+          }, 200);
+          return;
+        }
+        // 用户态请求都应该走 replayEntry，理论上不到这里
+        res.statusCode = 500;
+        res.end('unexpected: user request reached renderer');
+      };
+
+      const r1 = await httpGet(`${fx.baseUrl}/reason-test`);
+      expect(r1.cacheStatus).toBe('STALE');
+      expect(r1.staleReason).toBe('swr-fresh');
+
+      // 等一个 tick 让 setImmediate 把 bg http.request 真正发出（revalidating.add 已 sync）
+      await new Promise(r => setTimeout(r, 30));
+
+      const r2 = await httpGet(`${fx.baseUrl}/reason-test`);
+      expect(r2.cacheStatus).toBe('STALE');
+      expect(r2.staleReason).toBe('swr-bg-pending');
+    } finally {
+      await teardown(fx);
+    }
+  }, 5_000);
+
+  it('bg 失败（5xx）后下一次 STALE → reason=swr-bg-failed-recent', async () => {
+    const { fx, renderCalls } = await setupStale({ upstreamFails: true, bgTimeoutMs: 1_000 });
+    try {
+      // 第一次请求触发 bg；上游 5xx → release(false)，bgRevalidateFailures 写入失败时间
+      const r1 = await httpGet(`${fx.baseUrl}/reason-test`);
+      expect(r1.cacheStatus).toBe('STALE');
+      expect(r1.staleReason).toBe('swr-fresh');
+      // bg 5xx 完成 → release(false) 清 revalidating + 写 bgRevalidateFailures。
+      // 间接信号：用 inspection 检查 revalidating 状态需要内部 API；这里用一个稳定
+      // 的小睡眠（bg 5xx 路径已知 < 50ms 完成）来等其结算。
+      await waitFor(() => renderCalls.n >= 1);
+      await new Promise(r => setTimeout(r, 80));
+      // 第二次请求：revalidating 已清，但 bgRevalidateFailures 在窗口内 → failed-recent
+      const r2 = await httpGet(`${fx.baseUrl}/reason-test`);
+      expect(r2.cacheStatus).toBe('STALE');
+      expect(r2.staleReason).toBe('swr-bg-failed-recent');
+    } finally {
+      await teardown(fx);
+    }
+  });
+
+  it('handler.clear() 清空 bg 失败 / invalidation log（不残留脏状态）', async () => {
+    const { fx, renderCalls } = await setupStale({ upstreamFails: true, bgTimeoutMs: 1_000 });
+    try {
+      await httpGet(`${fx.baseUrl}/reason-test`);
+      await waitFor(() => renderCalls.n >= 1);
+      // 再次请求确认 failed-recent
+      const before = await httpGet(`${fx.baseUrl}/reason-test`);
+      expect(before.staleReason).toBe('swr-bg-failed-recent');
+
+      fx.handler.clear();
+
+      // clear 后 cache 也空了，下一次请求是 MISS（不是 STALE）—— 这里只是验证
+      // bgRevalidateFailures 没残留 “上次失败” 污染未来同名 key 的 STALE 标签。
+      const inspection = fx.handler.getCacheInspection();
+      expect(inspection.entries).toHaveLength(0);
+      expect(inspection.invalidations).toHaveLength(0);
     } finally {
       await teardown(fx);
     }

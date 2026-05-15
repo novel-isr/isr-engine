@@ -61,6 +61,10 @@ function config(extra: DeepPartial<ISRConfig> = {}): ISRConfig {
           enabled: extra.server?.ops?.metrics?.enabled ?? false,
           public: extra.server?.ops?.metrics?.public ?? false,
         },
+        inventory: {
+          enabled: extra.server?.ops?.inventory?.enabled ?? false,
+          public: extra.server?.ops?.inventory?.public ?? false,
+        },
       },
     },
   };

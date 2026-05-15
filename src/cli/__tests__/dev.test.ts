@@ -56,6 +56,7 @@ function makeConfig(overrides: Partial<ISRConfig> = {}): ISRConfig {
         tokenHeader: 'x-isr-admin-token',
         health: { enabled: true, public: true },
         metrics: { enabled: false, public: false },
+        inventory: { enabled: false, public: false },
       },
     },
     ssg: {

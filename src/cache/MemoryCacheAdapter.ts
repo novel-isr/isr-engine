@@ -8,7 +8,12 @@
  * - 标签系统，支持批量缓存失效
  */
 
-import type { ICacheAdapter, CacheSetOptions, CacheEntryMeta } from './ICacheAdapter';
+import type {
+  ICacheAdapter,
+  CacheSetOptions,
+  CacheEntryMeta,
+  CacheInspectionItem,
+} from './ICacheAdapter';
 
 /** 内存缓存条目 */
 interface MemoryCacheEntry<T = unknown> {
@@ -185,6 +190,26 @@ export class MemoryCacheAdapter implements ICacheAdapter {
 
   isConnected(): boolean {
     return true; // 内存缓存始终可用
+  }
+
+  async inspect(limit: number): Promise<CacheInspectionItem[]> {
+    const cap = limit > 0 ? limit : this.config.capacity;
+    const now = Date.now();
+    const out: CacheInspectionItem[] = [];
+    for (const [key, entry] of this.cache) {
+      if (out.length >= cap) break;
+      if (this.isExpired(entry)) continue; // 已过期但还没 evict 的不展示
+      out.push({
+        key,
+        sizeBytes: entry.meta.size ?? 0,
+        storedAt: entry.meta.createdAt,
+        ttlSecondsRemaining: entry.meta.expiresAt
+          ? Math.max(0, Math.ceil((entry.meta.expiresAt - now) / 1000))
+          : undefined,
+        tags: entry.tags,
+      });
+    }
+    return out;
   }
 
   async destroy(): Promise<void> {
