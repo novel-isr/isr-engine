@@ -47,7 +47,7 @@ describe('RedisCacheAdapter e2e (ioredis-mock)', () => {
       enableFallback: false,
     });
     // 等连接就绪
-    await new Promise(r => setTimeout(r, 50));
+    await new Promise(r => setTimeout(r, 200));
     await adapter.set('k1', { hello: 'world' }, { ttl: 60 });
     const v = await adapter.get<{ hello: string }>('k1');
     expect(v).toEqual({ hello: 'world' });
@@ -60,7 +60,7 @@ describe('RedisCacheAdapter e2e (ioredis-mock)', () => {
       keyPrefix: 'test:',
       enableFallback: false,
     });
-    await new Promise(r => setTimeout(r, 50));
+    await new Promise(r => setTimeout(r, 200));
     await adapter.set('k', 1);
     expect(await adapter.has('k')).toBe(true);
     expect(await adapter.delete('k')).toBe(true);
@@ -74,7 +74,7 @@ describe('RedisCacheAdapter e2e (ioredis-mock)', () => {
       keyPrefix: 'test:',
       enableFallback: false,
     });
-    await new Promise(r => setTimeout(r, 50));
+    await new Promise(r => setTimeout(r, 200));
     await adapter.setMany([
       { key: 'a', value: 1 },
       { key: 'b', value: 2 },
@@ -94,7 +94,7 @@ describe('RedisCacheAdapter e2e (ioredis-mock)', () => {
       keyPrefix: 'test:',
       enableFallback: false,
     });
-    await new Promise(r => setTimeout(r, 50));
+    await new Promise(r => setTimeout(r, 200));
     await adapter.set('a', 1);
     await adapter.set('b', 2);
     await adapter.clear();
@@ -111,7 +111,7 @@ describe('HybridCacheStore + 真实 Redis 协议 e2e', () => {
       keyPrefix: 'h1:',
       enableFallback: false,
     });
-    await new Promise(r => setTimeout(r, 50));
+    await new Promise(r => setTimeout(r, 200));
     const store = createHybridCacheStore({ redis, redisKeyPrefix: 'r:' });
 
     store.set('k', entry('hello'));
@@ -119,7 +119,7 @@ describe('HybridCacheStore + 真实 Redis 协议 e2e', () => {
     expect(store.get('k')?.body.toString()).toBe('hello');
 
     // 等 L2 异步写穿完成
-    await new Promise(r => setTimeout(r, 50));
+    await new Promise(r => setTimeout(r, 200));
     const fromL2 = await redis.get<{ body: string; statusCode: number }>('r:k');
     expect(fromL2).toBeDefined();
     expect(fromL2?.statusCode).toBe(200);
@@ -140,13 +140,13 @@ describe('HybridCacheStore + 真实 Redis 协议 e2e', () => {
       keyPrefix: 'shared:',
       enableFallback: false,
     });
-    await new Promise(r => setTimeout(r, 50));
+    await new Promise(r => setTimeout(r, 200));
 
     const pod1 = createHybridCacheStore({ redis: sharedRedis, redisKeyPrefix: 'pod:' });
     const pod2 = createHybridCacheStore({ redis: sharedRedis, redisKeyPrefix: 'pod:' });
 
     pod1.set('book:1', entry('诡秘之主'));
-    await new Promise(r => setTimeout(r, 50)); // 等 L2 写穿
+    await new Promise(r => setTimeout(r, 200)); // 等 L2 写穿
 
     // pod2 的 L1 没有该 key（独立 L1），但 getAsync 会回源 L2 并回填本地 L1
     expect(pod2.get('book:1')).toBeUndefined();
@@ -164,11 +164,11 @@ describe('HybridCacheStore + 真实 Redis 协议 e2e', () => {
       keyPrefix: 'restart:',
       enableFallback: false,
     });
-    await new Promise(r => setTimeout(r, 50));
+    await new Promise(r => setTimeout(r, 200));
     const store = createHybridCacheStore({ redis });
 
     store.set('k', entry('persistent'));
-    await new Promise(r => setTimeout(r, 50));
+    await new Promise(r => setTimeout(r, 200));
 
     // 模拟 pod 重启：旧 L1 丢失，新实例通过 L2 恢复
     const restarted = createHybridCacheStore({ redis });
@@ -186,7 +186,7 @@ describe('HybridCacheStore + 真实 Redis 协议 e2e', () => {
       keyPrefix: 'err:',
       enableFallback: false,
     });
-    await new Promise(r => setTimeout(r, 50));
+    await new Promise(r => setTimeout(r, 200));
     // 强制 L2 set 抛错
     redis.set = vi.fn().mockRejectedValue(new Error('redis down'));
     const onError = vi.fn();
@@ -194,7 +194,7 @@ describe('HybridCacheStore + 真实 Redis 协议 e2e', () => {
 
     expect(() => store.set('k', entry())).not.toThrow();
     expect(store.get('k')).toBeDefined(); // L1 仍有
-    await new Promise(r => setTimeout(r, 50));
+    await new Promise(r => setTimeout(r, 200));
     expect(onError).toHaveBeenCalledWith(expect.any(Error), 'set', 'k');
 
     await store.destroy();
@@ -206,7 +206,7 @@ describe('HybridCacheStore + 真实 Redis 协议 e2e', () => {
       keyPrefix: 'd:',
       enableFallback: false,
     });
-    await new Promise(r => setTimeout(r, 50));
+    await new Promise(r => setTimeout(r, 200));
     const store = createHybridCacheStore({ redis });
     store.set('k', entry());
     await store.destroy();
@@ -235,7 +235,7 @@ describe('RedisCacheAdapter —— Buffer/二进制序列化保真（v2.1 修复
       keyPrefix: 'buf:',
       enableFallback: false,
     });
-    await new Promise(r => setTimeout(r, 50));
+    await new Promise(r => setTimeout(r, 200));
 
     const payload = Buffer.from('hello二进制 🚀', 'utf8');
     await adapter.set('raw', payload);
@@ -254,7 +254,7 @@ describe('RedisCacheAdapter —— Buffer/二进制序列化保真（v2.1 修复
       keyPrefix: 'buf2:',
       enableFallback: false,
     });
-    await new Promise(r => setTimeout(r, 50));
+    await new Promise(r => setTimeout(r, 200));
 
     interface Payload {
       name: string;
@@ -284,7 +284,7 @@ describe('RedisCacheAdapter —— Buffer/二进制序列化保真（v2.1 修复
       keyPrefix: 'u8:',
       enableFallback: false,
     });
-    await new Promise(r => setTimeout(r, 50));
+    await new Promise(r => setTimeout(r, 200));
 
     const u8 = new Uint8Array([1, 2, 3, 255]);
     await adapter.set('u8', u8);
@@ -302,7 +302,7 @@ describe('RedisCacheAdapter —— Buffer/二进制序列化保真（v2.1 修复
       keyPrefix: 'json:',
       enableFallback: false,
     });
-    await new Promise(r => setTimeout(r, 50));
+    await new Promise(r => setTimeout(r, 200));
 
     const payload = { a: 1, b: 'str', c: [1, 2, 3], d: { e: true } };
     await adapter.set('k', payload);
@@ -325,7 +325,7 @@ describe('RedisCacheAdapter —— pipeline 错误聚合（v2.1 修复）', () =
       keyPrefix: 'pf:',
       enableFallback: true, // 启用内存降级，set() catch 后应写 fallback
     });
-    await new Promise(r => setTimeout(r, 50));
+    await new Promise(r => setTimeout(r, 200));
 
     // 劫持 pipeline，让 exec() 返回 [ [err, reply], ... ]
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -371,7 +371,7 @@ describe('RedisCacheAdapter —— pipeline 错误聚合（v2.1 修复）', () =
       keyPrefix: 'pfn:',
       enableFallback: false,
     });
-    await new Promise(r => setTimeout(r, 50));
+    await new Promise(r => setTimeout(r, 200));
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const internalLogger = (adapter as any).logger as { error: (msg: string) => void };

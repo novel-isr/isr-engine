@@ -78,7 +78,7 @@ describe('RedisCacheAdapter.inspect() —— ioredis-mock', () => {
       keyPrefix: 'inv-test:',
       enableFallback: false,
     });
-    await new Promise(r => setTimeout(r, 50)); // 等连接
+    await new Promise(r => setTimeout(r, 200)); // 等连接
     await adapter.set('a', 1, { ttl: 60 });
     await adapter.set('b', 2, { ttl: 120 });
     await adapter.set('c', { nested: 'data' }, { ttl: 30 });
@@ -101,7 +101,7 @@ describe('RedisCacheAdapter.inspect() —— ioredis-mock', () => {
       keyPrefix: 'inv-test-limit:',
       enableFallback: false,
     });
-    await new Promise(r => setTimeout(r, 50));
+    await new Promise(r => setTimeout(r, 200));
     for (let i = 0; i < 10; i++) {
       await adapter.set(`k${i}`, i, { ttl: 60 });
     }
@@ -121,7 +121,7 @@ describe('RedisCacheAdapter.inspect() —— ioredis-mock', () => {
       keyPrefix: 'app2:',
       enableFallback: false,
     });
-    await new Promise(r => setTimeout(r, 50));
+    await new Promise(r => setTimeout(r, 200));
     await a1.set('shared-key-name', 'app1-value', { ttl: 60 });
     await a2.set('shared-key-name', 'app2-value', { ttl: 60 });
 
