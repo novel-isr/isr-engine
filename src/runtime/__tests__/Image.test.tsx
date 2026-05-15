@@ -10,7 +10,7 @@ import { Image } from '../Image';
 
 interface ImgProps {
   src: string;
-  srcSet: string;
+  srcSet?: string;
   width: number;
   height?: number;
   loading: string;
@@ -19,8 +19,30 @@ interface ImgProps {
   alt: string;
 }
 
+interface LinkProps {
+  rel: string;
+  as: string;
+  href: string;
+  fetchPriority: string;
+  imageSrcSet?: string;
+  imageSizes?: string;
+}
+
+/** Image 返回 Fragment（可选 <link> + 必出 <img>），单测要从 children 里抽 img */
 function renderProps<P>(el: React.ReactElement): P {
-  return el.props as P;
+  const children = el.props.children;
+  // priority=false 时 Fragment 第一个 child 是 false（{priority && ...}），第二个是 img
+  // priority=true 时第一个是 <link>，第二个是 img
+  const list = Array.isArray(children) ? children : [children];
+  const img = list.find(c => React.isValidElement(c) && c.type === 'img');
+  return (img as React.ReactElement).props as P;
+}
+
+function getPreloadLink(el: React.ReactElement): LinkProps | null {
+  const children = el.props.children;
+  const list = Array.isArray(children) ? children : [children];
+  const link = list.find(c => React.isValidElement(c) && c.type === 'link');
+  return link ? ((link as React.ReactElement).props as LinkProps) : null;
 }
 
 describe('<Image>', () => {
@@ -96,5 +118,38 @@ describe('<Image>', () => {
     const props = renderProps<ImgProps>(el);
     expect(props.width).toBe(800);
     expect(props.height).toBe(600);
+  });
+
+  it('外部 URL passthrough：不走 /_/img，原 src 直出', () => {
+    const el = Image({
+      src: 'https://picsum.photos/300/400',
+      alt: '',
+      width: 300,
+    });
+    const props = renderProps<ImgProps>(el);
+    expect(props.src).toBe('https://picsum.photos/300/400');
+    expect(props.srcSet).toBeUndefined();
+  });
+
+  it('priority=true 注入 <link rel="preload"> 到 Fragment（React 19 hoist 到 head）', () => {
+    const el = Image({
+      src: '/cover.jpg',
+      alt: '',
+      width: 300,
+      priority: true,
+    });
+    const link = getPreloadLink(el);
+    expect(link).not.toBeNull();
+    expect(link!.rel).toBe('preload');
+    expect(link!.as).toBe('image');
+    expect(link!.fetchPriority).toBe('high');
+    expect(link!.href).toContain('/_/img');
+    expect(link!.imageSrcSet).toContain('1x');
+    expect(link!.imageSrcSet).toContain('2x');
+  });
+
+  it('priority=false 不注入 preload link', () => {
+    const el = Image({ src: '/x.jpg', alt: '', width: 100 });
+    expect(getPreloadLink(el)).toBeNull();
   });
 });
