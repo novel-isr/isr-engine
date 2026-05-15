@@ -8,6 +8,19 @@
 
 ---
 
+## [2.5.1] - 2026-05-15
+
+发布主题：**docs 加 NODE_ENV 禁忌警告**。零 API / 零行为改动，仅文档防回归。
+
+### Docs
+
+- `README.md` 顶部 + `docs/deployment.md` / `docs/getting-started.md` / `docs/observability.md` 各加 callout：⚠️ **绝不要把 NODE_ENV 写进 `.env` 文件**。
+- 起因：Vite 8 严格按 `.env` 锁 `VITE_USER_NODE_ENV`，让 `vite build` 即使 production 模式也回退 development，esbuild 用 `jsxDev: true`，但 React 19 生产 `react-server` runtime 的 `jsxDEV` 是 `void 0` → SSG 全部预渲染崩。文档之前没明示这个反模式，业务侧容易踩。
+- `docs/deployment.md` 的 `NODE_ENV` 行从「自动」改成显式说明各 launch path（K8s ConfigMap / Docker ENV / `pnpm start` 前缀），并新增「NODE_ENV 禁忌」专门 section。
+- `docs/getting-started.md` 的 `package.json` 示例 `start` 加上 `NODE_ENV=production` 前缀，让读者直接复制就是正确姿势。
+
+---
+
 ## [2.5.0] - 2026-05-15
 
 发布主题：**ISR 缓存可观测性 + 错误兜底 UX**。回应「能不能看到哪些页面在用过期缓存」「STALE 时上游是不是挂了」「OOM / SSR 兜底失败时用户看到什么」三个生产排错痛点。

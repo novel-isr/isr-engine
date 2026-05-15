@@ -48,6 +48,8 @@ Engine 的公共配置只叫 `runtime.telemetry`。第一方 HTTP 上报、Sentr
 `@novel-isr/analytics` 与 `@novel-isr/error-reporting` 是独立 SDK，给非 engine 应用或
 自定义前端使用；engine 自身不会动态 import 这些包，也不会把它们变成隐式依赖。
 
+> ⚠️ 下面示例读 `process.env.NODE_ENV`。**绝不要把 NODE_ENV 写进 `.env` 文件** —— Vite 8 会 hijack 让 `vite build` 回退 dev 模式致 React 19 SSG `jsxDEV is not a function` 全崩。NODE_ENV 走 K8s ConfigMap / Docker `ENV` / `pnpm start` 前缀注入，详见 [deployment.md](./deployment.md#-node_env-禁忌绝不写-env-文件)。
+
 ```ts
 // ssr.config.ts
 export default {

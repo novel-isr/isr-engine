@@ -34,12 +34,16 @@ export default defineConfig({
   "scripts": {
     "dev": "novel-isr dev",
     "build": "vite build",
-    "start": "novel-isr start"
+    "start": "NODE_ENV=production novel-isr start"
   }
 }
 ```
 
 `build` 直接走 `vite build` —— isr-engine 是运行时编排层，不接管构建系统。SSG 预渲染由 `createIsrPlugin` 的 `closeBundle` 钩子自动触发。
+
+`start` 前缀 `NODE_ENV=production` 让 Node 进程从第一行 import 起就是 production 模式（npm 库走 fast-path、Express 不泄 stack trace、engine logger 跳 debug）。
+
+> ⚠️ **NODE_ENV 禁忌：绝不写 `.env` 文件。** Vite 8 会读 `.env` 锁住 `VITE_USER_NODE_ENV`，让 `vite build` 在 production 模式回退到 development → React 19 SSG `jsxDEV is not a function` → 全部预渲染崩。详见 [deployment.md](./deployment.md#-node_env-禁忌绝不写-env-文件)。
 
 ## 4. `src/routes.tsx` —— 业务唯一路由源
 

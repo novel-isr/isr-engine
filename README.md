@@ -24,6 +24,8 @@ pnpm add @novel-isr/engine react react-dom react-server-dom-webpack rsc-html-str
 pnpm add -D vite typescript @types/react @types/react-dom
 ```
 
+> ⚠️ **NODE_ENV 禁忌：绝不写 `.env` 文件。** Vite 8 会读 `.env` 锁住 `VITE_USER_NODE_ENV`，让 `vite build` 即使 production 模式也回退 development，esbuild 用 `jsxDev: true` → React 19 `react-server.production.js` 的 `jsxDEV` 是 `void 0` → **SSG 全部预渲染崩**（`TypeError: jsxDEV is not a function`）。NODE_ENV 由 K8s ConfigMap / Docker `ENV` / `pnpm start` 前缀显式注入，详见 [docs/deployment.md](./docs/deployment.md#-node_env-禁忌绝不写-env-文件)。
+
 生产推荐接入（含单 routes、API i18n 与 SEO 下发）：
 
 ```ts

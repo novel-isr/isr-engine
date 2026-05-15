@@ -31,12 +31,29 @@ helmet → security headers → gzip/deflate(streaming-safe) → static (SSG 路
        → ISR cache → protected ops endpoints → catch-all RSC handler
 ```
 
+## ⚠️ NODE_ENV 禁忌：绝不写 `.env` 文件
+
+`NODE_ENV` 必须通过 **OS env 层**注入（K8s ConfigMap、Docker `ENV` 指令、shell 前缀），**任何 `.env` / `.env.*` 文件都不能写**。
+
+**为什么：** Vite 8 启动时 `loadEnv()` 把 `.env` 里的 `NODE_ENV` 锁进 `VITE_USER_NODE_ENV`，让 `vite build` 即使是 production 模式也回退到 development，esbuild 用 `jsxDev: true`，但 React 19 生产 `react-server` runtime 的 `jsxDEV` 是 `void 0` → SSG 渲染时 `TypeError: jsxDEV is not a function` → 全部预渲染路由失败。
+
+**正确姿势：**
+
+| 场景 | NODE_ENV 设法 |
+|------|--------------|
+| `pnpm dev` | Vite 启动自动 `'development'` |
+| `pnpm build` | Vite 启动自动 `'production'` |
+| `pnpm test` | Vitest 启动自动 `'test'` |
+| `pnpm start` | `package.json` script 前缀 `"start": "NODE_ENV=production novel-isr start"` |
+| Docker `docker run` | Dockerfile `ENV NODE_ENV=production` |
+| K8s prod | ConfigMap `NODE_ENV: production`（OS env 层，在任何 npm import 之前生效）|
+
 ## 生产环境变量
 
 | 变量 | 用途 | 示例 |
 |---|---|---|
 | `PORT` | 监听端口（默认 3000） | `PORT=8080` |
-| `NODE_ENV` | 必须 `production` | 自动 |
+| `NODE_ENV` | 必须 `production`；通过容器 env 注入（K8s ConfigMap / Docker `ENV` / `pnpm start` 前缀），**不要写 `.env` 文件**（见下方禁忌）| K8s ConfigMap |
 | `SITE_URL` | 站点公网域名；在 `ssr.config.ts runtime.site` 显式读取 | `https://my-app.com` |
 | `API_URL` | 上游 API 基址 | `https://api.internal/v1` |
 | `REDIS_URL` | Redis L2 缓存；在 `ssr.config.ts runtime.redis.url` 显式读取 | `redis://...:6379/0` |
