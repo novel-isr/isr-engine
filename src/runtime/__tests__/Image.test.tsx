@@ -28,21 +28,31 @@ interface LinkProps {
   imageSizes?: string;
 }
 
+// React 19 把 ReactElement.props 收紧为 unknown；统一一个窄类型读 children
+interface FragmentLike {
+  children?: React.ReactNode | React.ReactNode[];
+}
+
+function readChildren(el: React.ReactElement): React.ReactNode[] {
+  const children = (el.props as FragmentLike).children;
+  if (children === undefined || children === null) return [];
+  return Array.isArray(children) ? children : [children];
+}
+
 /** Image 返回 Fragment（可选 <link> + 必出 <img>），单测要从 children 里抽 img */
 function renderProps<P>(el: React.ReactElement): P {
-  const children = el.props.children;
-  // priority=false 时 Fragment 第一个 child 是 false（{priority && ...}），第二个是 img
-  // priority=true 时第一个是 <link>，第二个是 img
-  const list = Array.isArray(children) ? children : [children];
-  const img = list.find(c => React.isValidElement(c) && c.type === 'img');
-  return (img as React.ReactElement).props as P;
+  const img = readChildren(el).find(c => React.isValidElement(c) && c.type === 'img') as
+    | React.ReactElement
+    | undefined;
+  if (!img) throw new Error('Image did not render an <img>');
+  return img.props as P;
 }
 
 function getPreloadLink(el: React.ReactElement): LinkProps | null {
-  const children = el.props.children;
-  const list = Array.isArray(children) ? children : [children];
-  const link = list.find(c => React.isValidElement(c) && c.type === 'link');
-  return link ? ((link as React.ReactElement).props as LinkProps) : null;
+  const link = readChildren(el).find(c => React.isValidElement(c) && c.type === 'link') as
+    | React.ReactElement
+    | undefined;
+  return link ? (link.props as LinkProps) : null;
 }
 
 describe('<Image>', () => {

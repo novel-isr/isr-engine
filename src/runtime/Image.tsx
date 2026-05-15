@@ -81,10 +81,10 @@ export function Image(props: ImageProps): React.ReactElement {
           掉 Lighthouse "Resource load delay" 那段。 */}
       {props.priority && (
         <link
-          rel="preload"
-          as="image"
+          rel='preload'
+          as='image'
           href={src}
-          fetchPriority="high"
+          fetchPriority='high'
           {...(srcSet ? { imageSrcSet: srcSet } : {})}
           {...(props.sizes ? { imageSizes: props.sizes } : {})}
         />
