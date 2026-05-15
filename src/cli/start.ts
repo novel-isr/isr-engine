@@ -293,10 +293,15 @@ export async function startProductionServer(options: StartOptions): Promise<void
       fallthrough: true,
       setHeaders: (res, filePath) => {
         if (filePath.includes(`${path.sep}assets${path.sep}`)) {
+          // hash 命名的 build 产物：1 年 immutable
           res.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
         } else if (filePath.endsWith('.html')) {
           res.setHeader('Cache-Control', 'public, max-age=3600');
           res.setHeader('X-Served-By', 'ssg-static');
+        } else if (/\.(jpe?g|png|webp|avif|gif|svg|ico|woff2?)$/i.test(filePath)) {
+          // 图片 / 字体 / 图标：1 周 + 允许 stale 重验证（Lighthouse "efficient cache lifetimes"）
+          // 不可命名 hash 但内容稳定（如 public/covers/ public/favicon），比默认 1h 更合理
+          res.setHeader('Cache-Control', 'public, max-age=604800, stale-while-revalidate=86400');
         }
       },
     })

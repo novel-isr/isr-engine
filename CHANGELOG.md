@@ -8,6 +8,17 @@
 
 ---
 
+## [2.5.2] - 2026-05-16
+
+发布主题：**static asset cache header 优化（Lighthouse "efficient cache lifetimes"）**。
+
+### Changed
+
+- `cli/start.ts` express.static `setHeaders` 加分支：图片 / 字体 / 图标（jpe?g/png/webp/avif/gif/svg/ico/woff2?）从默认 1h 提升到 1 周 (`max-age=604800`) + `stale-while-revalidate=86400`。修 Lighthouse "Use efficient cache lifetimes" 警告。
+- `/assets/*`（hash 命名构建产物）维持 1 年 immutable；`.html` 维持 1h；其他文件维持 1h 默认。
+
+---
+
 ## [2.5.1] - 2026-05-15
 
 发布主题：**docs 加 NODE_ENV 禁忌警告**。零 API / 零行为改动，仅文档防回归。
