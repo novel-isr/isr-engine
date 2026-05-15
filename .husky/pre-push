@@ -1,0 +1,11 @@
+#!/usr/bin/env sh
+# 推前完整检查 —— type-check + lint + test。任何一项失败禁止 push，避免 CI 反复挂。
+# 跳过：HUSKY=0 git push 或者 git push --no-verify
+
+echo "🔍 pre-push: pnpm check (type-check + lint + test)..."
+pnpm check || {
+  echo ""
+  echo "❌ pre-push: pnpm check 失败，禁止 push。"
+  echo "   修完再 push，或 --no-verify 跳过（不推荐）。"
+  exit 1
+}
