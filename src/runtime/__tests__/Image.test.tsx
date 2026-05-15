@@ -162,4 +162,17 @@ describe('<Image>', () => {
     const el = Image({ src: '/x.jpg', alt: '', width: 100 });
     expect(getPreloadLink(el)).toBeNull();
   });
+
+  it('SVG passthrough：内部 SVG 也不走 /_/img、不发 srcset', () => {
+    const el = Image({ src: '/logo.svg', alt: '', width: 48 });
+    const props = renderProps<ImgProps>(el);
+    expect(props.src).toBe('/logo.svg');
+    expect(props.srcSet).toBeUndefined();
+  });
+
+  it('SVG passthrough：带 query 也识别', () => {
+    const el = Image({ src: '/logo.svg?v=2', alt: '', width: 48 });
+    const props = renderProps<ImgProps>(el);
+    expect(props.src).toBe('/logo.svg?v=2');
+  });
 });

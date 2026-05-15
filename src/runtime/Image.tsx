@@ -51,16 +51,24 @@ function isExternalUrl(src: string): boolean {
   return /^https?:\/\//i.test(src);
 }
 
+/** SVG 是矢量，不需要 sharp 优化也不需要 1x/2x srcset（无限分辨率），
+ *  无论 src 是内部还是外部，一律 passthrough 让浏览器直接加载。 */
+function isSvg(src: string): boolean {
+  // 去 query string 后判扩展名
+  return /\.svg($|\?|#)/i.test(src);
+}
+
 export function Image(props: ImageProps): React.ReactElement {
-  const external = isExternalUrl(props.src);
+  const passthrough = isExternalUrl(props.src) || isSvg(props.src);
   const endpoint = props.endpoint ?? '/_/img';
   const densities = props.densities ?? [1, 2];
 
   let src: string;
   let srcSet: string | undefined;
 
-  if (external) {
-    // 外部 URL passthrough —— sharp 端点不接管，但仍享有 priority / preload / CLS 防护
+  if (passthrough) {
+    // passthrough：外部 URL 或 SVG，不走 sharp 端点也不发 srcset，仍享有
+    // priority / preload / width/height（CLS 防护）等所有 priority 行为
     src = props.src;
     srcSet = undefined;
   } else {
