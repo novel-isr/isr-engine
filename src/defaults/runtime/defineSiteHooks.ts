@@ -553,15 +553,37 @@ function createSiteHooks(config: SiteHooksConfig, runtime: SiteRuntimeConfig): S
   const intlCfg = config.intl ?? {};
   const fallbackLocale = intlCfg.defaultLocale ?? 'zh-CN';
   const supportedLocales = intlCfg.locales?.length ? intlCfg.locales : undefined;
+  // 默认 detect 优先级（业界标准 i18n 顺序）：
+  //   1. URL pathname 前缀  /en-US/... → 'en-US'    ← 显式路由意图，最高优先级
+  //   2. locale cookie                              ← 用户手动切换过的偏好
+  //   3. Accept-Language 头                          ← 浏览器系统语言
+  //   4. defaultLocale                              ← 兜底
+  //
+  // 关键：前缀路由（prefixDefault:true 等场景）下，URL 是源真值。如果不优先用
+  // URL，curl /en-US 但 Accept-Language 是 zh 会被错误降级到 zh-CN，跟用户
+  // 明确写在 URL 里的意图相反。
+  // 业务侧可通过 intlCfg.detect 完全覆盖（任何 (req) => string 都行）。
   const detectLocale =
     intlCfg.detect ??
     ((req: Request): string => {
+      // 1. URL 前缀
+      if (supportedLocales) {
+        try {
+          const pathname = new URL(req.url).pathname;
+          const first = pathname.split('/')[1];
+          if (first && supportedLocales.includes(first)) return first;
+        } catch {
+          // 非法 URL（极少见，比如内部调用喂了相对路径）→ 继续后续策略
+        }
+      }
+      // 2. cookie
       const localeCookie = readCookie(req, 'locale');
       if (localeCookie) {
         return supportedLocales
           ? normalizeLocale(localeCookie, supportedLocales, fallbackLocale)
           : localeCookie;
       }
+      // 3. Accept-Language → 4. fallbackLocale
       const accept = req.headers.get('accept-language') ?? '';
       return supportedLocales
         ? normalizeLocale(parseAcceptLanguage(accept), supportedLocales, fallbackLocale)
