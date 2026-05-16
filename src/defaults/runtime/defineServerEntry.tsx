@@ -357,8 +357,15 @@ async function runRscPipeline(request: Request, extras: PipelineExtras): Promise
   }
   const ssrEntry = await import.meta.viteRsc.loadModule<SsrModule>('ssr', 'index');
 
+  // CSP nonce —— 由上游 createCspNonceMiddleware 生成并写到 req header 'x-csp-nonce'。
+  // React 19 renderToReadableStream 接 nonce 选项后，自动给所有内联 script (RSC payload、
+  // bootstrap、metadata) 打 nonce 属性。再配合 helmet CSP `script-src 'nonce-XXX'`，
+  // 整套 nonce-based CSP 闭环；Lighthouse csp-xss 不再判 'unsafe-inline' 高危。
+  const cspNonce = request.headers.get('x-csp-nonce') ?? undefined;
+
   const ssrResult = await ssrEntry.renderHTML(rscStream, {
     formState,
+    nonce: cspNonce,
     debugNojs: renderRequest.url.searchParams.has('__nojs'),
     forceCsrShell: renderRequest.url.searchParams.has('__csr-shell'),
     apiBaseUrl: extras.apiBaseUrl,

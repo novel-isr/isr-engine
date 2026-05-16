@@ -171,10 +171,14 @@ export async function startProductionServer(options: StartOptions): Promise<void
   for (const warning of opsConfig.warnings) {
     logger.warn(`[Ops] ${warning}`);
   }
-  // 安全头 —— helmet 默认 + 生产 CSP（prod 不允许 'unsafe-eval'）
+  // 安全头 —— helmet 默认 + 生产 CSP（prod 不允许 'unsafe-eval'）。
+  // 顺序关键：nonce 必须在 helmet 之前生成才能塞进 CSP header 的 script-src。
+  // nonce 同时透传到 req header，让下游 RSC handler 给 React 19 SSR 传 nonce 选项，
+  // React 自动给所有内联 script (RSC payload / bootstrap) 打 nonce 属性。
   // CSP connect-src 自动加入用户配置的服务 origin（让 CSR-fallback / 业务 fetch 不被挡）
-  const { createSecurityMiddleware, createCompressionMiddleware } =
+  const { createSecurityMiddleware, createCompressionMiddleware, createCspNonceMiddleware } =
     await import('@/server/middleware');
+  app.use(createCspNonceMiddleware());
   app.use(createSecurityMiddleware(false, extraConnectSrc));
   app.use(createCompressionMiddleware());
   if (extraConnectSrc.length > 0) {

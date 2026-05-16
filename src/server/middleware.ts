@@ -3,10 +3,37 @@
  * 提供通用中间件和开发/生产环境特定中间件
  */
 
+import { randomBytes } from 'node:crypto';
+import type { IncomingMessage, ServerResponse } from 'node:http';
 import express, { type RequestHandler, type Request, type Response } from 'express';
 import compression from 'compression';
 import helmet from 'helmet';
 import type { ServerContext } from './types';
+
+/** 用于在 res.locals 上挂 CSP nonce 的 key (Lighthouse csp-xss 审计需要) */
+export const CSP_NONCE_LOCAL = 'cspNonce';
+/** 用于在 req.headers 上透传 nonce 到 RSC handler 的 header 名 */
+export const CSP_NONCE_HEADER = 'x-csp-nonce';
+
+/**
+ * 生成 per-request CSP nonce，挂在 res.locals.cspNonce + req.headers['x-csp-nonce']。
+ *
+ * 作用：
+ *   - helmet CSP 用 res.locals.cspNonce 把 `nonce-XXX` 写进 script-src/style-src
+ *   - RSC SSR pipeline 从 req header 读 nonce 透传给 React 19 renderToReadableStream，
+ *     React 自动给所有 inline script (RSC payload / bootstrap) 打 nonce 属性
+ *
+ * 必须在 createSecurityMiddleware 之前挂载。
+ */
+export function createCspNonceMiddleware(): RequestHandler {
+  return (req, res, next) => {
+    const nonce = randomBytes(16).toString('base64');
+    (res.locals as Record<string, unknown>)[CSP_NONCE_LOCAL] = nonce;
+    // 透传到下游 RSC handler。Express 不让你直接改 req.headers 类型但运行时可以 set
+    (req.headers as Record<string, string>)[CSP_NONCE_HEADER] = nonce;
+    next();
+  };
+}
 
 /**
  * 开发环境 CSP 配置
@@ -31,17 +58,21 @@ const DEV_CSP = {
 /**
  * 生产环境 CSP 配置
  *
- * scriptSrc 允许 'unsafe-inline'：
- *   RSC SSR 必须内联 bootstrap script + Flight payload；与 Next.js 默认行为一致
- *   要更严格：用 nonce-based CSP（engine 内部支持，需在 ssr.config 设 nonce 提供器）
+ * scriptSrc 默认走 nonce-based + 'strict-dynamic'：
+ *   - 'nonce-XXX'      每请求新生成，React 19 SSR 给所有 inline 脚本自动打 nonce
+ *   - 'strict-dynamic' 让 nonce 化的脚本可以加载更多脚本（覆盖 modulepreload 等）
+ *   - 'unsafe-inline' 留作向后兼容：CSP3 浏览器看到 nonce 时会自动忽略 'unsafe-inline'，
+ *     旧浏览器（CSP2）回退到 'unsafe-inline'。Lighthouse csp-xss 给现代浏览器评分。
+ *
+ * styleSrc 暂留 'unsafe-inline'：React 19 metadata hoisting 注入的 <style precedence>
+ *   也是 inline，nonce 化它们需要更细的 SSR pipeline 改造，本期不做。
  *
  * connectSrc 默认仅 'self'：禁止任意第三方 fetch
- *   需要 cross-origin API（如 Sentry / Mixpanel）：在用户层覆盖此 CSP（参见 README）
+ *   需要 cross-origin API（如 Sentry / Mixpanel）：在用户层覆盖此 CSP
  */
-const PROD_CSP = {
+const PROD_CSP_BASE = {
   defaultSrc: ["'self'"],
   styleSrc: ["'self'", "'unsafe-inline'", 'https:'],
-  scriptSrc: ["'self'", "'unsafe-inline'"],
   imgSrc: ["'self'", 'data:', 'blob:', 'https:'],
   connectSrc: ["'self'"],
   fontSrc: ["'self'", 'https:', 'data:'],
@@ -58,23 +89,46 @@ const PROD_CSP = {
  *
  * extraConnectSrc：用户的服务域（来自 ssr.config.ts runtime.services）
  * 自动加入 CSP connect-src，避免浏览器 CSR-fallback / 业务 fetch 被 CSP 挡
+ *
+ * dev 模式仍用 'unsafe-inline'（DEV_CSP）—— HMR 需要。生产模式 nonce-based。
+ * 必须在前面挂 createCspNonceMiddleware 才能让 res.locals.cspNonce 存在。
  */
 export function createSecurityMiddleware(
   isDev: boolean,
   extraConnectSrc: string[] = []
 ): RequestHandler {
-  const baseCsp = isDev ? DEV_CSP : PROD_CSP;
+  if (isDev) {
+    const directives = {
+      ...DEV_CSP,
+      connectSrc: [...DEV_CSP.connectSrc, ...extraConnectSrc],
+    };
+    return helmet({
+      contentSecurityPolicy: { directives },
+      strictTransportSecurity: false,
+    });
+  }
+  // helmet directives 值可以是 string 或 (req, res) => string 函数；
+  // 函数形式每请求计算 → nonce 一次性使用。helmet 给的类型签名是 node http
+  // IncomingMessage/ServerResponse（不是 express Request/Response），所以
+  // 这里也用底层签名。
+  const nonceFn = (_req: IncomingMessage, res: ServerResponse): string => {
+    const locals = (res as ServerResponse & { locals?: Record<string, unknown> }).locals;
+    const nonce = locals?.[CSP_NONCE_LOCAL];
+    return typeof nonce === 'string' ? `'nonce-${nonce}'` : "'self'";
+  };
   const directives = {
-    ...baseCsp,
-    connectSrc: [...baseCsp.connectSrc, ...extraConnectSrc],
+    ...PROD_CSP_BASE,
+    connectSrc: [...PROD_CSP_BASE.connectSrc, ...extraConnectSrc],
+    // script-src: 'self' + 每请求 nonce + 'strict-dynamic'（让 nonce 信任传递给动态加载的脚本）
+    //              + 'unsafe-inline' 作 CSP2 回退（CSP3 浏览器看到 nonce 会忽略它）
+    scriptSrc: ["'self'", nonceFn, "'strict-dynamic'", "'unsafe-inline'"],
   };
   return helmet({
     contentSecurityPolicy: { directives },
-    // dev 关掉 HSTS —— helmet 默认会发 `Strict-Transport-Security: max-age=15552000;
-    // includeSubDomains`，浏览器对 localhost 也照吃。一旦缓存上 HSTS，后续即使
-    // 用户输 http://localhost:3000 也被强制升级到 https，dev 服务器又不发 TLS
-    // → ERR_SSL_PROTOCOL_ERROR。生产留 helmet 默认（站点必须上 HTTPS）。
-    strictTransportSecurity: isDev ? false : undefined,
+    // dev 关掉 HSTS —— helmet 默认会发 Strict-Transport-Security: max-age=15552000，
+    // 浏览器对 localhost 也照吃，导致 dev 时 http:// 被强制升级到 https://。
+    // 生产留 helmet 默认（站点必须上 HTTPS）。
+    strictTransportSecurity: undefined,
   });
 }
 
