@@ -1,6 +1,6 @@
 {
   "name": "@novel-isr/engine",
-  "version": "2.5.6",
+  "version": "2.5.7",
   "description": "ISR/SSG/Fallback rendering orchestration on Vite + React 19 RSC.",
   "license": "UNLICENSED",
   "repository": {
@@ -148,6 +148,7 @@
     "happy-dom": "^20.9.0",
     "husky": "^9.1.7",
     "ioredis-mock": "^8.9.0",
+    "jsdom": "^29.1.1",
     "prettier": "^3.3.3",
     "react": "^19.2.0",
     "react-dom": "^19.2.0",

@@ -40,6 +40,13 @@ import {
   type BrowserObservabilityHandle,
   type BrowserObservabilityOptions,
 } from './browserObservability';
+import { installClientPreloadHintFix } from './standardize-preload-hints.client';
+
+// 最早一步：在 React 任何代码跑之前 patch HTMLLinkElement.as setter，把
+// dev 模式下 plugin-rsc / HMR 动态创建的 <link rel=preload as=stylesheet>
+// 改成 HTML 标准 as=style，消除浏览器 "must have a valid `as` value" 警告。
+// 详见 standardize-preload-hints.client.ts。
+installClientPreloadHintFix();
 
 interface DefaultRscPayload {
   root: React.ReactNode;
