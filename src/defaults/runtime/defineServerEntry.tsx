@@ -203,8 +203,9 @@ export function defineServerEntry<C extends ServerCtx = ServerCtx>(
           if (url.pathname.endsWith('_.rsc')) {
             url.pathname = url.pathname.slice(0, -'_.rsc'.length);
           }
+          let localePrefix = '';
           if (intl?.locale) {
-            const localePrefix = `/${intl.locale}`;
+            localePrefix = `/${intl.locale}`;
             if (url.pathname === localePrefix) {
               url.pathname = '/';
             } else if (url.pathname.startsWith(`${localePrefix}/`)) {
@@ -217,7 +218,17 @@ export function defineServerEntry<C extends ServerCtx = ServerCtx>(
               ? Promise.resolve(hooks.loadSeoMeta(request, ctx))
               : Promise.resolve(null),
           ]);
-          return mergePageSeoMeta(pageSeoMeta, hookSeoMeta);
+          const merged = mergePageSeoMeta(pageSeoMeta, hookSeoMeta);
+          // 多语言 canonical 修正：admin 存的 canonical 是规范路径（无 locale），
+          // 但页面真实 URL 含 locale 前缀。两个 locale 渲染同一个 canonical →
+          // Google 判跨语言 URL 互为重复，只索引根域那一份，其它 locale SEO 死。
+          // 这里把当前 locale 前缀重新加回相对 canonical 路径，让每个 locale 的
+          // 页面声明自己为 canonical（业界标准多语言 SEO 做法）。
+          if (merged && localePrefix && merged.canonical?.startsWith('/')) {
+            merged.canonical =
+              merged.canonical === '/' ? `${localePrefix}/` : `${localePrefix}${merged.canonical}`;
+          }
+          return merged;
         });
         if (seoMeta) (ctx as ServerCtx).seoMeta = seoMeta;
 
