@@ -8,6 +8,33 @@
 
 ---
 
+## [2.5.9] - 2026-05-16
+
+发布主题：**LCP element render delay 修复 —— scoped-by-route CSS blocking 注入**。
+
+### Changed
+
+- `defaults/runtime/standardize-preload-hints.ts` SSR HTML stream rewriter 升级行为：
+  把 plugin-rsc 为动态 import 路由 chunk emit 的 `<link rel="preload" as="stylesheet|style" href="*.css">`
+  直接改写成 `<link rel="stylesheet" data-precedence="vite-rsc/importer-resources" ...>`。
+  让本路由 CSS 在初始渲染就 blocking 加载，消除 Lighthouse "Element render delay" 5+ 秒。
+- 天然 scoped-by-route：plugin-rsc 只为本次渲染用到的 chunk emit 这些 preload，engine 不需要业务暴露
+  路由 → 模块映射，也不会带上跨路由 CSS。100% engine-internal。
+- `data-precedence` 跟 plugin-rsc 自己 emit 的 `<link rel=stylesheet precedence>` 对齐，React 19 hydrate
+  时按 href + precedence dedupe，不会重复插入 link。
+
+### Removed
+
+- `defaults/entry.server.ssr.tsx` 正常 SSR 路径不再调用 `collectAllCss()` 全量注入所有 manifest CSS。
+  csr-shell fallback 路径保留（兜底时不知道走哪条路由，全量是合理 fallback）。
+
+### Added
+
+- `defaults/runtime/__tests__/standardize-preload-hints.test.ts` 单测覆盖 rewriter:
+  CSS preload 升级 / 非 CSS preload 透传 / 跨 chunk 边界 / 属性顺序兼容 / FLIGHT_DATA hint 改写。
+
+---
+
 ## [2.5.2] - 2026-05-16
 
 发布主题：**static asset cache header 优化（Lighthouse "efficient cache lifetimes"）**。

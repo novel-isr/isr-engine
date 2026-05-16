@@ -1,28 +1,46 @@
 /**
- * standardize-preload-hints —— 修正 SSR HTML 与内联 RSC 流里的 `as=stylesheet`。
+ * standardize-preload-hints —— 在 SSR HTML 出流上做两件事，针对 plugin-rsc 默认行为：
  *
- * 浏览器只接受 `<link rel=preload as=style>`；react-server-dom-webpack 仍然
- * 用 `as=stylesheet`，会触发 Chrome / Firefox 控制台警告：
- *   `<link rel=preload> must have a valid 'as' value`
+ *   1. 把 `<link rel="preload" as="stylesheet|style" href="*.css">` 升级成
+ *      `<link rel="stylesheet" data-precedence="vite-rsc/importer-resources"
+ *      href="*.css">` —— 让本路由的 CSS 在初始渲染就 **blocking 加载**，消除
+ *      "Element render delay" 5+ 秒 的 LCP 问题。
  *
- * 两处都得改写：
- *   1. SSR HTML 的 `<link rel="preload" as="stylesheet">`
- *   2. 内联 FLIGHT_DATA 的 RSC 提示行 `<id>:HL["href","stylesheet"]`
+ *      为啥这条路是开箱即用：plugin-rsc 天然只为本次渲染用到的 chunk emit
+ *      这些 preload（已经是 scoped-by-route），engine 把它们升级成 stylesheet
+ *      就是 scoped blocking 注入 —— 不需要业务方暴露任何路由表，也不会带上
+ *      跨路由 CSS。
+ *
+ *      `data-precedence` 用 'vite-rsc/importer-resources' 跟 plugin-rsc 自己 emit
+ *      的对齐：React 19 hydrate 时按 href+precedence dedupe，stylesheet hoisting
+ *      不会重复插入 link。
+ *
+ *   2. 把内联 FLIGHT_DATA 的 RSC 提示行 `<id>:HL["href","stylesheet"]` 里的
+ *      `"stylesheet"` 改成 HTML 标准 `"style"` —— 浏览器 `<link rel=preload>`
+ *      的 `as` 只接受 `style`，as=stylesheet 会触发控制台警告
+ *      `must have a valid 'as' value`。
+ *
+ *      HTML 路径已经在 (1) 升级走了，FLIGHT_DATA 是给客户端 RSC payload
+ *      navigation/hydrate 用的 hint，留下来仍然要做合规修正。
  *
  * 性能要点（2026-05 bench 回归 -50% QPS / +200ms p95 后修）：
- *   - SSR HTML 流 ~25 个 chunk，99% 不含 `stylesheet`
+ *   - SSR HTML 流 ~25 个 chunk，绝大多数不含 `stylesheet`
  *   - 旧实现对每个 chunk 都跑 decode / concat / 2× lastIndexOf / 2× slice /
  *     2× regex.replace / encode，全部花在了 pass-through 上
- *   - 现在的 fast path 用 byte 级 memmem 扫 `stylesheet` 字面量，没命中且没
- *     pending 时直接 enqueue 原始 Uint8Array（零分配、零拷贝）
+ *   - 现在的 fast path 用 byte 级 memmem 扫触发字面量，没命中且没 pending 时
+ *     直接 enqueue 原始 Uint8Array（零分配、零拷贝）
  *   - 慢路径才走 decode + regex；命中之后逻辑保持原样
  *   - 跨 chunk 边界的 needle (sty|lesheet) 由 byte-tail carry 兜底，留 9 字节
  *
  * 不依赖 plugin-rsc 虚拟模块，可独立单测。
  */
 
-const preloadStylesheetAsRe =
-  /(<link\b(?=[^>]*\brel=(["'])preload\2)(?=[^>]*\bas=(["'])stylesheet\3)[^>]*?)\bas=(["'])stylesheet\4/gi;
+const PRECEDENCE = 'vite-rsc/importer-resources';
+
+// 整 tag 命中：rel=preload 且 as=stylesheet|style（顺序任意），用 lookahead 兼容
+// 属性顺序变化（plugin-rsc 实测 rel 在前 as 在后，但不锁死）。
+const preloadCssLinkTagRe =
+  /<link\b(?=[^>]*\brel=(["'])preload\1)(?=[^>]*\bas=(["'])(?:stylesheet|style)\2)[^>]*>/gi;
 
 // FLIGHT_DATA 是放在 `<script>__FLIGHT_DATA.push("...")</script>` 内的 JS 字符串字面量，
 // JSON 里原本的 `"stylesheet"` 被转义成 `\"stylesheet\"`。
@@ -50,11 +68,27 @@ const HL_BYTES = new Uint8Array([
 
 const PENDING_HOLD = STYLESHEET_BYTES.length - 1; // 9 字节，covers all three needles
 
+/** 把单个 `<link rel=preload as=stylesheet|style ...>` tag 升级成 blocking stylesheet。
+ *
+ * 输入示例：`<link rel="preload" as="stylesheet" href="/assets/HomePage-x.css">`
+ * 输出示例：`<link rel="stylesheet" data-precedence="vite-rsc/importer-resources" href="/assets/HomePage-x.css">`
+ *
+ * 保留 href / integrity / crossorigin / type / media 等其它属性；只剥 rel=preload + as=...。
+ */
+function upgradePreloadCssTag(tag: string): string {
+  // 去掉前缀 "<link" 和后缀 ">"，得到属性段。
+  const attrs = tag.slice(5, tag.endsWith('/>') ? -2 : -1);
+  const stripped = attrs
+    .replace(/\s+rel=(["'])preload\1/i, '')
+    .replace(/\s+as=(["'])(?:stylesheet|style)\1/i, '')
+    .trimEnd();
+  // 拼接保证 rel + precedence 在前，方便人肉调试 + React 19 hydrate 解析。
+  return `<link rel="stylesheet" data-precedence="${PRECEDENCE}"${stripped}>`;
+}
+
 export function rewritePreloadHints(html: string): string {
   return html
-    .replace(preloadStylesheetAsRe, (_match, prefix, _relQuote, _asQuote, asAttrQuote) => {
-      return `${prefix}as=${asAttrQuote}style${asAttrQuote}`;
-    })
+    .replace(preloadCssLinkTagRe, upgradePreloadCssTag)
     .replace(flightHintStylesheetRe, '$1\\"style\\"');
 }
 
