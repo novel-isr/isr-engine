@@ -8,9 +8,8 @@ import { describe, it, expect } from 'vitest';
 import React from 'react';
 import { Image } from '../Image';
 
-// 注意：HTML 标准属性名是 fetchpriority / imagesrcset / imagesizes（全小写）。
-// 我们故意用小写 prop 名透传，绕过 React 19.2 react-dom 对 CamelCase 不转小写的 bug。
-// 单测断言用小写字段名匹配运行时实际 props。
+// JSX prop 用 React 标准 fetchPriority (camelCase)，React 19 DOM render 会
+// 序列化成小写 HTML attr。单测在 React tree 层断言，看到的还是 prop 名。
 interface ImgProps {
   src: string;
   srcSet?: string;
@@ -18,7 +17,7 @@ interface ImgProps {
   height?: number;
   loading: string;
   decoding: string;
-  fetchpriority: string;
+  fetchPriority: string;
   alt: string;
 }
 
@@ -26,9 +25,9 @@ interface LinkProps {
   rel: string;
   as: string;
   href: string;
-  fetchpriority: string;
-  imagesrcset?: string;
-  imagesizes?: string;
+  fetchPriority: string;
+  imageSrcSet?: string;
+  imageSizes?: string;
 }
 
 // React 19 把 ReactElement.props 收紧为 unknown；统一一个窄类型读 children
@@ -76,7 +75,7 @@ describe('<Image>', () => {
     const props = renderProps<ImgProps>(el);
     expect(props.loading).toBe('eager');
     expect(props.decoding).toBe('sync');
-    expect(props.fetchpriority).toBe('high');
+    expect(props.fetchPriority).toBe('high');
   });
 
   it('默认 lazy + async', () => {
@@ -84,7 +83,7 @@ describe('<Image>', () => {
     const props = renderProps<ImgProps>(el);
     expect(props.loading).toBe('lazy');
     expect(props.decoding).toBe('async');
-    expect(props.fetchpriority).toBe('auto');
+    expect(props.fetchPriority).toBe('auto');
   });
 
   it('quality 透传到 endpoint URL', () => {
@@ -155,10 +154,10 @@ describe('<Image>', () => {
     expect(link).not.toBeNull();
     expect(link!.rel).toBe('preload');
     expect(link!.as).toBe('image');
-    expect(link!.fetchpriority).toBe('high');
+    expect(link!.fetchPriority).toBe('high');
     expect(link!.href).toContain('/_/img');
-    expect(link!.imagesrcset).toContain('1x');
-    expect(link!.imagesrcset).toContain('2x');
+    expect(link!.imageSrcSet).toContain('1x');
+    expect(link!.imageSrcSet).toContain('2x');
   });
 
   it('priority=false 不注入 preload link', () => {

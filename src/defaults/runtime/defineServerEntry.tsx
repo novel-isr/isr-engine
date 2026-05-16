@@ -232,10 +232,12 @@ export function defineServerEntry<C extends ServerCtx = ServerCtx>(
         });
         if (seoMeta) (ctx as ServerCtx).seoMeta = seoMeta;
 
-        // headExtras hook 容错：抛错不应阻塞 SSR（业务侧返回值类型 unknown 时安全降级）
+        // headExtras hook 容错：抛错不应阻塞 SSR（业务侧返回值类型 unknown 时安全降级）。
+        // 把当前请求的 CSP nonce 透传给业务，让 inline <script> 能带 nonce 通过 CSP。
         let headExtras: string | undefined;
         try {
-          const raw = hooks.headExtras?.();
+          const headExtrasNonce = request.headers.get('x-csp-nonce') ?? undefined;
+          const raw = hooks.headExtras?.({ nonce: headExtrasNonce });
           if (typeof raw === 'string' && raw.length > 0) headExtras = raw;
         } catch {
           // 业务 hook 异常 → 当作没有 headExtras，继续渲染

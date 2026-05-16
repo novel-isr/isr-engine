@@ -255,15 +255,19 @@ export interface SiteHooksConfig {
    * 业务侧返回完整的标签 HTML（含 `<script>` / `<style>` / `<meta>` 外壳）。返回
    * 空字符串 / undefined 时跳过注入。
    *
+   * ctx.nonce：当前请求的 CSP nonce（engine 自动注入）。业务侧的 inline `<script>`
+   * 必须带上 nonce 属性，否则被 nonce-based CSP 阻断：
+   *
    * ```ts
    * import { THEME_INIT_SCRIPT } from '@novel-isr/ui/theme-utils';
    *
    * defineAdminSiteHooks({
-   *   headExtras: () => `<script>${THEME_INIT_SCRIPT}</script>`,
+   *   headExtras: ({ nonce }) =>
+   *     `<script${nonce ? ` nonce="${nonce}"` : ''}>${THEME_INIT_SCRIPT}</script>`,
    * });
    * ```
    */
-  headExtras?: () => string | undefined;
+  headExtras?: (ctx: { nonce?: string }) => string | undefined;
 }
 
 interface CompiledRoute {
@@ -466,7 +470,7 @@ export interface ServerHooksOutput {
     ctx: { traceId: string; locale?: string }
   ) => void | Promise<void>;
   /** 注入 `<head>` 末尾的 raw HTML —— 详见 SiteHooksConfig.headExtras 注释 */
-  headExtras?: () => string | undefined;
+  headExtras?: (ctx: { nonce?: string }) => string | undefined;
   __configureRuntime?: (runtime: SiteRuntimeConfig) => ServerHooksOutput;
 }
 

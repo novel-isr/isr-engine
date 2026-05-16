@@ -82,25 +82,24 @@ export function Image(props: ImageProps): React.ReactElement {
     src = buildUrl(props.width);
   }
 
-  // React 19.2 react-dom 把 JSX 的 `fetchPriority` (CamelCase) 序列化进 HTML
-  // 时**没小写成 fetchpriority** (HTML 标准属性名)，导致 Lighthouse 严格匹配
-  // 字面属性名失败、判 fetchpriority=high should be applied 红警。HTML 规范层
-  // 浏览器 case-insensitive parsing 实际是工作的，但 Lighthouse 看源码字符串。
-  //
-  // 修法：通过 spread 显式打小写 `fetchpriority` 属性，绕过 React prop 名 mapping
-  // 让 react-dom 把 unknown 小写属性原样输出到 HTML。
-  const fetchPriorityAttr = props.priority ? 'high' : 'auto';
-  const preloadExtras: Record<string, string> = {
-    fetchpriority: 'high',
-  };
-  if (srcSet) preloadExtras.imagesrcset = srcSet;
-  if (props.sizes) preloadExtras.imagesizes = props.sizes;
+  // 用 JSX 标准 prop 名 fetchPriority (camelCase) —— React 19.2 在 DOM render
+  // 路径下会序列化成小写 HTML 属性 fetchpriority；之前我用小写 spread 是过头修，
+  // 反而触发 React dev mode 警告 "Invalid DOM property fetchpriority"。
   return (
     <>
       {/* React 19 metadata hoisting：<link> 会被自动提到 <head>。HTML 解析早期
           就发起 image preload，比等 React 渲染到 <img> 节点早几百 ms，直接砍
           掉 Lighthouse "Resource load delay" 那段。 */}
-      {props.priority && <link rel='preload' as='image' href={src} {...preloadExtras} />}
+      {props.priority && (
+        <link
+          rel='preload'
+          as='image'
+          href={src}
+          fetchPriority='high'
+          {...(srcSet ? { imageSrcSet: srcSet } : {})}
+          {...(props.sizes ? { imageSizes: props.sizes } : {})}
+        />
+      )}
       <img
         src={src}
         srcSet={srcSet}
@@ -112,7 +111,7 @@ export function Image(props: ImageProps): React.ReactElement {
         sizes={props.sizes}
         loading={props.priority ? 'eager' : 'lazy'}
         decoding={props.priority ? 'sync' : 'async'}
-        {...{ fetchpriority: fetchPriorityAttr }}
+        fetchPriority={props.priority ? 'high' : 'auto'}
       />
     </>
   );
