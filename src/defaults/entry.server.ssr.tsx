@@ -23,13 +23,19 @@ import { HydrationShell } from './runtime/hydration-shell';
 // @ts-expect-error - 虚拟模块由 plugin-rsc 注入
 import assetsManifest from 'virtual:vite-rsc/assets-manifest';
 
-/** 收集 manifest 里所有唯一的 CSS 链接（client + server 两边）—— csr-shell fallback 用。
+/** 收集 manifest 里所有唯一的 CSS 链接（client + server 两边）。
  *
- * 正常 SSR 路径不调这里：plugin-rsc 在 `cssCodeSplit: true`（Vite 默认）下会自己把
- * 用到的 client component CSS 通过 React 19 metadata hoisting link 到 <head>，
- * 不需要 engine 介入。
+ * 用途：
+ *   1. 正常 SSR 路径：作为 <link rel="stylesheet" precedence>（React 19 metadata
+ *      hoisting）注入 head，**确保所有 server-component / client-component 的
+ *      CSS 在初始渲染就 blocking 加载**。
  *
- * 只在 SSR 渲染抛错降级到 csr-shell 时调：那一路要无脑灌满所有 CSS，否则壳无样式。
+ *      为啥必须 engine 介入：plugin-rsc 对**动态 import 的页面 chunk** 只发
+ *      preload (不发 stylesheet)，等 client React 资源池 hydrate 完才应用 →
+ *      导致首屏 LCP 文本元素延迟 5+ 秒 (Lighthouse "Element render delay")。
+ *      engine 这里 force-emit 让它们成为 head 阻塞 stylesheet。
+ *
+ *   2. csr-shell fallback：SSR 抛错时 fallback shell 也要正确样式。
  */
 function collectAllCss(): string[] {
   const set = new Set<string>();
@@ -177,10 +183,23 @@ export async function renderHTML(
   let status: number | undefined;
   let csrShellFallback = false;
 
+  // 收集全部 server + client CSS 作为 head blocking stylesheet 注入。
+  // 原因：plugin-rsc 对动态 import 的页面 chunk 只 emit preload (期望 client
+  // 资源池 hydrate 后再应用)，导致 SSR 初始渲染首屏元素无样式 → LCP 文本
+  // element render delay 5+ 秒。通过 React 19 precedence hoisting 强制把所有
+  // route CSS 提前到 head 作为 blocking stylesheet，初始渲染就有完整样式。
+  //
+  // precedence 用 'vite-rsc/importer-resources' 跟 plugin-rsc 自己 emit 的对齐，
+  // 避免顺序冲突 + 自动 dedupe (React 同 href + 同 precedence 视为同一 resource)。
+  const allCssHrefs = collectAllCss();
+
   try {
     if (options.forceCsrShell) throw new Error('forceCsrShell debug flag');
     htmlStream = await renderToReadableStream(
       <HydrationShell>
+        {allCssHrefs.map(href => (
+          <link key={href} rel='stylesheet' href={href} precedence='vite-rsc/importer-resources' />
+        ))}
         <SsrRoot />
       </HydrationShell>,
       {
