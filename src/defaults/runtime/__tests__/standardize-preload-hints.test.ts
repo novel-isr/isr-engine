@@ -3,7 +3,7 @@
  *
  * 覆盖两条规则：
  *   1. `<link rel=preload as=stylesheet|style>` → `<link rel=stylesheet data-precedence>`
- *   2. FLIGHT_DATA 内联 `:HL[..., "stylesheet"]` → `:HL[..., "style"]`
+ *   2. FLIGHT_DATA 内联 CSS `HL[..., "stylesheet"]` 资源提示去重
  *
  * 以及跨 chunk 边界 / 触发字面量切断 / pass-through 不破坏其它 link 的回归。
  */
@@ -92,18 +92,18 @@ describe('rewritePreloadHints (string-level)', () => {
     expect(rewritePreloadHints(input)).toBe(input);
   });
 
-  it('FLIGHT_DATA 提示行 :HL[..., "stylesheet"] → "style"', () => {
+  it('FLIGHT_DATA CSS 提示行会被删除，避免重复 preload', () => {
     const input =
       'self.__FLIGHT_DATA||(self.__FLIGHT_DATA=[]);self.__FLIGHT_DATA.push("1:HL[\\"/a.css\\",\\"stylesheet\\"]\\n")';
     const out = rewritePreloadHints(input);
-    expect(out).toContain(':HL[\\"/a.css\\",\\"style\\"]');
+    expect(out).not.toContain(':HL[\\"/a.css\\"');
     expect(out).not.toContain('\\"stylesheet\\"');
   });
 
-  it('FLIGHT_DATA 多行批量改写', () => {
-    const input = '"1:HL[\\"/a.css\\",\\"stylesheet\\"]\\n2:HL[\\"/b.css\\",\\"stylesheet\\"]\\n"';
+  it('FLIGHT_DATA 多行 CSS 提示批量去重', () => {
+    const input = '"1:HL[\\"/a.css\\",\\"stylesheet\\"]\\n2:HL[\\"/b.css\\",\\"style\\"]\\n"';
     const out = rewritePreloadHints(input);
-    expect(out).toBe('"1:HL[\\"/a.css\\",\\"style\\"]\\n2:HL[\\"/b.css\\",\\"style\\"]\\n"');
+    expect(out).toBe('""');
   });
 });
 
@@ -164,12 +164,12 @@ describe('standardizePreloadHints (stream)', () => {
     expect(out).toBe(big);
   });
 
-  it('FLIGHT_DATA 行被改写：stylesheet → style', async () => {
+  it('FLIGHT_DATA CSS 行被去重', async () => {
     const input =
       '<script>self.__FLIGHT_DATA||(self.__FLIGHT_DATA=[]);' +
       'self.__FLIGHT_DATA.push("1:HL[\\"/c.css\\",\\"stylesheet\\"]\\n")</script>';
     const out = await pipeChunks([input]);
-    expect(out).toContain(':HL[\\"/c.css\\",\\"style\\"]');
+    expect(out).not.toContain(':HL[\\"/c.css\\"');
     expect(out).not.toContain('\\"stylesheet\\"');
   });
 });

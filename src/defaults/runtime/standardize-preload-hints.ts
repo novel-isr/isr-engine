@@ -15,13 +15,14 @@
  *      的对齐：React 19 hydrate 时按 href+precedence dedupe，stylesheet hoisting
  *      不会重复插入 link。
  *
- *   2. 把内联 FLIGHT_DATA 的 RSC 提示行 `<id>:HL["href","stylesheet"]` 里的
- *      `"stylesheet"` 改成 HTML 标准 `"style"` —— 浏览器 `<link rel=preload>`
- *      的 `as` 只接受 `style`，as=stylesheet 会触发控制台警告
- *      `must have a valid 'as' value`。
+ *   2. 删除初始 HTML 内联 FLIGHT_DATA 里的 CSS resource-hint 行
+ *      `<id>:HL["href","stylesheet"]`。这些 hint 会让 React 在客户端再补一条
+ *      `<link rel=preload as=style>`；但 (1) 已经把同一路由 CSS 作为 blocking
+ *      stylesheet 注入 head，保留 hint 会变成重复 preload，线上会出现
+ *      `preloaded using link preload but not used`。
  *
- *      HTML 路径已经在 (1) 升级走了，FLIGHT_DATA 是给客户端 RSC payload
- *      navigation/hydrate 用的 hint，留下来仍然要做合规修正。
+ *      注意：这里只处理初始 HTML 内联 Flight；客户端导航的 RSC 响应不经过这个
+ *      HTML rewriter，仍由 React/Vite 按需处理资源提示。
  *
  * 性能要点（2026-05 bench 回归 -50% QPS / +200ms p95 后修）：
  *   - SSR HTML 流 ~25 个 chunk，绝大多数不含 `stylesheet`
@@ -42,9 +43,10 @@ const PRECEDENCE = 'vite-rsc/importer-resources';
 const preloadCssLinkTagRe =
   /<link\b(?=[^>]*\brel=(["'])preload\1)(?=[^>]*\bas=(["'])(?:stylesheet|style)\2)[^>]*>/gi;
 
-// FLIGHT_DATA 是放在 `<script>__FLIGHT_DATA.push("...")</script>` 内的 JS 字符串字面量，
-// JSON 里原本的 `"stylesheet"` 被转义成 `\"stylesheet\"`。
-const flightHintStylesheetRe = /(:HL\[\\"[^\\"\n]+\\",)\\"stylesheet\\"/g;
+// FLIGHT_DATA 是放在 `<script>__FLIGHT_DATA.push("...")</script>` 内的 JS 字符串字面量。
+// 初始 HTML 已经把 CSS preload 升级成 stylesheet；这里删除同批 Flight 里的 CSS
+// HL 行，避免客户端重复创建 `<link rel=preload as=style>` 后被浏览器判定 unused。
+const flightCssHintRowRe = /\d+:HL\[\\"[^\\"\n]+\\",\\"(?:stylesheet|style)\\"\](?:\\n|\n)/g;
 
 // 三个触发字面量。任一出现 → 走慢路径（必须 decode + carry，不能边界丢字节）。
 //   - "stylesheet" : 真正要被改写的目标字串
@@ -87,9 +89,7 @@ function upgradePreloadCssTag(tag: string): string {
 }
 
 export function rewritePreloadHints(html: string): string {
-  return html
-    .replace(preloadCssLinkTagRe, upgradePreloadCssTag)
-    .replace(flightHintStylesheetRe, '$1\\"style\\"');
+  return html.replace(preloadCssLinkTagRe, upgradePreloadCssTag).replace(flightCssHintRowRe, '');
 }
 
 /**
@@ -121,6 +121,14 @@ function concatBytes(a: Uint8Array, b: Uint8Array): Uint8Array {
   return out;
 }
 
+function flightRowStart(text: string, hlIndex: number): number {
+  let start = hlIndex;
+  while (start > 0 && text.charCodeAt(start - 1) >= 0x30 && text.charCodeAt(start - 1) <= 0x39) {
+    start--;
+  }
+  return start;
+}
+
 export function standardizePreloadHints(
   stream: ReadableStream<Uint8Array>
 ): ReadableStream<Uint8Array> {
@@ -149,7 +157,8 @@ export function standardizePreloadHints(
         if (triggered) {
           const text = charCarry + decoder.decode(combined, { stream: true });
           const linkStart = text.lastIndexOf('<link');
-          const flightStart = text.lastIndexOf(':HL[');
+          const hlStart = text.lastIndexOf(':HL[');
+          const flightStart = hlStart >= 0 ? flightRowStart(text, hlStart) : -1;
           let splitAt = text.length;
           if (linkStart >= 0) splitAt = Math.min(splitAt, linkStart);
           if (flightStart >= 0) splitAt = Math.min(splitAt, flightStart);
