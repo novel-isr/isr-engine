@@ -377,11 +377,13 @@ function createEndpointQueue(
   const anonymousId = readOrCreateBrowserId(`${baseOptions.key}_anonymous`);
   let timer: number | null = null;
   let retryTimer: number | null = null;
+  let inFlight = false;
   let consecutiveFailures = 0;
   let disposeLifecycleListeners: (() => void) | null = null;
 
   const flush = async (flushOptions: { beacon?: boolean } = {}) => {
     if (queue.length === 0) return;
+    if (!flushOptions.beacon && (inFlight || retryTimer !== null)) return;
     const payloads = queue.splice(0);
     const isError = baseOptions.key.includes('errors');
     const body = JSON.stringify({
@@ -389,9 +391,12 @@ function createEndpointQueue(
       sentAt: Date.now(),
       [isError ? 'reports' : 'events']: payloads,
     });
+    let shouldDrainAfterSuccess = false;
+    inFlight = true;
     try {
       await postJson(baseOptions.endpoint, body, flushOptions.beacon);
       consecutiveFailures = 0;
+      shouldDrainAfterSuccess = !flushOptions.beacon && queue.length >= baseOptions.batchSize;
       if (queue.length === 0) {
         clearRetryTimer();
       }
@@ -400,6 +405,9 @@ function createEndpointQueue(
       queue.splice(baseOptions.maxQueueSize);
       consecutiveFailures += 1;
       scheduleRetry();
+    } finally {
+      inFlight = false;
+      if (shouldDrainAfterSuccess) void flush();
     }
   };
 

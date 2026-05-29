@@ -115,7 +115,23 @@ describe('installBrowserObservability', () => {
       expect(fetchMock).toHaveBeenCalledTimes(3);
     });
 
-    const eventBody = JSON.parse(fetchMock.mock.calls[0]?.[1]?.body as string);
+    const analyticsBodies = fetchMock.mock.calls
+      .filter(([endpoint]) => endpoint === '/analytics')
+      .map(([, init]) => JSON.parse(init?.body as string));
+    const errorBody = JSON.parse(
+      fetchMock.mock.calls.find(([endpoint]) => endpoint === '/errors')?.[1]?.body as string
+    );
+
+    const eventBody = analyticsBodies.find(body =>
+      body.events.some((event: { name?: string }) => event.name === 'review.submit')
+    );
+    const metricBody = analyticsBodies.find(body =>
+      body.events.some(
+        (event: { name?: string; properties?: { metric?: string } }) =>
+          event.name === 'metric' && event.properties?.metric === 'search.latency'
+      )
+    );
+
     expect(eventBody.events[0]).toMatchObject({
       name: 'review.submit',
       properties: { bookId: 'b1', score: 5 },
@@ -123,7 +139,6 @@ describe('installBrowserObservability', () => {
       user: { id: 'u1', tenantId: 'tenant-a', segment: 'paid' },
     });
 
-    const metricBody = JSON.parse(fetchMock.mock.calls[1]?.[1]?.body as string);
     expect(metricBody.events[0]).toMatchObject({
       name: 'metric',
       properties: {
@@ -135,7 +150,6 @@ describe('installBrowserObservability', () => {
       tags: { route: '/search' },
     });
 
-    const errorBody = JSON.parse(fetchMock.mock.calls[2]?.[1]?.body as string);
     expect(errorBody.reports[0]).toMatchObject({
       message: 'domain failed',
       source: 'rating-widget',
@@ -338,6 +352,46 @@ describe('installBrowserObservability', () => {
       expect(fetchMock).toHaveBeenCalledTimes(2);
     });
     expect(listeners.online).toBeTypeOf('function');
+    handle.shutdown();
+  });
+
+  it('does not let the interval spam uploads while a retry is pending', async () => {
+    vi.useFakeTimers();
+    installBrowserGlobals();
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(new Response('{}', { status: 503 }))
+      .mockResolvedValue(new Response('{}', { status: 202 }));
+    vi.stubGlobal('fetch', fetchMock);
+
+    const handle = await installBrowserObservability({
+      app: 'novel-rating',
+      analytics: {
+        endpoint: '/analytics',
+        batchSize: 1,
+        flushIntervalMs: 1000,
+        webVitals: false,
+        trackInitialPage: false,
+        retryBaseDelayMs: 10_000,
+        retryMaxDelayMs: 10_000,
+      },
+      errorReporting: false,
+    });
+
+    handle.track('retry.pending');
+
+    await vi.waitFor(() => {
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+    });
+
+    await vi.advanceTimersByTimeAsync(5000);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+
+    await vi.advanceTimersByTimeAsync(8000);
+    await vi.waitFor(() => {
+      expect(fetchMock).toHaveBeenCalledTimes(2);
+    });
+
     handle.shutdown();
   });
 });
