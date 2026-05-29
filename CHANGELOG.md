@@ -8,6 +8,23 @@
 
 ---
 
+## [2.5.10] - 2026-05-29
+
+发布主题：**browser telemetry 上传退避保护**。
+
+### Fixed
+
+- 修复浏览器端 analytics / error-reporting endpoint 临时断连时，固定 flush interval 和 retry timer
+  叠加导致同一批 payload 重复并发上传的问题。
+- 上传队列现在保证同一 endpoint 同时只有一个普通 flush；失败期间只由退避 retry 驱动，成功后再继续排空已达到
+  `batchSize` 的后续队列。
+
+### Added
+
+- 增加 browser observability 单测，覆盖 retry pending 期间 interval 不刷屏的行为。
+
+---
+
 ## [2.5.9] - 2026-05-16
 
 发布主题：**LCP element render delay 修复 —— scoped-by-route CSS blocking 注入**。
