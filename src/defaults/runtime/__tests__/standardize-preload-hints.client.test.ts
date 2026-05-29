@@ -20,11 +20,20 @@ beforeAll(() => {
 });
 
 describe('installClientPreloadHintFix (setAttribute 路径)', () => {
-  it('rel=preload + as=stylesheet → 自动改成 as=style', () => {
+  it('rel=preload + as=stylesheet → 自动改成 as=style + crossorigin=anonymous', () => {
     const link = document.createElement('link');
     link.setAttribute('rel', 'preload');
     link.setAttribute('as', 'stylesheet');
     expect(link.getAttribute('as')).toBe('style');
+    expect(link.getAttribute('crossorigin')).toBe('anonymous');
+  });
+
+  it('属性顺序为 as → rel 时同样标准化 CSS preload', () => {
+    const link = document.createElement('link');
+    link.setAttribute('as', 'stylesheet');
+    link.setAttribute('rel', 'preload');
+    expect(link.getAttribute('as')).toBe('style');
+    expect(link.getAttribute('crossorigin')).toBe('anonymous');
   });
 
   it('rel != preload 时不改 (兼容 rel=stylesheet 等合法用法)', () => {
@@ -32,6 +41,7 @@ describe('installClientPreloadHintFix (setAttribute 路径)', () => {
     link.setAttribute('rel', 'stylesheet');
     link.setAttribute('as', 'stylesheet');
     expect(link.getAttribute('as')).toBe('stylesheet');
+    expect(link.hasAttribute('crossorigin')).toBe(false);
   });
 
   it('已合法的 as=style / as=image 透传不变', () => {
@@ -39,11 +49,13 @@ describe('installClientPreloadHintFix (setAttribute 路径)', () => {
     link1.setAttribute('rel', 'preload');
     link1.setAttribute('as', 'style');
     expect(link1.getAttribute('as')).toBe('style');
+    expect(link1.getAttribute('crossorigin')).toBe('anonymous');
 
     const link2 = document.createElement('link');
     link2.setAttribute('rel', 'preload');
     link2.setAttribute('as', 'image');
     expect(link2.getAttribute('as')).toBe('image');
+    expect(link2.hasAttribute('crossorigin')).toBe(false);
   });
 
   it('attribute 名大小写不敏感 (AS) + value 不敏感 (STYLESHEET) 都纠正', () => {
