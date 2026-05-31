@@ -369,7 +369,7 @@ export { extractRoutesForSitemap, nodeToWebRequest, pipeWebResponse }  // start.
   全过 → `pnpm publish --access restricted` 到私有 npm registry。
   退化 P95 > +20% 或 QPS < -15% 自动 block publish。
 - **`.github/workflows/ci.yml`** 触发器扩到 `branches: ['**']`（feature 分支也跑 lint/test）
-- **`.github/workflows/bench.yml`** 用 self-contained fixture 替代 sibling 依赖
+- **`.github/workflows/bench.yml`** 用 self-contained bench app 替代 sibling 依赖
 
 ### Changed — 行为修改（所有都是无感升级）
 
@@ -441,7 +441,7 @@ export { extractRoutesForSitemap, nodeToWebRequest, pipeWebResponse }  // start.
 - **CI 触发太窄** —— 之前 `branches: [main, develop]` 让 feature 分支裸奔，
   改为 `branches: ['**']`。
 
-### Performance — bench fixture baseline
+### Performance — bench baseline
 
 10/100/1000/10000 conn × 3 paths（单核 macOS dev 机器，仅供新提交对比，不代表
 绝对性能）：
