@@ -154,6 +154,7 @@ export class RedisCacheAdapter implements ICacheAdapter {
   private usingFallback = false;
   private healthCheckTimer: ReturnType<typeof setInterval> | null = null;
   private destroyed = false;
+  private connectionPromise: Promise<void> | null = null;
 
   constructor(config: Partial<RedisCacheConfig> = {}) {
     const merged: RedisCacheConfig = { ...DEFAULT_CONFIG, ...config };
@@ -165,8 +166,14 @@ export class RedisCacheAdapter implements ICacheAdapter {
       this.fallback = new MemoryCacheAdapter(this.config.fallbackConfig);
     }
 
-    // 异步初始化连接（不阻塞构造函数）
-    this.initConnection();
+    // 异步初始化连接（不阻塞构造函数）；公开方法会在首次调用时等待这次初始化完成，
+    // 避免连接尚未建立就误走 fallback 或对 null redis client 发命令。
+    this.connectionPromise = this.initConnection();
+  }
+
+  private async waitForInitialConnection(): Promise<void> {
+    if (this.destroyed || !this.connecting || !this.connectionPromise) return;
+    await this.connectionPromise;
   }
 
   /**
@@ -257,6 +264,7 @@ export class RedisCacheAdapter implements ICacheAdapter {
       this.enableFallbackMode();
     } finally {
       this.connecting = false;
+      this.connectionPromise = null;
     }
   }
 
@@ -343,6 +351,7 @@ export class RedisCacheAdapter implements ICacheAdapter {
   // ─── ICacheAdapter 实现 ─────────────────────────────────
 
   async get<T = unknown>(key: string): Promise<T | undefined> {
+    await this.waitForInitialConnection();
     const fallbackAdapter = this.getActiveAdapter();
     if (fallbackAdapter) {
       return fallbackAdapter.get<T>(key);
@@ -367,6 +376,7 @@ export class RedisCacheAdapter implements ICacheAdapter {
   }
 
   async set<T = unknown>(key: string, value: T, options?: CacheSetOptions): Promise<void> {
+    await this.waitForInitialConnection();
     const fallbackAdapter = this.getActiveAdapter();
     if (fallbackAdapter) {
       return fallbackAdapter.set(key, value, options);
@@ -411,6 +421,7 @@ export class RedisCacheAdapter implements ICacheAdapter {
   }
 
   async has(key: string): Promise<boolean> {
+    await this.waitForInitialConnection();
     const fallbackAdapter = this.getActiveAdapter();
     if (fallbackAdapter) {
       return fallbackAdapter.has(key);
@@ -426,6 +437,7 @@ export class RedisCacheAdapter implements ICacheAdapter {
   }
 
   async delete(key: string): Promise<boolean> {
+    await this.waitForInitialConnection();
     const fallbackAdapter = this.getActiveAdapter();
     if (fallbackAdapter) {
       return fallbackAdapter.delete(key);
@@ -441,6 +453,7 @@ export class RedisCacheAdapter implements ICacheAdapter {
   }
 
   async clear(): Promise<void> {
+    await this.waitForInitialConnection();
     const fallbackAdapter = this.getActiveAdapter();
     if (fallbackAdapter) {
       return fallbackAdapter.clear();
@@ -474,6 +487,7 @@ export class RedisCacheAdapter implements ICacheAdapter {
   }
 
   async getMany<T = unknown>(keys: string[]): Promise<Map<string, T | undefined>> {
+    await this.waitForInitialConnection();
     const result = new Map<string, T | undefined>();
 
     const fallbackAdapter = this.getActiveAdapter();
@@ -518,6 +532,7 @@ export class RedisCacheAdapter implements ICacheAdapter {
   async setMany<T = unknown>(
     entries: Array<{ key: string; value: T; options?: CacheSetOptions }>
   ): Promise<void> {
+    await this.waitForInitialConnection();
     const fallbackAdapter = this.getActiveAdapter();
     if (fallbackAdapter) {
       return fallbackAdapter.setMany(entries);
@@ -560,6 +575,7 @@ export class RedisCacheAdapter implements ICacheAdapter {
   }
 
   async invalidateByTag(tag: string): Promise<number> {
+    await this.waitForInitialConnection();
     const fallbackAdapter = this.getActiveAdapter();
     if (fallbackAdapter) {
       return fallbackAdapter.invalidateByTag(tag);
@@ -593,6 +609,7 @@ export class RedisCacheAdapter implements ICacheAdapter {
   }
 
   async inspect(limit: number): Promise<CacheInspectionItem[]> {
+    await this.waitForInitialConnection();
     const cap = limit > 0 ? limit : 500;
     // 降级模式（fallback memory）→ 委托给内存 adapter
     const fallbackAdapter = this.getActiveAdapter();

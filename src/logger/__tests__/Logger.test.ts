@@ -36,7 +36,8 @@ afterEach(() => {
 function getLoggedMessages(): string[] {
   // eslint-disable-next-line no-control-regex
   const ansiRe = /\[[0-9;]*m/g;
-  return consoleLogSpy.mock.calls.map(call => String(call[0] ?? '').replace(ansiRe, ''));
+  const calls = consoleLogSpy.mock.calls as unknown[][];
+  return calls.map(call => String(call[0] ?? '').replace(ansiRe, ''));
 }
 
 describe('Logger.getInstance —— 单例', () => {
