@@ -46,7 +46,14 @@ const preloadCssLinkTagRe =
 // FLIGHT_DATA 是放在 `<script>__FLIGHT_DATA.push("...")</script>` 内的 JS 字符串字面量。
 // 初始 HTML 已经把 CSS preload 升级成 stylesheet；这里删除同批 Flight 里的 CSS
 // HL 行，避免客户端重复创建 `<link rel=preload as=style>` 后被浏览器判定 unused。
-const flightCssHintRowRe = /\d+:HL\[\\"[^\\"\n]+\\",\\"(?:stylesheet|style)\\"\](?:\\n|\n)/g;
+//
+// React/Vite 的 HL tuple 不稳定：除了 `HL["/a.css","stylesheet"]`，也可能带
+// crossOrigin / precedence 等额外字段，或在局部测试里以未转义字符串出现。匹配时
+// 必须同时要求 href 是 CSS 且 hint 类型是 style/stylesheet，避免误删 font/script hint。
+const escapedFlightCssHintRowRe =
+  /\d+:HL\[\\"[^\\"]+\.css(?:[?#][^\\"]*)?\\",\\"(?:stylesheet|style)\\"(?:,[^\n]*?)?\](?:\\n|\n)?/g;
+const plainFlightCssHintRowRe =
+  /\d+:HL\["[^"]+\.css(?:[?#][^"]*)?","(?:stylesheet|style)"(?:,[^\n]*?)?\](?:\\n|\n)?/g;
 
 // 三个触发字面量。任一出现 → 走慢路径（必须 decode + carry，不能边界丢字节）。
 //   - "stylesheet" : 真正要被改写的目标字串
@@ -89,7 +96,10 @@ function upgradePreloadCssTag(tag: string): string {
 }
 
 export function rewritePreloadHints(html: string): string {
-  return html.replace(preloadCssLinkTagRe, upgradePreloadCssTag).replace(flightCssHintRowRe, '');
+  return html
+    .replace(preloadCssLinkTagRe, upgradePreloadCssTag)
+    .replace(escapedFlightCssHintRowRe, '')
+    .replace(plainFlightCssHintRowRe, '');
 }
 
 /**

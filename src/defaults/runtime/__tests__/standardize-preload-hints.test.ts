@@ -105,6 +105,31 @@ describe('rewritePreloadHints (string-level)', () => {
     const out = rewritePreloadHints(input);
     expect(out).toBe('""');
   });
+
+  it('FLIGHT_DATA CSS 提示带额外字段时也会去重', () => {
+    const input =
+      '"1:HL[\\"/assets/index-3Yw05LK4.css\\",\\"style\\",{\\"crossOrigin\\":\\"\\"}]\\n' +
+      '2:HL[\\"/assets/ReviewDetailPage-CcI_Jkfk.css?direct\\",\\"stylesheet\\",{\\"precedence\\":\\"route\\"}]\\n"';
+    const out = rewritePreloadHints(input);
+    expect(out).toBe('""');
+  });
+
+  it('未转义形态的 Flight CSS 提示也会去重，非 CSS resource hint 保留', () => {
+    const input =
+      '1:HL["/assets/ReviewDetailPage.css","style",{"crossOrigin":""}]\n' +
+      '2:HL["/assets/app.js","script"]\n' +
+      '3:HL["/fonts/site.woff2","font",{"crossOrigin":""}]\n';
+    const out = rewritePreloadHints(input);
+    expect(out).not.toContain('/assets/ReviewDetailPage.css');
+    expect(out).toContain('2:HL["/assets/app.js","script"]');
+    expect(out).toContain('3:HL["/fonts/site.woff2","font"');
+  });
+
+  it('Flight CSS 提示没有换行结尾时也会去重', () => {
+    const input = '"1:HL[\\"/assets/index.css\\",\\"style\\",{\\"crossOrigin\\":\\"\\"}]"';
+    const out = rewritePreloadHints(input);
+    expect(out).toBe('""');
+  });
 });
 
 describe('standardizePreloadHints (stream)', () => {
