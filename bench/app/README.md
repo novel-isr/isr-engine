@@ -1,6 +1,6 @@
-# bench-fixture
+# bench-app
 
-最小可启动的 ISR fixture —— 专供 CI bench 用。**不是 demo**，目标是用最少业务代码
+最小可启动的 ISR bench 应用 —— 专供 CI bench 用。**不是 demo**，目标是用最少业务代码
 覆盖 engine 的所有关键渲染路径，让 bench 测出来的 QPS / P95 直接对应 engine
 中间件的真实性能。
 
@@ -25,7 +25,7 @@
 ## 用法（CI 自动跑；手动也能跑）
 
 ```bash
-cd bench/fixture
+cd bench/app
 pnpm install --no-frozen-lockfile
 pnpm run build
 PORT=3000 pnpm start
@@ -43,5 +43,5 @@ CI 会设置 `BENCH_RUNNER_ID=github-actions-ubuntu-latest-x64-node22`。`bench/
 
 ## CI 集成
 
-`.github/workflows/bench.yml` 的 fixture 步骤直接 `cd bench/fixture` → build → start。
+`.github/workflows/bench.yml` 的 bench app 步骤直接 `cd bench/app` → build → start。
 **不依赖 sibling 业务项目**，bench job 在任何 fork / 任何 GitHub Actions checkout 都能跑。

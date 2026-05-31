@@ -182,7 +182,7 @@ export interface RuntimeSeoConfig {
 }
 
 export interface RuntimeServicesConfig {
-  /** 默认后端 API origin；业务数据、配置中心、mock fixture 都走这里 */
+  /** 默认后端 API origin；业务数据、配置中心、mock 数据都走这里 */
   api: string | undefined;
   /** telemetry 上报 origin；不配置时回退到 api，同源部署可留空 */
   telemetry: string | undefined;

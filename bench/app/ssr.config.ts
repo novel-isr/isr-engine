@@ -1,5 +1,5 @@
 /**
- * Bench fixture 路由配置 —— 覆盖 ISR 引擎的所有关键路径
+ * Bench app 路由配置 —— 覆盖 ISR 引擎的所有关键路径
  *
  * 路由策略：
  *   /              → ISR (TTL=60s, SWR=300s)  → 测 HIT/MISS/STALE 全链路
@@ -63,6 +63,10 @@ const config: ISRConfig = {
       },
       metrics: {
         enabled: process.env.ENABLE_METRICS === '1',
+        public: false,
+      },
+      inventory: {
+        enabled: false,
         public: false,
       },
     },

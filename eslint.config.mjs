@@ -36,9 +36,9 @@ export default [
       'tmp/**',
       'temp/**',
       '*.log',
-      // bench/fixture + examples/* 都是独立 package（自己的 node_modules + tsconfig）
+      // bench/app + examples/* 都是独立 package（自己的 node_modules + tsconfig）
       // 不进 engine 主 lint, 它们各自的代码风格用各自的工具链管
-      'bench/fixture/**',
+      'bench/app/**',
       'examples/**',
     ],
   },

@@ -5,7 +5,7 @@ name: Bench (perf regression gate)
 #   - 用 bench/compare.mjs 对比 bench/baseline.json，退化 > 20% 阻断
 #   - 没有 baseline 时（首次跑 / 新分支）自动 skip，避免空检验阻塞
 #
-# Fixture：bench/fixture/ —— 自带的最小 ISR 应用，无 sibling 依赖
+# Bench app：bench/app/ —— 自带的最小 ISR 应用，无 sibling 依赖
 #   GitHub Actions checkout 只拉本仓库就够跑，不需要 ../novel-rating-website
 
 on:
@@ -33,7 +33,7 @@ on:
       - 'src/middlewares/**'
       - 'src/cache/**'
       - 'bench/*.mjs'
-      - 'bench/fixture/**'
+      - 'bench/app/**'
       - 'bench/baseline.json'
       - '.github/workflows/bench.yml'
 
@@ -69,7 +69,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ${{ steps.pnpm-store.outputs.path }}
-          key: ${{ runner.os }}-node-${{ hashFiles('.nvmrc') }}-pnpm-${{ hashFiles('pnpm-lock.yaml', 'bench/fixture/pnpm-lock.yaml') }}
+          key: ${{ runner.os }}-node-${{ hashFiles('.nvmrc') }}-pnpm-${{ hashFiles('pnpm-lock.yaml', 'bench/app/pnpm-lock.yaml') }}
           restore-keys: |
             ${{ runner.os }}-node-${{ hashFiles('.nvmrc') }}-pnpm-
 
@@ -86,33 +86,33 @@ jobs:
       - name: Build engine
         run: pnpm run build
 
-      - name: Install bench-fixture deps
-        working-directory: bench/fixture
+      - name: Install bench app deps
+        working-directory: bench/app
         run: pnpm install --no-frozen-lockfile
 
-      - name: Build bench-fixture
-        working-directory: bench/fixture
+      - name: Build bench app
+        working-directory: bench/app
         run: pnpm run build
 
-      - name: Start bench-fixture in background
-        working-directory: bench/fixture
+      - name: Start bench app in background
+        working-directory: bench/app
         env:
           PORT: '3000'
           NODE_ENV: 'production'
           SITE_URL: 'http://localhost:3000'
         run: |
-          pnpm run start > /tmp/fixture.log 2>&1 &
-          echo $! > /tmp/fixture.pid
+          pnpm run start > /tmp/bench-app.log 2>&1 &
+          echo $! > /tmp/bench-app.pid
           # 等服务起来：最多 30 秒
           for i in $(seq 1 30); do
             if curl -sf http://localhost:3000/ > /dev/null 2>&1; then
-              echo "fixture up after ${i}s"
+              echo "bench app up after ${i}s"
               exit 0
             fi
             sleep 1
           done
-          echo "fixture failed to start in 30s; logs:"
-          cat /tmp/fixture.log
+          echo "bench app failed to start in 30s; logs:"
+          cat /tmp/bench-app.log
           exit 1
 
       - name: Run bench
@@ -140,11 +140,11 @@ jobs:
             echo "to seed: copy bench-current.json to bench/baseline.json and commit"
           fi
 
-      - name: Stop bench-fixture
+      - name: Stop bench app
         if: always()
         run: |
-          if [ -f /tmp/fixture.pid ]; then
-            kill $(cat /tmp/fixture.pid) || true
+          if [ -f /tmp/bench-app.pid ]; then
+            kill $(cat /tmp/bench-app.pid) || true
           fi
 
       - name: Upload bench artifacts
@@ -154,5 +154,5 @@ jobs:
           name: bench-current-${{ github.sha }}
           path: |
             bench-current.json
-            /tmp/fixture.log
+            /tmp/bench-app.log
           retention-days: 30

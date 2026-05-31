@@ -3,7 +3,7 @@
  *
  * **范围说明**（v2.1 起准确命名）：
  *   本文件 *不* 启动 ISREngine / Express server / RSC handler。那是真正的端到端
- *   测试范畴，需要 fixture entry.server.tsx —— 用 bench/fixture/ 跑端到端覆盖。
+ *   测试范畴，需要完整 entry.server.tsx —— 用 bench/app/ 跑端到端覆盖。
  *
  *   本文件聚焦多模块协作契约（中间件层 + revalidate 分发层）：
  *

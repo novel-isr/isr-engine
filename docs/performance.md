@@ -18,7 +18,7 @@
 - **加 4 核 / Cluster**：QPS ×4 几乎线性
 
 baseline：[`bench/baseline.json`](../bench/baseline.json) ——
-由 [`bench/fixture/`](../bench/fixture/) 跑出。
+由 [`bench/app/`](../bench/app/) 跑出。
 
 ## 复现命令
 

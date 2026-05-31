@@ -5,7 +5,7 @@
  *   - MemoryCacheAdapter：返回元数据 + 跳过已过期但未 evict 的 entry + 守 limit
  *   - RedisCacheAdapter：通过 ioredis-mock 验证 SCAN 路径不阻塞 + 守 limit + keyPrefix 边界
  */
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import IoRedisMock from 'ioredis-mock';
 import { MemoryCacheAdapter } from '../MemoryCacheAdapter';
 import { RedisCacheAdapter } from '../RedisCacheAdapter';
@@ -64,21 +64,13 @@ describe('MemoryCacheAdapter.inspect()', () => {
 });
 
 describe('RedisCacheAdapter.inspect() —— ioredis-mock', () => {
-  // ioredis-mock 默认实例间共享数据 —— 每个测试前清空，避免上一个测试残留 key
-  // 污染下一个测试或其他 test file（如 RedisCacheAdapter.e2e.test.ts）。
-  beforeEach(async () => {
-    const cleaner = new IoRedisMock();
-    await cleaner.flushall();
-    await cleaner.quit();
-  });
-
   it('SCAN 返回 keyPrefix 内所有 key + STRLEN/TTL 元数据', async () => {
     const adapter = new RedisCacheAdapter({
       host: 'localhost',
+      port: 16379,
       keyPrefix: 'inv-test:',
       enableFallback: false,
     });
-    await new Promise(r => setTimeout(r, 200)); // 等连接
     await adapter.set('a', 1, { ttl: 60 });
     await adapter.set('b', 2, { ttl: 120 });
     await adapter.set('c', { nested: 'data' }, { ttl: 30 });
@@ -98,10 +90,10 @@ describe('RedisCacheAdapter.inspect() —— ioredis-mock', () => {
   it('limit 截断（cap=2）', async () => {
     const adapter = new RedisCacheAdapter({
       host: 'localhost',
+      port: 16380,
       keyPrefix: 'inv-test-limit:',
       enableFallback: false,
     });
-    await new Promise(r => setTimeout(r, 200));
     for (let i = 0; i < 10; i++) {
       await adapter.set(`k${i}`, i, { ttl: 60 });
     }
@@ -111,25 +103,27 @@ describe('RedisCacheAdapter.inspect() —— ioredis-mock', () => {
   });
 
   it('keyPrefix 边界 —— 不会扫到其他 prefix 的 key', async () => {
-    const a1 = new RedisCacheAdapter({
+    const adapter = new RedisCacheAdapter({
       host: 'localhost',
+      port: 16381,
       keyPrefix: 'app1:',
       enableFallback: false,
     });
-    const a2 = new RedisCacheAdapter({
-      host: 'localhost',
-      keyPrefix: 'app2:',
-      enableFallback: false,
-    });
-    await new Promise(r => setTimeout(r, 200));
-    await a1.set('shared-key-name', 'app1-value', { ttl: 60 });
-    await a2.set('shared-key-name', 'app2-value', { ttl: 60 });
+    await adapter.set('shared-key-name', 'app1-value', { ttl: 60 });
 
-    const items1 = await a1.inspect(0);
+    const rawRedis = new IoRedisMock({
+      host: 'localhost',
+      port: 16381,
+      lazyConnect: true,
+    });
+    await rawRedis.connect();
+    await rawRedis.set('app2:shared-key-name', 'app2-value');
+
+    const items1 = await adapter.inspect(0);
     expect(items1).toHaveLength(1);
     // ioredis-mock 对 keyPrefix 的 SCAN 行为：返回值已自动剥前缀（与 ioredis 真实行为一致）
     expect(items1[0].key).toBe('shared-key-name');
-    await a1.destroy();
-    await a2.destroy();
+    await rawRedis.quit();
+    await adapter.destroy();
   });
 });

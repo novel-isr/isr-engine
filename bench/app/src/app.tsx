@@ -1,5 +1,5 @@
 /**
- * Bench fixture App —— minimal Server Component routing
+ * Bench app —— minimal Server Component routing
  *
  * Routes:
  *   /           Home (ISR)       exercises HIT/MISS/STALE + cacheTag

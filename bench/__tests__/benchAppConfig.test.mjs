@@ -1,8 +1,8 @@
 import { describe, expect, it } from 'vitest';
 
-import config from '../fixture/ssr.config.ts';
+import config from '../app/ssr.config.ts';
 
-describe('bench fixture config', () => {
+describe('bench app config', () => {
   it('uses top-level revalidate and no public cache/server hardening knobs', () => {
     expect(config.revalidate).toBe(60);
     expect(config).not.toHaveProperty('seo');

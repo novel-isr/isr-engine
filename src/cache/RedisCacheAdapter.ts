@@ -228,6 +228,7 @@ export class RedisCacheAdapter implements ICacheAdapter {
 
       // 事件监听
       this.redis.on('connect', () => {
+        if (this.destroyed) return;
         this.connected = true;
         this.usingFallback = false;
         this.logger.info('✅ Redis 缓存已连接');
@@ -237,6 +238,7 @@ export class RedisCacheAdapter implements ICacheAdapter {
       });
 
       this.redis.on('error', err => {
+        if (this.destroyed) return;
         this.logger.warn(`⚠️ Redis 错误: ${err.message}`);
         if (this.connected) {
           this.connected = false;
@@ -245,12 +247,14 @@ export class RedisCacheAdapter implements ICacheAdapter {
       });
 
       this.redis.on('close', () => {
+        if (this.destroyed) return;
         this.connected = false;
         this.logger.warn('⚠️ Redis 连接断开');
         this.enableFallbackMode();
       });
 
       this.redis.on('reconnecting', () => {
+        if (this.destroyed) return;
         this.logger.info('🔄 Redis 正在重连...');
       });
 
