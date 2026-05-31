@@ -76,6 +76,6 @@ curl -sI http://localhost:3000/health  | grep x-cache-status   # BYPASS
 
 ## 想看更复杂的
 
-- bench fixture（含动态 route + 多 path）：[bench/fixture/](../../bench/fixture/)
+- bench app（含动态 route + 多 path）：[bench/app/](../../bench/app/)
 - 全套接入指南：[docs/getting-started.md](../../docs/getting-started.md)
 - 每个 hook 怎么挂：[docs/site-hooks.md](../../docs/site-hooks.md)

@@ -287,9 +287,9 @@ Alt-Svc / Early Hints 中间件（≈400 行）。
 
 **examples/hello-world/README.md** —— 演示"4 条渲染路径"含 `pnpm fallback` 输出 `dist/spa/`，但本示例 vite.config 不构建独立 SPA bundle、`fallback` 是 runtime 代理不是 build 步骤。改写为"3 种用户级渲染模式"。
 
-**bench/fixture/README.md** —— 多处过期路径（`scripts/bench-fixture` → `bench/fixture`）+ 不存在的"挂上 rateLimit / experiments"声明 + 引用已删 root `ssr.config.example.ts`。重写。
+**bench/app/README.md** —— 多处过期路径（旧 bench 脚本 → `bench/app`）+ 不存在的"挂上 rateLimit / experiments"声明 + 引用已删 root `ssr.config.example.ts`。重写。
 
-**bench/fixture/package.json** —— 删未使用的 `@vitejs/plugin-react` 死依赖。
+**bench/app/package.json** —— 删未使用的 `@vitejs/plugin-react` 死依赖。
 
 ### Performance
 
@@ -353,7 +353,7 @@ export { extractRoutesForSitemap, nodeToWebRequest, pipeWebResponse }  // start.
 
 #### Bench 流水线
 
-- `bench/fixture/` —— self-contained 最小 ISR 应用，覆盖 ISR / SSG / 动态 ISR / SSR
+- `bench/app/` —— self-contained 最小 ISR 应用，覆盖 ISR / SSG / 动态 ISR / SSR
   四种渲染路径。CI 不再依赖 sibling 业务 repo
 - `bench/utils.mjs` —— 抽出可单测的 `extractP95` + `sleep` helpers
 - `bench/baseline.json` —— 10/100/1000 conn × 3 paths 的代表性 baseline
@@ -428,14 +428,14 @@ export { extractRoutesForSitemap, nodeToWebRequest, pipeWebResponse }  // start.
 - **`pnpm.overrides`：path-to-regexp 精确 pin `0.1.13`**（旧 `>=0.1.13`
   解析到 8.x，express 4.21 报 `pathRegexp is not a function`）。
 - **ESLint**：测试文件 override 关闭 `no-empty-function` + `no-non-null-assertion`
-  + `bench-fixture/**` 全 ignore。生产代码规则不变。
+  + `bench/app/**` 全 ignore。生产代码规则不变。
 
 ### Fixed — Bug 修复
 
 - **`bench.yml` 之前永远 skip** —— 旧版用 `if [ -f "../novel-rating-website/..." ]`
   在 GitHub Actions clean checkout 上永远 false。每次 nightly cron / dispatch /
   perf-sensitive PR 都是 `available=false` 一行 warning 静默跳过。**现已替换为
-  self-contained `bench/fixture/`，CI 实际跑 bench**。
+  self-contained `bench/app/`，CI 实际跑 bench**。
 - **bench-compare 路径错** —— 之前指向 `scripts/bench-baseline.json`，实际文件
   在 `bench/baseline.json`，对比永远 skip。
 - **CI 触发太窄** —— 之前 `branches: [main, develop]` 让 feature 分支裸奔，

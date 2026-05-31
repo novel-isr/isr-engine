@@ -26,9 +26,9 @@ export default defineConfig({
       'src/defaults/entry.tsx',
       'src/defaults/entry.server.tsx',
       'src/defaults/entry.server.ssr.tsx',
-      // bench-fixture 是独立 sub-package，它的 node_modules 含自己 deps 的测试，
+      // bench app 是独立 sub-package，它的 node_modules 含自己 deps 的测试，
       // 不应该被引擎主测套覆盖
-      'bench/fixture/**',
+      'bench/app/**',
     ],
     environment: 'node',
     globals: false,
