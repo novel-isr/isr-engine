@@ -245,7 +245,7 @@ function createEndpointAnalyticsClient(
       });
     },
     installWebVitals() {
-      return installFallbackWebVitals(base);
+      return installFallbackWebVitals(base, options.includeQueryString);
     },
     flush() {
       return base.flush();
@@ -485,12 +485,16 @@ function createEndpointQueue(
   return { enqueue, flush, shutdown };
 }
 
-function installFallbackWebVitals(base: ReturnType<typeof createEndpointQueue>): () => void {
+function installFallbackWebVitals(
+  base: ReturnType<typeof createEndpointQueue>,
+  includeQueryString?: boolean
+): () => void {
   if (!isBrowser() || typeof PerformanceObserver === 'undefined') return () => {};
   const cleanups: Array<() => void> = [];
   let cls = 0;
   let lcp = 0;
   let inp = 0;
+  let inpEntry: (PerformanceEntry & Record<string, unknown>) | undefined;
 
   const observe = (
     type: string,
@@ -512,7 +516,10 @@ function installFallbackWebVitals(base: ReturnType<typeof createEndpointQueue>):
 
   observe('paint', entry => {
     if (entry.name === 'first-contentful-paint') {
-      base.enqueue({ name: 'web_vital', properties: { name: 'FCP', value: entry.startTime } });
+      base.enqueue({
+        name: 'web_vital',
+        properties: createWebVitalPayload('FCP', entry.startTime, includeQueryString, entry),
+      });
     }
   });
   observe('largest-contentful-paint', entry => {
@@ -531,7 +538,10 @@ function installFallbackWebVitals(base: ReturnType<typeof createEndpointQueue>):
         typeof entry.interactionId === 'number' &&
         entry.interactionId > 0
       ) {
-        inp = Math.max(inp, entry.duration);
+        if (entry.duration >= inp) {
+          inp = entry.duration;
+          inpEntry = entry;
+        }
       }
     },
     { durationThreshold: 40 }
@@ -541,19 +551,19 @@ function installFallbackWebVitals(base: ReturnType<typeof createEndpointQueue>):
     if (lcp > 0) {
       base.enqueue({
         name: 'web_vital',
-        properties: { name: 'LCP', value: lcp },
+        properties: createWebVitalPayload('LCP', lcp, includeQueryString),
       });
     }
     if (inp > 0) {
       base.enqueue({
         name: 'web_vital',
-        properties: { name: 'INP', value: inp },
+        properties: createWebVitalPayload('INP', inp, includeQueryString, inpEntry),
       });
     }
     if (cls > 0) {
       base.enqueue({
         name: 'web_vital',
-        properties: { name: 'CLS', value: cls },
+        properties: createWebVitalPayload('CLS', cls, includeQueryString),
       });
     }
   };
@@ -564,7 +574,12 @@ function installFallbackWebVitals(base: ReturnType<typeof createEndpointQueue>):
   if (nav) {
     base.enqueue({
       name: 'web_vital',
-      properties: { name: 'TTFB', value: nav.responseStart },
+      properties: createWebVitalPayload(
+        'TTFB',
+        nav.responseStart,
+        includeQueryString,
+        nav as unknown as PerformanceEntry & Record<string, unknown>
+      ),
     });
   }
 
@@ -578,6 +593,38 @@ function installFallbackWebVitals(base: ReturnType<typeof createEndpointQueue>):
     document.removeEventListener('visibilitychange', flushIfHidden);
   });
   return () => cleanups.splice(0).forEach(cleanup => cleanup());
+}
+
+type WebVitalName = 'CLS' | 'FCP' | 'INP' | 'LCP' | 'TTFB';
+
+function createWebVitalPayload(
+  name: WebVitalName,
+  value: number,
+  includeQueryString?: boolean,
+  entry?: PerformanceEntry & Record<string, unknown>
+): Record<string, unknown> {
+  const payload: Record<string, unknown> = {
+    name,
+    value,
+    href: currentHref(includeQueryString),
+    path: currentPath(includeQueryString),
+    route: currentRoute(),
+    title: isBrowser() && typeof document.title === 'string' ? document.title : undefined,
+    navigationType: currentNavigationType(),
+    visibilityState:
+      isBrowser() && typeof document.visibilityState === 'string'
+        ? document.visibilityState
+        : undefined,
+    device: currentDevice(),
+    viewport: currentViewport(),
+    connection: currentConnection(),
+    entryType: entry?.entryType,
+    startTime: typeof entry?.startTime === 'number' ? entry.startTime : undefined,
+  };
+  const target = pickPerformanceTarget(entry);
+  if (target) payload.target = target;
+  if (typeof entry?.interactionId === 'number') payload.interactionId = entry.interactionId;
+  return payload;
 }
 
 async function postJson(endpoint: string, body: string, beacon?: boolean): Promise<void> {
@@ -602,6 +649,99 @@ function currentPath(includeQueryString?: boolean): string {
   if (!isBrowser()) return '/';
   const { pathname, search } = window.location;
   return includeQueryString ? `${pathname}${search}` : pathname;
+}
+
+function currentHref(includeQueryString?: boolean): string | undefined {
+  if (!isBrowser()) return undefined;
+  try {
+    const url = new URL(window.location.href);
+    return includeQueryString
+      ? `${url.origin}${url.pathname}${url.search}`
+      : `${url.origin}${url.pathname}`;
+  } catch {
+    return undefined;
+  }
+}
+
+function currentRoute(): string | undefined {
+  if (!isBrowser()) return undefined;
+  const explicit =
+    document.documentElement?.getAttribute('data-route') ??
+    document.body?.getAttribute('data-route') ??
+    undefined;
+  if (explicit) return explicit;
+  const globalRoute = (window as unknown as { __NOVEL_ISR_ROUTE__?: unknown }).__NOVEL_ISR_ROUTE__;
+  return typeof globalRoute === 'string' && globalRoute.trim() ? globalRoute : undefined;
+}
+
+function currentNavigationType(): string | undefined {
+  if (!isBrowser() || typeof performance.getEntriesByType !== 'function') return undefined;
+  const nav = performance.getEntriesByType('navigation')[0] as
+    | PerformanceNavigationTiming
+    | undefined;
+  return typeof nav?.type === 'string' ? nav.type : undefined;
+}
+
+function currentDevice(): string | undefined {
+  if (!isBrowser()) return undefined;
+  const uaData = (navigator as Navigator & { userAgentData?: { mobile?: boolean } }).userAgentData;
+  if (typeof uaData?.mobile === 'boolean') return uaData.mobile ? 'mobile' : 'desktop';
+  const width = window.innerWidth;
+  if (width < 768) return 'mobile';
+  if (width < 1180) return 'tablet';
+  return 'desktop';
+}
+
+function currentViewport(): string | undefined {
+  if (!isBrowser()) return undefined;
+  if (!Number.isFinite(window.innerWidth) || !Number.isFinite(window.innerHeight)) {
+    return undefined;
+  }
+  return `${window.innerWidth}x${window.innerHeight}`;
+}
+
+function currentConnection(): string | undefined {
+  if (!isBrowser()) return undefined;
+  const connection = (
+    navigator as Navigator & {
+      connection?: { effectiveType?: string; saveData?: boolean };
+    }
+  ).connection;
+  if (!connection?.effectiveType) return undefined;
+  return connection.saveData ? `${connection.effectiveType}:save-data` : connection.effectiveType;
+}
+
+function pickPerformanceTarget(
+  entry: (PerformanceEntry & Record<string, unknown>) | undefined
+): string | undefined {
+  if (typeof Element === 'undefined') return undefined;
+  const target = entry?.target;
+  if (!(target instanceof Element)) return undefined;
+  return toElementSelector(target);
+}
+
+function toElementSelector(element: Element): string {
+  const tag = element.tagName.toLowerCase();
+  const id = element.id ? `#${cssEscape(element.id)}` : '';
+  const testId = element.getAttribute('data-testid');
+  if (testId) return `${tag}[data-testid="${cssEscape(testId)}"]`;
+  const className =
+    typeof element.className === 'string'
+      ? element.className
+          .split(/\s+/)
+          .filter(Boolean)
+          .slice(0, 2)
+          .map(item => `.${cssEscape(item)}`)
+          .join('')
+      : '';
+  return `${tag}${id}${className}` || tag;
+}
+
+function cssEscape(value: string): string {
+  if (typeof CSS !== 'undefined' && typeof CSS.escape === 'function') {
+    return CSS.escape(value);
+  }
+  return value.replace(/["\\]/g, '\\$&');
 }
 
 function sanitizeUrl(url: string | undefined, includeQueryString?: boolean): string | undefined {

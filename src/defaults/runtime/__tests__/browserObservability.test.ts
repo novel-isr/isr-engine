@@ -300,19 +300,19 @@ describe('installBrowserObservability', () => {
       expect.arrayContaining([
         expect.objectContaining({
           name: 'web_vital',
-          properties: { name: 'TTFB', value: 123 },
+          properties: expect.objectContaining({ name: 'TTFB', value: 123, path: '/' }),
         }),
         expect.objectContaining({
           name: 'web_vital',
-          properties: { name: 'LCP', value: 2800 },
+          properties: expect.objectContaining({ name: 'LCP', value: 2800, path: '/' }),
         }),
         expect.objectContaining({
           name: 'web_vital',
-          properties: { name: 'INP', value: 260 },
+          properties: expect.objectContaining({ name: 'INP', value: 260, path: '/' }),
         }),
         expect.objectContaining({
           name: 'web_vital',
-          properties: { name: 'CLS', value: 0.12 },
+          properties: expect.objectContaining({ name: 'CLS', value: 0.12, path: '/' }),
         }),
       ])
     );
