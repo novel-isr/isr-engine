@@ -2,7 +2,7 @@
 
 | 字段 | 值 |
 |---|---|
-| Status | **Draft** |
+| Status | **Implemented**（`src/experiments/ManifestLoader.ts` + `ExposureQueue.ts`，kill switch 见 ManifestLoader status 处理） |
 | Author | engine 维护组 |
 | Created | 2026-05-12 |
 | Depends on | RFC 0001 |

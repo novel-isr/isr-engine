@@ -72,6 +72,8 @@ export type StaleReason = 'swr-fresh' | 'swr-bg-pending' | 'swr-bg-failed-recent
 const BG_FAILURE_TRACK_MAX = 1000;
 /** invalidation 时间戳的 LRU 上限 —— inventory 端点暴露 “target → lastInvalidatedMs” */
 const INVALIDATION_LOG_MAX = 1000;
+/** prefetch 冷却时间戳的 LRU 上限 —— 防止动态路径唯一值暴增导致内存泄漏 */
+const PREFETCH_COOLDOWN_TRACK_MAX = 1000;
 /** “最近失败” 窗口（毫秒）—— 在窗口内的 STALE 标记为 swr-bg-failed-recent */
 const BG_FAILURE_RECENT_WINDOW_MS = 60_000;
 
@@ -427,8 +429,14 @@ export function createIsrCacheHandler(
   const maxCachedBodyBytes = options.maxCachedBodyBytes ?? 5 * 1024 * 1024;
   const prefetchOnHit = options.prefetchOnHit;
   const prefetchCooldownMs = options.prefetchCooldownMs ?? 30_000;
-  /** 最近一次预热触发时间记录，用于冷却窗口去重 */
-  const prefetchCooldown = new Map<string, number>();
+  /**
+   * 最近一次预热触发时间记录，用于冷却窗口去重。
+   * LRU 上限 + ttl=冷却窗口：条目过期自动淘汰，防止动态路径唯一值暴增导致内存泄漏。
+   */
+  const prefetchCooldown = new LRUCache<string, number>({
+    max: PREFETCH_COOLDOWN_TRACK_MAX,
+    ttl: prefetchCooldownMs,
+  });
   /**
    * MISS 回源 single-flight 锁 —— key 到 deferred promise；首请求开始渲染时注册,
    * captureAndStore.onFinish 触发 resolve，并发 follower 通过 await 该 promise + 重读 cache 实现 HIT 回放。
@@ -526,6 +534,7 @@ export function createIsrCacheHandler(
     // 这两份附属状态不该残留。inventory 端点拍快照时会看到空集合。
     bgRevalidateFailures.clear();
     invalidationLog.clear();
+    prefetchCooldown.clear();
   };
   handler.destroy = async () => {
     unregisterInvalidator();
@@ -535,6 +544,7 @@ export function createIsrCacheHandler(
     inflightRegens.clear();
     bgRevalidateFailures.clear();
     invalidationLog.clear();
+    prefetchCooldown.clear();
     await cache.destroy();
   };
   handler.getCacheInspection = () => {
@@ -679,7 +689,7 @@ interface HandleContext {
   maxCachedBodyBytes: number;
   prefetchOnHit?: (ctx: { path: string; cacheKey: string }) => string[] | Promise<string[]>;
   prefetchCooldownMs: number;
-  prefetchCooldown: Map<string, number>;
+  prefetchCooldown: LRUCache<string, number>;
   /** bg revalidate 失败 cache key → 失败时间戳；STALE 路径计算 X-Cache-Stale-Reason 用 */
   bgRevalidateFailures: LRUCache<string, number>;
 }

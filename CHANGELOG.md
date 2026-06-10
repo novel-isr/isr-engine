@@ -6,6 +6,21 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- `prefetchCooldown` 由裸 `Map` 换成 `LRUCache`（max 1000 + ttl=冷却窗口），修复 prefetch 目标为动态路径时
+  冷却记录无界累积的内存泄漏风险；`handler.clear()` / `destroy()` 同步清空该状态。
+
+### Removed
+
+- 删除一次性社区发帖草稿 `docs/community-intro.md` / `docs/community-intro.en.md`（内容钉在 v2.3.1，已过期）。
+
+### Docs
+
+- RFC 0002（Experiments Platform）状态 Draft → Implemented（`ManifestLoader` / `ExposureQueue` / kill switch 均已落地）。
+- README 过期数据同步：测试数 551/543/609 → 718、覆盖率 ~50% → ~58%、版本亮点 v2.3.1 → v2.5.10、
+  安装示例 `^2.3.0` → `^2.5.0`、plugin-rsc `^0.5.24` → `^0.5.26`。
+
 ---
 
 ## [2.5.10] - 2026-05-29

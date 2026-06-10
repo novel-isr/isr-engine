@@ -642,3 +642,48 @@ describe('isrCacheMiddleware —— X-Cache-Stale-Reason', () => {
     }
   });
 });
+
+describe('isrCacheMiddleware —— prefetch 冷却窗口', () => {
+  it('HIT 触发预热；冷却窗口内不重复触发，窗口过后（LRU ttl 过期）重新触发', async () => {
+    const cooldownMs = 200;
+    const warmHits = { n: 0, sawSentinel: false };
+    const fx = await startFixture({
+      prefetchOnHit: () => ['/warm'],
+      prefetchCooldownMs: cooldownMs,
+    });
+    fx.renderImpl.current = (req, res) => {
+      if ((req.url ?? '').startsWith('/warm')) {
+        warmHits.n++;
+        if (String(req.headers['x-isr-prefetch'] || '') === '1') warmHits.sawSentinel = true;
+        // Set-Cookie 阻止 /warm 入缓存 —— 保证每次预热触发都落到下游渲染，便于计数
+        res.setHeader('set-cookie', 'noscache=1; Path=/');
+      }
+      res.setHeader('content-type', 'text/html');
+      res.statusCode = 200;
+      res.end('<html>x</html>');
+    };
+
+    try {
+      // MISS 填缓存 → HIT 触发预热
+      await httpGet(`${fx.baseUrl}/page`);
+      const hit1 = await httpGet(`${fx.baseUrl}/page`);
+      expect(hit1.cacheStatus).toBe('HIT');
+      await waitFor(() => warmHits.n === 1, 1_000);
+      expect(warmHits.sawSentinel).toBe(true);
+
+      // 冷却窗口内再次 HIT：不重复预热
+      const hit2 = await httpGet(`${fx.baseUrl}/page`);
+      expect(hit2.cacheStatus).toBe('HIT');
+      await new Promise(r => setTimeout(r, 100));
+      expect(warmHits.n).toBe(1);
+
+      // 等过冷却窗口（LRUCache ttl 同步过期）后 HIT：重新预热
+      await new Promise(r => setTimeout(r, cooldownMs + 50));
+      const hit3 = await httpGet(`${fx.baseUrl}/page`);
+      expect(hit3.cacheStatus).toBe('HIT');
+      await waitFor(() => warmHits.n === 2, 1_000);
+    } finally {
+      await teardown(fx);
+    }
+  });
+});
