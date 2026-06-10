@@ -6,6 +6,14 @@
 
 ## [Unreleased]
 
+### Added
+
+- ISREngine 生命周期测试（此前覆盖率 0% → 97%）：start 后 ops 路由可访问与 invalidator 注册、
+  shutdown 的 allSettled 失败聚合语义、initialize + generateSeo 产物落盘。server 层换受控实现
+  （真 Express + http.Server，不拉起 Vite）。
+- `extractSsgRoutes` 测试（spider 87% → 96%）：ssg.routes 数组 / 同步异步函数三种来源、
+  回退 routes mode=ssg 提取、通配符跳过、来源优先级。
+
 ### Fixed
 
 - `prefetchCooldown` 由裸 `Map` 换成 `LRUCache`（max 1000 + ttl=冷却窗口），修复 prefetch 目标为动态路径时

@@ -3,6 +3,7 @@ import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import {
+  extractSsgRoutes,
   routeToFilePath,
   spiderSsgRoutes,
   SsgBuildFailedError,
@@ -511,5 +512,55 @@ describe('spiderSsgRoutes —— continueOnError', () => {
     expect(calls).toBe(1); // content-type 错误不重试
     expect(result.failed).toBe(1);
     expect(result.routes[0].error).toContain('unsupported content-type');
+  });
+});
+
+describe('extractSsgRoutes —— SSG 路由来源优先级', () => {
+  it('ssg.routes 数组直接返回', async () => {
+    const routes = await extractSsgRoutes({ ssg: { routes: ['/a', '/b'] } });
+    expect(routes).toEqual(['/a', '/b']);
+  });
+
+  it('ssg.routes 支持异步函数（动态来源，如从 CMS 拉列表）', async () => {
+    const routes = await extractSsgRoutes({
+      ssg: { routes: async () => ['/books/1', '/books/2'] },
+    });
+    expect(routes).toEqual(['/books/1', '/books/2']);
+  });
+
+  it('ssg.routes 同步函数也可用', async () => {
+    const routes = await extractSsgRoutes({ ssg: { routes: () => ['/x'] } });
+    expect(routes).toEqual(['/x']);
+  });
+
+  it('未配置 ssg.routes 时回退到 routes 中 mode=ssg 的条目（字符串 / 对象两种写法）', async () => {
+    const routes = await extractSsgRoutes({
+      routes: {
+        '/about': 'ssg',
+        '/pricing': { mode: 'ssg', ttl: 60 },
+        '/feed': 'isr',
+        '/admin': { mode: 'ssr' },
+      },
+    });
+    expect(routes.sort()).toEqual(['/about', '/pricing']);
+  });
+
+  it('通配符路由不可预生成，回退提取时跳过', async () => {
+    const routes = await extractSsgRoutes({
+      routes: { '/books/*': 'ssg', '/about': 'ssg' },
+    });
+    expect(routes).toEqual(['/about']);
+  });
+
+  it('ssg.routes 优先于 routes mode=ssg（两者同时存在只取前者）', async () => {
+    const routes = await extractSsgRoutes({
+      ssg: { routes: ['/only-this'] },
+      routes: { '/about': 'ssg' },
+    });
+    expect(routes).toEqual(['/only-this']);
+  });
+
+  it('两个来源都为空 → 空列表', async () => {
+    expect(await extractSsgRoutes({})).toEqual([]);
   });
 });
