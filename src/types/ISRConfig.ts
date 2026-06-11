@@ -313,6 +313,19 @@ export interface RuntimeConfig {
    *   - **localhost**：留空。浏览器对 `Domain=localhost` 处理不一致，反而出问题
    */
   cookieDomain?: string;
+  /**
+   * ISR 缓存按 Host 隔离。
+   *
+   * 用法：
+   *   - **多域名打到同一 SSR 进程**（按域名出不同内容：白标站 / 渠道站 /
+   *     tenant-by-domain）：必须设 true —— cache key 追加 `|h=<host>`，
+   *     `a.com/books` 与 `b.com/books` 各自独立缓存，不会跨站串内容。
+   *   - **单一站点**（一个进程只服务一个域名，业界默认形态）：留 false/undefined，
+   *     避免 www/裸域/内网探活等多个 Host 别名造成缓存碎片化。
+   *
+   * `revalidatePath` 失效不区分 host —— 清除该路径所有 host 的条目。
+   */
+  hostIsolation?: boolean;
   /** 按职责拆开的后端服务 origin */
   services: RuntimeServicesConfig;
   /** 分布式 ISR 缓存与跨实例失效广播 */

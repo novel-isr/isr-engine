@@ -8,6 +8,11 @@
 
 ### Added
 
+- **ISR 缓存 Host 隔离**（`runtime.hostIsolation` / middleware `hostIsolation` 选项）：
+  多域名打到同一 SSR 进程且按域名出不同内容（白标站 / tenant-by-domain）时，
+  cache key 追加 `|h=<host>`，各 host 独立缓存不串内容。默认关闭（单站点形态不受影响）。
+  `revalidatePath` 清除该路径所有 host 的条目。
+
 - ISREngine 生命周期测试（此前覆盖率 0% → 97%）：start 后 ops 路由可访问与 invalidator 注册、
   shutdown 的 allSettled 失败聚合语义、initialize + generateSeo 产物落盘。server 层换受控实现
   （真 Express + http.Server，不拉起 Vite）。
@@ -16,6 +21,9 @@
 
 ### Fixed
 
+- **variant 隔离条目无法被 `revalidatePath` 清除**：失效匹配此前只认精确 key 和 `?` 前缀，
+  带 `|v=` 后缀的无 query 条目被漏掉（实验页面失效后继续回放旧缓存直到 TTL 过期）。
+  匹配规则补上 `|` 前缀分支，对 `|v=` / `|h=` 隔离后缀一律全清。
 - `prefetchCooldown` 由裸 `Map` 换成 `LRUCache`（max 1000 + ttl=冷却窗口），修复 prefetch 目标为动态路径时
   冷却记录无界累积的内存泄漏风险；`handler.clear()` / `destroy()` 同步清空该状态。
 

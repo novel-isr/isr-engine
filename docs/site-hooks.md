@@ -215,6 +215,11 @@ HTTP request
 
 - `userId`：从网关 header、session cookie 或 token 里解析出的用户身份。
 - `tenantId`：SaaS / 白标站 / 渠道站，从域名、header、cookie 或路径里解析。
+  ⚠️ **如果 tenantId 影响渲染产物且按域名区分租户，必须开 `runtime.hostIsolation: true`**
+  —— ISR 缓存默认按路径共享，不开会把租户 A 的 HTML 回放给租户 B
+  （见 [caching.md 缓存键的隔离维度](./caching.md#缓存键的隔离维度)）。
+  按 header/cookie/路径区分租户的，路径型天然隔离；header/cookie 型请把对应路由设为
+  `ssr` 模式（不入缓存），缓存键目前不含这两个维度。
 - `requestSegment`：灰度分层、渠道、设备、风控分群、审计标签。
 - 轻量观测字段：例如 `requestSource`、`traceParent`。
 

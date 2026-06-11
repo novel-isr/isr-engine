@@ -130,6 +130,13 @@ export interface IsrCacheMiddlewareOptions {
    */
   variantCookieName?: string;
   /**
+   * Host 隔离。
+   * 默认值：`config.runtime.hostIsolation`；都未配置时关闭。
+   * 启用后：cacheKey 追加 `|h=<host>`，多域名打到同一进程时各 host 独立缓存。
+   * 适用：按域名出不同内容（白标站 / tenant-by-domain）；单一站点不要开（缓存碎片化）。
+   */
+  hostIsolation?: boolean;
+  /**
    * Cache key 应用层 namespace —— bump 它即整体失效（无需 SCAN/FLUSH），TTL 自然回收旧 entry。
    * 默认 `process.env.ISR_CACHE_NAMESPACE ?? 'default'`。
    *
@@ -417,6 +424,7 @@ export function createIsrCacheHandler(
     !!config?.runtime?.experiments && Object.keys(config.runtime.experiments).length > 0;
   const variantIsolation = options.variantIsolation ?? hasExperiments;
   const variantCookieName = options.variantCookieName ?? 'ab';
+  const hostIsolation = options.hostIsolation ?? config?.runtime?.hostIsolation ?? false;
   const cacheNamespace = options.cacheNamespace ?? process.env.ISR_CACHE_NAMESPACE ?? 'default';
   // build version 嵌入 cache key：每次 deploy 后 APP_VERSION 不同 → 旧 cache 自然失效（永远 miss）→ 新 build 走 fresh render
   // CI 注入 APP_VERSION=<git sha>；本地开发不注入 → fallback 'dev'，所有 key 共享 'dev' 前缀（开发体验不受影响）
@@ -470,7 +478,9 @@ export function createIsrCacheHandler(
       ];
       let cleared = 0;
       for (const key of Array.from(cache.keys())) {
-        if (keys.some(k => key === k) || keys.some(k => key.startsWith(`${k}?`))) {
+        // 三种匹配：精确（无 query 无隔离后缀）、`?` 前缀（带 query）、`|` 前缀
+        // （variant `|v=` / host `|h=` 隔离后缀）。失效语义对 variant/host 一律全清。
+        if (keys.some(k => key === k || key.startsWith(`${k}?`) || key.startsWith(`${k}|`))) {
           if (cache.delete(key)) cleared++;
         }
       }
@@ -508,6 +518,7 @@ export function createIsrCacheHandler(
       bgTimeoutMs,
       variantIsolation,
       variantCookieName,
+      hostIsolation,
       cacheKeyPrefix,
       inflightRegens,
       singleflightWaitMs,
@@ -683,6 +694,7 @@ interface HandleContext {
   bgTimeoutMs: number;
   variantIsolation: boolean;
   variantCookieName: string;
+  hostIsolation: boolean;
   cacheKeyPrefix: string;
   inflightRegens: Map<string, { promise: Promise<void>; resolve: () => void }>;
   singleflightWaitMs: number;
@@ -1370,6 +1382,10 @@ function buildCacheKey(
   const normalized = normalizeQuery(rawQuery);
   let key = `${ctx.cacheKeyPrefix}${method}:${pathname}`;
   if (normalized) key += `?${normalized}`;
+  // host 维度在 variant 之前 —— 隔离后缀统一以 `|` 开头，invalidateLocal 按 `${k}|` 前缀全清
+  if (ctx.hostIsolation) {
+    key += `|h=${String(req.headers.host || '').toLowerCase()}`;
+  }
   if (ctx.variantIsolation) {
     const digest = extractVariantDigest(req, ctx.variantCookieName);
     if (digest) key += `|v=${digest}`;

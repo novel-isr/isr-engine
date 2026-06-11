@@ -21,6 +21,7 @@ import {
 } from '../isrCacheMiddleware';
 import { createMemoryCacheStore, type IsrCacheStore, type IsrCachedEntry } from '../isrCacheStore';
 import { l2ReadTimeoutsTotal } from '../../metrics/PromMetrics';
+import { revalidatePath } from '../../rsc/revalidate';
 
 /** 下游渲染器契约 —— 每次请求返回的响应由调用方指定 */
 type RenderFn = (req: IncomingMessage, res: ServerResponse) => void;
@@ -682,6 +683,142 @@ describe('isrCacheMiddleware —— prefetch 冷却窗口', () => {
       const hit3 = await httpGet(`${fx.baseUrl}/page`);
       expect(hit3.cacheStatus).toBe('HIT');
       await waitFor(() => warmHits.n === 2, 1_000);
+    } finally {
+      await teardown(fx);
+    }
+  });
+});
+
+describe('isrCacheMiddleware —— revalidatePath 清除带隔离后缀的条目', () => {
+  it('variant 隔离（|v=）的无 query 条目也会被清除（回归：曾只匹配精确 key 和 `?` 前缀）', async () => {
+    const fx = await startFixture(
+      {},
+      {
+        renderMode: 'isr',
+        revalidate: 3600,
+        runtime: {
+          experiments: { hero: { variants: ['v1', 'v2'], weights: [50, 50] } },
+        },
+      }
+    );
+    try {
+      let calls = 0;
+      fx.renderImpl.current = (_req, res) => {
+        calls++;
+        res.setHeader('content-type', 'text/html');
+        res.statusCode = 200;
+        res.end(`<html>call=${calls}</html>`);
+      };
+
+      const headers = { cookie: 'ab=hero=v1' };
+      expect((await httpGet(`${fx.baseUrl}/home`, headers)).cacheStatus).toBe('MISS');
+      expect((await httpGet(`${fx.baseUrl}/home`, headers)).cacheStatus).toBe('HIT');
+
+      await revalidatePath('/home');
+
+      const after = await httpGet(`${fx.baseUrl}/home`, headers);
+      expect(after.cacheStatus).toBe('MISS');
+      expect(after.body).toContain('call=2');
+    } finally {
+      await teardown(fx);
+    }
+  });
+});
+
+describe('isrCacheMiddleware —— Host 隔离（多域名共享进程）', () => {
+  it('默认关闭：不同 Host 共享同一缓存条目（单站点形态）', async () => {
+    const fx = await startFixture({});
+    try {
+      let calls = 0;
+      fx.renderImpl.current = (_req, res) => {
+        calls++;
+        res.setHeader('content-type', 'text/html');
+        res.statusCode = 200;
+        res.end(`<html>call=${calls}</html>`);
+      };
+
+      expect((await httpGet(`${fx.baseUrl}/books`, { host: 'a.example.com' })).cacheStatus).toBe(
+        'MISS'
+      );
+      const r2 = await httpGet(`${fx.baseUrl}/books`, { host: 'b.example.com' });
+      expect(r2.cacheStatus).toBe('HIT');
+      expect(r2.body).toContain('call=1');
+    } finally {
+      await teardown(fx);
+    }
+  });
+
+  it('hostIsolation=true：不同 Host 各自独立缓存，互不串内容', async () => {
+    const fx = await startFixture({ hostIsolation: true });
+    try {
+      fx.renderImpl.current = (req, res) => {
+        res.setHeader('content-type', 'text/html');
+        res.statusCode = 200;
+        res.end(`<html>tenant=${req.headers.host}</html>`);
+      };
+
+      const a1 = await httpGet(`${fx.baseUrl}/books`, { host: 'a.example.com' });
+      expect(a1.cacheStatus).toBe('MISS');
+      const b1 = await httpGet(`${fx.baseUrl}/books`, { host: 'b.example.com' });
+      expect(b1.cacheStatus).toBe('MISS');
+
+      // 各自 HIT 自己的内容
+      const a2 = await httpGet(`${fx.baseUrl}/books`, { host: 'a.example.com' });
+      expect(a2.cacheStatus).toBe('HIT');
+      expect(a2.body).toContain('tenant=a.example.com');
+      const b2 = await httpGet(`${fx.baseUrl}/books`, { host: 'b.example.com' });
+      expect(b2.cacheStatus).toBe('HIT');
+      expect(b2.body).toContain('tenant=b.example.com');
+      expect(a2.cacheKey).not.toBe(b2.cacheKey);
+    } finally {
+      await teardown(fx);
+    }
+  });
+
+  it('runtime.hostIsolation=true（ssr.config.ts 路径）同样生效', async () => {
+    const fx = await startFixture(
+      {},
+      { renderMode: 'isr', revalidate: 3600, runtime: { hostIsolation: true } }
+    );
+    try {
+      fx.renderImpl.current = (req, res) => {
+        res.setHeader('content-type', 'text/html');
+        res.statusCode = 200;
+        res.end(`<html>tenant=${req.headers.host}</html>`);
+      };
+      await httpGet(`${fx.baseUrl}/x`, { host: 'a.example.com' });
+      const b = await httpGet(`${fx.baseUrl}/x`, { host: 'b.example.com' });
+      expect(b.cacheStatus).toBe('MISS'); // 未串到 a 的条目
+    } finally {
+      await teardown(fx);
+    }
+  });
+
+  it('revalidatePath 清除该路径所有 host 的条目', async () => {
+    const fx = await startFixture({ hostIsolation: true });
+    try {
+      let calls = 0;
+      fx.renderImpl.current = (_req, res) => {
+        calls++;
+        res.setHeader('content-type', 'text/html');
+        res.statusCode = 200;
+        res.end(`<html>call=${calls}</html>`);
+      };
+
+      await httpGet(`${fx.baseUrl}/books`, { host: 'a.example.com' });
+      await httpGet(`${fx.baseUrl}/books`, { host: 'b.example.com' });
+      expect((await httpGet(`${fx.baseUrl}/books`, { host: 'a.example.com' })).cacheStatus).toBe(
+        'HIT'
+      );
+
+      await revalidatePath('/books');
+
+      expect((await httpGet(`${fx.baseUrl}/books`, { host: 'a.example.com' })).cacheStatus).toBe(
+        'MISS'
+      );
+      expect((await httpGet(`${fx.baseUrl}/books`, { host: 'b.example.com' })).cacheStatus).toBe(
+        'MISS'
+      );
     } finally {
       await teardown(fx);
     }
