@@ -92,8 +92,26 @@ async function resolveImportPath(
         sourcemap: 'inline',
         write: false,
         logLevel: 'silent',
-        // 保持依赖为 external，避免把整个 node_modules 打进配置产物
-        packages: 'external',
+        // 保持第三方依赖为 external，避免把整个 node_modules 打进配置产物；
+        // 但 @novel-isr/engine 必须打进产物：它的 ./runtime 导出指向 src/runtime/*.ts
+        // 源码（要留给业务侧 RSC 打包器处理）。如果这里也 external，编译出的临时 .mjs 里
+        // 会残留 `import ... from '@novel-isr/engine/runtime'`，Node 22.18+/24 原生
+        // type-stripping 会拒绝剥离 node_modules 下的 .ts（ERR_UNSUPPORTED_NODE_MODULES_
+        // TYPE_STRIPPING），导致配置加载失败。交给 esbuild 打包转译则无此问题。
+        plugins: [
+          {
+            name: 'externalize-except-engine',
+            setup(build) {
+              build.onResolve({ filter: /^[^./]/ }, args => {
+                if (/^@novel-isr\/engine(?:\/|$)/.test(args.path)) {
+                  // 不 external，交给默认打包（tree-shake 后只会带入真正用到的纯函数）
+                  return null;
+                }
+                return { path: args.path, external: true };
+              });
+            },
+          },
+        ],
       });
 
       const code = result.outputFiles?.[0]?.text;

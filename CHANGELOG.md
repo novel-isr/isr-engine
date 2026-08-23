@@ -39,6 +39,22 @@
 
 ---
 
+## [2.5.12] - 2026-08-23
+
+发布主题：**配置加载兼容 Node 22.18+/24 原生 type-stripping**。
+
+### Fixed
+
+- **`loadConfig` 无法加载 import 了 `@novel-isr/engine/runtime` 的 `ssr.config.ts`**：
+  引擎的 `./runtime` 导出指向 `src/runtime/*.ts` 源码（要留给业务侧 RSC 打包器处理），
+  而配置加载用 esbuild `packages:'external'` 编译，会把这条 import 以 external 形式残留在
+  临时 `.mjs` 里。Node 22.18+/24 原生 type-stripping 拒绝剥离 `node_modules` 下的 `.ts`
+  （`ERR_UNSUPPORTED_NODE_MODULES_TYPE_STRIPPING`），导致全新环境（无 `.isr-cache`）首次 build/start 直接挂。
+  修复：esbuild 编译配置时把第三方依赖保持 external，但 `@novel-isr/engine` 打进产物（esbuild 转译其
+  TS + tree-shake，只带入真正用到的纯函数）。新增回归测试覆盖「配置 import `@novel-isr/engine/runtime`」。
+
+---
+
 ## [2.5.11] - 2026-08-23
 
 发布主题：**生产 SSR 非首页 CSS 资源路径修复**。

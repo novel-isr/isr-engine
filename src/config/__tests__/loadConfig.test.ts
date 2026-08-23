@@ -26,6 +26,46 @@ async function writeConfig(cwd: string, name: string, content: string): Promise<
   await fs.writeFile(path.join(cwd, name), content, 'utf8');
 }
 
+/**
+ * 在 cwd 下造一个假的 `@novel-isr/engine` 包，其 `./runtime` 导出指向源码 .ts。
+ * 用来复现「配置 import @novel-isr/engine/runtime → 源码 .ts」这个真实场景：
+ * 若 loadConfig 把 engine external 出去，编译产物会残留对 .ts 的 import，
+ * Node 22.18+/24 原生 type-stripping 会拒绝剥离 node_modules 下的 .ts。
+ */
+async function writeFakeEngineWithSourceTs(cwd: string): Promise<void> {
+  const pkgDir = path.join(cwd, 'node_modules', '@novel-isr', 'engine');
+  const srcDir = path.join(pkgDir, 'src', 'runtime');
+  await fs.mkdir(srcDir, { recursive: true });
+  await fs.writeFile(
+    path.join(pkgDir, 'package.json'),
+    JSON.stringify({
+      name: '@novel-isr/engine',
+      version: '0.0.0',
+      type: 'module',
+      exports: { './runtime': { default: './src/runtime/index.ts' } },
+    }),
+    'utf8'
+  );
+  await fs.writeFile(
+    path.join(srcDir, 'index.ts'),
+    [
+      'export interface I18nConfig {',
+      '  locales: readonly string[];',
+      '  defaultLocale: string;',
+      '  prefixDefault?: boolean;',
+      '}',
+      '',
+      'export function withLocale(pathname: string, locale: string, config: I18nConfig): string {',
+      "  if (!config.locales.includes(locale)) throw new Error('unknown locale');",
+      "  const clean = pathname.startsWith('/') ? pathname : '/' + pathname;",
+      '  if (locale === config.defaultLocale && !config.prefixDefault) return clean;',
+      "  return '/' + locale + (clean === '/' ? '' : clean);",
+      '}',
+    ].join('\n'),
+    'utf8'
+  );
+}
+
 function fullConfigSource(
   options: {
     renderMode?: string;
@@ -248,6 +288,32 @@ ${fullConfigSource({ runtime: 'runtime' })}
       expect(config.runtime.services.api).toBe('https://api.example.com');
       expect(config.runtime.services.telemetry).toBe('https://telemetry.example.com');
       expect(config.runtime.redis?.keyPrefix).toBe('app:');
+    } finally {
+      await rmTmp(cwd);
+    }
+  });
+});
+
+describe('loadConfig —— 配置 import @novel-isr/engine/runtime（源码 .ts 回归）', () => {
+  it('engine 的 ./runtime 导出指向源码 .ts 时，配置能正常加载（不被 external 出去）', async () => {
+    const cwd = await mkTmpDir();
+    try {
+      await writeFakeEngineWithSourceTs(cwd);
+      // 用 withLocale 计算 revalidate，确保它确实被使用、不被 tree-shake；
+      // '/en/about'.length === 9
+      await writeConfig(
+        cwd,
+        'ssr.config.ts',
+        `
+import { withLocale } from '@novel-isr/engine/runtime';
+const I18N = { locales: ['zh', 'en'] as const, defaultLocale: 'zh' };
+const revalidate = withLocale('/about', 'en', I18N).length;
+${fullConfigSource({ renderMode: "'isr'", revalidate: 'revalidate' })}
+`
+      );
+      const config = await loadConfig({ cwd });
+      expect(config.renderMode).toBe('isr');
+      expect(config.revalidate).toBe(9);
     } finally {
       await rmTmp(cwd);
     }
