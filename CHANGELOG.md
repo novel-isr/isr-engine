@@ -39,6 +39,20 @@
 
 ---
 
+## [2.5.11] - 2026-08-23
+
+发布主题：**生产 SSR 非首页 CSS 资源路径修复**。
+
+### Fixed
+
+- **生产 SSR 非首页样式失效（`/src/*.scss` 源码路径泄漏）**：`@vitejs/plugin-rsc` 升级
+  `^0.5.26 → ^0.5.34`，修复 SCSS 模块未被 hash 化到 `serverResources` manifest、导致 SSR
+  `<head>` 输出 `<link rel="stylesheet" href="/src/styles/global.scss">` / `/src/pages/*.module.scss`
+  这类源码路径的问题（生产环境该路径返回 text/html 的 SPA 壳而非 CSS）。升级后 manifest 正确映射到
+  `/assets/*.css`，非首页（`/about`、`/articles`、`/case-studies`、`/contact` 等）样式正常加载。
+
+---
+
 ## [2.5.10] - 2026-05-29
 
 发布主题：**browser telemetry 上传退避保护**。

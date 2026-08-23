@@ -1,6 +1,6 @@
 {
   "name": "@novel-isr/engine",
-  "version": "2.5.10",
+  "version": "2.5.11",
   "description": "ISR/SSG/Fallback rendering orchestration on Vite + React 19 RSC.",
   "license": "UNLICENSED",
   "repository": {
@@ -103,7 +103,7 @@
   },
   "packageManager": "pnpm@9.15.9",
   "dependencies": {
-    "@vitejs/plugin-rsc": "^0.5.26",
+    "@vitejs/plugin-rsc": "^0.5.34",
     "chalk": "^5.3.0",
     "commander": "^12.1.0",
     "compression": "^1.7.4",
