@@ -39,6 +39,26 @@
 
 ---
 
+## [2.5.16] - 2026-08-25
+
+发布主题：**dev 客户端导航样式原子提交修复**。
+
+### Fixed
+
+- **Vite dev 首次路由切换仍闪现无样式 DOM**：纯 Flight CSS hint 过滤器此前用 `.css`
+  后缀判断资源，遗漏 dev 使用的 `.scss` / `.less` 源码 URL 及无扩展名样式端点。现在以
+  Flight `HL` tuple 的 `style|stylesheet` 类型作为协议依据，生产构建与 dev 资源统一处理。
+- **CSS preload 与 stylesheet 凭据模式不一致**：客户端兼容补丁此前给 preload 无条件添加
+  `crossorigin="anonymous"`，但 React 后续 stylesheet 未必携带该属性，Chrome 因此无法复用
+  preload 并发起第二次请求。现在补丁只纠正非法的 `as="stylesheet"`，完整保留调用方声明的
+  CORS/credentials 语义，避免新 DOM 先于第二次 CSSOM 建立而提交。
+
+### Tests
+
+- 新增 dev `.scss`、无扩展名样式 URL 与 credentials mode 回归测试。
+
+---
+
 ## [2.5.15] - 2026-08-25
 
 发布主题：**客户端 RSC 导航样式原子提交修复**。

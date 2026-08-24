@@ -20,12 +20,12 @@ beforeAll(() => {
 });
 
 describe('installClientPreloadHintFix (setAttribute 路径)', () => {
-  it('rel=preload + as=stylesheet → 自动改成 as=style + crossorigin=anonymous', () => {
+  it('rel=preload + as=stylesheet → 只修正 as，不擅自改变 credentials mode', () => {
     const link = document.createElement('link');
     link.setAttribute('rel', 'preload');
     link.setAttribute('as', 'stylesheet');
     expect(link.getAttribute('as')).toBe('style');
-    expect(link.getAttribute('crossorigin')).toBe('anonymous');
+    expect(link.hasAttribute('crossorigin')).toBe(false);
   });
 
   it('属性顺序为 as → rel 时同样标准化 CSS preload', () => {
@@ -33,7 +33,7 @@ describe('installClientPreloadHintFix (setAttribute 路径)', () => {
     link.setAttribute('as', 'stylesheet');
     link.setAttribute('rel', 'preload');
     expect(link.getAttribute('as')).toBe('style');
-    expect(link.getAttribute('crossorigin')).toBe('anonymous');
+    expect(link.hasAttribute('crossorigin')).toBe(false);
   });
 
   it('rel != preload 时不改 (兼容 rel=stylesheet 等合法用法)', () => {
@@ -49,13 +49,23 @@ describe('installClientPreloadHintFix (setAttribute 路径)', () => {
     link1.setAttribute('rel', 'preload');
     link1.setAttribute('as', 'style');
     expect(link1.getAttribute('as')).toBe('style');
-    expect(link1.getAttribute('crossorigin')).toBe('anonymous');
+    expect(link1.hasAttribute('crossorigin')).toBe(false);
 
     const link2 = document.createElement('link');
     link2.setAttribute('rel', 'preload');
     link2.setAttribute('as', 'image');
     expect(link2.getAttribute('as')).toBe('image');
     expect(link2.hasAttribute('crossorigin')).toBe(false);
+  });
+
+  it('保留调用方显式声明的 crossorigin credentials mode', () => {
+    const link = document.createElement('link');
+    link.setAttribute('crossorigin', 'use-credentials');
+    link.setAttribute('rel', 'preload');
+    link.setAttribute('as', 'stylesheet');
+
+    expect(link.getAttribute('as')).toBe('style');
+    expect(link.getAttribute('crossorigin')).toBe('use-credentials');
   });
 
   it('attribute 名大小写不敏感 (AS) + value 不敏感 (STYLESHEET) 都纠正', () => {

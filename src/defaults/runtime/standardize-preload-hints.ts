@@ -48,12 +48,13 @@ const preloadCssLinkTagRe =
 // HL 行，避免客户端重复创建 `<link rel=preload as=style>` 后被浏览器判定 unused。
 //
 // React/Vite 的 HL tuple 不稳定：除了 `HL["/a.css","stylesheet"]`，也可能带
-// crossOrigin / precedence 等额外字段，或在局部测试里以未转义字符串出现。匹配时
-// 必须同时要求 href 是 CSS 且 hint 类型是 style/stylesheet，避免误删 font/script hint。
+// crossOrigin / precedence 等额外字段，或在局部测试里以未转义字符串出现。CSS 资源
+// 在 dev 下保留 `.scss` / `.less` 等源码 URL，生产环境也可能使用无扩展名 CDN URL；
+// Flight tuple 的资源类型才是协议事实，不能用 `.css` 后缀猜测资源类型。
 const escapedFlightCssHintRowRe =
-  /(?:[0-9a-f]+)?:HL\[\\"[^\\"]+\.css(?:[?#][^\\"]*)?\\",\\"(?:stylesheet|style)\\"(?:,[^\n]*?)?\](?:\\n|\n)?/gi;
+  /(?:[0-9a-f]+)?:HL\[\\"[^\\"]+\\",\\"(?:stylesheet|style)\\"(?:,[^\n]*?)?\](?:\\n|\n)?/gi;
 const plainFlightCssHintRowRe =
-  /(?:[0-9a-f]+)?:HL\["[^"]+\.css(?:[?#][^"]*)?","(?:stylesheet|style)"(?:,[^\n]*?)?\](?:\\n|\n)?/gi;
+  /(?:[0-9a-f]+)?:HL\["[^"]+","(?:stylesheet|style)"(?:,[^\n]*?)?\](?:\\n|\n)?/gi;
 
 // 三个触发字面量。任一出现 → 走慢路径（必须 decode + carry，不能边界丢字节）。
 //   - "stylesheet" : 真正要被改写的目标字串
@@ -220,9 +221,7 @@ function isCssRscHintRow(row: Uint8Array): boolean {
     if (!Array.isArray(tuple)) return false;
     const [href, type] = tuple;
     return (
-      typeof href === 'string' &&
-      /\.css(?:[?#]|$)/i.test(href) &&
-      (type === 'stylesheet' || type === 'style')
+      typeof href === 'string' && href.length > 0 && (type === 'stylesheet' || type === 'style')
     );
   } catch {
     return false;

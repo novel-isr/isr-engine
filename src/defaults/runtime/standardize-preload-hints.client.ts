@@ -2,7 +2,7 @@
  * standardize-preload-hints (client) —— 客户端 DOM 侧把
  *   <link rel="preload" as="stylesheet">
  * 改写成 HTML 标准且可复用的
- *   <link rel="preload" as="style" crossorigin="anonymous">
+ *   <link rel="preload" as="style">
  *
  * 为啥要客户端版本：
  *   server 侧的 standardize-preload-hints 走 stream rewrite，覆盖 SSR HTML +
@@ -11,12 +11,12 @@
  *   SSR 流），浏览器照样打 `<link rel=preload> must have a valid as value` 警告。
  *
  * 修法：拦截 HTMLLinkElement.prototype.as / rel setter + Element.prototype.setAttribute，
- * 只要 link 是 CSS preload，就自动标准化成 as=style + crossorigin=anonymous。
+ * 只要 link 是 CSS preload，就自动标准化成 as=style。
  *
- * crossorigin 的原因：RSC 客户端导航会先插 preload，React 后续再插 stylesheet。
- * 如果两者 credentials mode 不一致，Chrome 会报：
- *   A preload ... is found, but is not used because the request credentials mode does not match
- * 并重新请求 CSS。CSS preload 必须和后续 stylesheet 的 CORS/credentials 语义一致。
+ * 不得在这里合成 crossorigin：RSC 客户端导航会先插 preload，React 后续再插
+ * stylesheet，两者 credentials mode 必须完全一致。若 hint 没声明 crossOrigin，而
+ * 引擎单方面给 preload 加 anonymous，浏览器无法复用它，会重新请求 stylesheet，
+ * 新 DOM 便可能先于第二次请求生成的 CSSOM 出现在屏幕上。
  *
  * 比 MutationObserver 早：在元素插入 DOM、浏览器开始预加载之前就改正确，警告不再触发。
  *
@@ -32,7 +32,6 @@ function normalizeCssPreloadLink(link: HTMLLinkElement): void {
   if (as !== 'stylesheet' && as !== 'style') return;
 
   if (as !== 'style') link.setAttribute('as', 'style');
-  if (!link.hasAttribute('crossorigin')) link.setAttribute('crossorigin', 'anonymous');
 }
 
 export function installClientPreloadHintFix(): void {

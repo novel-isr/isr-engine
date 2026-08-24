@@ -148,6 +148,14 @@ describe('rewritePreloadHints (string-level)', () => {
     expect(out).toBe('""');
   });
 
+  it('FLIGHT_DATA dev 预处理器与无扩展名样式提示也会去重', () => {
+    const input =
+      '"1:HL[\\"/src/pages/ArticlesPage.module.scss\\",\\"stylesheet\\"]\\n' +
+      '2:HL[\\"/styles/route?theme=dark\\",\\"style\\"]\\n"';
+
+    expect(rewritePreloadHints(input)).toBe('""');
+  });
+
   it('未转义形态的 Flight CSS 提示也会去重，非 CSS resource hint 保留', () => {
     const input =
       '1:HL["/assets/ReviewDetailPage.css","style",{"crossOrigin":""}]\n' +
@@ -252,6 +260,19 @@ describe('stripRscCssPreloadHints (client navigation Flight stream)', () => {
       expect(out).toContain(stylesheetResource);
       expect(out).toContain(scriptHint);
     }
+  });
+
+  it('按 Flight 样式类型删除 dev 预处理器与无扩展名 URL，不依赖 .css 后缀', async () => {
+    const input =
+      ':HL["/src/pages/ArticlesPage.module.scss","stylesheet"]\n' +
+      ':HL["/styles/route?theme=dark","style"]\n' +
+      ':HL["/assets/client.js","script"]\n';
+
+    const out = await pipeRscChunks([input]);
+
+    expect(out).not.toContain('ArticlesPage.module.scss');
+    expect(out).not.toContain('/styles/route?theme=dark');
+    expect(out).toContain(':HL["/assets/client.js","script"]');
   });
 
   it('逐字节透传 Flight 二进制 payload，不做 UTF-8 解码重编码', async () => {
