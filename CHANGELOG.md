@@ -39,6 +39,26 @@
 
 ---
 
+## [2.6.1] - 2026-08-25
+
+发布主题：**Vite dev 样式资源原子交接**。
+
+### Fixed
+
+- **刷新或首次切换路由时短暂出现无样式内容**：`@vitejs/plugin-rsc@0.5.34` 的 dev
+  虚拟模块会在 hydration effect 中一次性删除所有 `vite-rsc/client-reference` SSR
+  stylesheet，但 Vite 对路由级 SCSS 的内联 `<style data-vite-dev-id>` 可能在后续任务才插入，
+  因此两者之间存在可见的 CSSOM 空窗。engine 现在在 Vite 插件解析层接管该虚拟模块，按资源
+  匹配 SSR link 与 Vite style；每个 link 只在自己的替代 style 已进入 DOM 后移除。
+- 该修复仅在 `vite serve` 生效，不修改业务主题、路由或样式代码，也不 patch DOM prototype；
+  production 继续由 React 原生 stylesheet resource 生命周期管理。
+
+### Tests
+
+- 新增 dev stylesheet 原子交接测试，覆盖已就绪与延迟就绪的路由样式，以及非
+  `client-reference` 全局样式不受影响。
+- 新增 Vite 虚拟模块所有权测试，锁定 engine 必须先于上游批量清理实现解析该模块。
+
 ## [2.6.0] - 2026-08-25
 
 发布主题：**React RSC 样式资源生命周期根治**。

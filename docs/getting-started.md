@@ -8,7 +8,7 @@
 mkdir my-app && cd my-app
 pnpm init
 # engine + RSC 流水线 peer 依赖
-pnpm add @novel-isr/engine@^2.6.0 \
+pnpm add @novel-isr/engine@^2.6.1 \
   react@19.3.0-canary-bd6ea412-20260824 \
   react-dom@19.3.0-canary-bd6ea412-20260824 \
   react-server-dom-webpack@19.3.0-canary-bd6ea412-20260824 \

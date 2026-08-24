@@ -31,6 +31,7 @@ import type { PluginOption, Plugin } from 'vite';
 import vitePluginRsc from '@vitejs/plugin-rsc';
 
 import { createDevAssetRequestMiddleware } from './devAssetRequestMiddleware';
+import { createDevCssHandoffPlugin } from './createDevCssHandoffPlugin';
 import { createIsrCacheMiddleware } from './isrCacheMiddleware';
 import { createSsgPostBuildPlugin } from './createSsgPostBuildPlugin';
 import { resolveClientObservabilityOptions } from './clientObservabilityConfig';
@@ -244,18 +245,6 @@ function createBrowserShimPlugin(): Plugin {
           force(envs[name]?.build);
         }
       }
-    },
-  };
-}
-
-function createReactVirtualModuleInteropPlugin(): Plugin {
-  return {
-    name: 'isr:react-virtual-module-interop',
-    enforce: 'post',
-    transform(code, id) {
-      if (!id.includes('vite-rsc/remove-duplicate-server-css')) return null;
-      if (!code.includes('import React from "react";')) return null;
-      return code.replace('import React from "react";', 'import * as React from "react";');
     },
   };
 }
@@ -571,8 +560,8 @@ export function createIsrPlugin(options: CreateIsrPluginOptions = {}): PluginOpt
     createEngineDefaultEntriesPlugin(root, userConfig),
     createAppAliasPlugin(root),
     createDevAssetRequestMiddleware(root),
+    createDevCssHandoffPlugin(resolveEngineDefaultsDir()),
     createBrowserShimPlugin(),
-    createReactVirtualModuleInteropPlugin(),
   ];
 
   if (isrCacheOptions?.enabled !== false) {
