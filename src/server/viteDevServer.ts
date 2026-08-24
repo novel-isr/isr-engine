@@ -76,6 +76,7 @@ export async function createViteDevServer(): Promise<ViteDevServer> {
   }
 
   const engineOverrides: InlineConfig = {
+    configFile: false,
     server: {
       middlewareMode: true,
       hmr: hmrDisabled

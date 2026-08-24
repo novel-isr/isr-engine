@@ -39,6 +39,19 @@
 
 ---
 
+## [2.5.13] - 2026-08-24
+
+发布主题：**开发服务器 Vite 配置单次加载**。
+
+### Fixed
+
+- **开发模式重复注册 Vite / RSC / ISR 插件**：`createViteDevServer()` 已显式调用
+  `loadConfigFromFile()` 并合并业务配置，但随后调用 `createServer()` 时没有关闭 Vite 的配置文件自动发现，
+  导致同一 `vite.config` 被再次加载，插件初始化、缓存写入和中间件注册执行两遍。
+  修复后传入 `configFile: false`，明确由引擎完成唯一一次配置加载；新增回归测试锁定该调用契约。
+
+---
+
 ## [2.5.12] - 2026-08-23
 
 发布主题：**配置加载兼容 Node 22.18+/24 原生 type-stripping**。
