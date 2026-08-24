@@ -24,7 +24,7 @@ import { resolveOpsConfig, createOpsAuthMiddleware } from '@/server/opsConfig';
 import type { RuntimeConfig } from '@/types';
 
 interface StartOptions {
-  port: string;
+  port?: string;
   host?: string;
 }
 

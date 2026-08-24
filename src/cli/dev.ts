@@ -10,7 +10,7 @@ import { DEFAULT_PORT } from '@/config/defaults';
 import type { ISRConfig } from '@/types';
 
 interface StartOptions {
-  port: string;
+  port?: string;
   host?: string;
   open?: boolean;
 }
