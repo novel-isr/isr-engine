@@ -39,6 +39,27 @@
 
 ---
 
+## [2.5.15] - 2026-08-25
+
+发布主题：**客户端 RSC 导航样式原子提交修复**。
+
+### Fixed
+
+- **首次客户端路由切换短暂丢失页面样式**：React Flight 响应同时包含 CSS `:HL` resource hint
+  和真实的 `<link rel="stylesheet" precedence>` resource。React 先处理 hint 后会把资源标记为已插入，
+  导致后续 stylesheet resource 不再挂起 transition，新路由 DOM 可能在 CSS 下载完成前提交。现在纯
+  `_.rsc` 响应以字节安全的流式状态机移除 CSS hint，保留真实 stylesheet resource，让 React 等待路由
+  CSS 加载完成后再提交页面；dev 与 production 的首次路由切换行为一致。
+- 初始 SSR HTML 的 Flight CSS hint 去重支持 React 19 实际使用的无 row-id `:HL[...]` wire format，
+  同时保留旧的 `<hex>:HL[...]` 兼容形式。
+
+### Tests
+
+- 新增纯 Flight 流回归测试，覆盖所有 chunk 切分位置、非 CSS hint 保留、真实 stylesheet resource
+  保留，以及二进制 payload 逐字节透传。
+
+---
+
 ## [2.5.14] - 2026-08-24
 
 发布主题：**CLI 服务监听配置优先级修复**。

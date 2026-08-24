@@ -21,8 +21,8 @@
  *      stylesheet 注入 head，保留 hint 会变成重复 preload，线上会出现
  *      `preloaded using link preload but not used`。
  *
- *      注意：这里只处理初始 HTML 内联 Flight；客户端导航的 RSC 响应不经过这个
- *      HTML rewriter，仍由 React/Vite 按需处理资源提示。
+ *      客户端导航的纯 Flight 响应由本模块的 `stripRscCssPreloadHints` 单独处理；
+ *      不能直接套用 HTML rewriter，否则业务 payload 里的 HTML 字符串可能被误改。
  *
  * 性能要点（2026-05 bench 回归 -50% QPS / +200ms p95 后修）：
  *   - SSR HTML 流 ~25 个 chunk，绝大多数不含 `stylesheet`
@@ -51,9 +51,9 @@ const preloadCssLinkTagRe =
 // crossOrigin / precedence 等额外字段，或在局部测试里以未转义字符串出现。匹配时
 // 必须同时要求 href 是 CSS 且 hint 类型是 style/stylesheet，避免误删 font/script hint。
 const escapedFlightCssHintRowRe =
-  /\d+:HL\[\\"[^\\"]+\.css(?:[?#][^\\"]*)?\\",\\"(?:stylesheet|style)\\"(?:,[^\n]*?)?\](?:\\n|\n)?/g;
+  /(?:[0-9a-f]+)?:HL\[\\"[^\\"]+\.css(?:[?#][^\\"]*)?\\",\\"(?:stylesheet|style)\\"(?:,[^\n]*?)?\](?:\\n|\n)?/gi;
 const plainFlightCssHintRowRe =
-  /\d+:HL\["[^"]+\.css(?:[?#][^"]*)?","(?:stylesheet|style)"(?:,[^\n]*?)?\](?:\\n|\n)?/g;
+  /(?:[0-9a-f]+)?:HL\["[^"]+\.css(?:[?#][^"]*)?","(?:stylesheet|style)"(?:,[^\n]*?)?\](?:\\n|\n)?/gi;
 
 // 三个触发字面量。任一出现 → 走慢路径（必须 decode + carry，不能边界丢字节）。
 //   - "stylesheet" : 真正要被改写的目标字串
@@ -198,6 +198,130 @@ export function standardizePreloadHints(
         }
         const text = charCarry + decoder.decode();
         if (text) controller.enqueue(encoder.encode(rewritePreloadHints(text)));
+      },
+    })
+  );
+}
+
+function isHexByte(byte: number): boolean {
+  return (
+    (byte >= 0x30 && byte <= 0x39) ||
+    (byte >= 0x61 && byte <= 0x66) ||
+    (byte >= 0x41 && byte <= 0x46)
+  );
+}
+
+function isCssRscHintRow(row: Uint8Array): boolean {
+  const colon = row.indexOf(0x3a);
+  if (colon < 0 || row[colon + 1] !== 0x48 || row[colon + 2] !== 0x4c) return false;
+
+  try {
+    const tuple = JSON.parse(new TextDecoder().decode(row.subarray(colon + 3))) as unknown;
+    if (!Array.isArray(tuple)) return false;
+    const [href, type] = tuple;
+    return (
+      typeof href === 'string' &&
+      /\.css(?:[?#]|$)/i.test(href) &&
+      (type === 'stylesheet' || type === 'style')
+    );
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * 删除客户端导航 Flight 响应中的 CSS `HL` 行，但保留真实的 React stylesheet
+ * resource row。React 会用后者挂起 transition，直到路由 CSS 加载完成后再提交页面。
+ *
+ * 这里按字节处理而不是把整个响应 decode/re-encode：Flight 可以携带二进制 row，任何
+ * UTF-8 字符串往返都会破坏这些 payload。状态机只缓冲可能是 `[hex]:HL[...]` 的短行，
+ * 已确认不是资源提示的内容立即透传。
+ */
+export function stripRscCssPreloadHints(
+  stream: ReadableStream<Uint8Array>
+): ReadableStream<Uint8Array> {
+  type Mode = 'prefix' | 'hint' | 'passthrough';
+  type PrefixPhase = 'hex' | 'h' | 'l' | 'bracket';
+
+  let mode: Mode = 'prefix';
+  let phase: PrefixPhase = 'hex';
+  let pending: number[] = [];
+
+  const resetRow = () => {
+    mode = 'prefix';
+    phase = 'hex';
+    pending = [];
+  };
+
+  return stream.pipeThrough(
+    new TransformStream<Uint8Array, Uint8Array>({
+      transform(chunk, controller) {
+        let index = 0;
+
+        while (index < chunk.byteLength) {
+          if (mode === 'passthrough') {
+            const newline = chunk.indexOf(0x0a, index);
+            if (newline === -1) {
+              controller.enqueue(chunk.subarray(index));
+              return;
+            }
+            controller.enqueue(chunk.subarray(index, newline + 1));
+            index = newline + 1;
+            resetRow();
+            continue;
+          }
+
+          const byte = chunk[index++];
+          if (mode === 'hint') {
+            if (byte !== 0x0a) {
+              pending.push(byte);
+              continue;
+            }
+            const row = new Uint8Array(pending);
+            if (!isCssRscHintRow(row)) {
+              const rowWithNewline = new Uint8Array(row.byteLength + 1);
+              rowWithNewline.set(row);
+              rowWithNewline[row.byteLength] = 0x0a;
+              controller.enqueue(rowWithNewline);
+            }
+            resetRow();
+            continue;
+          }
+
+          let matches = false;
+          if (phase === 'hex') {
+            if (isHexByte(byte)) {
+              matches = true;
+            } else if (byte === 0x3a) {
+              matches = true;
+              phase = 'h';
+            }
+          } else if (phase === 'h' && byte === 0x48) {
+            matches = true;
+            phase = 'l';
+          } else if (phase === 'l' && byte === 0x4c) {
+            matches = true;
+            phase = 'bracket';
+          } else if (phase === 'bracket' && byte === 0x5b) {
+            matches = true;
+            mode = 'hint';
+          }
+
+          pending.push(byte);
+          if (matches) continue;
+
+          controller.enqueue(new Uint8Array(pending));
+          if (byte === 0x0a) resetRow();
+          else {
+            mode = 'passthrough';
+            pending = [];
+          }
+        }
+      },
+      flush(controller) {
+        if (pending.length === 0) return;
+        const row = new Uint8Array(pending);
+        if (mode !== 'hint' || !isCssRscHintRow(row)) controller.enqueue(row);
       },
     })
   );

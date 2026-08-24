@@ -12,6 +12,7 @@ import { describe, expect, it } from 'vitest';
 import {
   bytesIncludeAscii,
   rewritePreloadHints,
+  stripRscCssPreloadHints,
   standardizePreloadHints,
 } from '../standardize-preload-hints';
 
@@ -35,6 +36,39 @@ async function pipeChunks(chunks: string[]): Promise<string> {
   }
   text += decoder.decode();
   return text;
+}
+
+/** 把纯 Flight 响应喂进客户端导航专用的 CSS hint 去重流。 */
+async function pipeRscBytes(chunks: Uint8Array[]): Promise<Uint8Array> {
+  const parts: Uint8Array[] = [];
+  let length = 0;
+  const source = new ReadableStream<Uint8Array>({
+    start(controller) {
+      for (const chunk of chunks) controller.enqueue(chunk);
+      controller.close();
+    },
+  });
+  const reader = stripRscCssPreloadHints(source).getReader();
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    parts.push(value);
+    length += value.byteLength;
+  }
+  const out = new Uint8Array(length);
+  let offset = 0;
+  for (const part of parts) {
+    out.set(part, offset);
+    offset += part.byteLength;
+  }
+  return out;
+}
+
+async function pipeRscChunks(chunks: string[]): Promise<string> {
+  const encoder = new TextEncoder();
+  const decoder = new TextDecoder();
+  const out = await pipeRscBytes(chunks.map(chunk => encoder.encode(chunk)));
+  return decoder.decode(out);
 }
 
 describe('rewritePreloadHints (string-level)', () => {
@@ -94,7 +128,7 @@ describe('rewritePreloadHints (string-level)', () => {
 
   it('FLIGHT_DATA CSS 提示行会被删除，避免重复 preload', () => {
     const input =
-      'self.__FLIGHT_DATA||(self.__FLIGHT_DATA=[]);self.__FLIGHT_DATA.push("1:HL[\\"/a.css\\",\\"stylesheet\\"]\\n")';
+      'self.__FLIGHT_DATA||(self.__FLIGHT_DATA=[]);self.__FLIGHT_DATA.push(":HL[\\"/a.css\\",\\"stylesheet\\"]\\n")';
     const out = rewritePreloadHints(input);
     expect(out).not.toContain(':HL[\\"/a.css\\"');
     expect(out).not.toContain('\\"stylesheet\\"');
@@ -196,6 +230,36 @@ describe('standardizePreloadHints (stream)', () => {
     const out = await pipeChunks([input]);
     expect(out).not.toContain(':HL[\\"/c.css\\"');
     expect(out).not.toContain('\\"stylesheet\\"');
+  });
+});
+
+describe('stripRscCssPreloadHints (client navigation Flight stream)', () => {
+  it('删除 CSS HL 行，同时保留 React stylesheet resource 与其它资源提示', async () => {
+    const cssHint = ':HL["/assets/ArticlesPage.css","stylesheet"]\n';
+    const stylesheetResource =
+      'b:["$","link","css:/assets/ArticlesPage.css",' +
+      '{"rel":"stylesheet","precedence":"vite-rsc/importer-resources",' +
+      '"href":"/assets/ArticlesPage.css","data-rsc-css-href":"/assets/ArticlesPage.css"}]\n';
+    const scriptHint = ':HL["/assets/client.js","script"]\n';
+
+    for (let split = 1; split < cssHint.length; split++) {
+      const out = await pipeRscChunks([
+        cssHint.slice(0, split),
+        cssHint.slice(split) + stylesheetResource + scriptHint,
+      ]);
+
+      expect(out).not.toContain(':HL["/assets/ArticlesPage.css"');
+      expect(out).toContain(stylesheetResource);
+      expect(out).toContain(scriptHint);
+    }
+  });
+
+  it('逐字节透传 Flight 二进制 payload，不做 UTF-8 解码重编码', async () => {
+    const binaryPayload = new Uint8Array([0x31, 0x3a, 0x54, 0x33, 0x2c, 0xff, 0x00, 0x0a]);
+
+    const out = await pipeRscBytes([binaryPayload.slice(0, 5), binaryPayload.slice(5)]);
+
+    expect(out).toEqual(binaryPayload);
   });
 });
 
