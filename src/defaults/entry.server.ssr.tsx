@@ -17,7 +17,6 @@ import type { ReactFormState } from 'react-dom/client';
 import { renderToReadableStream } from 'react-dom/server.edge';
 import { injectRSCPayload } from 'rsc-html-stream/server';
 import type { IntlPayload } from './runtime/seo-runtime';
-import { standardizePreloadHints } from './runtime/standardize-preload-hints';
 import { setClientI18n } from '../runtime/i18n-store';
 import { HydrationShell } from './runtime/hydration-shell';
 // @ts-expect-error - 虚拟模块由 plugin-rsc 注入
@@ -28,11 +27,8 @@ import assetsManifest from 'virtual:vite-rsc/assets-manifest';
  * 只在 csr-shell fallback 路径使用 —— SSR 抛错后我们不知道原本应该走哪条路由的
  * CSS，所以全量注入兜底。
  *
- * 正常 SSR 路径不再走这里：plugin-rsc 天然只为本次渲染用到的 chunk emit
- * `<link rel=preload as=stylesheet>`（已经是 scoped-by-route），engine 的
- * standardize-preload-hints stream rewriter 在出流时把这些 preload 升级成
- * `<link rel=stylesheet data-precedence=...>` 让它们成为 blocking stylesheet，
- * 既消除 LCP element render delay，又不会过度注入跨路由 CSS。
+ * 正常 SSR 路径不走这里：plugin-rsc 为本次渲染使用的 chunk 生成 React
+ * stylesheet resource，React 直接输出带 precedence 的 blocking stylesheet。
  */
 function collectAllCss(): string[] {
   const set = new Set<string>();
@@ -138,8 +134,6 @@ const CSR_SHELL_STYLES = `
     outline-offset: 2px;
   }
 `;
-
-// preload-hint 改写实现独立到 ./runtime/standardize-preload-hints.ts，可单测。
 
 export interface RenderHtmlOptions {
   formState?: ReactFormState;
@@ -258,8 +252,6 @@ export async function renderHTML(
       injectRSCPayload(rscStream2, { nonce: options.nonce })
     );
   }
-
-  responseStream = standardizePreloadHints(responseStream);
 
   return { stream: responseStream, status, csrShellFallback };
 }

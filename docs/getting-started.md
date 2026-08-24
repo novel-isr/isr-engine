@@ -8,11 +8,18 @@
 mkdir my-app && cd my-app
 pnpm init
 # engine + RSC 流水线 peer 依赖
-pnpm add @novel-isr/engine react react-dom react-server-dom-webpack rsc-html-stream
+pnpm add @novel-isr/engine@^2.6.0 \
+  react@19.3.0-canary-bd6ea412-20260824 \
+  react-dom@19.3.0-canary-bd6ea412-20260824 \
+  react-server-dom-webpack@19.3.0-canary-bd6ea412-20260824 \
+  rsc-html-stream
 pnpm add -D vite typescript @types/react @types/react-dom @types/node
 ```
 
 > `react-server-dom-webpack` / `rsc-html-stream` 是 engine 的 raw subpath export（如 `@novel-isr/engine/server-entry`）和 `@vitejs/plugin-rsc` 共同消费的 peer dep —— 严格 pnpm 模式下必须显式装。
+
+> v2.6.0 要求 React 三件套严格同版。上面的精确构建包含 React 上游
+> CSS Flight hint `as=style` 修复；不要单独升降任何一个 React 包。
 
 > **不要再装 `@vitejs/plugin-react`** —— `@vitejs/plugin-rsc`（engine 内部用）已内置 React Refresh + JSX 处理；重复注册会报 `RefreshRuntime has already been declared`。
 

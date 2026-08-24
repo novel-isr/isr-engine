@@ -2,12 +2,12 @@
 
 > Vite + React 19 RSC 的 ISR / SSG / Fallback 编排层。基于 [@vitejs/plugin-rsc](https://github.com/vitejs/vite-plugin-react/tree/main/packages/plugin-rsc) 官方插件——**不手写 Flight 协议**。业务只维护一个 `routes` 路由源、一个 `App` 壳和可选的 `SiteHooks` 配置，其余 SSR / ISR / SSG / CSR recovery 协议细节全部由 engine 收口。
 
-[![Vite 8](https://img.shields.io/badge/Vite-8-646CFF.svg)](https://vitejs.dev/) [![React 19](https://img.shields.io/badge/React-19-61DAFB.svg)](https://react.dev/) [![Express 5](https://img.shields.io/badge/Express-5-000000.svg)](https://expressjs.com/) [![Node 22.21.1](https://img.shields.io/badge/Node-22.21.1-339933.svg)](https://nodejs.org/) [![Tests 728](https://img.shields.io/badge/Tests-728%20passing-brightgreen.svg)](./CHANGELOG.md)
+[![Vite 8](https://img.shields.io/badge/Vite-8-646CFF.svg)](https://vitejs.dev/) [![React 19](https://img.shields.io/badge/React-19-61DAFB.svg)](https://react.dev/) [![Express 5](https://img.shields.io/badge/Express-5-000000.svg)](https://expressjs.com/) [![Node 22.21.1](https://img.shields.io/badge/Node-22.21.1-339933.svg)](https://nodejs.org/) [![Tests 712](https://img.shields.io/badge/Tests-712%20passing-brightgreen.svg)](./CHANGELOG.md)
 
-> **v2.5.10（2026-05-29）** —— browser telemetry 上传退避保护：修复 endpoint 临时断连时
-> flush interval 与 retry timer 叠加导致同批 payload 重复并发上传的问题；
-> 同一 endpoint 同时只允许一个普通 flush，失败期间只由退避 retry 驱动。
-> 详见 [CHANGELOG.md](./CHANGELOG.md#2510---2026-05-29)。
+> **v2.6.0（2026-08-25）** —— React RSC 样式资源生命周期根治：引擎不再解析
+> Flight 私有协议、改写 SSR 流或 patch DOM prototype，改由包含上游修复的同版
+> React 三件套原生管理 preload 与 stylesheet。
+> 详见 [CHANGELOG.md](./CHANGELOG.md#260---2026-08-25)。
 
 > **通用框架，与业务无关**。任何 Vite + React 19 + RSC 站点都可以接。
 > 包名前缀 `@novel-isr` 仅是首发项目代号，与小说业务**无任何耦合**——
@@ -19,7 +19,11 @@
 ```bash
 # engine + 必需的 peer 依赖（react-server-dom-webpack / rsc-html-stream 给 RSC 流水线用，
 # 严格 pnpm 模式下必须显式装）
-pnpm add @novel-isr/engine react react-dom react-server-dom-webpack rsc-html-stream
+pnpm add @novel-isr/engine@^2.6.0 \
+  react@19.3.0-canary-bd6ea412-20260824 \
+  react-dom@19.3.0-canary-bd6ea412-20260824 \
+  react-server-dom-webpack@19.3.0-canary-bd6ea412-20260824 \
+  rsc-html-stream
 pnpm add -D vite typescript @types/react @types/react-dom
 ```
 
@@ -635,7 +639,7 @@ npm Enterprise / GitHub Packages）。**任何项目**都可以作为消费方�
 //npm.your-company.com/:_authToken=${NPM_TOKEN}
 
 # 2. package.json 里写语义版本号
-{ "dependencies": { "@novel-isr/engine": "^2.5.0" } }
+{ "dependencies": { "@novel-isr/engine": "^2.6.0" } }
 
 # 3. install
 pnpm install

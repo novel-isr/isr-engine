@@ -39,6 +39,30 @@
 
 ---
 
+## [2.6.0] - 2026-08-25
+
+发布主题：**React RSC 样式资源生命周期根治**。
+
+### Changed
+
+- React、React DOM 与 React Server DOM Webpack 锁定到同一个包含上游 CSS Flight hint
+  修复的精确构建 `19.3.0-canary-bd6ea412-20260824`。该构建从资源生产端直接输出
+  `:HL[href,"style"]`，使 preload 与 stylesheet 使用 React 同一套标准资源身份和挂起语义。
+
+### Removed
+
+- 删除引擎对 Flight `HL` 私有字节协议的过滤器，纯 RSC 流现在原样交给 React 客户端。
+- 删除对 `HTMLLinkElement.prototype` 和 `Element.prototype.setAttribute` 的全局 monkey patch。
+- 删除 SSR HTML 的 CSS preload/Flight hint 流改写；首屏和客户端导航均由 React
+  原生 stylesheet resource 处理。
+
+### Tests
+
+- 新增样式资源所有权架构测试，防止重新引入 Flight 过滤或 DOM prototype patch，
+  并强制 React 三件套严格同版。
+
+---
+
 ## [2.5.16] - 2026-08-25
 
 发布主题：**dev 客户端导航样式原子提交修复**。

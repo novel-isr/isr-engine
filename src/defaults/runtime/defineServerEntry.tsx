@@ -34,7 +34,6 @@ import { App } from '@app/_entry';
 import '@app/_routes';
 
 import { parseRenderRequest } from './request';
-import { stripRscCssPreloadHints } from './standardize-preload-hints';
 import { type IntlPayload, type PageSeoMeta, injectSeoMeta, mergePageSeoMeta } from './seo-runtime';
 import { injectHeadExtras } from './head-extras-runtime';
 import { runWithI18n } from './i18n-server';
@@ -336,7 +335,7 @@ async function runRscPipeline(request: Request, extras: PipelineExtras): Promise
   const rscStream = renderToReadableStream<DefaultRscPayload>(rscPayload, { temporaryReferences });
 
   if (renderRequest.isRsc) {
-    return new Response(stripRscCssPreloadHints(rscStream), {
+    return new Response(rscStream, {
       status: actionStatus,
       headers: { 'content-type': 'text/x-component;charset=utf-8' },
     });
