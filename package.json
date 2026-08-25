@@ -93,6 +93,8 @@
     "format": "prettier --write .",
     "type-check": "tsc --noEmit",
     "test": "vitest run",
+    "pretest:browser": "pnpm run build",
+    "test:browser": "playwright test e2e/dev-css-lifecycle/dev-css-lifecycle.spec.ts",
     "bench": "node bench/runner.mjs",
     "check": "pnpm run type-check && pnpm run lint && pnpm run test",
     "release": "pnpm run check && pnpm run build && npm publish --access restricted",
@@ -129,6 +131,7 @@
   },
   "devDependencies": {
     "@eslint/js": "^9.15.0",
+    "@playwright/test": "^1.62.1",
     "@types/compression": "^1.7.5",
     "@types/express": "^5.0.0",
     "@types/ioredis-mock": "^8.2.5",

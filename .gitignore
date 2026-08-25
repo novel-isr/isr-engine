@@ -51,6 +51,8 @@ coverage/
 # Testing
 .coverage/
 junit.xml
+playwright-report/
+test-results/
 
 # Typescript
 *.tsbuildinfo
