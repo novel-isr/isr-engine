@@ -56,7 +56,7 @@ describe('transformDevCssModule', () => {
         'virtual:novel-isr/dev-style-registry',
         '/src/a?b.scss'
       )
-    ).toThrow(/stylesheet identity.*does not match/i);
+    ).toThrow(/stylesheet (?:identity|semantic query).*does not match/i);
   });
 
   it.each(['/src/Card.css', '/src/Card.scss', '/src/Card.module.scss'])(

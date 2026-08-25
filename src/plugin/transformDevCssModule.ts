@@ -1,7 +1,10 @@
 import ts from 'typescript';
 import type { TransformResult } from 'vite';
 
-import { canonicalizeDevStyleId } from '../defaults/runtime/dev-style-id';
+import {
+  canonicalizeDevStyleId,
+  canonicalizeDevStyleSemanticQuery,
+} from '../defaults/runtime/dev-style-id';
 
 const STYLESHEET_URL = /\.(?:css|less|sass|scss|styl|stylus|pcss|postcss|sss)(?:[?#]|$)/i;
 
@@ -347,6 +350,12 @@ export function transformDevCssModule(
   const wrapperStyleId = canonicalizeDevStyleId(updateStyleId);
   const transformedStyleId = canonicalizeDevStyleId(id);
   const canonicalBrowserStyleId = canonicalizeDevStyleId(exactStyleId);
+  const semanticQueries = [updateStyleId, id, exactStyleId].map(value =>
+    canonicalizeDevStyleSemanticQuery(value)
+  );
+  if (!semanticQueries.every(query => query === semanticQueries[0])) {
+    throw compatibilityError(id, 'stylesheet semantic query does not match across identities.');
+  }
   if (wrapperStyleId !== transformedStyleId && wrapperStyleId !== canonicalBrowserStyleId) {
     throw compatibilityError(id, 'stylesheet identity in the wrapper does not match the module.');
   }

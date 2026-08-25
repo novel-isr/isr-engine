@@ -6,6 +6,7 @@ import {
 } from './dev-style-id';
 
 const RSC_STYLESHEET = 'link[rel="stylesheet"][data-precedence^="vite-rsc/"]';
+const DEV_STYLE_REGISTRY_INSPECT = Symbol.for('novel-isr.dev-style-registry.inspect');
 
 type DevStyleState = 'ssr-active' | 'client-active' | 'updating' | 'pending-release' | 'released';
 
@@ -41,8 +42,7 @@ export function createDevStyleRegistry(
 ): DevStyleRegistry {
   const records = new Map<string, StyleRecord>();
   const pendingRscGenerations = new Set<number>();
-  const committedRscGenerations = new Set<number>();
-  const invalidatedTransportGenerations = new Set<number>();
+  const invalidatedTransportGenerationRanges: Array<[number, number]> = [];
   const preparingRscGenerations = new Set<number>();
   const preparedRscGenerations = new Set<number>();
   const preparationControllers = new Map<number, AbortController>();
@@ -50,7 +50,46 @@ export function createDevStyleRegistry(
   const generationPreloads = new Map<number, Map<string, HTMLLinkElement>>();
   const rscDeclarations = new Map<number, string[]>();
   let committedActiveIds: string[] = [];
-  let latestCommittedGeneration = -1;
+  let committedGenerationWatermark = -1;
+
+  const isInvalidatedGeneration = (generation: number): boolean =>
+    invalidatedTransportGenerationRanges.some(
+      ([start, end]) => generation >= start && generation <= end
+    );
+
+  const invalidateGeneration = (generation: number) => {
+    let index = 0;
+    while (
+      index < invalidatedTransportGenerationRanges.length &&
+      invalidatedTransportGenerationRanges[index]![1] < generation - 1
+    ) {
+      index += 1;
+    }
+    const current = invalidatedTransportGenerationRanges[index];
+    if (!current || generation < current[0] - 1) {
+      invalidatedTransportGenerationRanges.splice(index, 0, [generation, generation]);
+      return;
+    }
+    current[0] = Math.min(current[0], generation);
+    current[1] = Math.max(current[1], generation);
+    while (index + 1 < invalidatedTransportGenerationRanges.length) {
+      const next = invalidatedTransportGenerationRanges[index + 1]!;
+      if (next[0] > current[1] + 1) break;
+      current[1] = Math.max(current[1], next[1]);
+      invalidatedTransportGenerationRanges.splice(index + 1, 1);
+    }
+  };
+
+  const clearInvalidatedThrough = (generation: number) => {
+    while (
+      invalidatedTransportGenerationRanges[0] &&
+      invalidatedTransportGenerationRanges[0][1] <= generation
+    ) {
+      invalidatedTransportGenerationRanges.shift();
+    }
+    const first = invalidatedTransportGenerationRanges[0];
+    if (first && first[0] <= generation) first[0] = generation + 1;
+  };
 
   const canonicalId = (id: string): string => {
     if (!id.trim())
@@ -91,12 +130,15 @@ export function createDevStyleRegistry(
     return href ? getDevStyleTransportGeneration(href, document.baseURI) : undefined;
   };
 
-  const generationLinks = (generation: number): HTMLLinkElement[] =>
+  const generationTransportLinks = (): HTMLLinkElement[] =>
     Array.from(
       document.querySelectorAll<HTMLLinkElement>(
         `${RSC_STYLESHEET}[href*="${DEV_STYLE_TRANSPORT_GENERATION_PARAM}="]`
       )
-    ).filter(link => linkGeneration(link) === generation);
+    );
+
+  const generationLinks = (generation: number): HTMLLinkElement[] =>
+    generationTransportLinks().filter(link => linkGeneration(link) === generation);
 
   const isCommitted = (id: string): boolean => committedActiveIds.includes(id);
 
@@ -132,12 +174,6 @@ export function createDevStyleRegistry(
   const sameActiveSet = (left: string[], right: string[]): boolean =>
     left.length === right.length && left.every(id => right.includes(id));
 
-  const requiredByPendingGeneration = (id: string, exceptGeneration?: number): boolean =>
-    Array.from(rscDeclarations).some(
-      ([pending, ids]) =>
-        pending !== exceptGeneration && pendingRscGenerations.has(pending) && ids.includes(id)
-    );
-
   const commitActiveSet = (activeIds: string[], generation?: number) => {
     for (const record of Array.from(records.values())) {
       if (activeIds.includes(record.id)) {
@@ -164,7 +200,11 @@ export function createDevStyleRegistry(
       if (
         !isImporterResource(link) ||
         (exactGeneration && owner !== generation && !(generation === 0 && owner === undefined)) ||
-        (owner !== undefined && (owner > generation || invalidatedTransportGenerations.has(owner)))
+        (owner === undefined && committedGenerationWatermark > 0) ||
+        (owner !== undefined &&
+          (owner < committedGenerationWatermark ||
+            owner > generation ||
+            isInvalidatedGeneration(owner)))
       ) {
         continue;
       }
@@ -193,9 +233,7 @@ export function createDevStyleRegistry(
     for (const link of matchingLinks(id)) {
       const owner = linkGeneration(link);
       if (
-        (owner === undefined ||
-          owner <= generation ||
-          invalidatedTransportGenerations.has(owner)) &&
+        (owner === undefined || owner <= generation || isInvalidatedGeneration(owner)) &&
         link !== selected
       ) {
         link.remove();
@@ -208,7 +246,7 @@ export function createDevStyleRegistry(
     for (const id of committedActiveIds) {
       const record = matchingRecord(id);
       if (record?.cssText !== undefined) installManagedNode(record);
-      convergeCommittedTransport(id, latestCommittedGeneration, !!record?.node?.isConnected);
+      convergeCommittedTransport(id, committedGenerationWatermark, !!record?.node?.isConnected);
     }
   };
 
@@ -270,39 +308,36 @@ export function createDevStyleRegistry(
     rscDeclarations.delete(generation);
   };
 
-  const reclaimInvalidatedTransport = (generation: number) => {
-    const invalidatedLinks = generationLinks(generation);
-    const invalidatedIds = Array.from(
-      new Set(invalidatedLinks.map(stylesheetId).filter((id): id is string => id !== undefined))
-    );
-    for (const id of invalidatedIds) {
-      const validOwner =
-        !!matchingRecord(id)?.node?.isConnected ||
-        matchingLinks(id).some(link => {
-          const owner = linkGeneration(link);
-          return owner === undefined || !invalidatedTransportGenerations.has(owner);
-        });
-      const stillRequired = isCommitted(id) || requiredByPendingGeneration(id, generation);
-      if (validOwner || !stillRequired) {
-        for (const link of invalidatedLinks) {
-          if (stylesheetId(link) === id) link.remove();
-        }
-        continue;
-      }
-      const invalidOwners = matchingLinks(id).filter(link => {
-        const owner = linkGeneration(link);
-        return owner !== undefined && invalidatedTransportGenerations.has(owner);
-      });
-      for (const link of invalidOwners.slice(0, -1)) link.remove();
+  const removeGenerationTransport = (generation: number) => {
+    for (const link of generationLinks(generation)) link.remove();
+  };
+
+  const clearObsoleteGeneration = (generation: number) => {
+    clearGenerationState(generation, true);
+    removeGenerationTransport(generation);
+  };
+
+  const reconcileCommittedGenerationTouch = (generation: number) => {
+    clearGenerationState(generation, false);
+    reconcileCommittedSet();
+    for (const link of generationLinks(generation)) {
+      const id = stylesheetId(link);
+      if (id === undefined || !committedActiveIds.includes(id)) link.remove();
     }
   };
 
-  const invalidateUncommittedGeneration = (generation: number, reconcile: boolean) => {
-    if (committedRscGenerations.has(generation)) return;
-    invalidatedTransportGenerations.add(generation);
-    clearGenerationState(generation, true);
-    if (reconcile) reconcileCommittedSet();
-    reclaimInvalidatedTransport(generation);
+  const invalidateUncommittedGeneration = (generation: number) => {
+    if (generation < committedGenerationWatermark) {
+      clearObsoleteGeneration(generation);
+      return;
+    }
+    if (generation === committedGenerationWatermark) {
+      reconcileCommittedGenerationTouch(generation);
+      return;
+    }
+    invalidateGeneration(generation);
+    clearObsoleteGeneration(generation);
+    reconcileCommittedSet();
   };
 
   const finalizeDroppedGenerations = (committingGeneration: number) => {
@@ -317,19 +352,54 @@ export function createDevStyleRegistry(
     ]);
     const dropped = Array.from(candidates)
       .filter(
-        generation => generation < committingGeneration && !committedRscGenerations.has(generation)
+        generation => generation > committedGenerationWatermark && generation < committingGeneration
       )
       .sort((left, right) => left - right);
     if (dropped.length === 0) return;
     for (const generation of dropped) {
-      invalidatedTransportGenerations.add(generation);
-      clearGenerationState(generation, true);
+      invalidateGeneration(generation);
+      clearObsoleteGeneration(generation);
     }
     reconcileCommittedSet();
-    for (const generation of dropped) reclaimInvalidatedTransport(generation);
   };
 
-  return {
+  const clearCommittedGenerationState = (generation: number) => {
+    const candidates = new Set<number>([
+      ...pendingRscGenerations,
+      ...preparingRscGenerations,
+      ...preparedRscGenerations,
+      ...preparationControllers.keys(),
+      ...preparationPromises.keys(),
+      ...generationPreloads.keys(),
+      ...rscDeclarations.keys(),
+    ]);
+    for (const candidate of candidates) {
+      if (candidate <= generation) clearGenerationState(candidate, candidate < generation);
+    }
+    for (const link of generationTransportLinks()) {
+      const owner = linkGeneration(link);
+      if (owner !== undefined && owner < generation && isInvalidatedGeneration(owner)) {
+        link.remove();
+      }
+    }
+    clearInvalidatedThrough(generation);
+  };
+
+  const sorted = (values: Iterable<number>): number[] => Array.from(values).sort((a, b) => a - b);
+
+  const inspectGenerationState = () => ({
+    committedWatermark: committedGenerationWatermark,
+    controllers: sorted(preparationControllers.keys()),
+    declarations: sorted(rscDeclarations.keys()),
+    invalidatedRanges: invalidatedTransportGenerationRanges.map(([start, end]) => [start, end]),
+    pending: sorted(pendingRscGenerations),
+    preloads: sorted(generationPreloads.keys()),
+    prepared: sorted(preparedRscGenerations),
+    preparing: sorted(preparingRscGenerations),
+    promises: sorted(preparationPromises.keys()),
+  });
+
+  const registry: DevStyleRegistry = {
     publish(id, cssText) {
       const record = findOrCreateRecord(canonicalId(id));
       record.cssText = cssText;
@@ -337,13 +407,15 @@ export function createDevStyleRegistry(
 
       if (
         isCommitted(record.id) ||
-        (latestCommittedGeneration === -1 && pendingRscGenerations.size === 0 && links.length === 0)
+        (committedGenerationWatermark === -1 &&
+          pendingRscGenerations.size === 0 &&
+          links.length === 0)
       ) {
         installManagedNode(record);
         if (!isCommitted(record.id)) committedActiveIds.push(record.id);
         convergeCommittedTransport(
           record.id,
-          latestCommittedGeneration,
+          committedGenerationWatermark,
           !!record.node?.isConnected
         );
       }
@@ -357,11 +429,27 @@ export function createDevStyleRegistry(
     },
 
     beginRscUpdate(generation) {
-      if (generation > latestCommittedGeneration) pendingRscGenerations.add(generation);
+      if (generation <= committedGenerationWatermark || isInvalidatedGeneration(generation)) {
+        if (generation < committedGenerationWatermark || isInvalidatedGeneration(generation)) {
+          clearObsoleteGeneration(generation);
+        } else {
+          reconcileCommittedGenerationTouch(generation);
+        }
+        return;
+      }
+      pendingRscGenerations.add(generation);
     },
 
     declareRscStyles(generation, activeIds) {
-      if (generation < latestCommittedGeneration) return;
+      if (generation <= committedGenerationWatermark || isInvalidatedGeneration(generation)) {
+        if (generation < committedGenerationWatermark) clearObsoleteGeneration(generation);
+        else if (isInvalidatedGeneration(generation)) {
+          clearObsoleteGeneration(generation);
+        } else {
+          reconcileCommittedGenerationTouch(generation);
+        }
+        return;
+      }
       const active = Array.from(new Set(Array.from(activeIds, canonicalId)));
       const existing = rscDeclarations.get(generation);
       if (existing && !sameActiveSet(existing, active)) {
@@ -374,10 +462,12 @@ export function createDevStyleRegistry(
     },
 
     prepareRscStyles(generation, activeIds) {
-      if (
-        generation <= latestCommittedGeneration ||
-        invalidatedTransportGenerations.has(generation)
-      ) {
+      if (generation <= committedGenerationWatermark || isInvalidatedGeneration(generation)) {
+        if (generation < committedGenerationWatermark || isInvalidatedGeneration(generation)) {
+          clearObsoleteGeneration(generation);
+        } else {
+          reconcileCommittedGenerationTouch(generation);
+        }
         return Promise.resolve();
       }
       this.declareRscStyles(generation, activeIds);
@@ -416,7 +506,7 @@ export function createDevStyleRegistry(
     },
 
     abortRscUpdate(generation) {
-      invalidateUncommittedGeneration(generation, true);
+      invalidateUncommittedGeneration(generation);
     },
 
     beginUpdate() {
@@ -442,11 +532,12 @@ export function createDevStyleRegistry(
     },
 
     reconcileDocumentStyles(generation, activeIds) {
-      if (
-        generation < latestCommittedGeneration ||
-        invalidatedTransportGenerations.has(generation)
-      ) {
+      if (generation < committedGenerationWatermark || isInvalidatedGeneration(generation)) {
+        clearObsoleteGeneration(generation);
         return;
+      }
+      if (generation === committedGenerationWatermark) {
+        reconcileCommittedGenerationTouch(generation);
       }
       if (
         preparingRscGenerations.has(generation) ||
@@ -455,7 +546,7 @@ export function createDevStyleRegistry(
         return;
       }
       const active = Array.from(new Set(Array.from(activeIds, canonicalId)));
-      if (generation === latestCommittedGeneration) {
+      if (generation === committedGenerationWatermark) {
         if (!sameActiveSet(committedActiveIds, active)) {
           throw new Error(`Conflicting committed stylesheet set for RSC generation ${generation}.`);
         }
@@ -495,16 +586,14 @@ export function createDevStyleRegistry(
         );
       }
       commitActiveSet(active, generation);
-      latestCommittedGeneration = generation;
-      committedRscGenerations.add(generation);
-      clearGenerationState(generation, false);
+      committedGenerationWatermark = generation;
+      clearCommittedGenerationState(generation);
       options.onRscCommit?.(generation);
     },
 
     dispose() {
       pendingRscGenerations.clear();
-      committedRscGenerations.clear();
-      invalidatedTransportGenerations.clear();
+      invalidatedTransportGenerationRanges.length = 0;
       for (const controller of preparationControllers.values()) controller.abort();
       preparationControllers.clear();
       preparationPromises.clear();
@@ -520,4 +609,8 @@ export function createDevStyleRegistry(
       records.clear();
     },
   };
+  Object.defineProperty(registry, DEV_STYLE_REGISTRY_INSPECT, {
+    value: inspectGenerationState,
+  });
+  return registry;
 }

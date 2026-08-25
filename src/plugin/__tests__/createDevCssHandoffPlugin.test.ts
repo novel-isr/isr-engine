@@ -417,7 +417,7 @@ describe('createDevCssLifecyclePlugins', () => {
 
   it('uses an exact graph URL for a filename containing an encoded query delimiter', async () => {
     const [prePlugin, , postPlugin] = createDevCssLifecyclePlugins(defaultsDir);
-    const resolvedId = '/workspace/app/src/a?b.scss';
+    const resolvedId = '/workspace/app/src/a%3Fb.scss';
     const configureServer = prePlugin!.configureServer as (server: unknown) => void;
     configureServer({
       config: { root: '/workspace/app' },
@@ -451,5 +451,89 @@ describe('createDevCssLifecyclePlugins', () => {
       '__novel_isr_dev_styles.publish("/src/a%3Fb.scss", ".encoded{color:green}")'
     );
     expect(result.code).not.toContain('__novel_isr_dev_styles.publish("/src/a?b.scss="');
+  });
+
+  it('rejects an exact graph URL that drops a resolved semantic query', async () => {
+    const [prePlugin, , postPlugin] = createDevCssLifecyclePlugins(defaultsDir);
+    const resolvedId = '/workspace/app/src/theme.scss?theme=dark&t=123';
+    const configureServer = prePlugin!.configureServer as (server: unknown) => void;
+    configureServer({
+      config: { root: '/workspace/app' },
+      environments: {
+        client: {
+          moduleGraph: {
+            getModuleById(id: string) {
+              return id === resolvedId ? { url: '/src/theme.scss' } : undefined;
+            },
+          },
+        },
+      },
+    });
+    const transform = postPlugin!.transform as (
+      code: string,
+      id: string
+    ) => Promise<{ code: string; map: null }>;
+
+    expect(() =>
+      transform.call(
+        { environment: { name: 'client' } },
+        `
+          import { updateStyle, removeStyle } from "/@vite/client";
+          const styleId = "/src/theme.scss";
+          updateStyle(styleId, ".theme{color:green}");
+          import.meta.hot.prune(() => removeStyle(styleId));
+        `,
+        resolvedId
+      )
+    ).toThrow(/semantic query.*does not match/i);
+  });
+
+  it('allows transport query differences and equivalent semantic query ordering', async () => {
+    const [prePlugin, , postPlugin] = createDevCssLifecyclePlugins(defaultsDir);
+    const configureServer = prePlugin!.configureServer as (server: unknown) => void;
+    const exactNodes = new Map([
+      ['/workspace/app/src/plain.scss?t=123', { url: '/src/plain.scss?v=456' }],
+      [
+        '/workspace/app/src/theme.scss?theme=dark&mode=wide&t=123',
+        { url: '/src/theme.scss?mode=wide&theme=dark&v=456' },
+      ],
+    ]);
+    configureServer({
+      config: { root: '/workspace/app' },
+      environments: {
+        client: { moduleGraph: { getModuleById: (id: string) => exactNodes.get(id) } },
+      },
+    });
+    const transform = postPlugin!.transform as (
+      code: string,
+      id: string
+    ) => Promise<{ code: string; map: null }>;
+    const wrapper = (styleId: string) => `
+      import { updateStyle, removeStyle } from "/@vite/client";
+      const id = ${JSON.stringify(styleId)};
+      updateStyle(id, ".theme{color:green}");
+      import.meta.hot.prune(() => removeStyle(id));
+    `;
+
+    expect(
+      transform.call(
+        { environment: { name: 'client' } },
+        wrapper('/workspace/app/src/plain.scss'),
+        '/workspace/app/src/plain.scss?t=123'
+      )
+    ).toMatchObject({
+      code: expect.stringContaining('__novel_isr_dev_styles.publish("/src/plain.scss"'),
+    });
+    expect(
+      transform.call(
+        { environment: { name: 'client' } },
+        wrapper('/workspace/app/src/theme.scss?mode=wide&theme=dark'),
+        '/workspace/app/src/theme.scss?theme=dark&mode=wide&t=123'
+      )
+    ).toMatchObject({
+      code: expect.stringContaining(
+        '__novel_isr_dev_styles.publish("/src/theme.scss?mode=wide&theme=dark"'
+      ),
+    });
   });
 });

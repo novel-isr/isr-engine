@@ -17,10 +17,22 @@ function canonicalizePathname(pathname: string): string {
   });
 }
 
-export function canonicalizeDevStyleId(value: string, baseUrl = 'http://novel-isr.local/'): string {
+function canonicalUrl(value: string, baseUrl: string): URL {
   const url = new URL(value, baseUrl);
   for (const key of TRANSPORT_QUERY_KEYS) url.searchParams.delete(key);
   url.searchParams.sort();
+  return url;
+}
+
+export function canonicalizeDevStyleSemanticQuery(
+  value: string,
+  baseUrl = 'http://novel-isr.local/'
+): string {
+  return canonicalUrl(value, baseUrl).search;
+}
+
+export function canonicalizeDevStyleId(value: string, baseUrl = 'http://novel-isr.local/'): string {
+  const url = canonicalUrl(value, baseUrl);
   return `${canonicalizePathname(url.pathname)}${url.search}`;
 }
 
