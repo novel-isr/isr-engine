@@ -38,27 +38,35 @@ function browserStyleIdForResolvedModule(
   id: string
 ): string | undefined {
   const moduleGraph = server?.environments.client.moduleGraph;
-  const moduleNode =
-    moduleGraph?.getModuleById(id) ?? moduleGraph?.getModuleById(cleanModuleId(id));
-  if (moduleNode?.url && !moduleNode.url.startsWith('\0')) {
-    return canonicalizeDevStyleId(moduleNode.url);
-  }
-
   const queryStart = id.indexOf('?');
   const resolvedPath = queryStart === -1 ? id : id.slice(0, queryStart);
   const query = queryStart === -1 ? '' : id.slice(queryStart);
-  if (resolvedPath.startsWith('/@fs/')) return canonicalizeDevStyleId(id);
-  if (!server) {
-    return resolvedPath.startsWith('/src/') ? canonicalizeDevStyleId(id) : undefined;
+  let mappedId: string | undefined;
+  if (resolvedPath.startsWith('/@fs/') || (!server && resolvedPath.startsWith('/src/'))) {
+    mappedId = canonicalizeDevStyleId(id);
+  } else if (server && path.isAbsolute(resolvedPath)) {
+    const normalizedRoot = normalizePath(path.resolve(server.config.root));
+    const normalizedPath = normalizePath(path.resolve(resolvedPath));
+    const relative = normalizePath(path.relative(normalizedRoot, normalizedPath));
+    const browserUrl =
+      relative !== '..' && !relative.startsWith('../') ? `/${relative}` : `/@fs/${normalizedPath}`;
+    mappedId = canonicalizeDevStyleId(`${browserUrl}${query}`);
   }
-  if (!path.isAbsolute(resolvedPath)) return undefined;
 
-  const normalizedRoot = normalizePath(path.resolve(server.config.root));
-  const normalizedPath = normalizePath(path.resolve(resolvedPath));
-  const relative = normalizePath(path.relative(normalizedRoot, normalizedPath));
-  const browserUrl =
-    relative !== '..' && !relative.startsWith('../') ? `/${relative}` : `/@fs/${normalizedPath}`;
-  return canonicalizeDevStyleId(`${browserUrl}${query}`);
+  const exactNode = moduleGraph?.getModuleById(id);
+  if (exactNode?.url && !exactNode.url.startsWith('\0')) {
+    return canonicalizeDevStyleId(exactNode.url);
+  }
+  if (mappedId === undefined) return undefined;
+
+  const cleanNode = moduleGraph?.getModuleById(cleanModuleId(id));
+  if (cleanNode?.url && !cleanNode.url.startsWith('\0')) {
+    const cleanGraphPath = new URL(canonicalizeDevStyleId(cleanNode.url), 'http://novel-isr.local/')
+      .pathname;
+    const mappedPath = new URL(mappedId, 'http://novel-isr.local/').pathname;
+    if (cleanGraphPath !== mappedPath) return undefined;
+  }
+  return mappedId;
 }
 
 function hasUseClientDirective(code: string, id: string): boolean {

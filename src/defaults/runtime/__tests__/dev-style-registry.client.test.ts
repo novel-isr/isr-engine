@@ -315,7 +315,7 @@ describe('development style registry', () => {
     expect(link.isConnected).toBe(false);
   });
 
-  it('invalidates a skipped older generation when its abort arrives after a newer commit', () => {
+  it('invalidates a skipped older generation as part of the newer commit', () => {
     const { document, registry } = createFixture();
     registry.publish('/src/A.scss', '.a{display:block}');
 
@@ -327,7 +327,7 @@ describe('development style registry', () => {
     registry.declareRscStyles(2, ['/src/C.scss']);
     registry.publish('/src/C.scss', '.c{display:grid}');
     registry.reconcileDocumentStyles(2, ['/src/C.scss']);
-    expect(skipped.isConnected).toBe(true);
+    expect(skipped.isConnected).toBe(false);
 
     registry.abortRscUpdate(1);
 
@@ -405,6 +405,28 @@ describe('development style registry', () => {
         document.querySelectorAll<HTMLStyleElement>('style[data-novel-isr-dev-style]')
       ).map(node => node.dataset.novelIsrDevStyle)
     ).toEqual(['/src/C.scss']);
+  });
+
+  it('ignores a late commit from an invalidated generation even when its bytes are cached', () => {
+    const window = new Window({ url: 'http://localhost:3000/' });
+    const document = window.document as unknown as Document;
+    const committed: number[] = [];
+    const registry = createDevStyleRegistry(document, {
+      onRscCommit: generation => committed.push(generation),
+    });
+    fixtures.push({ document, registry, window });
+    registry.publish('/src/A.scss', '.a{display:block}');
+    registry.reconcileDocumentStyles(0, ['/src/A.scss']);
+
+    registry.beginRscUpdate(1);
+    registry.declareRscStyles(1, ['/src/B.scss']);
+    registry.publish('/src/B.scss', '.b{display:grid}');
+    registry.abortRscUpdate(1);
+    registry.reconcileDocumentStyles(1, ['/src/B.scss']);
+
+    expect(committed).toEqual([0]);
+    expect(document.querySelector('style[data-novel-isr-dev-style="/src/A.scss"]')).not.toBeNull();
+    expect(document.querySelector('style[data-novel-isr-dev-style="/src/B.scss"]')).toBeNull();
   });
 
   it('treats a committed importer-resource link as an active owner', () => {
@@ -714,6 +736,87 @@ describe('development style registry', () => {
     expect(owner.media).toBe('');
     expect(committed).toEqual([1]);
     expect(preload!.isConnected).toBe(false);
+  });
+
+  it('finalizes every older uncommitted prepared generation when a newer tree commits', async () => {
+    const window = new Window({ url: 'http://localhost:3000/' });
+    const document = window.document as unknown as Document;
+    const committed: number[] = [];
+    const registry = createDevStyleRegistry(document, {
+      onRscCommit: generation => committed.push(generation),
+    });
+    fixtures.push({ document, registry, window });
+    const bootstrap = appendRscLink(document, '/src/A.scss?direct');
+    bootstrap.dataset.precedence = 'vite-rsc/importer-resources';
+    await registry.prepareRscStyles(0, ['/src/A.scss']);
+    registry.reconcileDocumentStyles(0, ['/src/A.scss']);
+
+    registry.beginRscUpdate(1);
+    const preparationB = registry.prepareRscStyles(1, ['/src/B.scss']);
+    const preloadB = document.querySelector<HTMLLinkElement>(
+      'link[rel="preload"][href*="/src/B.scss"]'
+    )!;
+    preloadB.dispatchEvent(new window.Event('load'));
+    await preparationB;
+    const transportB = appendRscLink(document, '/src/B.scss?direct', 1);
+    transportB.dataset.precedence = 'vite-rsc/importer-resources';
+    transportB.media = 'not all';
+
+    registry.beginRscUpdate(2);
+    registry.publish('/src/C.scss', '.c{display:grid}');
+    await registry.prepareRscStyles(2, ['/src/C.scss']);
+
+    registry.beginRscUpdate(3);
+    const preparationD = registry.prepareRscStyles(3, ['/src/D.scss']);
+    const preloadD = document.querySelector<HTMLLinkElement>(
+      'link[rel="preload"][href*="/src/D.scss"]'
+    )!;
+    const transportD = appendRscLink(document, '/src/D.scss?direct', 3);
+    transportD.dataset.precedence = 'vite-rsc/importer-resources';
+    transportD.media = 'not all';
+
+    registry.reconcileDocumentStyles(2, ['/src/C.scss']);
+    registry.reconcileDocumentStyles(2, ['/src/C.scss']);
+    registry.abortRscUpdate(1);
+    registry.reconcileDocumentStyles(1, ['/src/B.scss']);
+    await registry.prepareRscStyles(1, ['/src/B.scss']);
+
+    expect(committed).toEqual([0, 2]);
+    expect(preloadB.isConnected).toBe(false);
+    expect(transportB.isConnected).toBe(false);
+    expect(document.querySelector('link[rel="preload"][href*="/src/B.scss"]')).toBeNull();
+    expect(document.querySelector('style[data-novel-isr-dev-style="/src/C.scss"]')).not.toBeNull();
+    expect(preloadD.isConnected).toBe(true);
+    expect(transportD.isConnected).toBe(true);
+    expect(transportD.media).toBe('not all');
+
+    registry.abortRscUpdate(3);
+    await expect(preparationD).rejects.toThrow(/generation 3 was aborted/i);
+  });
+
+  it('aborts an older in-flight preparation when a newer tree commits', async () => {
+    const { document, registry } = createFixture();
+    registry.publish('/src/A.scss', '.a{display:block}');
+    registry.reconcileDocumentStyles(0, ['/src/A.scss']);
+
+    registry.beginRscUpdate(1);
+    const preparationB = registry.prepareRscStyles(1, ['/src/B.scss']);
+    const preloadB = document.querySelector<HTMLLinkElement>(
+      'link[rel="preload"][href*="/src/B.scss"]'
+    )!;
+    const transportB = appendRscLink(document, '/src/B.scss?direct', 1);
+    transportB.dataset.precedence = 'vite-rsc/importer-resources';
+    transportB.media = 'not all';
+
+    registry.beginRscUpdate(2);
+    registry.publish('/src/C.scss', '.c{display:grid}');
+    await registry.prepareRscStyles(2, ['/src/C.scss']);
+    registry.reconcileDocumentStyles(2, ['/src/C.scss']);
+
+    await expect(preparationB).rejects.toThrow(/generation 1 was aborted/i);
+    expect(preloadB.isConnected).toBe(false);
+    expect(transportB.isConnected).toBe(false);
+    expect(document.querySelector('style[data-novel-isr-dev-style="/src/C.scss"]')).not.toBeNull();
   });
 
   it('requires the exact prepared generation owner instead of activating an older fallback', async () => {

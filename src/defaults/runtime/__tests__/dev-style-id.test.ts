@@ -25,6 +25,20 @@ describe('development stylesheet identifiers', () => {
     );
   });
 
+  it('preserves encoded reserved path bytes without turning them into query syntax', () => {
+    expect(canonicalizeDevStyleId('/src/a%3fb.scss')).toBe('/src/a%3Fb.scss');
+    expect(canonicalizeDevStyleId('/src/a%2fb.scss')).toBe('/src/a%2Fb.scss');
+    expect(canonicalizeDevStyleId('/src/a%23b.scss')).toBe('/src/a%23b.scss');
+    expect(canonicalizeDevStyleId('/src/a?b.scss')).toBe('/src/a?b.scss=');
+    expect(styleIdsMatch('/src/a%3Fb.scss', '/src/a?b.scss')).toBe(false);
+  });
+
+  it('normalizes percent case and semantic query order component by component', () => {
+    expect(canonicalizeDevStyleId('/src/a%7eb.scss?z=%2f&a=hello%20world')).toBe(
+      '/src/a~b.scss?a=hello+world&z=%2F'
+    );
+  });
+
   it('keeps the generation as transport metadata but removes it from canonical ownership', () => {
     const transport = withDevStyleTransportGeneration('/src/Card.scss?direct&theme=dark', 7);
 

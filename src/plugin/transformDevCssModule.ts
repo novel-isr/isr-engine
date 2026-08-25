@@ -1,6 +1,8 @@
 import ts from 'typescript';
 import type { TransformResult } from 'vite';
 
+import { canonicalizeDevStyleId } from '../defaults/runtime/dev-style-id';
+
 const STYLESHEET_URL = /\.(?:css|less|sass|scss|styl|stylus|pcss|postcss|sss)(?:[?#]|$)/i;
 
 function hasDirectQuery(value: string): boolean {
@@ -252,6 +254,29 @@ function compatibilityError(id: string, detail: string): Error {
   return new Error(`Vite development CSS wrapper compatibility error for ${id}: ${detail}`);
 }
 
+function staticStringValue(source: ts.SourceFile, expression: ts.Expression): string | undefined {
+  if (ts.isStringLiteral(expression)) return expression.text;
+  if (!ts.isIdentifier(expression)) return undefined;
+  const matches: ts.VariableDeclaration[] = [];
+  for (const statement of source.statements) {
+    if (
+      !ts.isVariableStatement(statement) ||
+      (statement.declarationList.flags & ts.NodeFlags.Const) === 0
+    ) {
+      continue;
+    }
+    for (const declaration of statement.declarationList.declarations) {
+      if (ts.isIdentifier(declaration.name) && declaration.name.text === expression.text) {
+        matches.push(declaration);
+      }
+    }
+  }
+  const declaration = matches.length === 1 ? matches[0] : undefined;
+  return declaration?.initializer && ts.isStringLiteral(declaration.initializer)
+    ? declaration.initializer.text
+    : undefined;
+}
+
 export function transformDevCssModule(
   code: string,
   id: string,
@@ -306,8 +331,24 @@ export function transformDevCssModule(
     );
   }
   const removeStyleArgument = removeStyleCall.arguments[0];
-  if (removeStyleArgument === undefined) {
+  const updateStyleArgument = updateStyleCall.arguments[0];
+  if (removeStyleArgument === undefined || updateStyleArgument === undefined) {
     throw compatibilityError(id, 'expected the removeStyle callback to receive one stylesheet id.');
+  }
+  const updateStyleId = staticStringValue(source, updateStyleArgument);
+  const removeStyleId = staticStringValue(source, removeStyleArgument);
+  if (
+    updateStyleId === undefined ||
+    removeStyleId === undefined ||
+    updateStyleId !== removeStyleId
+  ) {
+    throw compatibilityError(id, 'could not prove one exact stylesheet identity in the wrapper.');
+  }
+  const wrapperStyleId = canonicalizeDevStyleId(updateStyleId);
+  const transformedStyleId = canonicalizeDevStyleId(id);
+  const canonicalBrowserStyleId = canonicalizeDevStyleId(exactStyleId);
+  if (wrapperStyleId !== transformedStyleId && wrapperStyleId !== canonicalBrowserStyleId) {
+    throw compatibilityError(id, 'stylesheet identity in the wrapper does not match the module.');
   }
   const expectedReferences = new Set<ts.Identifier>([
     updateStyleCall.expression as ts.Identifier,
@@ -325,12 +366,12 @@ export function transformDevCssModule(
     {
       start: updateStyleCall.getStart(source),
       end: updateStyleCall.getEnd(),
-      value: `__novel_isr_dev_styles.publish(${JSON.stringify(exactStyleId)}, ${updateStyleCall.arguments[1]?.getText(source)})`,
+      value: `__novel_isr_dev_styles.publish(${JSON.stringify(canonicalBrowserStyleId)}, ${updateStyleCall.arguments[1]?.getText(source)})`,
     },
     {
       start: removeStyleCall.getStart(source),
       end: removeStyleCall.getEnd(),
-      value: `__novel_isr_dev_styles.prune(${JSON.stringify(exactStyleId)})`,
+      value: `__novel_isr_dev_styles.prune(${JSON.stringify(canonicalBrowserStyleId)})`,
     },
   ];
 

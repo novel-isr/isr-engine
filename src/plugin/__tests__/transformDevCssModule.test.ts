@@ -48,11 +48,22 @@ describe('transformDevCssModule', () => {
     ).toThrow(/missing an exact browser module URL from the Vite module graph/i);
   });
 
+  it('rejects a wrapper whose resolved stylesheet identity disagrees with the transformed id', () => {
+    expect(() =>
+      transformDevCssModule(
+        VITE_WRAPPER.replace('"/src/Card.module.scss"', '"/src/a%3Fb.scss"'),
+        '/src/a?b.scss',
+        'virtual:novel-isr/dev-style-registry',
+        '/src/a?b.scss'
+      )
+    ).toThrow(/stylesheet identity.*does not match/i);
+  });
+
   it.each(['/src/Card.css', '/src/Card.scss', '/src/Card.module.scss'])(
     'routes Vite DOM mutations for %s through the development style registry',
     id => {
       const result = transformDevCssModule(
-        VITE_WRAPPER,
+        VITE_WRAPPER.replaceAll('/src/Card.module.scss', id),
         id,
         'virtual:novel-isr/dev-style-registry'
       );

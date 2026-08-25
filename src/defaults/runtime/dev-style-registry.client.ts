@@ -163,7 +163,7 @@ export function createDevStyleRegistry(
       const owner = linkGeneration(link);
       if (
         !isImporterResource(link) ||
-        (exactGeneration && owner !== generation) ||
+        (exactGeneration && owner !== generation && !(generation === 0 && owner === undefined)) ||
         (owner !== undefined && (owner > generation || invalidatedTransportGenerations.has(owner)))
       ) {
         continue;
@@ -258,6 +258,77 @@ export function createDevStyleRegistry(
     generationPreloads.delete(generation);
   };
 
+  const clearGenerationState = (generation: number, abortPreparation: boolean) => {
+    const controller = preparationControllers.get(generation);
+    if (abortPreparation) controller?.abort();
+    preparationControllers.delete(generation);
+    preparationPromises.delete(generation);
+    preparingRscGenerations.delete(generation);
+    preparedRscGenerations.delete(generation);
+    removeGenerationPreloads(generation);
+    pendingRscGenerations.delete(generation);
+    rscDeclarations.delete(generation);
+  };
+
+  const reclaimInvalidatedTransport = (generation: number) => {
+    const invalidatedLinks = generationLinks(generation);
+    const invalidatedIds = Array.from(
+      new Set(invalidatedLinks.map(stylesheetId).filter((id): id is string => id !== undefined))
+    );
+    for (const id of invalidatedIds) {
+      const validOwner =
+        !!matchingRecord(id)?.node?.isConnected ||
+        matchingLinks(id).some(link => {
+          const owner = linkGeneration(link);
+          return owner === undefined || !invalidatedTransportGenerations.has(owner);
+        });
+      const stillRequired = isCommitted(id) || requiredByPendingGeneration(id, generation);
+      if (validOwner || !stillRequired) {
+        for (const link of invalidatedLinks) {
+          if (stylesheetId(link) === id) link.remove();
+        }
+        continue;
+      }
+      const invalidOwners = matchingLinks(id).filter(link => {
+        const owner = linkGeneration(link);
+        return owner !== undefined && invalidatedTransportGenerations.has(owner);
+      });
+      for (const link of invalidOwners.slice(0, -1)) link.remove();
+    }
+  };
+
+  const invalidateUncommittedGeneration = (generation: number, reconcile: boolean) => {
+    if (committedRscGenerations.has(generation)) return;
+    invalidatedTransportGenerations.add(generation);
+    clearGenerationState(generation, true);
+    if (reconcile) reconcileCommittedSet();
+    reclaimInvalidatedTransport(generation);
+  };
+
+  const finalizeDroppedGenerations = (committingGeneration: number) => {
+    const candidates = new Set<number>([
+      ...pendingRscGenerations,
+      ...preparingRscGenerations,
+      ...preparedRscGenerations,
+      ...preparationControllers.keys(),
+      ...preparationPromises.keys(),
+      ...generationPreloads.keys(),
+      ...rscDeclarations.keys(),
+    ]);
+    const dropped = Array.from(candidates)
+      .filter(
+        generation => generation < committingGeneration && !committedRscGenerations.has(generation)
+      )
+      .sort((left, right) => left - right);
+    if (dropped.length === 0) return;
+    for (const generation of dropped) {
+      invalidatedTransportGenerations.add(generation);
+      clearGenerationState(generation, true);
+    }
+    reconcileCommittedSet();
+    for (const generation of dropped) reclaimInvalidatedTransport(generation);
+  };
+
   return {
     publish(id, cssText) {
       const record = findOrCreateRecord(canonicalId(id));
@@ -303,6 +374,12 @@ export function createDevStyleRegistry(
     },
 
     prepareRscStyles(generation, activeIds) {
+      if (
+        generation <= latestCommittedGeneration ||
+        invalidatedTransportGenerations.has(generation)
+      ) {
+        return Promise.resolve();
+      }
       this.declareRscStyles(generation, activeIds);
       const existing = preparationPromises.get(generation);
       if (existing) return existing;
@@ -339,41 +416,7 @@ export function createDevStyleRegistry(
     },
 
     abortRscUpdate(generation) {
-      if (committedRscGenerations.has(generation)) return;
-      invalidatedTransportGenerations.add(generation);
-      preparationControllers.get(generation)?.abort();
-      preparationControllers.delete(generation);
-      preparationPromises.delete(generation);
-      preparingRscGenerations.delete(generation);
-      preparedRscGenerations.delete(generation);
-      removeGenerationPreloads(generation);
-      pendingRscGenerations.delete(generation);
-      rscDeclarations.delete(generation);
-      reconcileCommittedSet();
-      const abortedLinks = generationLinks(generation);
-      const abortedIds = Array.from(
-        new Set(abortedLinks.map(stylesheetId).filter((id): id is string => id !== undefined))
-      );
-      for (const id of abortedIds) {
-        const validOwner =
-          !!matchingRecord(id)?.node?.isConnected ||
-          matchingLinks(id).some(link => {
-            const owner = linkGeneration(link);
-            return owner === undefined || !invalidatedTransportGenerations.has(owner);
-          });
-        const stillRequired = isCommitted(id) || requiredByPendingGeneration(id, generation);
-        if (validOwner || !stillRequired) {
-          for (const link of abortedLinks) {
-            if (stylesheetId(link) === id) link.remove();
-          }
-          continue;
-        }
-        const invalidOwners = matchingLinks(id).filter(link => {
-          const owner = linkGeneration(link);
-          return owner !== undefined && invalidatedTransportGenerations.has(owner);
-        });
-        for (const link of invalidOwners.slice(0, -1)) link.remove();
-      }
+      invalidateUncommittedGeneration(generation, true);
     },
 
     beginUpdate() {
@@ -399,7 +442,12 @@ export function createDevStyleRegistry(
     },
 
     reconcileDocumentStyles(generation, activeIds) {
-      if (generation < latestCommittedGeneration) return;
+      if (
+        generation < latestCommittedGeneration ||
+        invalidatedTransportGenerations.has(generation)
+      ) {
+        return;
+      }
       if (
         preparingRscGenerations.has(generation) ||
         (preparationPromises.has(generation) && !preparedRscGenerations.has(generation))
@@ -436,6 +484,8 @@ export function createDevStyleRegistry(
       });
       if (!ready) return;
 
+      finalizeDroppedGenerations(generation);
+
       for (const id of active) {
         convergeCommittedTransport(
           id,
@@ -447,17 +497,7 @@ export function createDevStyleRegistry(
       commitActiveSet(active, generation);
       latestCommittedGeneration = generation;
       committedRscGenerations.add(generation);
-      removeGenerationPreloads(generation);
-      preparationControllers.delete(generation);
-      preparationPromises.delete(generation);
-      preparingRscGenerations.delete(generation);
-      preparedRscGenerations.delete(generation);
-      for (const pending of pendingRscGenerations) {
-        if (pending <= generation) pendingRscGenerations.delete(pending);
-      }
-      for (const pending of rscDeclarations.keys()) {
-        if (pending <= generation) rscDeclarations.delete(pending);
-      }
+      clearGenerationState(generation, false);
       options.onRscCommit?.(generation);
     },
 

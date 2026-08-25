@@ -8,20 +8,20 @@ const TRANSPORT_QUERY_KEYS = new Set([
   DEV_STYLE_TRANSPORT_GENERATION_PARAM,
 ]);
 
-function decodeURIComponentSafely(value: string): string {
-  try {
-    return decodeURIComponent(value);
-  } catch {
-    return value;
-  }
+const UNRESERVED_PATH_BYTE = /^[A-Za-z\d._~-]$/;
+
+function canonicalizePathname(pathname: string): string {
+  return pathname.replace(/%([\da-f]{2})/gi, (_encoded, hex: string) => {
+    const decoded = String.fromCharCode(Number.parseInt(hex, 16));
+    return UNRESERVED_PATH_BYTE.test(decoded) ? decoded : `%${hex.toUpperCase()}`;
+  });
 }
 
 export function canonicalizeDevStyleId(value: string, baseUrl = 'http://novel-isr.local/'): string {
-  const decoded = decodeURIComponentSafely(value).replaceAll('\\', '/');
-  const url = new URL(decoded, baseUrl);
+  const url = new URL(value, baseUrl);
   for (const key of TRANSPORT_QUERY_KEYS) url.searchParams.delete(key);
   url.searchParams.sort();
-  return `${url.pathname}${url.search}`;
+  return `${canonicalizePathname(url.pathname)}${url.search}`;
 }
 
 export function styleIdsMatch(left: string, right: string, baseUrl?: string): boolean {

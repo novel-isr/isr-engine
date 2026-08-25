@@ -373,4 +373,83 @@ describe('createDevCssLifecyclePlugins', () => {
       '__novel_isr_dev_styles.publish("/src/Card.css", ".card{color:green}")'
     );
   });
+
+  it('preserves semantic queries when only the clean client graph node is available', async () => {
+    const [prePlugin, , postPlugin] = createDevCssLifecyclePlugins(defaultsDir);
+    const configureServer = prePlugin!.configureServer as (server: unknown) => void;
+    configureServer({
+      config: { root: '/workspace/app' },
+      environments: {
+        client: {
+          moduleGraph: {
+            getModuleById(id: string) {
+              return id === '/workspace/app/src/theme.scss'
+                ? { url: '/src/theme.scss' }
+                : undefined;
+            },
+          },
+        },
+      },
+    });
+    const transform = postPlugin!.transform as (
+      code: string,
+      id: string
+    ) => Promise<{
+      code: string;
+      map: null;
+    }>;
+
+    const result = await transform.call(
+      { environment: { name: 'client' } },
+      `
+        import { updateStyle, removeStyle } from "/@vite/client";
+        const styleId = "/workspace/app/src/theme.scss?theme=dark";
+        updateStyle(styleId, ".theme{color:green}");
+        import.meta.hot.prune(() => removeStyle(styleId));
+      `,
+      '/workspace/app/src/theme.scss?theme=dark&t=123'
+    );
+
+    expect(result.code).toContain(
+      '__novel_isr_dev_styles.publish("/src/theme.scss?theme=dark", ".theme{color:green}")'
+    );
+  });
+
+  it('uses an exact graph URL for a filename containing an encoded query delimiter', async () => {
+    const [prePlugin, , postPlugin] = createDevCssLifecyclePlugins(defaultsDir);
+    const resolvedId = '/workspace/app/src/a?b.scss';
+    const configureServer = prePlugin!.configureServer as (server: unknown) => void;
+    configureServer({
+      config: { root: '/workspace/app' },
+      environments: {
+        client: {
+          moduleGraph: {
+            getModuleById(id: string) {
+              return id === resolvedId ? { url: '/src/a%3Fb.scss' } : undefined;
+            },
+          },
+        },
+      },
+    });
+    const transform = postPlugin!.transform as (
+      code: string,
+      id: string
+    ) => Promise<{ code: string; map: null }>;
+
+    const result = await transform.call(
+      { environment: { name: 'client' } },
+      `
+        import { updateStyle, removeStyle } from "/@vite/client";
+        const styleId = ${JSON.stringify(resolvedId)};
+        updateStyle(styleId, ".encoded{color:green}");
+        import.meta.hot.prune(() => removeStyle(styleId));
+      `,
+      resolvedId
+    );
+
+    expect(result.code).toContain(
+      '__novel_isr_dev_styles.publish("/src/a%3Fb.scss", ".encoded{color:green}")'
+    );
+    expect(result.code).not.toContain('__novel_isr_dev_styles.publish("/src/a?b.scss="');
+  });
 });

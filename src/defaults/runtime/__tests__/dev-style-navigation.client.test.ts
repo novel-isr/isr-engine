@@ -13,6 +13,54 @@ function appendRscLink(document: Document, href: string): void {
 }
 
 describe('development style navigation lifecycle', () => {
+  it('commits generation-zero Server CSS through the real prepare and commit sequence', async () => {
+    const window = new Window({ url: 'http://localhost:3000/' });
+    const document = window.document as unknown as Document;
+    const lifecycle = createDevStyleNavigationLifecycle();
+    const committed: number[] = [];
+    const registry = createDevStyleRegistry(document, {
+      onRscCommit: generation => {
+        committed.push(generation);
+        lifecycle.complete(generation);
+      },
+    });
+    lifecycle.register(registry);
+    const bootstrap = document.createElement('link');
+    bootstrap.rel = 'stylesheet';
+    bootstrap.href = '/src/ServerOnly.scss?direct';
+    bootstrap.dataset.precedence = 'vite-rsc/importer-resources';
+    document.head.appendChild(bootstrap);
+
+    await lifecycle.prepareTree(0, ['/src/ServerOnly.scss']);
+    expect(bootstrap.isConnected).toBe(true);
+    expect(bootstrap.media).toBe('');
+
+    lifecycle.commitTree(0, ['/src/ServerOnly.scss']);
+    expect(committed).toEqual([0]);
+    expect(bootstrap.isConnected).toBe(true);
+    expect(bootstrap.media).toBe('');
+
+    registry.publish('/src/ServerOnly.scss', '.server-only{color:green}');
+    registry.beginUpdate();
+    registry.publish('/src/ServerOnly.scss', '.server-only{color:blue}');
+    registry.commitUpdate(['/src/ServerOnly.scss']);
+    expect(bootstrap.isConnected).toBe(false);
+    expect(
+      document.querySelector<HTMLStyleElement>(
+        'style[data-novel-isr-dev-style="/src/ServerOnly.scss"]'
+      )?.textContent
+    ).toContain('blue');
+
+    registry.beginRscUpdate(1);
+    await lifecycle.prepareTree(1, []);
+    lifecycle.commitTree(1, []);
+    expect(committed).toEqual([0, 1]);
+    expect(document.querySelector('style[data-novel-isr-dev-style]')).toBeNull();
+
+    registry.dispose();
+    window.close();
+  });
+
   it('fails before scheduling when declared styles have no registry owner', async () => {
     const lifecycle = createDevStyleNavigationLifecycle();
 
