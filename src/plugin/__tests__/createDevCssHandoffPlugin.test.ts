@@ -309,6 +309,48 @@ describe('createDevCssLifecyclePlugins', () => {
     expect(() =>
       validate(proxyFor('/@fs/fixture/src/a%2Fb.tsx'), '/fixture/src/a/b.tsx', '/fixture')
     ).toThrow(/unsupported @vitejs\/plugin-rsc client reference proxy shape/i);
+
+    const encodedSeparatorTarget = '/fixture/node_modules/a%2Fb/index.js';
+    const encodedSeparatorReference =
+      '/@id/__x00__virtual:vite-rsc/client-in-server-package-proxy/' +
+      encodeURIComponent(encodedSeparatorTarget);
+    expect(() =>
+      validate(
+        proxyFor(encodedSeparatorReference),
+        '/fixture/node_modules/a/b/index.js',
+        '/fixture'
+      )
+    ).toThrow(/unsupported @vitejs\/plugin-rsc client reference proxy shape/i);
+  });
+
+  it('preserves the complete virtual client-reference query identity', () => {
+    const proxyFor = (referenceId: string) => `
+      import * as $$ReactServer from ${JSON.stringify(pinnedRscRuntime)};
+      export default $$ReactServer.registerClientReference(
+        () => { throw new Error("Unexpectedly client reference export '" + "default" + "' is called on server"); },
+        ${JSON.stringify(referenceId)},
+        "default"
+      );
+    `;
+    const validate = (referenceId: string, moduleId: string) =>
+      clientReferenceIdFromProxy(proxyFor(referenceId), moduleId, '/fixture');
+
+    expect(validate('/@id/__x00__virtual:fixture/card', '\0virtual:fixture/card')).toBe(
+      '/@id/__x00__virtual:fixture/card'
+    );
+    expect(
+      validate('/@id/__x00__virtual:fixture/card?theme=dark', '\0virtual:fixture/card?theme=dark')
+    ).toBe('/@id/__x00__virtual:fixture/card?theme=dark');
+
+    expect(() =>
+      validate('/@id/__x00__virtual:fixture/card?theme=light', '\0virtual:fixture/card?theme=dark')
+    ).toThrow(/unsupported @vitejs\/plugin-rsc client reference proxy shape/i);
+    expect(() =>
+      validate('/@id/__x00__virtual:fixture/a%2Fb?theme=dark', '\0virtual:fixture/a/b?theme=dark')
+    ).toThrow(/unsupported @vitejs\/plugin-rsc client reference proxy shape/i);
+    expect(() =>
+      validate('/@id/__x00__virtual:fixture/card%3Ftheme=dark', '\0virtual:fixture/card?theme=dark')
+    ).toThrow(/unsupported @vitejs\/plugin-rsc client reference proxy shape/i);
   });
 
   it('does not treat a non-prologue use-client string as a client reference target', async () => {

@@ -191,10 +191,11 @@ function rootRelativeFilePath(root: string, referenceId: string): string | undef
 }
 
 function referenceMatchesModule(referenceId: string, moduleId: string, root: string): boolean {
-  const cleanId = cleanModuleId(moduleId).replaceAll('\\', '/');
-  if (cleanId.startsWith('\0')) {
-    return referenceId === `/@id/__x00__${cleanId.slice(1)}`;
+  const normalizedModuleId = moduleId.replaceAll('\\', '/');
+  if (normalizedModuleId.startsWith('\0')) {
+    return referenceId === `/@id/__x00__${normalizedModuleId.slice(1)}`;
   }
+  const cleanId = cleanModuleId(normalizedModuleId);
 
   const packageProxy = '/@id/__x00__virtual:vite-rsc/client-in-server-package-proxy/';
   if (referenceId.startsWith(packageProxy)) {
