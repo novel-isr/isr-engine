@@ -57,6 +57,7 @@ describe('stylesheet lifecycle ownership', () => {
     expect(clientEntry).toContain('observeDevRscResponse');
     expect(clientEntry).toContain('getOrCreateDevStyleRegistry');
     expect(responseObserver).toContain('queueMicrotask(resolveCompletion)');
+    expect(responseObserver).toContain('void completed.catch(() => {})');
     expect(resourceDispatcher).toContain(".S(href, 'vite-rsc/client-reference'");
     expect(resourceDispatcher).toContain("{ media: 'not all' }");
     expect(plugin).toContain('assertPinnedDevStyleResourceDispatcher();');

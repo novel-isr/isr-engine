@@ -16,6 +16,9 @@ export function observeDevRscResponse(original: Response): DevRscResponseObserva
     resolveCompletion = resolve;
     rejectCompletion = reject;
   });
+  // createFromFetch can reject or cancel before its caller obtains `completed`.
+  // Handle that timing window now; the original promise remains rejected for the later await.
+  void completed.catch(() => {});
   const body = new ReadableStream<Uint8Array>({
     async pull(controller) {
       try {
