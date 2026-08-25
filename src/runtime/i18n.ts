@@ -89,10 +89,13 @@ export function withLocale(pathname: string, locale: string, config: I18nConfig)
 }
 
 /**
- * Accept-Language 协商 —— RFC 4647 lookup
+ * Accept-Language 协商 —— RFC 4647 lookup（含主语言回退）
  *
  * negotiateLocale('zh-CN,en;q=0.9', { locales: ['zh','en'], defaultLocale: 'en' })
  *   → 'zh'   （'zh-CN' 命中 'zh'）
+ *
+ * negotiateLocale('en-GB', { locales: ['zh-hans','en-us'], defaultLocale: 'zh-hans' })
+ *   → 'en-us'   （'en-GB' 主语言 'en' 回退到第一个 en-*）
  *
  * negotiateLocale(null, ...) → defaultLocale
  */
@@ -112,13 +115,20 @@ export function negotiateLocale(
 
   const supported = config.locales.map(l => l.toLowerCase());
   for (const { tag } of ranked) {
-    // 精确匹配（'zh' === 'zh'）
+    // 1) 完整 code 精确匹配（'en-us' === 'en-us'）
     const exact = supported.indexOf(tag);
     if (exact >= 0) return config.locales[exact];
-    // 主语言匹配（'zh-CN' → 'zh'）
+
     const primary = tag.split('-')[0];
+
+    // 2) 主语言精确匹配（'ja' === 'ja'，针对无地区后缀的 locale 如 ja/fr/tr）
     const sub = supported.indexOf(primary);
     if (sub >= 0) return config.locales[sub];
+
+    // 3) 主语言回退（'en' / 'en-GB' → 第一个 en-*；'zh' / 'zh-CN' → zh-hans）
+    //    解决「浏览器只发 en / en-GB，而 locales 是 en-us/en-au」这类地区码不匹配问题。
+    const primaryPrefix = supported.findIndex(l => l.startsWith(primary + '-'));
+    if (primaryPrefix >= 0) return config.locales[primaryPrefix];
   }
   return config.defaultLocale;
 }

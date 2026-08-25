@@ -67,6 +67,40 @@ describe('negotiateLocale', () => {
   });
 });
 
+describe('negotiateLocale —— 主语言回退（地区码）', () => {
+  const regional = {
+    locales: ['zh-hans', 'en-us', 'en-au', 'ja', 'fr', 'tr'],
+    defaultLocale: 'zh-hans',
+  };
+
+  it("maps bare 'en' → first en-* locale", () => {
+    expect(negotiateLocale('en', regional)).toBe('en-us');
+  });
+
+  it("maps 'en-GB' → first en-* locale", () => {
+    expect(negotiateLocale('en-GB,en;q=0.9', regional)).toBe('en-us');
+  });
+
+  it("maps 'zh-CN' / 'zh' → zh-hans", () => {
+    expect(negotiateLocale('zh-CN,zh;q=0.9', regional)).toBe('zh-hans');
+    expect(negotiateLocale('zh', regional)).toBe('zh-hans');
+  });
+
+  it('still exact-matches regional locale code', () => {
+    expect(negotiateLocale('en-au', regional)).toBe('en-au');
+    expect(negotiateLocale('en-us', regional)).toBe('en-us');
+  });
+
+  it('still matches bare locale via primary subtag', () => {
+    expect(negotiateLocale('ja-JP,ja;q=0.9', regional)).toBe('ja');
+    expect(negotiateLocale('fr-FR', regional)).toBe('fr');
+  });
+
+  it('falls back to defaultLocale when nothing matches', () => {
+    expect(negotiateLocale('de-DE', regional)).toBe('zh-hans');
+  });
+});
+
 describe('alternates', () => {
   it('produces hreflang entries for every locale', () => {
     const cfg = { locales: ['zh', 'en'], defaultLocale: 'zh' };

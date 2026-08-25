@@ -39,6 +39,19 @@
 
 ---
 
+## [2.6.7] - 2026-08-25
+
+发布主题：**i18n 主语言回退**。
+
+### Fixed
+
+- **`negotiateLocale` 无法处理「地区码不匹配」**：此前只做完整 code 精确匹配 + 主语言精确匹配（例如
+  `locales: ['zh-hans','en-us','en-au']` 时，浏览器发 `en` 或 `en-GB` 会回退到 defaultLocale）。
+  现在补上「主语言回退」：`en` / `en-GB` → 第一个 `en-*`（`en-us`）、`zh` / `zh-CN` → `zh-hans`。
+  这样启用 `prefixDefault: true` + LocaleRedirect 后，英文浏览器不再被误判成默认语言。
+
+---
+
 ## [2.6.2] - 2026-08-25
 
 发布主题：**Vite dev 首屏 stylesheet 资源身份根治**。

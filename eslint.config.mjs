@@ -22,6 +22,7 @@ export default [
       '.vite/**',
       '.turbo/**',
       'node_modules/**',
+      '.worktrees/**',
       '*.config.js',
       '*.config.mjs',
       '*.config.ts',
