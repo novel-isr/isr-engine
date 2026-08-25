@@ -21,6 +21,33 @@ export default { card: "_card_123" };
 `;
 
 describe('transformDevCssModule', () => {
+  it('publishes and prunes the exact browser module URL supplied by Vite', () => {
+    const result = transformDevCssModule(
+      VITE_WRAPPER,
+      '/workspace/app/src/Card.module.scss',
+      'virtual:novel-isr/dev-style-registry',
+      '/src/Card.module.scss'
+    );
+
+    expect(result?.code).toContain(
+      '__novel_isr_dev_styles.publish("/src/Card.module.scss", __vite__css);'
+    );
+    expect(result?.code).toContain(
+      'import.meta.hot.prune(() => __novel_isr_dev_styles.prune("/src/Card.module.scss"));'
+    );
+    expect(result?.code).not.toContain('__novel_isr_dev_styles.publish(__vite__id');
+  });
+
+  it('rejects a mutator-bearing wrapper without an exact browser module mapping', () => {
+    expect(() =>
+      transformDevCssModule(
+        VITE_WRAPPER,
+        '/workspace/unknown/Card.module.scss',
+        'virtual:novel-isr/dev-style-registry'
+      )
+    ).toThrow(/missing an exact browser module URL from the Vite module graph/i);
+  });
+
   it.each(['/src/Card.css', '/src/Card.scss', '/src/Card.module.scss'])(
     'routes Vite DOM mutations for %s through the development style registry',
     id => {
@@ -33,9 +60,11 @@ describe('transformDevCssModule', () => {
       expect(result?.code).toContain(
         'import { devStyleRegistry as __novel_isr_dev_styles } from "virtual:novel-isr/dev-style-registry";'
       );
-      expect(result?.code).toContain('__novel_isr_dev_styles.publish(__vite__id, __vite__css);');
       expect(result?.code).toContain(
-        'import.meta.hot.prune(() => __novel_isr_dev_styles.prune(__vite__id));'
+        `__novel_isr_dev_styles.publish(${JSON.stringify(id)}, __vite__css);`
+      );
+      expect(result?.code).toContain(
+        `import.meta.hot.prune(() => __novel_isr_dev_styles.prune(${JSON.stringify(id)}));`
       );
       expect(result?.code).toContain('export default { card: "_card_123" };');
       expect(result?.code).not.toContain('__vite__updateStyle(__vite__id, __vite__css)');
@@ -54,8 +83,10 @@ describe('transformDevCssModule', () => {
       'virtual:novel-isr/dev-style-registry'
     );
 
-    expect(result?.code).toContain('__novel_isr_dev_styles.publish(__vite__id, __vite__css);');
-    expect(result?.code).toContain('__novel_isr_dev_styles.prune(__vite__id)');
+    expect(result?.code).toContain(
+      '__novel_isr_dev_styles.publish("/src/Card.module.scss", __vite__css);'
+    );
+    expect(result?.code).toContain('__novel_isr_dev_styles.prune("/src/Card.module.scss")');
     expect(result?.code).not.toContain('applyStyle(__vite__id, __vite__css)');
     expect(result?.code).not.toContain('disposeStyle(__vite__id)');
   });
@@ -67,8 +98,10 @@ describe('transformDevCssModule', () => {
       'virtual:novel-isr/dev-style-registry'
     );
 
-    expect(result?.code).toContain('__novel_isr_dev_styles.publish(__vite__id, __vite__css);');
-    expect(result?.code).toContain('__novel_isr_dev_styles.prune(__vite__id)');
+    expect(result?.code).toContain(
+      '__novel_isr_dev_styles.publish("/src/Card.module.scss", __vite__css);'
+    );
+    expect(result?.code).toContain('__novel_isr_dev_styles.prune("/src/Card.module.scss")');
   });
 
   it.each([
@@ -120,8 +153,10 @@ describe('transformDevCssModule', () => {
       'virtual:novel-isr/dev-style-registry'
     );
 
-    expect(result?.code).toContain('__novel_isr_dev_styles.publish(__vite__id, __vite__css);');
-    expect(result?.code).toContain('__novel_isr_dev_styles.prune(__vite__id)');
+    expect(result?.code).toContain(
+      '__novel_isr_dev_styles.publish("/src/Card.module.scss", __vite__css);'
+    );
+    expect(result?.code).toContain('__novel_isr_dev_styles.prune("/src/Card.module.scss")');
   });
 
   it('rejects unsupported Vite bundled-development mutator access', () => {

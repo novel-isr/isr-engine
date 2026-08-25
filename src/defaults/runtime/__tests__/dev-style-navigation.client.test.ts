@@ -13,6 +13,82 @@ function appendRscLink(document: Document, href: string): void {
 }
 
 describe('development style navigation lifecycle', () => {
+  it('fails before scheduling when declared styles have no registry owner', async () => {
+    const lifecycle = createDevStyleNavigationLifecycle();
+
+    await expect(lifecycle.prepareTree(1, ['/src/A.scss'])).rejects.toThrow(
+      /stylesheet registry is unavailable/i
+    );
+  });
+
+  it('waits for exact generation style preparation before payload side effects', async () => {
+    const lifecycle = createDevStyleNavigationLifecycle();
+    const events: string[] = [];
+    let resolveStyles!: () => void;
+    const stylesReady = new Promise<void>(resolve => {
+      resolveStyles = resolve;
+    });
+
+    const navigation = lifecycle.run(
+      async () => 'B',
+      value => {
+        events.push(`apply:${value}`);
+        return value;
+      },
+      async (_value, generation) => {
+        events.push(`prepare:${generation}`);
+        await stylesReady;
+        events.push(`ready:${generation}`);
+      }
+    );
+
+    await Promise.resolve();
+    expect(events).toEqual(['prepare:1']);
+    resolveStyles();
+    await expect(navigation).resolves.toEqual({ status: 'applied', value: 'B', generation: 1 });
+    expect(events).toEqual(['prepare:1', 'ready:1', 'apply:B']);
+  });
+
+  it('aborts an older generation still preparing when a newer response is ready', async () => {
+    const window = new Window({ url: 'http://localhost:3000/' });
+    const document = window.document as unknown as Document;
+    const lifecycle = createDevStyleNavigationLifecycle();
+    const registry = createDevStyleRegistry(document, {
+      onRscCommit: generation => lifecycle.complete(generation),
+    });
+    lifecycle.register(registry);
+    const applied: string[] = [];
+
+    const first = lifecycle.run(
+      async () => 'B',
+      value => {
+        applied.push(value);
+        return value;
+      },
+      (_value, generation) => lifecycle.prepareTree(generation!, ['/src/B.scss'])
+    );
+    await Promise.resolve();
+    expect(document.querySelector('link[rel="preload"][href*="/src/B.scss"]')).not.toBeNull();
+
+    registry.publish('/src/C.scss', '.c{display:flex}');
+    await expect(
+      lifecycle.run(
+        async () => 'C',
+        value => {
+          applied.push(value);
+          return value;
+        },
+        (_value, generation) => lifecycle.prepareTree(generation!, ['/src/C.scss'])
+      )
+    ).resolves.toEqual({ status: 'applied', value: 'C', generation: 2 });
+
+    await expect(first).resolves.toEqual({ status: 'superseded', operationValue: 'B' });
+    expect(applied).toEqual(['C']);
+    expect(document.querySelector('link[rel="preload"][href*="/src/B.scss"]')).toBeNull();
+    registry.dispose();
+    window.close();
+  });
+
   it('assigns the generation before transport starts and leaves disabled transport untouched', async () => {
     const lifecycle = createDevStyleNavigationLifecycle();
     let developmentGeneration: number | undefined;
@@ -192,27 +268,31 @@ describe('development style navigation lifecycle', () => {
     lifecycle.commitTree(0, ['/src/A.scss']);
 
     const b = await lifecycle.run(
-      async () => 'B',
+      async () => {
+        registry.publish('/src/B.scss', '.b{display:grid}');
+        return 'B';
+      },
       (value, generation) => {
-        lifecycle.prepareTree(generation!, ['/src/B.scss']);
         return { value, generation: generation! };
-      }
+      },
+      (_value, generation) => lifecycle.prepareTree(generation!, ['/src/B.scss'])
     );
     expect(b.status).toBe('applied');
     if (b.status !== 'applied') throw new Error('B should be accepted');
 
     const c = await lifecycle.run(
-      async () => 'C',
+      async () => {
+        registry.publish('/src/C.scss', '.c{display:flex}');
+        return 'C';
+      },
       (value, generation) => {
-        lifecycle.prepareTree(generation!, ['/src/C.scss']);
         return { value, generation: generation! };
-      }
+      },
+      (_value, generation) => lifecycle.prepareTree(generation!, ['/src/C.scss'])
     );
     expect(c.status).toBe('applied');
     if (c.status !== 'applied') throw new Error('C should be accepted');
 
-    registry.publish('/src/B.scss', '.b{display:grid}');
-    registry.publish('/src/C.scss', '.c{display:flex}');
     appendRscLink(document, '/src/B.scss?direct');
     appendRscLink(document, '/src/C.scss?direct');
     lifecycle.commitTree(b.value.generation, ['/src/B.scss']);

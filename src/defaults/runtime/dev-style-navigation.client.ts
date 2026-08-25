@@ -8,9 +8,10 @@ export interface DevStyleNavigationLifecycle {
   register(registry: DevStyleRegistry): () => void;
   run<T, R>(
     operation: (generation: number | undefined) => Promise<T>,
-    apply: (value: T, generation: number | undefined) => R
+    apply: (value: T, generation: number | undefined) => R,
+    prepare?: (value: T, generation: number | undefined) => void | Promise<void>
   ): Promise<DevStyleNavigationResult<R, T>>;
-  prepareTree(generation: number, styleIds: Iterable<string>): void;
+  prepareTree(generation: number, styleIds: Iterable<string>): Promise<void>;
   commitTree(generation: number, styleIds: Iterable<string>): void;
   complete(generation: number): void;
 }
@@ -30,7 +31,7 @@ export function createDevStyleNavigationLifecycle(
         const value = await operation(undefined);
         return { status: 'applied', value: apply(value, undefined), generation: undefined };
       },
-      prepareTree: () => {},
+      prepareTree: async () => {},
       commitTree: () => {},
       complete: () => {},
     };
@@ -40,7 +41,15 @@ export function createDevStyleNavigationLifecycle(
   let latestResolvedGeneration = 0;
   let registry: DevStyleRegistry | undefined;
   const pendingGenerations = new Set<number>([0]);
+  const preparingGenerations = new Set<number>();
   const pendingStyleIds = new Map<number, string[]>();
+
+  const abort = (generation: number) => {
+    pendingGenerations.delete(generation);
+    pendingStyleIds.delete(generation);
+    preparingGenerations.delete(generation);
+    registry?.abortRscUpdate(generation);
+  };
 
   const complete = (generation: number) => {
     for (const pending of pendingGenerations) {
@@ -64,7 +73,7 @@ export function createDevStyleNavigationLifecycle(
       };
     },
 
-    async run(operation, apply) {
+    async run(operation, apply, prepare) {
       const generation = ++nextGeneration;
       pendingGenerations.add(generation);
       registry?.beginRscUpdate(generation);
@@ -73,26 +82,49 @@ export function createDevStyleNavigationLifecycle(
       try {
         value = await operation(generation);
       } catch (error) {
-        pendingGenerations.delete(generation);
-        registry?.abortRscUpdate(generation);
+        abort(generation);
         if (generation < latestResolvedGeneration) return { status: 'superseded' };
         throw error;
       }
 
       if (generation < latestResolvedGeneration) {
-        pendingGenerations.delete(generation);
-        registry?.abortRscUpdate(generation);
+        abort(generation);
         return { status: 'superseded', operationValue: value };
       }
 
       latestResolvedGeneration = generation;
+      for (const preparing of preparingGenerations) {
+        if (preparing < generation) registry?.abortRscUpdate(preparing);
+      }
+      try {
+        if (prepare) preparingGenerations.add(generation);
+        await prepare?.(value, generation);
+      } catch (error) {
+        abort(generation);
+        if (generation < latestResolvedGeneration) {
+          return { status: 'superseded', operationValue: value };
+        }
+        throw error;
+      }
+      preparingGenerations.delete(generation);
+
+      if (generation < latestResolvedGeneration) {
+        abort(generation);
+        return { status: 'superseded', operationValue: value };
+      }
       return { status: 'applied', value: apply(value, generation), generation };
     },
 
-    prepareTree(generation, styleIds) {
+    async prepareTree(generation, styleIds) {
       const declared = Array.from(styleIds);
       pendingStyleIds.set(generation, declared);
-      registry?.declareRscStyles(generation, declared);
+      if (!registry) {
+        if (declared.length === 0) return;
+        throw new Error(
+          `Development stylesheet registry is unavailable for RSC generation ${generation}.`
+        );
+      }
+      await registry.prepareRscStyles(generation, declared);
     },
 
     commitTree(generation, styleIds) {

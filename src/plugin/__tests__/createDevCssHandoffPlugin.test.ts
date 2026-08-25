@@ -50,6 +50,7 @@ describe('createDevCssLifecyclePlugins', () => {
     expect(plugin.enforce).toBe('pre');
     expect(resolveId(VITE_RSC_REMOVE_DUPLICATE_CSS_ID)).toBe(DEV_CSS_HANDOFF_RESOLVED_ID);
     expect(load(DEV_CSS_HANDOFF_RESOLVED_ID)).toContain('DevCssLifecycleBoundary');
+    expect(load(DEV_CSS_HANDOFF_RESOLVED_ID)).toContain(`import "${DEV_STYLE_REGISTRY_ID}"`);
     expect(load(DEV_CSS_HANDOFF_RESOLVED_ID)).not.toContain('React.useLayoutEffect');
     expect(load(DEV_CSS_HANDOFF_RESOLVED_ID)).not.toContain('reconcileDocumentStyles');
     expect(load(DEV_CSS_HANDOFF_RESOLVED_ID)).not.toContain('handoffDevClientReferenceStyles');
@@ -101,6 +102,8 @@ describe('createDevCssLifecyclePlugins', () => {
     const result = instrumentDevRscStylesheetModule(code, id, 'file:///engine/declarations.js');
 
     expect(result?.code).toContain('prepareDevStyleDependencies');
+    expect(result?.code).toContain('getDevStyleTransportMedia');
+    expect(result?.code).toContain('media: __novel_isr_transport_media');
     expect(result?.code).toContain('{ js: [], css: ["/src/Page.scss"] }');
     expect(result?.code).toContain('export function Resources()');
   });

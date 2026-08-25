@@ -37,7 +37,11 @@ describe('development RSC stylesheet identity', () => {
       configFile: false,
       appType: 'custom',
       logLevel: 'silent',
-      server: { middlewareMode: true, hmr: false },
+      server: {
+        middlewareMode: true,
+        hmr: false,
+        fs: { allow: [root, process.cwd()] },
+      },
       plugins: [
         ...createDevCssLifecyclePlugins(path.resolve(process.cwd(), 'src/defaults')),
         ...vitePluginRsc({
@@ -100,6 +104,11 @@ describe('development RSC stylesheet identity', () => {
       '/src/Page.scss',
     ]);
     expect(flight).toContain('__novel_isr_style_generation=3');
+    expect(flight).toContain('not all');
+
+    const initial = await rscEntry.render();
+    const initialFlight = await new Response(initial.stream).text();
+    expect(initialFlight).not.toContain('not all');
 
     const listener = http.createServer(server.middlewares);
     await new Promise<void>(resolve => listener.listen(0, '127.0.0.1', resolve));
@@ -131,6 +140,26 @@ describe('development RSC stylesheet identity', () => {
     expect(cssModuleCode).toContain('__novel_isr_dev_styles.prune(');
     expect(cssModuleCode).not.toMatch(/__vite__updateStyle\s*\(/);
     expect(cssModuleCode).not.toMatch(/__vite__removeStyle\s*\(/);
+
+    const externalRoot = await mkdtemp(path.join(process.cwd(), '.tmp-dev-style-external-'));
+    fixtureRoots.push(externalRoot);
+    const externalStyle = path.join(externalRoot, 'Page.scss');
+    await writeFile(externalStyle, '.external { color: rgb(4, 5, 6); }\n');
+    const rootWrapper = await server.environments.client.transformRequest('/src/Page.scss');
+    const semanticWrapper = await server.environments.client.transformRequest(
+      '/src/Page.scss?theme=dark&t=stale'
+    );
+    const externalUrl = `/@fs/${externalStyle}`;
+    const externalWrapper = await server.environments.client.transformRequest(externalUrl);
+
+    expect(rootWrapper?.code).toContain('__novel_isr_dev_styles.publish("/src/Page.scss"');
+    expect(semanticWrapper?.code).toContain(
+      '__novel_isr_dev_styles.publish("/src/Page.scss?theme=dark"'
+    );
+    expect(externalWrapper?.code).toContain(
+      `__novel_isr_dev_styles.publish(${JSON.stringify(externalUrl)}`
+    );
+    expect(externalWrapper?.code).not.toContain('__novel_isr_dev_styles.publish("/src/Page.scss"');
   });
 });
 

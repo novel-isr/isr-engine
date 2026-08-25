@@ -25,9 +25,7 @@ export function canonicalizeDevStyleId(value: string, baseUrl = 'http://novel-is
 }
 
 export function styleIdsMatch(left: string, right: string, baseUrl?: string): boolean {
-  const a = canonicalizeDevStyleId(left, baseUrl);
-  const b = canonicalizeDevStyleId(right, baseUrl);
-  return a === b || a.endsWith(b) || b.endsWith(a);
+  return canonicalizeDevStyleId(left, baseUrl) === canonicalizeDevStyleId(right, baseUrl);
 }
 
 export function withDevStyleTransportGeneration(
@@ -43,6 +41,17 @@ export function withDevStyleTransportGeneration(
   return /^[a-z][a-z\d+.-]*:/i.test(value)
     ? url.toString()
     : `${url.pathname}${url.search}${url.hash}`;
+}
+
+export function createDevStyleTransportHref(
+  value: string,
+  generation: number,
+  baseUrl = 'http://novel-isr.local/'
+): string {
+  const canonical = canonicalizeDevStyleId(value, baseUrl);
+  const url = new URL(canonical, baseUrl);
+  url.searchParams.set('direct', '');
+  return withDevStyleTransportGeneration(`${url.pathname}${url.search}`, generation, baseUrl);
 }
 
 export function getDevStyleTransportGeneration(

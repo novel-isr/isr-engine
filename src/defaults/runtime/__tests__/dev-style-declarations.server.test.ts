@@ -53,6 +53,25 @@ describe('development RSC style declarations', () => {
     expect(styleIds).toEqual(['/src/A.scss', '/src/B.css?theme=dark']);
   });
 
+  it('emits transport hrefs from the same canonical identity used by the payload', () => {
+    let prepared: unknown;
+    runWithDevStyleDeclarationCollection(
+      [],
+      () => {
+        prepared = prepareDevStyleDependencies({
+          css: ['/src/A.scss?z=2&direct&a=1&t=old'],
+          js: [],
+        });
+      },
+      { transportGeneration: 5 }
+    );
+
+    expect(prepared).toEqual({
+      css: ['/src/A.scss?a=1&z=2&direct=&__novel_isr_style_generation=5'],
+      js: [],
+    });
+  });
+
   it('does not add a transport generation outside a development navigation request', () => {
     let prepared: unknown;
 

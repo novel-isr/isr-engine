@@ -43,6 +43,25 @@ afterEach(() => {
 });
 
 describe('development style registry', () => {
+  it('keeps root and external styles with the same basename in separate cache records', () => {
+    const { document, registry } = createFixture();
+
+    registry.publish('/src/Card.scss', '.root{color:green}');
+    registry.publish('/@fs/workspace/package/src/Card.scss', '.external{color:red}');
+
+    const nodes = Array.from(
+      document.querySelectorAll<HTMLStyleElement>('style[data-novel-isr-dev-style]')
+    );
+    expect(nodes.map(node => node.dataset.novelIsrDevStyle)).toEqual([
+      '/src/Card.scss',
+      '/@fs/workspace/package/src/Card.scss',
+    ]);
+    expect(nodes.map(node => node.textContent)).toEqual([
+      '.root{color:green}',
+      '.external{color:red}',
+    ]);
+  });
+
   it('installs and updates one managed node before releasing an SSR client-reference link', () => {
     const { document, registry } = createFixture(`
       <link rel="stylesheet" href="/src/Card.scss?direct" data-precedence="vite-rsc/client-reference">
@@ -132,7 +151,7 @@ describe('development style registry', () => {
     `);
 
     registry.reconcileDocumentStyles(0, ['/src/Card.scss']);
-    registry.publish('/workspace/app/src/Card.scss', '.card { color: green }');
+    registry.publish('/src/Card.scss', '.card { color: green }');
 
     expect(document.querySelector('link[href*="Card.scss"]')).toBeNull();
     expect(
@@ -663,6 +682,169 @@ describe('development style registry', () => {
     expect(mutations.indexOf('remove:/src/B.scss')).toBeGreaterThan(
       mutations.indexOf('insert:/src/A.scss')
     );
+  });
+
+  it('preloads a pending generation without applying it and refuses commit until ready', async () => {
+    const window = new Window({ url: 'http://localhost:3000/' });
+    const document = window.document as unknown as Document;
+    const committed: number[] = [];
+    const registry = createDevStyleRegistry(document, {
+      onRscCommit: generation => committed.push(generation),
+    });
+    fixtures.push({ document, registry, window });
+
+    registry.beginRscUpdate(1);
+    const preparation = registry.prepareRscStyles(1, ['/src/B.scss']);
+    const preload = document.querySelector<HTMLLinkElement>(
+      'link[rel="preload"][as="style"][href*="/src/B.scss"]'
+    );
+
+    expect(preload).not.toBeNull();
+    expect(document.querySelector('link[rel="stylesheet"][href*="/src/B.scss"]')).toBeNull();
+    registry.reconcileDocumentStyles(1, ['/src/B.scss']);
+    expect(committed).toEqual([]);
+
+    preload!.dispatchEvent(new window.Event('load'));
+    await preparation;
+    const owner = appendRscLink(document, '/src/B.scss?direct', 1);
+    owner.dataset.precedence = 'vite-rsc/importer-resources';
+    owner.media = 'not all';
+    registry.reconcileDocumentStyles(1, ['/src/B.scss']);
+
+    expect(owner.media).toBe('');
+    expect(committed).toEqual([1]);
+    expect(preload!.isConnected).toBe(false);
+  });
+
+  it('requires the exact prepared generation owner instead of activating an older fallback', async () => {
+    const window = new Window({ url: 'http://localhost:3000/' });
+    const document = window.document as unknown as Document;
+    const committed: number[] = [];
+    const registry = createDevStyleRegistry(document, {
+      onRscCommit: generation => committed.push(generation),
+    });
+    fixtures.push({ document, registry, window });
+    const bootstrap = appendRscLink(document, '/src/A.scss?direct');
+    bootstrap.dataset.precedence = 'vite-rsc/importer-resources';
+    registry.reconcileDocumentStyles(0, ['/src/A.scss']);
+
+    registry.beginRscUpdate(1);
+    const preparation = registry.prepareRscStyles(1, ['/src/A.scss']);
+    const preload = document.querySelector<HTMLLinkElement>(
+      'link[rel="preload"][as="style"][href*="/src/A.scss"]'
+    )!;
+    preload.dispatchEvent(new window.Event('load'));
+    await preparation;
+
+    registry.reconcileDocumentStyles(1, ['/src/A.scss']);
+    expect(committed).toEqual([0]);
+    expect(bootstrap.isConnected).toBe(true);
+
+    const exact = appendRscLink(document, '/src/A.scss?direct', 1);
+    exact.dataset.precedence = 'vite-rsc/importer-resources';
+    exact.media = 'not all';
+    const mutations: string[] = [];
+    const removeExactAttribute = exact.removeAttribute.bind(exact);
+    exact.removeAttribute = name => {
+      if (name === 'media') mutations.push('activate-exact');
+      removeExactAttribute(name);
+    };
+    const removeBootstrap = bootstrap.remove.bind(bootstrap);
+    bootstrap.remove = () => {
+      mutations.push('remove-bootstrap');
+      removeBootstrap();
+    };
+    registry.reconcileDocumentStyles(1, ['/src/A.scss']);
+
+    expect(committed).toEqual([0, 1]);
+    expect(exact.media).toBe('');
+    expect(exact.isConnected).toBe(true);
+    expect(bootstrap.isConnected).toBe(false);
+    expect(mutations.indexOf('activate-exact')).toBeGreaterThanOrEqual(0);
+    expect(mutations.indexOf('remove-bootstrap')).toBeGreaterThan(
+      mutations.indexOf('activate-exact')
+    );
+  });
+
+  it('keeps future transport non-applying and swaps cached A after B with no zero owner', async () => {
+    const window = new Window({ url: 'http://localhost:3000/' });
+    const document = window.document as unknown as Document;
+    const registry = createDevStyleRegistry(document);
+    fixtures.push({ document, registry, window });
+
+    registry.publish('/src/A.scss', '.a{color:green}');
+    registry.reconcileDocumentStyles(0, ['/src/A.scss']);
+
+    registry.beginRscUpdate(1);
+    registry.publish('/src/B.scss', '.b{color:blue}');
+    await registry.prepareRscStyles(1, ['/src/B.scss']);
+
+    registry.beginRscUpdate(2);
+    await registry.prepareRscStyles(2, ['/src/A.scss']);
+    const futureA = appendRscLink(document, '/src/A.scss?direct', 2);
+    futureA.dataset.precedence = 'vite-rsc/importer-resources';
+    futureA.media = 'not all';
+
+    registry.reconcileDocumentStyles(1, ['/src/B.scss']);
+
+    expect(document.querySelector('style[data-novel-isr-dev-style="/src/A.scss"]')).toBeNull();
+    expect(document.querySelector('style[data-novel-isr-dev-style="/src/B.scss"]')).not.toBeNull();
+    expect(futureA.isConnected).toBe(true);
+    expect(futureA.media).toBe('not all');
+
+    const mutations: string[] = [];
+    const observer = new window.MutationObserver(records => {
+      for (const mutation of records) {
+        if (mutation.type === 'attributes' && mutation.target === futureA) {
+          mutations.push(`activate:${futureA.media}`);
+        }
+        for (const node of mutation.addedNodes) {
+          if (node instanceof window.HTMLStyleElement) {
+            mutations.push(`insert:${node.dataset.novelIsrDevStyle}`);
+          }
+        }
+        for (const node of mutation.removedNodes) {
+          if (node instanceof window.HTMLStyleElement) {
+            mutations.push(`remove:${node.dataset.novelIsrDevStyle}`);
+          }
+        }
+      }
+    });
+    observer.observe(document.head, {
+      childList: true,
+      attributes: true,
+      attributeFilter: ['media'],
+    });
+
+    registry.reconcileDocumentStyles(2, ['/src/A.scss']);
+    await window.happyDOM.whenAsyncComplete();
+    observer.disconnect();
+
+    expect(document.querySelector('style[data-novel-isr-dev-style="/src/A.scss"]')).not.toBeNull();
+    expect(document.querySelector('style[data-novel-isr-dev-style="/src/B.scss"]')).toBeNull();
+    expect(futureA.isConnected).toBe(false);
+    expect(mutations.indexOf('insert:/src/A.scss')).toBeGreaterThanOrEqual(0);
+    expect(mutations.indexOf('remove:/src/B.scss')).toBeGreaterThan(
+      mutations.indexOf('insert:/src/A.scss')
+    );
+  });
+
+  it('aborts a pending preload without activating its stylesheet owner', async () => {
+    const { document, registry, window } = createFixture();
+    registry.beginRscUpdate(1);
+    const preparation = registry.prepareRscStyles(1, ['/src/B.scss']);
+    const rejected = expect(preparation).rejects.toThrow(/aborted/i);
+    const owner = appendRscLink(document, '/src/B.scss?direct', 1);
+    owner.dataset.precedence = 'vite-rsc/importer-resources';
+    owner.media = 'not all';
+
+    registry.abortRscUpdate(1);
+
+    await rejected;
+    expect(owner.isConnected).toBe(false);
+    expect(owner.media).toBe('not all');
+    expect(document.querySelector('link[rel="preload"][href*="/src/B.scss"]')).toBeNull();
+    window.happyDOM.cancelAsync();
   });
 
   it('keeps released CSS detached and uses republished bytes on its next activation', () => {

@@ -255,13 +255,18 @@ function compatibilityError(id: string, detail: string): Error {
 export function transformDevCssModule(
   code: string,
   id: string,
-  registryId: string
+  registryId: string,
+  browserStyleId?: string
 ): TransformResult | undefined {
   if (!STYLESHEET_URL.test(id) || hasDirectQuery(id)) return undefined;
 
   const source = ts.createSourceFile(id, code, ts.ScriptTarget.Latest, true, ts.ScriptKind.JS);
   const bindings = collectViteStyleBindings(source);
   if (!bindings.hasEvidence) return undefined;
+  const exactStyleId = browserStyleId ?? (/^\/(?:src|@fs)\//.test(id) ? id : undefined);
+  if (exactStyleId === undefined) {
+    throw compatibilityError(id, 'missing an exact browser module URL from the Vite module graph.');
+  }
   if (bindings.unsupportedMutatorAccesses.length > 0) {
     throw compatibilityError(id, 'contains unsupported Vite DOM-mutator access.');
   }
@@ -320,12 +325,12 @@ export function transformDevCssModule(
     {
       start: updateStyleCall.getStart(source),
       end: updateStyleCall.getEnd(),
-      value: `__novel_isr_dev_styles.publish(${updateStyleCall.arguments.map(arg => arg.getText(source)).join(', ')})`,
+      value: `__novel_isr_dev_styles.publish(${JSON.stringify(exactStyleId)}, ${updateStyleCall.arguments[1]?.getText(source)})`,
     },
     {
       start: removeStyleCall.getStart(source),
       end: removeStyleCall.getEnd(),
-      value: `__novel_isr_dev_styles.prune(${removeStyleArgument.getText(source)})`,
+      value: `__novel_isr_dev_styles.prune(${JSON.stringify(exactStyleId)})`,
     },
   ];
 

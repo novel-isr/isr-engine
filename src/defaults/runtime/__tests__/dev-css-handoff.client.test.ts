@@ -16,9 +16,9 @@ describe('dev client-reference stylesheet ownership', () => {
       ).length;
 
     const registry = createDevStyleRegistry(document as unknown as Document);
-    registry.publish('/workspace/app/src/Card.scss', '.card { color: green; }');
+    registry.publish('/src/Card.scss', '.card { color: green; }');
     registry.beginUpdate();
-    registry.prune('/workspace/app/src/Card.scss');
+    registry.prune('/src/Card.scss');
     registry.commitUpdate();
 
     expect(ownerCount()).toBeGreaterThan(0);
@@ -39,11 +39,11 @@ describe('dev client-reference stylesheet ownership', () => {
     const registry = createDevStyleRegistry(document as unknown as Document);
 
     try {
-      registry.publish('/workspace/app/src/Card.scss', '.card { color: green; }');
+      registry.publish('/src/Card.scss', '.card { color: green; }');
       registry.reconcileDocumentStyles(0, ['/src/Card.scss']);
       expect(document.querySelector('link[href*="Card.scss"]')).toBeNull();
       registry.beginUpdate();
-      registry.prune('/workspace/app/src/Card.scss');
+      registry.prune('/src/Card.scss');
       registry.commitUpdate();
 
       expect(ownerCount()).toBeGreaterThan(0);

@@ -18,8 +18,11 @@ describe('development stylesheet identifiers', () => {
     );
   });
 
-  it('matches Vite filesystem identities with client stylesheet URLs', () => {
-    expect(styleIdsMatch('/workspace/app/src/Card.scss', '/src/Card.scss?direct')).toBe(true);
+  it('matches only exact canonical browser module URLs', () => {
+    expect(styleIdsMatch('/src/Card.scss', '/src/Card.scss?direct')).toBe(true);
+    expect(styleIdsMatch('/@fs/workspace/package/src/Card.scss', '/src/Card.scss?direct')).toBe(
+      false
+    );
   });
 
   it('keeps the generation as transport metadata but removes it from canonical ownership', () => {

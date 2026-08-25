@@ -1,6 +1,6 @@
 import { AsyncLocalStorage } from 'node:async_hooks';
 
-import { canonicalizeDevStyleId, withDevStyleTransportGeneration } from './dev-style-id';
+import { canonicalizeDevStyleId, createDevStyleTransportHref } from './dev-style-id';
 
 const DEV_STYLE_DECLARATIONS_KEY = '__NOVEL_ISR_DEV_STYLE_DECLARATIONS_V2__';
 const DEV_CLIENT_REFERENCE_STYLES_KEY = '__NOVEL_ISR_DEV_CLIENT_REFERENCE_STYLES__';
@@ -78,8 +78,14 @@ export function prepareDevStyleDependencies(dependencies: unknown): PluginRscDep
   if (generation === undefined) return validated;
   return {
     ...validated,
-    css: validated.css.map(href => withDevStyleTransportGeneration(href, generation)),
+    css: validated.css.map(href => createDevStyleTransportHref(href, generation)),
   };
+}
+
+export function getDevStyleTransportMedia(): string | undefined {
+  return getDeclarationStorage().getStore()?.transportGeneration === undefined
+    ? undefined
+    : 'not all';
 }
 
 export function registerDevClientReferenceStyles(

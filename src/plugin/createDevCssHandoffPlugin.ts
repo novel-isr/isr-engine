@@ -4,9 +4,10 @@ import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
 import ts from 'typescript';
-import type { EnvironmentModuleNode, Plugin, ViteDevServer } from 'vite';
+import { normalizePath, type EnvironmentModuleNode, type Plugin, type ViteDevServer } from 'vite';
 
 import { transformDevCssModule } from './transformDevCssModule';
+import { canonicalizeDevStyleId } from '../defaults/runtime/dev-style-id';
 
 export const VITE_RSC_REMOVE_DUPLICATE_CSS_ID = 'virtual:vite-rsc/remove-duplicate-server-css';
 export const DEV_CSS_HANDOFF_RESOLVED_ID = '\0virtual:novel-isr/dev-css-handoff';
@@ -30,6 +31,34 @@ function getPinnedRscServerRuntimePath(): string {
 
 function cleanModuleId(id: string): string {
   return id.replace(/[?#].*$/, '');
+}
+
+function browserStyleIdForResolvedModule(
+  server: ViteDevServer | undefined,
+  id: string
+): string | undefined {
+  const moduleGraph = server?.environments.client.moduleGraph;
+  const moduleNode =
+    moduleGraph?.getModuleById(id) ?? moduleGraph?.getModuleById(cleanModuleId(id));
+  if (moduleNode?.url && !moduleNode.url.startsWith('\0')) {
+    return canonicalizeDevStyleId(moduleNode.url);
+  }
+
+  const queryStart = id.indexOf('?');
+  const resolvedPath = queryStart === -1 ? id : id.slice(0, queryStart);
+  const query = queryStart === -1 ? '' : id.slice(queryStart);
+  if (resolvedPath.startsWith('/@fs/')) return canonicalizeDevStyleId(id);
+  if (!server) {
+    return resolvedPath.startsWith('/src/') ? canonicalizeDevStyleId(id) : undefined;
+  }
+  if (!path.isAbsolute(resolvedPath)) return undefined;
+
+  const normalizedRoot = normalizePath(path.resolve(server.config.root));
+  const normalizedPath = normalizePath(path.resolve(resolvedPath));
+  const relative = normalizePath(path.relative(normalizedRoot, normalizedPath));
+  const browserUrl =
+    relative !== '..' && !relative.startsWith('../') ? `/${relative}` : `/@fs/${normalizedPath}`;
+  return canonicalizeDevStyleId(`${browserUrl}${query}`);
 }
 
 function hasUseClientDirective(code: string, id: string): boolean {
@@ -512,6 +541,45 @@ function isPinnedResourcesFactory(factory: ts.ArrowFunction | ts.FunctionExpress
   );
 }
 
+function addTransportMediaToPinnedFactory(
+  source: ts.SourceFile,
+  code: string,
+  factory: ts.ArrowFunction | ts.FunctionExpression
+): string {
+  let linkProps: ts.ObjectLiteralExpression | undefined;
+  const visit = (node: ts.Node) => {
+    if (ts.isObjectLiteralExpression(node) && isPinnedLinkProps(node, 'href', 'precedence')) {
+      linkProps = node;
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(factory);
+  const lastParameter = factory.parameters[factory.parameters.length - 1];
+  if (!linkProps || !lastParameter) {
+    throw new Error('Pinned Resources factory lost its stylesheet transport binding.');
+  }
+
+  const factoryStart = factory.getStart(source);
+  const replacements = [
+    {
+      position: lastParameter.getEnd() - factoryStart,
+      value: ', __novel_isr_transport_media',
+    },
+    {
+      position: linkProps.getEnd() - factoryStart - 1,
+      value: ',\n          media: __novel_isr_transport_media',
+    },
+  ].sort((left, right) => right.position - left.position);
+  let factoryCode = code.slice(factoryStart, factory.getEnd());
+  for (const replacement of replacements) {
+    factoryCode =
+      factoryCode.slice(0, replacement.position) +
+      replacement.value +
+      factoryCode.slice(replacement.position);
+  }
+  return factoryCode;
+}
+
 function isPinnedDependencies(node: ts.Expression): boolean {
   if (!ts.isObjectLiteralExpression(node) || node.properties.length !== 2) return false;
   const properties = new Map(
@@ -627,7 +695,7 @@ export function instrumentDevRscStylesheetModule(
     initializer.arguments[1].getStart(source),
     initializer.arguments[1].getEnd()
   );
-  const factoryCode = code.slice(factory.getStart(source), factory.getEnd());
+  const factoryCode = addTransportMediaToPinnedFactory(source, code, factory);
   const cleanupCode = code.slice(
     initializer.arguments[2].getStart(source),
     initializer.arguments[2].getEnd()
@@ -644,15 +712,14 @@ export function Resources() {
     __novel_isr_prepare_styles(${depsCode}),
     ${cleanupCode},
     ${precedenceCode},
+    __novel_isr_get_transport_media(),
   );
   return ${reactCode}.createElement(__novel_isr_RscResources);
 }`;
 
   return {
     code:
-      `import { prepareDevStyleDependencies as __novel_isr_prepare_styles } from ${JSON.stringify(
-        declarationsUrl
-      )};\n` +
+      `import { getDevStyleTransportMedia as __novel_isr_get_transport_media, prepareDevStyleDependencies as __novel_isr_prepare_styles } from ${JSON.stringify(declarationsUrl)};\n` +
       code.slice(0, resourcesStatement.getStart(source)) +
       replacement +
       code.slice(resourcesStatement.getEnd()),
@@ -694,7 +761,15 @@ export function createDevCssLifecyclePlugins(defaultsDir: string): Plugin[] {
       },
       load(id) {
         if (id !== DEV_CSS_HANDOFF_RESOLVED_ID) return undefined;
-        return readFileSync(lifecycleBoundaryPath, 'utf8');
+        const boundary = readFileSync(lifecycleBoundaryPath, 'utf8');
+        const directive = "'use client';";
+        if (!boundary.startsWith(directive)) {
+          throw new Error('[novel-isr] Development CSS boundary lost its client directive.');
+        }
+        return boundary.replace(
+          directive,
+          `${directive}\n\nimport ${JSON.stringify(DEV_STYLE_REGISTRY_ID)};`
+        );
       },
       transform(code, id) {
         if (this?.environment.name === 'rsc') {
@@ -760,7 +835,12 @@ export function createDevCssLifecyclePlugins(defaultsDir: string): Plugin[] {
         `;
       },
       transform(code, id) {
-        return transformDevCssModule(code, id, DEV_STYLE_REGISTRY_ID);
+        return transformDevCssModule(
+          code,
+          id,
+          DEV_STYLE_REGISTRY_ID,
+          browserStyleIdForResolvedModule(devServer, id)
+        );
       },
     },
   ];

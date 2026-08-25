@@ -60,20 +60,30 @@ interface DefaultRscPayloadState {
   styleIds: string[];
 }
 
-function createPayloadState(
-  payload: DefaultRscPayload,
-  generation: number | undefined
-): DefaultRscPayloadState {
-  if (!import.meta.env.DEV) return { payload, generation, styleIds: [] };
+function payloadDevStyleIds(payload: DefaultRscPayload): string[] {
+  if (!import.meta.env.DEV) return [];
   if (
     !Array.isArray(payload.devStyleIds) ||
     !payload.devStyleIds.every(id => typeof id === 'string')
   ) {
     throw new Error('Development RSC payload is missing its canonical devStyleIds declaration.');
   }
-  const styleIds = [...payload.devStyleIds];
-  if (generation !== undefined) prepareDevStyleTree(generation, styleIds);
-  return { payload, generation, styleIds };
+  return [...payload.devStyleIds];
+}
+
+async function preparePayloadDevStyles(
+  payload: DefaultRscPayload,
+  generation: number | undefined
+): Promise<void> {
+  if (!import.meta.env.DEV || generation === undefined) return;
+  await prepareDevStyleTree(generation, payloadDevStyleIds(payload));
+}
+
+function createPayloadState(
+  payload: DefaultRscPayload,
+  generation: number | undefined
+): DefaultRscPayloadState {
+  return { payload, generation, styleIds: payloadDevStyleIds(payload) };
 }
 
 function renderPayloadRoot({
@@ -304,7 +314,8 @@ async function main(hooks: ClientEntryHooks): Promise<void> {
           setClientI18n(payload.intl);
           applySeoToDocument(payload.seoMeta, payload.siteBaseUrl ?? undefined);
           setPayload(createPayloadState(payload, generation));
-        }
+        },
+        ({ payload }, generation) => preparePayloadDevStyles(payload, generation)
       );
     }
 
@@ -365,7 +376,8 @@ async function main(hooks: ClientEntryHooks): Promise<void> {
           applySeoToDocument(payload.seoMeta, payload.siteBaseUrl ?? undefined);
           setPayload(createPayloadState(payload, generation));
           return payload;
-        }
+        },
+        (payload, generation) => preparePayloadDevStyles(payload, generation)
       );
       const payload = result.status === 'superseded' ? result.operationValue : result.value;
       if (!payload) return undefined;
@@ -411,6 +423,7 @@ async function main(hooks: ClientEntryHooks): Promise<void> {
   let setPayload: (v: DefaultRscPayloadState) => void = () => {};
   const initialPayload = await createFromReadableStream<DefaultRscPayload>(rscStream);
   setClientI18n(initialPayload.intl);
+  if (import.meta.env.DEV) await preparePayloadDevStyles(initialPayload, 0);
   const initialPayloadState = createPayloadState(
     initialPayload,
     import.meta.env.DEV ? 0 : undefined
@@ -448,7 +461,8 @@ async function main(hooks: ClientEntryHooks): Promise<void> {
         setClientI18n(payload.intl);
         applySeoToDocument(payload.seoMeta, payload.siteBaseUrl ?? undefined);
         setPayload(createPayloadState(payload, generation));
-      }
+      },
+      ({ payload }, generation) => preparePayloadDevStyles(payload, generation)
     );
   }
 
@@ -473,7 +487,8 @@ async function main(hooks: ClientEntryHooks): Promise<void> {
         applySeoToDocument(payload.seoMeta, payload.siteBaseUrl ?? undefined);
         setPayload(createPayloadState(payload, generation));
         return payload;
-      }
+      },
+      (payload, generation) => preparePayloadDevStyles(payload, generation)
     );
     const payload = result.status === 'superseded' ? result.operationValue : result.value;
     if (!payload) return undefined;

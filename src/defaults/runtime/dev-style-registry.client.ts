@@ -1,8 +1,8 @@
 import {
   DEV_STYLE_TRANSPORT_GENERATION_PARAM,
   canonicalizeDevStyleId,
+  createDevStyleTransportHref,
   getDevStyleTransportGeneration,
-  styleIdsMatch,
 } from './dev-style-id';
 
 const RSC_STYLESHEET = 'link[rel="stylesheet"][data-precedence^="vite-rsc/"]';
@@ -26,6 +26,7 @@ export interface DevStyleRegistry {
   prune(id: string): void;
   beginRscUpdate(generation: number): void;
   declareRscStyles(generation: number, activeIds: Iterable<string>): void;
+  prepareRscStyles(generation: number, activeIds: Iterable<string>): Promise<void>;
   abortRscUpdate(generation: number): void;
   beginUpdate(): void;
   commitUpdate(activeIds?: Iterable<string>): void;
@@ -42,6 +43,11 @@ export function createDevStyleRegistry(
   const pendingRscGenerations = new Set<number>();
   const committedRscGenerations = new Set<number>();
   const invalidatedTransportGenerations = new Set<number>();
+  const preparingRscGenerations = new Set<number>();
+  const preparedRscGenerations = new Set<number>();
+  const preparationControllers = new Map<number, AbortController>();
+  const preparationPromises = new Map<number, Promise<void>>();
+  const generationPreloads = new Map<number, Map<string, HTMLLinkElement>>();
   const rscDeclarations = new Map<number, string[]>();
   let committedActiveIds: string[] = [];
   let latestCommittedGeneration = -1;
@@ -53,11 +59,7 @@ export function createDevStyleRegistry(
   };
 
   const matchingRecord = (id: string): StyleRecord | undefined => {
-    const exact = records.get(id);
-    if (exact) return exact;
-    return Array.from(records.values()).find(record =>
-      styleIdsMatch(record.id, id, document.baseURI)
-    );
+    return records.get(id);
   };
 
   const stylesheetId = (link: HTMLLinkElement): string | undefined => {
@@ -81,7 +83,7 @@ export function createDevStyleRegistry(
   const matchingLinks = (id: string): HTMLLinkElement[] =>
     Array.from(document.querySelectorAll<HTMLLinkElement>(RSC_STYLESHEET)).filter(link => {
       const linkId = stylesheetId(link);
-      return linkId !== undefined && styleIdsMatch(linkId, id, document.baseURI);
+      return linkId === id;
     });
 
   const linkGeneration = (link: HTMLLinkElement): number | undefined => {
@@ -96,8 +98,7 @@ export function createDevStyleRegistry(
       )
     ).filter(link => linkGeneration(link) === generation);
 
-  const isCommitted = (id: string): boolean =>
-    committedActiveIds.some(activeId => styleIdsMatch(activeId, id, document.baseURI));
+  const isCommitted = (id: string): boolean => committedActiveIds.includes(id);
 
   const installManagedNode = (record: StyleRecord): HTMLStyleElement => {
     const node = record.node?.isConnected ? record.node : document.createElement('style');
@@ -129,35 +130,17 @@ export function createDevStyleRegistry(
   };
 
   const sameActiveSet = (left: string[], right: string[]): boolean =>
-    left.length === right.length &&
-    left.every(id => right.some(other => styleIdsMatch(id, other, document.baseURI)));
+    left.length === right.length && left.every(id => right.includes(id));
 
   const requiredByPendingGeneration = (id: string, exceptGeneration?: number): boolean =>
     Array.from(rscDeclarations).some(
       ([pending, ids]) =>
-        pending !== exceptGeneration &&
-        pendingRscGenerations.has(pending) &&
-        ids.some(pendingId => styleIdsMatch(pendingId, id, document.baseURI))
+        pending !== exceptGeneration && pendingRscGenerations.has(pending) && ids.includes(id)
     );
 
   const commitActiveSet = (activeIds: string[], generation?: number) => {
-    const hasNewerPendingGeneration =
-      generation !== undefined &&
-      Array.from(pendingRscGenerations).some(pending => pending > generation);
-    const protectedIds =
-      generation === undefined
-        ? []
-        : Array.from(rscDeclarations)
-            .filter(([pending]) => pending > generation)
-            .flatMap(([, ids]) => ids);
-
     for (const record of Array.from(records.values())) {
-      if (activeIds.some(id => styleIdsMatch(record.id, id, document.baseURI))) {
-        restoreActiveState(record);
-      } else if (
-        protectedIds.some(id => styleIdsMatch(record.id, id, document.baseURI)) ||
-        (hasNewerPendingGeneration && !isCommitted(record.id))
-      ) {
+      if (activeIds.includes(record.id)) {
         restoreActiveState(record);
       } else {
         release(record, generation);
@@ -169,13 +152,18 @@ export function createDevStyleRegistry(
   const isImporterResource = (link: HTMLLinkElement): boolean =>
     !!link.dataset.precedence?.startsWith('vite-rsc/importer-resources');
 
-  const committedTransportOwner = (id: string, generation: number): HTMLLinkElement | undefined => {
+  const committedTransportOwner = (
+    id: string,
+    generation: number,
+    exactGeneration = false
+  ): HTMLLinkElement | undefined => {
     let selected: HTMLLinkElement | undefined;
     let selectedGeneration = Number.NEGATIVE_INFINITY;
     for (const link of matchingLinks(id)) {
       const owner = linkGeneration(link);
       if (
         !isImporterResource(link) ||
+        (exactGeneration && owner !== generation) ||
         (owner !== undefined && (owner > generation || invalidatedTransportGenerations.has(owner)))
       ) {
         continue;
@@ -189,13 +177,19 @@ export function createDevStyleRegistry(
     return selected;
   };
 
+  const activateTransportOwner = (link: HTMLLinkElement) => {
+    if (link.media === 'not all') link.removeAttribute('media');
+  };
+
   const convergeCommittedTransport = (
     id: string,
     generation: number,
-    managed: boolean
+    managed: boolean,
+    exactGeneration = false
   ): boolean => {
-    const selected = managed ? undefined : committedTransportOwner(id, generation);
+    const selected = managed ? undefined : committedTransportOwner(id, generation, exactGeneration);
     if (!managed && !selected) return false;
+    if (selected) activateTransportOwner(selected);
     for (const link of matchingLinks(id)) {
       const owner = linkGeneration(link);
       if (
@@ -216,6 +210,52 @@ export function createDevStyleRegistry(
       if (record?.cssText !== undefined) installManagedNode(record);
       convergeCommittedTransport(id, latestCommittedGeneration, !!record?.node?.isConnected);
     }
+  };
+
+  const transportHref = (id: string, generation: number): string => {
+    return createDevStyleTransportHref(id, generation, document.baseURI);
+  };
+
+  const prepareTransport = (generation: number, id: string, signal: AbortSignal): Promise<void> => {
+    const href = transportHref(id, generation);
+    const link = document.createElement('link');
+    link.rel = 'preload';
+    link.as = 'style';
+    link.href = href;
+    link.dataset.novelIsrDevStylePreload = id;
+    generationPreloads.get(generation)?.set(id, link);
+
+    return new Promise<void>((resolve, reject) => {
+      const cleanup = () => {
+        link.removeEventListener('load', onLoad);
+        link.removeEventListener('error', onError);
+        signal.removeEventListener('abort', onAbort);
+      };
+      const onLoad = () => {
+        cleanup();
+        resolve();
+      };
+      const onError = () => {
+        cleanup();
+        reject(new Error(`Failed to preload development stylesheet ${id}.`));
+      };
+      const onAbort = () => {
+        cleanup();
+        reject(new Error(`Development stylesheet generation ${generation} was aborted.`));
+      };
+      link.addEventListener('load', onLoad, { once: true });
+      link.addEventListener('error', onError, { once: true });
+      signal.addEventListener('abort', onAbort, { once: true });
+      document.head.appendChild(link);
+      if (signal.aborted) onAbort();
+    });
+  };
+
+  const removeGenerationPreloads = (generation: number) => {
+    const preloads = generationPreloads.get(generation);
+    if (!preloads) return;
+    for (const link of preloads.values()) link.remove();
+    generationPreloads.delete(generation);
   };
 
   return {
@@ -262,9 +302,51 @@ export function createDevStyleRegistry(
       rscDeclarations.set(generation, active);
     },
 
+    prepareRscStyles(generation, activeIds) {
+      this.declareRscStyles(generation, activeIds);
+      const existing = preparationPromises.get(generation);
+      if (existing) return existing;
+      if (generation === 0) {
+        preparedRscGenerations.add(generation);
+        return Promise.resolve();
+      }
+
+      const active = rscDeclarations.get(generation) ?? [];
+      const controller = new AbortController();
+      const preloads = new Map<string, HTMLLinkElement>();
+      generationPreloads.set(generation, preloads);
+      preparationControllers.set(generation, controller);
+      preparingRscGenerations.add(generation);
+      const preparation = Promise.all(
+        active.map(id => {
+          const record = matchingRecord(id);
+          return record?.cssText === undefined
+            ? prepareTransport(generation, id, controller.signal)
+            : Promise.resolve();
+        })
+      ).then(() => {
+        if (controller.signal.aborted) {
+          throw new Error(`Development stylesheet generation ${generation} was aborted.`);
+        }
+        preparingRscGenerations.delete(generation);
+        preparedRscGenerations.add(generation);
+      });
+      preparation.catch(() => {
+        preparingRscGenerations.delete(generation);
+      });
+      preparationPromises.set(generation, preparation);
+      return preparation;
+    },
+
     abortRscUpdate(generation) {
       if (committedRscGenerations.has(generation)) return;
       invalidatedTransportGenerations.add(generation);
+      preparationControllers.get(generation)?.abort();
+      preparationControllers.delete(generation);
+      preparationPromises.delete(generation);
+      preparingRscGenerations.delete(generation);
+      preparedRscGenerations.delete(generation);
+      removeGenerationPreloads(generation);
       pendingRscGenerations.delete(generation);
       rscDeclarations.delete(generation);
       reconcileCommittedSet();
@@ -318,6 +400,12 @@ export function createDevStyleRegistry(
 
     reconcileDocumentStyles(generation, activeIds) {
       if (generation < latestCommittedGeneration) return;
+      if (
+        preparingRscGenerations.has(generation) ||
+        (preparationPromises.has(generation) && !preparedRscGenerations.has(generation))
+      ) {
+        return;
+      }
       const active = Array.from(new Set(Array.from(activeIds, canonicalId)));
       if (generation === latestCommittedGeneration) {
         if (!sameActiveSet(committedActiveIds, active)) {
@@ -334,6 +422,7 @@ export function createDevStyleRegistry(
         );
       }
       if (!declared) rscDeclarations.set(generation, active);
+      const exactPreparedOwner = preparedRscGenerations.has(generation);
 
       for (const id of active) {
         const record = findOrCreateRecord(id);
@@ -343,16 +432,26 @@ export function createDevStyleRegistry(
       const ready = active.every(id => {
         const record = matchingRecord(id);
         if (record?.node?.isConnected) return true;
-        return committedTransportOwner(id, generation) !== undefined;
+        return committedTransportOwner(id, generation, exactPreparedOwner) !== undefined;
       });
       if (!ready) return;
 
       for (const id of active) {
-        convergeCommittedTransport(id, generation, !!matchingRecord(id)?.node?.isConnected);
+        convergeCommittedTransport(
+          id,
+          generation,
+          !!matchingRecord(id)?.node?.isConnected,
+          exactPreparedOwner
+        );
       }
       commitActiveSet(active, generation);
       latestCommittedGeneration = generation;
       committedRscGenerations.add(generation);
+      removeGenerationPreloads(generation);
+      preparationControllers.delete(generation);
+      preparationPromises.delete(generation);
+      preparingRscGenerations.delete(generation);
+      preparedRscGenerations.delete(generation);
       for (const pending of pendingRscGenerations) {
         if (pending <= generation) pendingRscGenerations.delete(pending);
       }
@@ -366,6 +465,12 @@ export function createDevStyleRegistry(
       pendingRscGenerations.clear();
       committedRscGenerations.clear();
       invalidatedTransportGenerations.clear();
+      for (const controller of preparationControllers.values()) controller.abort();
+      preparationControllers.clear();
+      preparationPromises.clear();
+      preparingRscGenerations.clear();
+      preparedRscGenerations.clear();
+      for (const generation of generationPreloads.keys()) removeGenerationPreloads(generation);
       rscDeclarations.clear();
       committedActiveIds = [];
       for (const record of Array.from(records.values())) {
