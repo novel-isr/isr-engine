@@ -36,6 +36,9 @@ export function createDevAssetRequestMiddleware(root: string): Plugin {
     enforce: 'pre',
     configureServer(server) {
       const projectRoot = server.config.root || root;
+      const viteCacheDir = path.resolve(
+        server.config.cacheDir || path.join(projectRoot, 'node_modules/.vite')
+      );
 
       server.middlewares.use((req, res, next) => {
         const originalUrl = req.url ?? '';
@@ -45,7 +48,12 @@ export function createDevAssetRequestMiddleware(root: string): Plugin {
         }
 
         const pathname = getPathname(req.url ?? '');
-        if (pathname && isDevAssetPath(pathname) && !assetExists(projectRoot, pathname)) {
+        if (
+          pathname &&
+          isDevAssetPath(pathname) &&
+          !isViteCacheAsset(projectRoot, viteCacheDir, pathname) &&
+          !assetExists(projectRoot, pathname)
+        ) {
           res.statusCode = 404;
           res.setHeader('content-type', 'text/plain; charset=utf-8');
           res.end(`Dev asset not found: ${pathname}`);
@@ -56,6 +64,12 @@ export function createDevAssetRequestMiddleware(root: string): Plugin {
       });
     },
   };
+}
+
+function isViteCacheAsset(root: string, cacheDir: string, pathname: string): boolean {
+  const assetPath = resolveAssetPath(root, pathname);
+  const relative = path.relative(cacheDir, assetPath);
+  return relative === '' || (!relative.startsWith('..') && !path.isAbsolute(relative));
 }
 
 function getPathname(url: string): string {
@@ -78,9 +92,11 @@ function isDevAssetPath(pathname: string): boolean {
 }
 
 function assetExists(root: string, pathname: string): boolean {
-  const absolutePath = pathname.startsWith('/@fs/')
-    ? pathname.slice('/@fs'.length)
-    : path.join(root, pathname);
+  const absolutePath = resolveAssetPath(root, pathname);
 
   return fs.existsSync(absolutePath) && fs.statSync(absolutePath).isFile();
+}
+
+function resolveAssetPath(root: string, pathname: string): string {
+  return pathname.startsWith('/@fs/') ? pathname.slice('/@fs'.length) : path.join(root, pathname);
 }

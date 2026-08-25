@@ -51,6 +51,21 @@ describe('dev asset request middleware', () => {
     expect(res.body).toContain('Dev asset not found: /src/runtime/boundary.module.scss');
   });
 
+  it('leaves generated optimize-dependency URLs under Vite ownership', async () => {
+    const root = await createRoot({});
+    const handler = installMiddleware(root);
+    const req = { url: '/node_modules/.vite/deps/rsc-html-stream_client.js?v=cold-start' };
+    const res = createResponse();
+    let nextCalled = false;
+
+    handler(req as Connect.IncomingMessage, res as never, () => {
+      nextCalled = true;
+    });
+
+    expect(nextCalled).toBe(true);
+    expect(res.ended).toBe(false);
+  });
+
   it('keeps query strings when stripping cache suffixes', () => {
     expect(stripRscClientReferenceCacheSuffix('/src/App.tsx$$cache=abc?v=1')).toBe(
       '/src/App.tsx?v=1'
@@ -84,7 +99,7 @@ function installMiddleware(root: string): Connect.NextHandleFunction {
   configureServer.call(
     {} as never,
     {
-      config: { root },
+      config: { root, cacheDir: path.join(root, 'node_modules/.vite') },
       middlewares: {
         use(handler: Connect.NextHandleFunction) {
           handlers.push(handler);

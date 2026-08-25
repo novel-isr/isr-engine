@@ -512,6 +512,7 @@ function createAppAliasPlugin(root: string): Plugin {
             'react/jsx-dev-runtime',
             'react-dom',
             'react-dom/client',
+            'rsc-html-stream/client',
           ],
           exclude: [
             ...clientReferenceDeps,
