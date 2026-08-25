@@ -33,6 +33,8 @@ describe('stylesheet lifecycle ownership', () => {
       expect(packageJson.devDependencies[dependency]).toBe(reactWithStyleHintFix);
     }
     expect(packageJson.dependencies['@vitejs/plugin-rsc']).toBe('0.5.34');
+    expect(packageJson.peerDependencies.vite).toBe('8.0.14');
+    expect(packageJson.devDependencies.vite).toBe('8.0.14');
   });
 
   it('carries each development generation into an engine-owned React commit boundary', () => {

@@ -16,6 +16,7 @@ import {
   VITE_RSC_REMOVE_DUPLICATE_CSS_ID,
 } from '../createDevCssHandoffPlugin';
 import { createIsrPlugin } from '../createIsrPlugin';
+import * as devCssHandoffPlugin from '../createDevCssHandoffPlugin';
 
 describe('createDevCssLifecyclePlugins', () => {
   const defaultsDir = path.resolve(process.cwd(), 'src/defaults');
@@ -404,6 +405,32 @@ describe('createDevCssLifecyclePlugins', () => {
     }
   });
 
+  it('characterizes the pinned Vite dependency-version URL regex', () => {
+    expect(viteVersion).toBe('8.0.14');
+    const pinnedDepVersionRE = /[?&](v=[\w.-]+)\b/;
+
+    expect(pinnedDepVersionRE.test('/entry?v=-')).toBe(false);
+    expect(pinnedDepVersionRE.test('/entry?v=.')).toBe(false);
+    expect(pinnedDepVersionRE.test('/entry?v=a-')).toBe(true);
+    expect('/entry?v=a-'.match(pinnedDepVersionRE)?.[1]).toBe('v=a');
+    expect(pinnedDepVersionRE.test('/entry?v=-a')).toBe(true);
+    expect(pinnedDepVersionRE.test('/entry?v=release.12')).toBe(true);
+  });
+
+  it('fails loudly for an unsupported imported Vite before lifecycle transforms are created', () => {
+    const assertPinnedViteVersion = Reflect.get(devCssHandoffPlugin, 'assertPinnedViteVersion') as (
+      actualVersion: string
+    ) => void;
+
+    expect(() => assertPinnedViteVersion('8.0.15')).toThrow(
+      /requires Vite 8\.0\.14.*detected 8\.0\.15/i
+    );
+    expect(() => assertPinnedViteVersion(viteVersion)).not.toThrow();
+    const plugins = createDevCssLifecyclePlugins(defaultsDir);
+    expect(plugins[0]?.configResolved).toBeTypeOf('function');
+    expect(() => (plugins[0]?.configResolved as () => void)()).not.toThrow();
+  });
+
   it('does not treat a non-prologue use-client string as a client reference target', async () => {
     const [prePlugin, clientReferencePlugin] = createDevCssLifecyclePlugins(defaultsDir);
     const preTransform = prePlugin!.transform as (code: string, id: string) => unknown;
@@ -465,27 +492,73 @@ describe('createDevCssLifecyclePlugins', () => {
       id: string
     ) => Promise<unknown>;
     const context = { environment: { name: 'rsc' } };
-    const darkId = '\0virtual:fixture/card?variant=dark';
-    const lightId = '\0virtual:fixture/card?variant=light';
+    const cases = [
+      {
+        label: 'direct',
+        darkQuery: 'direct=dark',
+        lightQuery: 'direct=light',
+        removeQuery: 'direct=dark&t=1234567890123',
+        probeQuery: 'direct=light&v=release.1',
+      },
+      {
+        label: 'import',
+        darkQuery: 'import=x',
+        lightQuery: 'import=y',
+        removeQuery: 'import=x&import',
+        probeQuery: 'import=y&t=1234567890123',
+      },
+      {
+        label: 'short-timestamp',
+        darkQuery: 't=11',
+        lightQuery: 't=dark',
+        removeQuery: 't=11&t=1234567890123',
+        probeQuery: 't=dark&v=release.1',
+      },
+      {
+        label: 'punctuation-version',
+        darkQuery: 'v=-',
+        lightQuery: 'v=.',
+        removeQuery: 'v=-&t=1234567890123',
+        probeQuery: 'v=.&import',
+      },
+      {
+        label: 'valid-version-sibling',
+        darkQuery: 'variant=dark&v=a-',
+        lightQuery: 'variant=light&v=release.1',
+        removeQuery: 'variant=dark&v=release.2',
+        probeQuery: 'variant=light&v=other.version',
+      },
+    ];
 
-    await preTransform.call(context, `'use client';\nexport default function Dark() {}`, darkId);
-    await preTransform.call(context, `'use client';\nexport default function Light() {}`, lightId);
-    await preTransform.call(
-      context,
-      'export default function NotClient() {}',
-      `${darkId}&t=1234567890123&import`
-    );
-
-    await expect(
-      postTransform.call(context, 'export default function NotClient() {}', darkId)
-    ).resolves.toBeUndefined();
-    await expect(
-      postTransform.call(
+    for (const testCase of cases) {
+      const baseId = `\0virtual:fixture/card/${testCase.label}`;
+      const darkId = `${baseId}?${testCase.darkQuery}`;
+      const lightId = `${baseId}?${testCase.lightQuery}`;
+      await preTransform.call(context, `'use client';\nexport default function Dark() {}`, darkId);
+      await preTransform.call(
         context,
-        'export default function Light() {}',
-        `${lightId}&t=1234567890124&import`
-      )
-    ).rejects.toThrow(/development server is unavailable/i);
+        `'use client';\nexport default function Light() {}`,
+        lightId
+      );
+      await preTransform.call(
+        context,
+        'export default function NotClient() {}',
+        `${baseId}?${testCase.removeQuery}`
+      );
+
+      await expect(
+        postTransform.call(context, 'export default function NotClient() {}', darkId),
+        `${testCase.label} dark candidate must be removed`
+      ).resolves.toBeUndefined();
+      await expect(
+        postTransform.call(
+          context,
+          'export default function Light() {}',
+          `${baseId}?${testCase.probeQuery}`
+        ),
+        `${testCase.label} light candidate must remain`
+      ).rejects.toThrow(/development server is unavailable/i);
+    }
   });
 
   it('does not decode reserved path bytes while tracking virtual client-reference candidates', async () => {

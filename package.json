@@ -121,7 +121,7 @@
     "react-dom": "19.3.0-canary-bd6ea412-20260824",
     "react-server-dom-webpack": "19.3.0-canary-bd6ea412-20260824",
     "rsc-html-stream": "^0.0.7",
-    "vite": "^8.0.0"
+    "vite": "8.0.14"
   },
   "optionalDependencies": {
     "ioredis": "^5.4.1",
@@ -157,7 +157,7 @@
     "rsc-html-stream": "^0.0.7",
     "sass-embedded": "^1.79.4",
     "tsc-alias": "^1.8.17",
-    "vite": "^8.0.14",
+    "vite": "8.0.14",
     "vitest": "^4.1.7"
   },
   "pnpm": {

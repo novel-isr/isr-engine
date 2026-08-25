@@ -4,7 +4,13 @@ import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
 import ts from 'typescript';
-import { normalizePath, type EnvironmentModuleNode, type Plugin, type ViteDevServer } from 'vite';
+import {
+  normalizePath,
+  type EnvironmentModuleNode,
+  type Plugin,
+  version as viteVersion,
+  type ViteDevServer,
+} from 'vite';
 
 import { transformDevCssModule } from './transformDevCssModule';
 import {
@@ -33,8 +39,18 @@ function getPinnedRscServerRuntimePath(): string {
 }
 
 const VITE_HMR_TIMESTAMP_VALUE = /^\d{13}$/;
-const VITE_DEP_VERSION_VALUE = /^[\w.-]+$/;
+const VITE_DEP_VERSION_RE = /[?&](v=[\w.-]+)\b/;
 const DEV_STYLE_GENERATION_VALUE = /^(?:0|[1-9]\d*)$/;
+const PINNED_VITE_VERSION = '8.0.14';
+
+export function assertPinnedViteVersion(actualVersion: string): void {
+  if (actualVersion !== PINNED_VITE_VERSION) {
+    throw new Error(
+      `[novel-isr] Development CSS lifecycle requires Vite ${PINNED_VITE_VERSION}; ` +
+        `detected ${actualVersion}. Install the engine's exact Vite peer version.`
+    );
+  }
+}
 
 function isModuleTransportQueryParameter(parameter: string): boolean {
   const separator = parameter.indexOf('=');
@@ -43,7 +59,7 @@ function isModuleTransportQueryParameter(parameter: string): boolean {
 
   if (key === 'direct' || key === 'import') return value === '';
   if (key === 't') return VITE_HMR_TIMESTAMP_VALUE.test(value);
-  if (key === 'v') return VITE_DEP_VERSION_VALUE.test(value);
+  if (key === 'v') return VITE_DEP_VERSION_RE.test(`?${parameter}`);
   if (key !== DEV_STYLE_TRANSPORT_GENERATION_PARAM) return false;
   if (!DEV_STYLE_GENERATION_VALUE.test(value)) return false;
   return Number.isSafeInteger(Number(value));
@@ -904,6 +920,7 @@ export interface DevCssLifecyclePluginPhases {
 export function createDevCssLifecyclePluginPhases(
   defaultsDir: string
 ): DevCssLifecyclePluginPhases {
+  assertPinnedViteVersion(viteVersion);
   const lifecycleBoundaryPath = path.resolve(defaultsDir, 'runtime/dev-css-handoff.client.ts');
   const registryUrl = pathToFileURL(
     path.resolve(defaultsDir, 'runtime/dev-style-registry.client.ts')
@@ -922,6 +939,9 @@ export function createDevCssLifecyclePluginPhases(
       name: 'isr:dev-css-handoff',
       apply: 'serve',
       enforce: 'pre',
+      configResolved() {
+        assertPinnedViteVersion(viteVersion);
+      },
       configureServer(server) {
         devServer = server;
       },
