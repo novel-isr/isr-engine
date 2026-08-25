@@ -28,6 +28,9 @@ export const DEV_STYLE_REGISTRY_RESOLVED_ID = '\0virtual:novel-isr/dev-style-reg
 const VITE_RSC_CSS_RESOLVED_PREFIX = '\0virtual:vite-rsc/css?';
 const STYLESHEET_URL = /\.(?:css|less|sass|scss|styl|stylus|pcss|postcss|sss)(?:[?#]|$)/i;
 const SPECIAL_STYLESHEET_QUERY = /[?&](?:direct|inline|raw|url)(?:[=&]|$)/;
+// Keep this in lockstep with Vite 8.0.14's SPECIAL_QUERY_RE: these requests produce values or
+// separate execution contexts, so they cannot contribute stylesheets to the document graph.
+const TERMINAL_CLIENT_RESOURCE_QUERY = /[?&](?:worker|sharedworker|raw|url)\b/;
 let pinnedRscServerRuntimePath: string | undefined;
 
 function getPinnedRscServerRuntimePath(): string {
@@ -478,19 +481,28 @@ async function collectClientReferenceStyles(server: ViteDevServer, id: string): 
 
   const visited = new Set<EnvironmentModuleNode>();
   const styleIds = new Set<string>();
-  const visit = (module: EnvironmentModuleNode) => {
+  const visit = async (module: EnvironmentModuleNode): Promise<void> => {
     if (visited.has(module)) return;
     visited.add(module);
-    for (const dependency of module.importedModules) {
+
+    const transformId = module.id || module.url;
+    if (!transformId) return;
+    await environment.transformRequest(transformId);
+    const transformed =
+      (module.id ? environment.moduleGraph.getModuleById(module.id) : undefined) ??
+      (module.url ? await environment.moduleGraph.getModuleByUrl(module.url) : undefined) ??
+      module;
+
+    for (const dependency of transformed.importedModules) {
       const dependencyId = dependency.url || dependency.id;
       if (dependencyId && STYLESHEET_URL.test(dependencyId)) {
         if (!SPECIAL_STYLESHEET_QUERY.test(dependencyId)) styleIds.add(dependencyId);
-      } else {
-        visit(dependency);
+      } else if (!dependencyId || !TERMINAL_CLIENT_RESOURCE_QUERY.test(dependencyId)) {
+        await visit(dependency);
       }
     }
   };
-  visit(entry);
+  await visit(entry);
   return Array.from(styleIds).sort();
 }
 

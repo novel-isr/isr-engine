@@ -5,7 +5,7 @@ import { pathToFileURL } from 'node:url';
 
 import vitePluginRsc from '@vitejs/plugin-rsc';
 import { afterEach, describe, expect, it } from 'vitest';
-import { createServer, type ViteDevServer } from 'vite';
+import { createServer, normalizePath, type ViteDevServer } from 'vite';
 
 import {
   createDevCssLifecyclePlugins,
@@ -70,6 +70,19 @@ describe('development RSC stylesheet identity', () => {
     expect(transformedBoundary?.code.match(/registerDevClientReferenceStyles\)/g)).toHaveLength(1);
     expect(transformedBoundary?.code).toContain('/src/runtime/boundary.module.css');
 
+    const eagerRaw =
+      await server.environments.client.moduleGraph.getModuleByUrl('/content/example.md?raw');
+    expect(eagerRaw?.transformResult?.code).toContain('export default');
+    for (const terminalUrl of [
+      '/content/example.md?url',
+      '/content/worker.ts?worker',
+      '/content/worker.ts?sharedworker',
+    ]) {
+      const terminal = await server.environments.client.moduleGraph.getModuleByUrl(terminalUrl);
+      expect(terminal, terminalUrl).toBeDefined();
+      expect(terminal?.transformResult?.code, terminalUrl).toBeTruthy();
+    }
+
     const rscEnvironment = server.environments.rsc as typeof server.environments.rsc & {
       runner: { import(id: string): Promise<unknown> };
     };
@@ -79,10 +92,23 @@ describe('development RSC stylesheet identity', () => {
     const flight = await new Response(await rscEntry.render(1)).text();
 
     expect(flight).toContain('/src/ClientCard.module.scss?direct=&__novel_isr_style_generation=1');
+    expect(flight).toContain('/src/NestedPanel.module.scss?direct=&__novel_isr_style_generation=1');
+    expect(flight).toContain('/src/NestedLeaf.module.scss?direct=&__novel_isr_style_generation=1');
+    expect(flight).not.toContain('Worker.module.scss');
   });
 
   it('keeps query-bearing virtual client references distinct through the standard engine pipeline', async () => {
     const root = await createFixture();
+    const externalRoot = await mkdtemp(path.join(process.cwd(), '.tmp-dev-style-external-client-'));
+    fixtureRoots.push(externalRoot);
+    await writeFile(
+      path.join(externalRoot, 'ExternalPanel.tsx'),
+      `'use client';\nimport styles from './ExternalPanel.module.scss';\nexport default function ExternalPanel() { return <aside className={styles.panel}>external</aside>; }\n`
+    );
+    await writeFile(
+      path.join(externalRoot, 'ExternalPanel.module.scss'),
+      '.panel { display: grid; }\n'
+    );
     const virtualClientId = 'virtual:fixture/client-card';
     const loadedClientIds: string[] = [];
     const server = await createServer({
@@ -108,6 +134,13 @@ describe('development RSC stylesheet identity', () => {
             const variant = new URLSearchParams(
               queryStart === -1 ? '' : id.slice(queryStart + 1)
             ).get('variant');
+            if (variant === 'external') {
+              return (
+                `'use client';\n` +
+                `import ExternalPanel from ${JSON.stringify(`/@fs/${normalizePath(path.join(externalRoot, 'ExternalPanel.tsx'))}`)};\n` +
+                `export default ExternalPanel;\n`
+              );
+            }
             const stylesheet =
               variant === 'dark'
                 ? '/src/VirtualDark.scss'
@@ -128,8 +161,12 @@ describe('development RSC stylesheet identity', () => {
 
     const darkId = `${virtualClientId}?variant=dark`;
     const lightId = `${virtualClientId}?variant=light`;
+    const externalId = `${virtualClientId}?variant=external`;
+    const inlineId = `${virtualClientId}?inline`;
     const dark = await server.environments.rsc.transformRequest(`\0${darkId}`);
     const light = await server.environments.rsc.transformRequest(`\0${lightId}`);
+    const external = await server.environments.rsc.transformRequest(`\0${externalId}`);
+    const inline = await server.environments.rsc.transformRequest(`\0${inlineId}`);
 
     expect(dark?.code).toContain(`/@id/__x00__${darkId}`);
     expect(dark?.code).toContain('/src/VirtualDark.scss');
@@ -139,8 +176,13 @@ describe('development RSC stylesheet identity', () => {
     expect(light?.code).toContain('/src/VirtualLight.scss');
     expect(light?.code).not.toContain('/src/VirtualDark.scss');
     expect(light?.code).not.toContain('/src/VirtualFallback.scss');
+    expect(external?.code).toContain('/@fs/');
+    expect(external?.code).toContain('ExternalPanel.module.scss');
+    expect(inline?.code).toContain('/src/VirtualFallback.scss');
     expect(loadedClientIds).toContain(`\0${darkId}`);
     expect(loadedClientIds).toContain(`\0${lightId}`);
+    expect(loadedClientIds).toContain(`\0${externalId}`);
+    expect(loadedClientIds).toContain(`\0${inlineId}`);
     expect(loadedClientIds).not.toContain(`\0${virtualClientId}`);
   });
 
@@ -364,12 +406,32 @@ async function createFixture(): Promise<string> {
   await writeFile(path.join(root, 'src/entry.ssr.ts'), 'export {};\n');
   await writeFile(
     path.join(root, 'src/ClientCard.tsx'),
-    `'use client';\nimport styles from './ClientCard.module.scss';\nexport function Badge() { return <span className={styles.card}>badge</span>; }\nexport default function ClientCard() { return <div className={styles.card}>card</div>; }\n`
+    `'use client';\nimport NestedPanel from './NestedPanel';\nimport styles from './ClientCard.module.scss';\nexport function Badge() { return <span className={styles.card}>badge</span>; }\nexport default function ClientCard() { return <div className={styles.card}>card<NestedPanel /></div>; }\n`
   );
   await writeFile(
     path.join(root, 'src/ClientCard.module.scss'),
     '.card { color: rgb(1, 2, 3); }\n'
   );
+  await writeFile(
+    path.join(root, 'src/NestedPanel.tsx'),
+    `'use client';\nimport NestedLeaf from './NestedLeaf';\nimport styles from './NestedPanel.module.scss';\nexport const panelCycle = 'panel';\nexport default function NestedPanel() { return <section className={styles.panel}><NestedLeaf /></section>; }\n`
+  );
+  await writeFile(path.join(root, 'src/NestedPanel.module.scss'), '.panel { padding: 3px; }\n');
+  await writeFile(
+    path.join(root, 'src/NestedLeaf.tsx'),
+    `'use client';\nimport { panelCycle } from './NestedPanel';\nimport styles from './NestedLeaf.module.scss';\nimport contentUrl from '../content/example.md?url';\nimport Worker from '../content/worker.ts?worker';\nimport SharedWorker from '../content/worker.ts?sharedworker';\nconst content = import.meta.glob('../content/*.md', { query: '?raw', import: 'default', eager: true });\nexport default function NestedLeaf() { void contentUrl; void Worker; void SharedWorker; return <span className={styles.leaf}>{panelCycle}{Object.keys(content).length}</span>; }\n`
+  );
+  await writeFile(path.join(root, 'src/NestedLeaf.module.scss'), '.leaf { display: inline; }\n');
+  await mkdir(path.join(root, 'content'));
+  await writeFile(
+    path.join(root, 'content/example.md'),
+    '# Not JavaScript\n\n<div>raw content</div>\n'
+  );
+  await writeFile(
+    path.join(root, 'content/worker.ts'),
+    `import './Worker.module.scss';\nself.postMessage('ready');\n`
+  );
+  await writeFile(path.join(root, 'content/Worker.module.scss'), '.worker { display: none; }\n');
   await writeFile(
     path.join(root, 'src/Page.tsx'),
     `import './Page.scss';\nimport ClientCard from './ClientCard';\nexport default function Page() { return <main><ClientCard /></main>; }\n`
