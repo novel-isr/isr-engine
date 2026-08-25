@@ -111,6 +111,10 @@ function referenceMatchesModule(referenceId: string, moduleId: string): boolean 
   const reference = decodeModuleId(referenceId);
   const module = decodeModuleId(cleanModuleId(moduleId));
   if (!reference || !module) return false;
+  if (reference.startsWith('/@fs/')) {
+    const fileReference = reference.slice('/@fs'.length);
+    return module === fileReference || module === fileReference.slice(1);
+  }
   if (module === reference || module.endsWith(reference)) return true;
   if (module.startsWith('\0')) {
     return reference === `/@id/__x00__${module.slice(1)}`;
@@ -741,7 +745,16 @@ export function createDevCssHandoffPlugin(defaultsDir: string): Plugin {
   return plugin;
 }
 
-export function createDevCssLifecyclePlugins(defaultsDir: string): Plugin[] {
+export interface DevCssLifecyclePluginPhases {
+  /** Must observe raw directives before plugin-rsc replaces client modules with proxies. */
+  beforeRsc: Plugin[];
+  /** Must observe plugin-rsc proxies and Vite's generated CSS wrappers, respectively. */
+  afterRsc: Plugin[];
+}
+
+export function createDevCssLifecyclePluginPhases(
+  defaultsDir: string
+): DevCssLifecyclePluginPhases {
   const lifecycleBoundaryPath = path.resolve(defaultsDir, 'runtime/dev-css-handoff.client.ts');
   const registryUrl = pathToFileURL(
     path.resolve(defaultsDir, 'runtime/dev-style-registry.client.ts')
@@ -755,7 +768,7 @@ export function createDevCssLifecyclePlugins(defaultsDir: string): Plugin[] {
   const clientReferenceModuleIds = new Set<string>();
   let devServer: ViteDevServer | undefined;
 
-  return [
+  const plugins = [
     {
       name: 'isr:dev-css-handoff',
       apply: 'serve',
@@ -851,5 +864,15 @@ export function createDevCssLifecyclePlugins(defaultsDir: string): Plugin[] {
         );
       },
     },
-  ];
+  ] satisfies [Plugin, Plugin, Plugin];
+
+  return {
+    beforeRsc: [plugins[0]],
+    afterRsc: [plugins[1], plugins[2]],
+  };
+}
+
+export function createDevCssLifecyclePlugins(defaultsDir: string): Plugin[] {
+  const phases = createDevCssLifecyclePluginPhases(defaultsDir);
+  return [...phases.beforeRsc, ...phases.afterRsc];
 }

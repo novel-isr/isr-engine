@@ -31,7 +31,7 @@ import type { PluginOption, Plugin } from 'vite';
 import vitePluginRsc from '@vitejs/plugin-rsc';
 
 import { createDevAssetRequestMiddleware } from './devAssetRequestMiddleware';
-import { createDevCssLifecyclePlugins } from './createDevCssHandoffPlugin';
+import { createDevCssLifecyclePluginPhases } from './createDevCssHandoffPlugin';
 import { createIsrCacheMiddleware } from './isrCacheMiddleware';
 import { createSsgPostBuildPlugin } from './createSsgPostBuildPlugin';
 import { resolveClientObservabilityOptions } from './clientObservabilityConfig';
@@ -556,11 +556,13 @@ export function createIsrPlugin(options: CreateIsrPluginOptions = {}): PluginOpt
   logger.info(`   server = ${fmt('rsc')}`);
   logger.info(`   ssr    = ${fmt('ssr')}`);
 
+  const devCssLifecycle = createDevCssLifecyclePluginPhases(resolveEngineDefaultsDir());
+
   const plugins: PluginOption[] = [
     createEngineDefaultEntriesPlugin(root, userConfig),
     createAppAliasPlugin(root),
     createDevAssetRequestMiddleware(root),
-    ...createDevCssLifecyclePlugins(resolveEngineDefaultsDir()),
+    ...devCssLifecycle.beforeRsc,
     createBrowserShimPlugin(),
   ];
 
@@ -583,6 +585,10 @@ export function createIsrPlugin(options: CreateIsrPluginOptions = {}): PluginOpt
       },
     })
   );
+
+  // These transforms consume artifacts produced by plugin-rsc/Vite. Their array position is the
+  // causal boundary; `enforce: 'post'` alone does not order them after another post hook.
+  plugins.push(...devCssLifecycle.afterRsc);
 
   // 让 `vite build` 自动跑 SSG 预渲染，无需 `novel-isr build` CLI 包一层
   plugins.push(createSsgPostBuildPlugin(userConfig as ISRConfig | undefined));

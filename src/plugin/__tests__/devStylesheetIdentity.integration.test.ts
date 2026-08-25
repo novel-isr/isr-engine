@@ -12,6 +12,7 @@ import {
   DEV_CSS_HANDOFF_RESOLVED_ID,
   VITE_RSC_REMOVE_DUPLICATE_CSS_ID,
 } from '../createDevCssHandoffPlugin';
+import { createIsrPlugin } from '../createIsrPlugin';
 
 const fixtureRoots: string[] = [];
 const viteServers: ViteDevServer[] = [];
@@ -28,6 +29,59 @@ describe('development RSC stylesheet identity', () => {
     await Promise.all(
       fixtureRoots.splice(0).map(root => rm(root, { recursive: true, force: true }))
     );
+  });
+
+  it('instruments client-reference styles after the standard engine RSC proxy transform', async () => {
+    const root = await createFixture();
+    const server = await createServer({
+      root,
+      configFile: false,
+      appType: 'custom',
+      logLevel: 'silent',
+      server: {
+        middlewareMode: true,
+        hmr: false,
+        fs: { allow: [root, process.cwd()] },
+      },
+      plugins: createIsrPlugin({ root, isrCache: { enabled: false } }),
+    });
+    viteServers.push(server);
+
+    const transformed = await server.environments.rsc.transformRequest('/src/ClientCard.tsx');
+    const boundaryUrl = `/@fs/${path.resolve(process.cwd(), 'src/runtime/boundary.tsx')}`;
+    const transformedBoundary = await server.environments.rsc.transformRequest(boundaryUrl);
+
+    const pluginNames = server.config.plugins.map(plugin => plugin.name);
+    expect(pluginNames.indexOf('isr:dev-css-handoff')).toBeLessThan(
+      pluginNames.indexOf('rsc:use-client')
+    );
+    expect(pluginNames.indexOf('rsc:use-client')).toBeLessThan(
+      pluginNames.indexOf('isr:dev-client-reference-styles')
+    );
+    expect(pluginNames.indexOf('vite:css-post')).toBeLessThan(
+      pluginNames.indexOf('isr:dev-style-registry')
+    );
+
+    expect(transformed?.code).toContain('registerClientReference(');
+    expect(transformed?.code.match(/registerDevClientReferenceStyles\)/g)).toHaveLength(1);
+    expect(transformed?.code).toContain('/src/ClientCard.module.scss');
+    expect(transformedBoundary?.code).toContain('registerClientReference(');
+    expect(transformedBoundary?.code.match(/registerDevClientReferenceStyles\)/g)).toHaveLength(1);
+    expect(transformedBoundary?.code).toContain('/src/runtime/boundary.module.css');
+
+    const rscEnvironment = server.environments.rsc as typeof server.environments.rsc & {
+      runner: { import(id: string): Promise<unknown> };
+    };
+    const rscEntry = (await rscEnvironment.runner.import('/src/entry.rsc.tsx')) as {
+      render(): Promise<{
+        devStyleIds: string[];
+        stream: ReadableStream<Uint8Array>;
+      }>;
+    };
+    const rendered = await rscEntry.render();
+    await new Response(rendered.stream).text();
+
+    expect(rendered.devStyleIds).toContain('/src/ClientCard.module.scss');
   });
 
   it('separates the SSR stylesheet URL from the JavaScript CSS-module URL', async () => {
@@ -172,6 +226,10 @@ async function createFixture(): Promise<string> {
     JSON.stringify({ private: true, type: 'module' }, null, 2)
   );
   await writeFile(path.join(root, 'src/entry.browser.ts'), 'export {};\n');
+  await writeFile(
+    path.join(root, 'src/app.tsx'),
+    `export function App() { return <main>fixture</main>; }\n`
+  );
   const declarationsUrl = pathToFileURL(
     path.resolve(process.cwd(), 'src/defaults/runtime/dev-style-declarations.server.ts')
   ).href;
