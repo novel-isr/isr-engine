@@ -257,6 +257,10 @@ describe('development RSC stylesheet identity', () => {
     expect(flight).toMatch(
       /:HS\["\/src\/ClientCard\.module\.scss\?direct=&__novel_isr_style_generation=3","vite-rsc\/client-reference",\{"media":"not all"\}\]/
     );
+    expect(flight).toMatch(
+      /:HS\["\/src\/Page\.scss\?direct=&__novel_isr_style_generation=3","vite-rsc\/importer-resources",\{"media":"not all"\}\]/
+    );
+    expect(flight).not.toMatch(/:HL\["\/src\/Page\.scss\?direct=&__novel_isr_style_generation=3"/);
 
     const initialFlight = await new Response(await rscEntry.render()).text();
     expect(initialFlight).not.toContain('not all');

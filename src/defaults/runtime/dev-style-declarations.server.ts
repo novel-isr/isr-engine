@@ -84,9 +84,19 @@ export function prepareDevStyleDependencies(dependencies: unknown): PluginRscDep
   declareDevStyleDependencies(validated);
   const generation = getDeclarationStorage().getStore()?.transportGeneration;
   if (generation === undefined) return validated;
+  for (const href of validated.css) {
+    emitDevStylesheetResource(
+      createDevStyleTransportHref(href, generation),
+      'vite-rsc/importer-resources',
+      'not all'
+    );
+  }
   return {
     ...validated,
-    css: validated.css.map(href => createDevStyleTransportHref(href, generation)),
+    // A host <link> in a Flight tree is serialized as :HL (preload), not :HS
+    // (stylesheet owner). The dispatcher above is the authoritative transport;
+    // keeping these children would create duplicate preload-only declarations.
+    css: [],
   };
 }
 
@@ -139,6 +149,10 @@ export function declareDevClientReferenceStyles(reference: unknown): void {
       generation === undefined
         ? createDevStyleStylesheetHref(styleId)
         : createDevStyleTransportHref(styleId, generation);
-    emitDevStylesheetResource(href, generation === undefined ? undefined : 'not all');
+    emitDevStylesheetResource(
+      href,
+      'vite-rsc/client-reference',
+      generation === undefined ? undefined : 'not all'
+    );
   }
 }

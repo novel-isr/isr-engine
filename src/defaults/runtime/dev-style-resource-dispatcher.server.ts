@@ -6,6 +6,10 @@ interface ReactDomResourceDispatcher {
   S(href: string, precedence: string | undefined, options?: { media?: string }): void;
 }
 
+export type DevStyleResourcePrecedence =
+  | 'vite-rsc/client-reference'
+  | 'vite-rsc/importer-resources';
+
 interface PinnedReactDomModule {
   version: string;
   __DOM_INTERNALS_DO_NOT_USE_OR_WARN_USERS_THEY_CANNOT_UPGRADE: {
@@ -29,10 +33,10 @@ export function assertPinnedDevStyleResourceDispatcher(): void {
   pinnedResourceDispatcher();
 }
 
-export function emitDevStylesheetResource(href: string, media?: string): void {
-  pinnedResourceDispatcher().S(
-    href,
-    'vite-rsc/client-reference',
-    media === undefined ? undefined : { media }
-  );
+export function emitDevStylesheetResource(
+  href: string,
+  precedence: DevStyleResourcePrecedence,
+  media?: string
+): void {
+  pinnedResourceDispatcher().S(href, precedence, media === undefined ? undefined : { media });
 }

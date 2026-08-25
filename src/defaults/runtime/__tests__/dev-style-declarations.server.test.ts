@@ -28,7 +28,7 @@ describe('development RSC style declarations', () => {
     ).toThrow(/unsupported @vitejs\/plugin-rsc dependency shape/i);
   });
 
-  it('adds the request generation only to transport hrefs while collecting canonical ids', () => {
+  it('delegates generation-bound importer CSS to resource transport while collecting canonical ids', () => {
     const styleIds: string[] = [];
     let prepared: unknown;
 
@@ -44,19 +44,17 @@ describe('development RSC style declarations', () => {
     );
 
     expect(prepared).toEqual({
-      css: [
-        '/src/A.scss?direct=&__novel_isr_style_generation=4',
-        '/src/B.css?theme=dark&direct=&__novel_isr_style_generation=4',
-      ],
+      css: [],
       js: ['/src/chunk.js'],
     });
     expect(styleIds).toEqual(['/src/A.scss', '/src/B.css?theme=dark']);
   });
 
-  it('emits transport hrefs from the same canonical identity used by the payload', () => {
+  it('does not retain generation-bound importer CSS as preload-only resource children', () => {
+    const styleIds: string[] = [];
     let prepared: unknown;
     runWithDevStyleDeclarationCollection(
-      [],
+      styleIds,
       () => {
         prepared = prepareDevStyleDependencies({
           css: ['/src/A.scss?z=2&direct&a=1&t=old'],
@@ -67,9 +65,10 @@ describe('development RSC style declarations', () => {
     );
 
     expect(prepared).toEqual({
-      css: ['/src/A.scss?a=1&z=2&direct=&__novel_isr_style_generation=5'],
+      css: [],
       js: [],
     });
+    expect(styleIds).toEqual(['/src/A.scss?a=1&z=2']);
   });
 
   it('does not add a transport generation outside a development navigation request', () => {
