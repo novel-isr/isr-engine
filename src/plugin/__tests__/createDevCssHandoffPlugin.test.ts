@@ -154,6 +154,7 @@ describe('createDevCssLifecyclePlugins', () => {
   });
 
   it('accepts only client proxies bound to the pinned plugin-rsc runtime and module identity', () => {
+    const root = '/fixture';
     const validProxy = `
       import * as $$ReactServer from ${JSON.stringify(pinnedRscRuntime)};
       export const Badge = $$ReactServer.registerClientReference(
@@ -168,7 +169,7 @@ describe('createDevCssLifecyclePlugins', () => {
       );
     `;
 
-    expect(clientReferenceIdFromProxy(validProxy, '/src/ClientCard.tsx')).toBe(
+    expect(clientReferenceIdFromProxy(validProxy, '/src/ClientCard.tsx', root)).toBe(
       '/src/ClientCard.tsx'
     );
     expect(() =>
@@ -177,7 +178,8 @@ describe('createDevCssLifecyclePlugins', () => {
           '@vitejs/plugin-rsc/dist/react/rsc/server.js',
           'lookalike/rsc/server.js'
         ),
-        '/src/ClientCard.tsx'
+        '/src/ClientCard.tsx',
+        root
       )
     ).toThrow(/unsupported @vitejs\/plugin-rsc client reference proxy shape/i);
     expect(() =>
@@ -186,7 +188,8 @@ describe('createDevCssLifecyclePlugins', () => {
           pinnedRscRuntime,
           'file:///tmp/fake/@vitejs/plugin-rsc/dist/react/rsc/server.js'
         ),
-        '/src/ClientCard.tsx'
+        '/src/ClientCard.tsx',
+        root
       )
     ).toThrow(/unsupported @vitejs\/plugin-rsc client reference proxy shape/i);
     expect(() =>
@@ -195,7 +198,8 @@ describe('createDevCssLifecyclePlugins', () => {
           `() => { throw new Error("Unexpectedly client reference export '" + "Badge" + "' is called on server"); }`,
           'sideEffect()'
         ),
-        '/src/ClientCard.tsx'
+        '/src/ClientCard.tsx',
+        root
       )
     ).toThrow(/unsupported @vitejs\/plugin-rsc client reference proxy shape/i);
     expect(() =>
@@ -204,35 +208,106 @@ describe('createDevCssLifecyclePlugins', () => {
           `"Unexpectedly client reference export '" + "Badge" + "' is called on server"`,
           `"Unexpectedly client reference export 'Badge' is called on server"`
         ),
-        '/src/ClientCard.tsx'
+        '/src/ClientCard.tsx',
+        root
       )
     ).toThrow(/unsupported @vitejs\/plugin-rsc client reference proxy shape/i);
     expect(() =>
       clientReferenceIdFromProxy(
         validProxy.replace('export const Badge', 'export var Badge'),
-        '/src/ClientCard.tsx'
+        '/src/ClientCard.tsx',
+        root
       )
     ).toThrow(/unsupported @vitejs\/plugin-rsc client reference proxy shape/i);
     expect(() =>
       clientReferenceIdFromProxy(
         validProxy.replaceAll('$$ReactServer', 'Runtime'),
-        '/src/ClientCard.tsx'
+        '/src/ClientCard.tsx',
+        root
       )
     ).toThrow(/unsupported @vitejs\/plugin-rsc client reference proxy shape/i);
     expect(() =>
       clientReferenceIdFromProxy(
         validProxy.replace('"/src/ClientCard.tsx"', '"/src/Other.tsx"'),
-        '/src/ClientCard.tsx'
+        '/src/ClientCard.tsx',
+        root
       )
     ).toThrow(/unsupported @vitejs\/plugin-rsc client reference proxy shape/i);
     expect(() =>
       clientReferenceIdFromProxy(
         validProxy.replace('"/src/ClientCard.tsx"', '"/%ZZ.tsx"'),
-        '/src/ClientCard.tsx'
+        '/src/ClientCard.tsx',
+        root
       )
     ).toThrow(/unsupported @vitejs\/plugin-rsc client reference proxy shape/i);
     expect(() =>
-      clientReferenceIdFromProxy(`${validProxy}\nconsole.log("surplus");`, '/src/ClientCard.tsx')
+      clientReferenceIdFromProxy(
+        `${validProxy}\nconsole.log("surplus");`,
+        '/src/ClientCard.tsx',
+        root
+      )
+    ).toThrow(/unsupported @vitejs\/plugin-rsc client reference proxy shape/i);
+  });
+
+  it('binds root-relative client references to the configured project root exactly', () => {
+    const proxyFor = (referenceId: string) => `
+      import * as $$ReactServer from ${JSON.stringify(pinnedRscRuntime)};
+      export default $$ReactServer.registerClientReference(
+        () => { throw new Error("Unexpectedly client reference export '" + "default" + "' is called on server"); },
+        ${JSON.stringify(referenceId)},
+        "default"
+      );
+    `;
+    const validate = clientReferenceIdFromProxy;
+
+    expect(
+      validate(proxyFor('/src/ClientCard.tsx'), '/fixture/src/ClientCard.tsx', '/fixture')
+    ).toBe('/src/ClientCard.tsx');
+    expect(validate(proxyFor('/src/ClientCard.tsx'), '/src/ClientCard.tsx', '/fixture')).toBe(
+      '/src/ClientCard.tsx'
+    );
+    expect(
+      validate(
+        proxyFor('/@fs/external/src/ClientCard.tsx'),
+        '/external/src/ClientCard.tsx',
+        '/fixture'
+      )
+    ).toBe('/@fs/external/src/ClientCard.tsx');
+    expect(
+      validate(proxyFor('/src/ClientCard.tsx'), 'C:\\fixture\\src\\ClientCard.tsx', 'C:\\fixture')
+    ).toBe('/src/ClientCard.tsx');
+
+    const packageTarget = '/fixture/node_modules/client-pkg/index.js';
+    const packageReference =
+      '/@id/__x00__virtual:vite-rsc/client-in-server-package-proxy/' +
+      encodeURIComponent(packageTarget);
+    expect(validate(proxyFor(packageReference), packageTarget, '/fixture')).toBe(packageReference);
+
+    expect(() =>
+      validate(proxyFor('/src/ClientCard.tsx'), '/different-root/src/ClientCard.tsx', '/fixture')
+    ).toThrow(/unsupported @vitejs\/plugin-rsc client reference proxy shape/i);
+    expect(() =>
+      validate(proxyFor('/src/ClientCard.tsx'), '/fixture/other/src/ClientCard.tsx', '/fixture')
+    ).toThrow(/unsupported @vitejs\/plugin-rsc client reference proxy shape/i);
+    expect(() =>
+      validate(
+        proxyFor('/@fs/external/src/ClientCard.tsx'),
+        '/different/external/src/ClientCard.tsx',
+        '/fixture'
+      )
+    ).toThrow(/unsupported @vitejs\/plugin-rsc client reference proxy shape/i);
+    expect(() =>
+      validate(
+        proxyFor(packageReference),
+        '/different/node_modules/client-pkg/index.js',
+        '/fixture'
+      )
+    ).toThrow(/unsupported @vitejs\/plugin-rsc client reference proxy shape/i);
+    expect(() => validate(proxyFor('/src/a%2Fb.tsx'), '/fixture/src/a/b.tsx', '/fixture')).toThrow(
+      /unsupported @vitejs\/plugin-rsc client reference proxy shape/i
+    );
+    expect(() =>
+      validate(proxyFor('/@fs/fixture/src/a%2Fb.tsx'), '/fixture/src/a/b.tsx', '/fixture')
     ).toThrow(/unsupported @vitejs\/plugin-rsc client reference proxy shape/i);
   });
 
@@ -273,7 +348,8 @@ describe('createDevCssLifecyclePlugins', () => {
     expect(() =>
       clientReferenceIdFromProxy(
         'export default registerReference("/src/ClientCard.tsx")',
-        '/src/ClientCard.tsx'
+        '/src/ClientCard.tsx',
+        '/fixture'
       )
     ).toThrow(/unsupported @vitejs\/plugin-rsc client reference proxy shape.*ClientCard\.tsx/i);
   });
@@ -312,7 +388,7 @@ describe('createDevCssLifecyclePlugins', () => {
       ${surplus}
     `;
 
-    expect(() => clientReferenceIdFromProxy(proxy, '/src/ClientCard.tsx')).toThrow(
+    expect(() => clientReferenceIdFromProxy(proxy, '/src/ClientCard.tsx', '/fixture')).toThrow(
       /unsupported @vitejs\/plugin-rsc client reference proxy shape/i
     );
   });
@@ -327,7 +403,7 @@ describe('createDevCssLifecyclePlugins', () => {
       );
     `;
 
-    expect(() => clientReferenceIdFromProxy(proxy, '/src/ClientCard.tsx')).toThrow(
+    expect(() => clientReferenceIdFromProxy(proxy, '/src/ClientCard.tsx', '/fixture')).toThrow(
       /unsupported @vitejs\/plugin-rsc client reference proxy shape/i
     );
   });

@@ -99,7 +99,7 @@ function isPinnedRscServerRuntime(value: string): boolean {
   }
 }
 
-function decodeModuleId(value: string): string | undefined {
+function decodePackageProxyTarget(value: string): string | undefined {
   try {
     return decodeURIComponent(value).replaceAll('\\', '/');
   } catch {
@@ -107,30 +107,122 @@ function decodeModuleId(value: string): string | undefined {
   }
 }
 
-function referenceMatchesModule(referenceId: string, moduleId: string): boolean {
-  const reference = decodeModuleId(referenceId);
-  const module = decodeModuleId(cleanModuleId(moduleId));
-  if (!reference || !module) return false;
-  if (reference.startsWith('/@fs/')) {
-    const fileReference = reference.slice('/@fs'.length);
-    return module === fileReference || module === fileReference.slice(1);
+const UNRESERVED_PATH_BYTE = /^[A-Za-z\d._~-]$/;
+const WINDOWS_DRIVE_PATH = /^[A-Za-z]:\//;
+
+function canonicalPathSegment(segment: string): string | undefined {
+  let result = '';
+  for (let index = 0; index < segment.length; ) {
+    const codePoint = segment.codePointAt(index);
+    if (codePoint === undefined) return undefined;
+    const character = String.fromCodePoint(codePoint);
+    if (character === '%') {
+      const hex = segment.slice(index + 1, index + 3);
+      if (!/^[\da-f]{2}$/i.test(hex)) return undefined;
+      const decoded = String.fromCharCode(Number.parseInt(hex, 16));
+      result += UNRESERVED_PATH_BYTE.test(decoded) ? decoded : `%${hex.toUpperCase()}`;
+      index += 3;
+      continue;
+    }
+    if (/^[A-Za-z\d._~:@+-]$/.test(character)) result += character;
+    else {
+      result += encodeURIComponent(character).replace(
+        /[!'()*]/g,
+        value => `%${value.charCodeAt(0).toString(16).toUpperCase()}`
+      );
+    }
+    index += character.length;
   }
-  if (module === reference || module.endsWith(reference)) return true;
-  if (module.startsWith('\0')) {
-    return reference === `/@id/__x00__${module.slice(1)}`;
+  return result;
+}
+
+function canonicalFilePath(value: string): string | undefined {
+  const normalized = value.replaceAll('\\', '/');
+  const hasDrive = WINDOWS_DRIVE_PATH.test(normalized);
+  const absolute = normalized.startsWith('/') || hasDrive;
+  if (!absolute) return undefined;
+
+  const segments: string[] = [];
+  for (const rawSegment of normalized.split('/')) {
+    if (rawSegment === '') continue;
+    const segment = canonicalPathSegment(rawSegment);
+    if (segment === undefined) return undefined;
+    if (segment === '.') continue;
+    if (segment === '..') {
+      if (segments.length === 0 || (hasDrive && segments.length === 1)) return undefined;
+      segments.pop();
+      continue;
+    }
+    segments.push(segment);
   }
+
+  const drive = segments[0];
+  if (hasDrive && drive) {
+    segments[0] = `${drive.charAt(0).toLowerCase()}${drive.slice(1)}`;
+    return segments.join('/');
+  }
+  return `/${segments.join('/')}`;
+}
+
+function filePathFromFsUrl(value: string): string | undefined {
+  if (!value.startsWith('/@fs/')) return undefined;
+  const filePath = value.slice('/@fs/'.length);
+  return canonicalFilePath(WINDOWS_DRIVE_PATH.test(filePath) ? filePath : `/${filePath}`);
+}
+
+function canonicalModuleFilePath(moduleId: string): string | undefined {
+  const cleanId = cleanModuleId(moduleId);
+  return filePathFromFsUrl(cleanId) ?? canonicalFilePath(cleanId);
+}
+
+function rootRelativeFilePath(root: string, referenceId: string): string | undefined {
+  if (
+    !referenceId.startsWith('/') ||
+    referenceId.startsWith('//') ||
+    referenceId.includes('\\') ||
+    referenceId.startsWith('/@')
+  ) {
+    return undefined;
+  }
+  const canonicalRoot = canonicalFilePath(root);
+  const canonicalReference = canonicalFilePath(referenceId);
+  if (!canonicalRoot || !canonicalReference || referenceId.startsWith('/@fs/')) return undefined;
+  return canonicalFilePath(`${canonicalRoot}/${canonicalReference.slice(1)}`);
+}
+
+function referenceMatchesModule(referenceId: string, moduleId: string, root: string): boolean {
+  const cleanId = cleanModuleId(moduleId).replaceAll('\\', '/');
+  if (cleanId.startsWith('\0')) {
+    return referenceId === `/@id/__x00__${cleanId.slice(1)}`;
+  }
+
   const packageProxy = '/@id/__x00__virtual:vite-rsc/client-in-server-package-proxy/';
-  return (
-    reference.startsWith(packageProxy) &&
-    module === decodeModuleId(reference.slice(packageProxy.length))
-  );
+  if (referenceId.startsWith(packageProxy)) {
+    const target = decodePackageProxyTarget(referenceId.slice(packageProxy.length));
+    const targetPath = target === undefined ? undefined : canonicalModuleFilePath(target);
+    const modulePath = canonicalModuleFilePath(cleanId);
+    return targetPath !== undefined && modulePath !== undefined && targetPath === modulePath;
+  }
+
+  const moduleFilePath = canonicalModuleFilePath(cleanId);
+  if (!moduleFilePath) return false;
+  const fsReference = filePathFromFsUrl(referenceId);
+  if (fsReference) return moduleFilePath === fsReference;
+
+  const browserReference = rootRelativeFilePath(root, referenceId);
+  if (!browserReference) return false;
+  if (cleanId.startsWith('/') && !cleanId.startsWith('/@fs/')) {
+    if (canonicalFilePath(cleanId) === canonicalFilePath(referenceId)) return true;
+  }
+  return moduleFilePath === browserReference;
 }
 
 function registerClientReferenceCall(
   expression: ts.Expression,
   runtimeBinding: string,
   exportName: string,
-  moduleId: string
+  moduleId: string,
+  root: string
 ): string | undefined {
   if (
     !ts.isCallExpression(expression) ||
@@ -146,7 +238,7 @@ function registerClientReferenceCall(
     !ts.isStringLiteral(expression.arguments[1]) ||
     !ts.isStringLiteral(expression.arguments[2]) ||
     expression.arguments[2].text !== exportName ||
-    !referenceMatchesModule(expression.arguments[1].text, moduleId)
+    !referenceMatchesModule(expression.arguments[1].text, moduleId, root)
   ) {
     return undefined;
   }
@@ -203,7 +295,7 @@ function isPinnedClientReferenceProxy(
   );
 }
 
-export function clientReferenceIdFromProxy(code: string, id: string): string {
+export function clientReferenceIdFromProxy(code: string, id: string, root: string): string {
   const source = ts.createSourceFile(
     id,
     code,
@@ -243,7 +335,8 @@ export function clientReferenceIdFromProxy(code: string, id: string): string {
         statement.expression,
         runtimeBinding,
         'default',
-        id
+        id,
+        root
       );
       if (!referenceId) throw unsupportedClientProxy(id);
       referenceIds.add(referenceId);
@@ -272,7 +365,8 @@ export function clientReferenceIdFromProxy(code: string, id: string): string {
           declaration.initializer,
           runtimeBinding,
           declaration.name.text,
-          id
+          id,
+          root
         );
         if (!referenceId) throw unsupportedClientProxy(id);
         referenceIds.add(referenceId);
@@ -818,7 +912,7 @@ export function createDevCssLifecyclePluginPhases(
             '[novel-isr] Development server is unavailable for CSS dependency mapping.'
           );
         }
-        const referenceId = clientReferenceIdFromProxy(code, id);
+        const referenceId = clientReferenceIdFromProxy(code, id, devServer.config.root);
         const styleIds = await collectClientReferenceStyles(devServer, id);
         return {
           code:
