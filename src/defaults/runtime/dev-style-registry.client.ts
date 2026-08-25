@@ -20,11 +20,12 @@ export interface DevStyleRegistry {
   publish(id: string, cssText: string): void;
   prune(id: string): void;
   beginRscUpdate(generation: number): void;
+  declareRscStyles(generation: number, activeIds: Iterable<string>): void;
   abortRscUpdate(generation: number): void;
   beginUpdate(): void;
   commitUpdate(activeIds?: Iterable<string>): void;
   abortUpdate(): void;
-  reconcileDocumentStyles(generation: number): void;
+  reconcileDocumentStyles(generation: number, activeIds: Iterable<string>): void;
   dispose(): void;
 }
 
@@ -34,6 +35,7 @@ export function createDevStyleRegistry(
 ): DevStyleRegistry {
   const records = new Map<string, StyleRecord>();
   const pendingRscGenerations = new Set<number>();
+  const rscDeclarations = new Map<number, string[]>();
   let committedActiveIds: string[] = [];
   let latestCommittedGeneration = -1;
 
@@ -103,9 +105,28 @@ export function createDevStyleRegistry(
     record.state = record.node?.isConnected ? 'client-active' : 'ssr-active';
   };
 
-  const commitActiveSet = (activeIds: string[]) => {
+  const sameActiveSet = (left: string[], right: string[]): boolean =>
+    left.length === right.length &&
+    left.every(id => right.some(other => styleIdsMatch(id, other, document.baseURI)));
+
+  const commitActiveSet = (activeIds: string[], generation?: number) => {
+    const hasNewerPendingGeneration =
+      generation !== undefined &&
+      Array.from(pendingRscGenerations).some(pending => pending > generation);
+    const protectedIds =
+      generation === undefined
+        ? []
+        : Array.from(rscDeclarations)
+            .filter(([pending]) => pending > generation)
+            .flatMap(([, ids]) => ids);
+
     for (const record of Array.from(records.values())) {
       if (activeIds.some(id => styleIdsMatch(record.id, id, document.baseURI))) {
+        restoreActiveState(record);
+      } else if (
+        protectedIds.some(id => styleIdsMatch(record.id, id, document.baseURI)) ||
+        (hasNewerPendingGeneration && !isCommitted(record.id))
+      ) {
         restoreActiveState(record);
       } else {
         release(record);
@@ -130,7 +151,10 @@ export function createDevStyleRegistry(
       record.cssText = cssText;
       const links = matchingLinks(record.id);
 
-      if (isCommitted(record.id) || (pendingRscGenerations.size === 0 && links.length === 0)) {
+      if (
+        isCommitted(record.id) ||
+        (latestCommittedGeneration === -1 && pendingRscGenerations.size === 0 && links.length === 0)
+      ) {
         installManagedNode(record);
         if (!isCommitted(record.id)) committedActiveIds.push(record.id);
         for (const link of links) link.remove();
@@ -148,8 +172,22 @@ export function createDevStyleRegistry(
       if (generation > latestCommittedGeneration) pendingRscGenerations.add(generation);
     },
 
+    declareRscStyles(generation, activeIds) {
+      if (generation < latestCommittedGeneration) return;
+      const active = Array.from(new Set(Array.from(activeIds, canonicalId)));
+      const existing = rscDeclarations.get(generation);
+      if (existing && !sameActiveSet(existing, active)) {
+        throw new Error(
+          `Conflicting development stylesheet declarations for RSC generation ${generation}.`
+        );
+      }
+      for (const id of active) findOrCreateRecord(id);
+      rscDeclarations.set(generation, active);
+    },
+
     abortRscUpdate(generation) {
       pendingRscGenerations.delete(generation);
+      rscDeclarations.delete(generation);
       reconcileCommittedSet();
     },
 
@@ -175,24 +213,31 @@ export function createDevStyleRegistry(
       }
     },
 
-    reconcileDocumentStyles(generation) {
+    reconcileDocumentStyles(generation, activeIds) {
       if (generation < latestCommittedGeneration) return;
+      const active = Array.from(new Set(Array.from(activeIds, canonicalId)));
       if (generation === latestCommittedGeneration) {
+        if (!sameActiveSet(committedActiveIds, active)) {
+          throw new Error(`Conflicting committed stylesheet set for RSC generation ${generation}.`);
+        }
         reconcileCommittedSet();
         return;
       }
 
-      const links = Array.from(document.querySelectorAll<HTMLLinkElement>(RSC_STYLESHEET));
-      const activeIds = Array.from(
-        new Set(links.map(stylesheetId).filter((id): id is string => id !== undefined))
-      );
+      const declared = rscDeclarations.get(generation);
+      if (declared && !sameActiveSet(declared, active)) {
+        throw new Error(
+          `RSC generation ${generation} committed a stylesheet set different from its payload.`
+        );
+      }
+      if (!declared) rscDeclarations.set(generation, active);
 
-      for (const id of activeIds) {
+      for (const id of active) {
         const record = findOrCreateRecord(id);
         if (record.cssText !== undefined) installManagedNode(record);
       }
 
-      const ready = activeIds.every(id => {
+      const ready = active.every(id => {
         const record = matchingRecord(id);
         if (record?.node?.isConnected) return true;
         return matchingLinks(id).some(
@@ -201,21 +246,25 @@ export function createDevStyleRegistry(
       });
       if (!ready) return;
 
-      for (const id of activeIds) {
+      for (const id of active) {
         if (matchingRecord(id)?.node?.isConnected) {
           for (const link of matchingLinks(id)) link.remove();
         }
       }
-      commitActiveSet(activeIds);
+      commitActiveSet(active, generation);
       latestCommittedGeneration = generation;
       for (const pending of pendingRscGenerations) {
         if (pending <= generation) pendingRscGenerations.delete(pending);
+      }
+      for (const pending of rscDeclarations.keys()) {
+        if (pending <= generation) rscDeclarations.delete(pending);
       }
       options.onRscCommit?.(generation);
     },
 
     dispose() {
       pendingRscGenerations.clear();
+      rscDeclarations.clear();
       committedActiveIds = [];
       for (const record of Array.from(records.values())) {
         record.node?.remove();

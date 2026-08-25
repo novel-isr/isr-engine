@@ -43,7 +43,7 @@ describe('development style registry', () => {
     `);
 
     registry.publish('/src/Card.scss', '.card { color: green }');
-    registry.reconcileDocumentStyles(0);
+    registry.reconcileDocumentStyles(0, ['/src/Card.scss']);
     expect(
       document.querySelector('style[data-novel-isr-dev-style="/src/Card.scss"]')
     ).not.toBeNull();
@@ -125,7 +125,7 @@ describe('development style registry', () => {
       <link rel="stylesheet" href="/src/Card.scss?direct" data-precedence="vite-rsc/importer-resources">
     `);
 
-    registry.reconcileDocumentStyles(0);
+    registry.reconcileDocumentStyles(0, ['/src/Card.scss']);
     registry.publish('/workspace/app/src/Card.scss', '.card { color: green }');
 
     expect(document.querySelector('link[href*="Card.scss"]')).toBeNull();
@@ -163,7 +163,7 @@ describe('development style registry', () => {
     registry.beginRscUpdate(1);
     appendRscLink(document, '/src/B.scss?direct');
     registry.publish('/src/B.scss', '.b{display:grid}');
-    registry.reconcileDocumentStyles(1);
+    registry.reconcileDocumentStyles(1, ['/src/B.scss']);
     await window.happyDOM.whenAsyncComplete();
     observer.disconnect();
 
@@ -185,7 +185,7 @@ describe('development style registry', () => {
     registry.beginRscUpdate(1);
     registry.prune('/src/A.scss');
     appendRscLink(document, '/src/B.scss?direct');
-    registry.reconcileDocumentStyles(1);
+    registry.reconcileDocumentStyles(1, ['/src/B.scss']);
     registry.abortRscUpdate(1);
 
     expect(document.querySelector('style[data-novel-isr-dev-style="/src/A.scss"]')).not.toBeNull();
@@ -198,7 +198,7 @@ describe('development style registry', () => {
     registry.beginRscUpdate(1);
     registry.publish('/src/B.scss', '.b{display:grid}');
     appendRscLink(document, '/src/B.scss?direct');
-    registry.reconcileDocumentStyles(1);
+    registry.reconcileDocumentStyles(1, ['/src/B.scss']);
 
     expect(document.querySelector('style[data-novel-isr-dev-style="/src/B.scss"]')).not.toBeNull();
     expect(document.querySelector('link[href*="/src/B.scss"]')).toBeNull();
@@ -211,11 +211,11 @@ describe('development style registry', () => {
     registry.beginRscUpdate(0);
     appendRscLink(document, '/src/B.scss?direct');
     registry.publish('/src/B.scss', '.b{display:grid}');
-    registry.reconcileDocumentStyles(0);
+    registry.reconcileDocumentStyles(0, ['/src/B.scss']);
     const owner = document.querySelector('style[data-novel-isr-dev-style="/src/B.scss"]');
 
-    registry.reconcileDocumentStyles(0);
-    registry.reconcileDocumentStyles(0);
+    registry.reconcileDocumentStyles(0, ['/src/B.scss']);
+    registry.reconcileDocumentStyles(0, ['/src/B.scss']);
 
     expect(owner).not.toBeNull();
     expect(owner?.isConnected).toBe(true);
@@ -230,7 +230,7 @@ describe('development style registry', () => {
     registry.beginRscUpdate(0);
     appendRscLink(document, '/src/A.scss?direct');
     registry.publish('/src/A.scss', '.a{display:block}');
-    registry.reconcileDocumentStyles(0);
+    registry.reconcileDocumentStyles(0, ['/src/A.scss']);
 
     registry.beginRscUpdate(1);
     appendRscLink(document, '/src/B.scss?direct');
@@ -245,7 +245,7 @@ describe('development style registry', () => {
 
     appendRscLink(document, '/src/C.scss?direct');
     registry.publish('/src/C.scss', '.c{display:flex}');
-    registry.reconcileDocumentStyles(2);
+    registry.reconcileDocumentStyles(2, ['/src/C.scss']);
 
     expect(document.querySelector('style[data-novel-isr-dev-style="/src/A.scss"]')).toBeNull();
     expect(document.querySelector('style[data-novel-isr-dev-style="/src/B.scss"]')).toBeNull();
@@ -263,29 +263,64 @@ describe('development style registry', () => {
 
     appendRscLink(document, '/src/A.scss?direct');
     registry.publish('/src/A.scss', '.a{display:block}');
-    registry.reconcileDocumentStyles(0);
+    registry.reconcileDocumentStyles(0, ['/src/A.scss']);
 
     registry.beginRscUpdate(1);
+    registry.declareRscStyles(1, ['/src/B.scss']);
     registry.publish('/src/B.scss', '.b{display:grid}');
     registry.beginRscUpdate(2);
+    registry.declareRscStyles(2, ['/src/C.scss']);
+    registry.publish('/src/C.scss', '.c{display:flex}');
 
     appendRscLink(document, '/src/B.scss?direct');
-    registry.reconcileDocumentStyles(1);
+    appendRscLink(document, '/src/C.scss?direct');
+    registry.reconcileDocumentStyles(1, ['/src/B.scss']);
 
     expect(committed).toEqual([0, 1]);
-    expect(document.querySelector('style[data-novel-isr-dev-style="/src/B.scss"]')).not.toBeNull();
-    expect(document.querySelector('style[data-novel-isr-dev-style="/src/A.scss"]')).toBeNull();
+    expect(
+      Array.from(
+        document.querySelectorAll<HTMLStyleElement>('style[data-novel-isr-dev-style]')
+      ).map(node => node.dataset.novelIsrDevStyle)
+    ).toEqual(['/src/B.scss']);
 
-    registry.publish('/src/C.scss', '.c{display:flex}');
-    registry.reconcileDocumentStyles(1);
-    appendRscLink(document, '/src/C.scss?direct');
-    registry.reconcileDocumentStyles(2);
-    registry.reconcileDocumentStyles(2);
-    registry.reconcileDocumentStyles(1);
+    registry.reconcileDocumentStyles(2, ['/src/C.scss']);
+    registry.reconcileDocumentStyles(2, ['/src/C.scss']);
+    registry.reconcileDocumentStyles(1, ['/src/B.scss']);
 
     expect(committed).toEqual([0, 1, 2]);
-    expect(document.querySelector('style[data-novel-isr-dev-style="/src/C.scss"]')).not.toBeNull();
+    expect(
+      Array.from(
+        document.querySelectorAll<HTMLStyleElement>('style[data-novel-isr-dev-style]')
+      ).map(node => node.dataset.novelIsrDevStyle)
+    ).toEqual(['/src/C.scss']);
+  });
+
+  it('does not promote an aborted generation when its CSS publishes late', () => {
+    const { document, registry } = createFixture();
+
+    registry.beginRscUpdate(0);
+    registry.declareRscStyles(0, ['/src/A.scss']);
+    registry.publish('/src/A.scss', '.a{display:block}');
+    registry.reconcileDocumentStyles(0, ['/src/A.scss']);
+
+    registry.beginRscUpdate(1);
+    registry.declareRscStyles(1, ['/src/B.scss']);
+    registry.abortRscUpdate(1);
+    registry.publish('/src/B.scss', '.b{display:grid}');
+
     expect(document.querySelector('style[data-novel-isr-dev-style="/src/B.scss"]')).toBeNull();
+    expect(document.querySelector('style[data-novel-isr-dev-style="/src/A.scss"]')).not.toBeNull();
+
+    registry.beginRscUpdate(2);
+    registry.declareRscStyles(2, ['/src/C.scss']);
+    registry.publish('/src/C.scss', '.c{display:flex}');
+    registry.reconcileDocumentStyles(2, ['/src/C.scss']);
+
+    expect(
+      Array.from(
+        document.querySelectorAll<HTMLStyleElement>('style[data-novel-isr-dev-style]')
+      ).map(node => node.dataset.novelIsrDevStyle)
+    ).toEqual(['/src/C.scss']);
   });
 
   it('treats a committed importer-resource link as an active owner', () => {
@@ -295,7 +330,7 @@ describe('development style registry', () => {
     registry.beginRscUpdate(1);
     const link = appendRscLink(document, '/src/B.scss?direct');
     link.dataset.precedence = 'vite-rsc/importer-resources';
-    registry.reconcileDocumentStyles(1);
+    registry.reconcileDocumentStyles(1, ['/src/B.scss']);
 
     expect(link.isConnected).toBe(true);
     expect(document.querySelector('style[data-novel-isr-dev-style="/src/A.scss"]')).toBeNull();

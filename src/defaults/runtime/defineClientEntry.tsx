@@ -33,7 +33,7 @@ import { GlobalErrorBoundary } from './error-boundary';
 import { HydrationShell } from './hydration-shell';
 import { createRscRenderRequest } from './request';
 import { DevStyleCommitBoundary } from './dev-style-commit-boundary.client';
-import { runWithDevStyleNavigation } from './dev-style-navigation.client';
+import { prepareDevStyleTree, runWithDevStyleNavigation } from './dev-style-navigation.client';
 import { installDevRenderInspector } from './dev-render-inspector';
 import { setClientI18n } from '../../runtime/i18n-store';
 import { applySeoToDocument, type IntlPayload, type PageSeoMeta } from './seo-runtime';
@@ -51,17 +51,39 @@ interface DefaultRscPayload {
   siteBaseUrl?: string | null;
   formState?: import('react-dom/client').ReactFormState;
   returnValue?: { ok: boolean; data: unknown };
+  devStyleIds?: string[];
 }
 
 interface DefaultRscPayloadState {
   payload: DefaultRscPayload;
   generation: number | undefined;
+  styleIds: string[];
 }
 
-function renderPayloadRoot({ payload, generation }: DefaultRscPayloadState): React.ReactNode {
+function createPayloadState(
+  payload: DefaultRscPayload,
+  generation: number | undefined
+): DefaultRscPayloadState {
+  if (!import.meta.env.DEV) return { payload, generation, styleIds: [] };
+  if (
+    !Array.isArray(payload.devStyleIds) ||
+    !payload.devStyleIds.every(id => typeof id === 'string')
+  ) {
+    throw new Error('Development RSC payload is missing its canonical devStyleIds declaration.');
+  }
+  const styleIds = [...payload.devStyleIds];
+  if (generation !== undefined) prepareDevStyleTree(generation, styleIds);
+  return { payload, generation, styleIds };
+}
+
+function renderPayloadRoot({
+  payload,
+  generation,
+  styleIds,
+}: DefaultRscPayloadState): React.ReactNode {
   if (!import.meta.env.DEV || generation === undefined) return payload.root;
   return (
-    <DevStyleCommitBoundary key={generation} generation={generation}>
+    <DevStyleCommitBoundary key={generation} generation={generation} styleIds={styleIds}>
       {payload.root}
     </DevStyleCommitBoundary>
   );
@@ -270,7 +292,7 @@ async function main(hooks: ClientEntryHooks): Promise<void> {
           syncBrowserUrlToFinalRedirect(response);
           setClientI18n(payload.intl);
           applySeoToDocument(payload.seoMeta, payload.siteBaseUrl ?? undefined);
-          setPayload({ payload, generation });
+          setPayload(createPayloadState(payload, generation));
         }
       );
     }
@@ -326,12 +348,12 @@ async function main(hooks: ClientEntryHooks): Promise<void> {
         (payload, generation) => {
           setClientI18n(payload.intl);
           applySeoToDocument(payload.seoMeta, payload.siteBaseUrl ?? undefined);
-          setPayload({ payload, generation });
+          setPayload(createPayloadState(payload, generation));
           return payload;
         }
       );
-      if (result.status === 'superseded') return undefined;
-      const payload = result.value;
+      const payload = result.status === 'superseded' ? result.operationValue : result.value;
+      if (!payload) return undefined;
       const { ok, data } = payload.returnValue!;
       if (!ok) {
         captureActionError(observability, data, id);
@@ -374,19 +396,22 @@ async function main(hooks: ClientEntryHooks): Promise<void> {
   let setPayload: (v: DefaultRscPayloadState) => void = () => {};
   const initialPayload = await createFromReadableStream<DefaultRscPayload>(rscStream);
   setClientI18n(initialPayload.intl);
+  const initialPayloadState = createPayloadState(
+    initialPayload,
+    import.meta.env.DEV ? 0 : undefined
+  );
 
   function BrowserRoot(): React.ReactNode {
-    const [payloadState, setPayload_] = React.useState<DefaultRscPayloadState>({
-      payload: initialPayload,
-      generation: import.meta.env.DEV ? 0 : undefined,
-    });
+    const [payloadState, setPayload_] = React.useState<DefaultRscPayloadState>(initialPayloadState);
     React.useEffect(() => {
       setPayload = v => React.startTransition(() => setPayload_(v));
     }, [setPayload_]);
-    React.useEffect(
-      () => listenNavigation(fetchRscPayload, hooks.onNavigate, observability, hookContext),
-      []
-    );
+    React.useEffect(() => {
+      const onNavigation = import.meta.env.DEV
+        ? () => observeDevNavigationFailure(fetchRscPayload())
+        : fetchRscPayload;
+      return listenNavigation(onNavigation, hooks.onNavigate, observability, hookContext);
+    }, []);
     return renderPayloadRoot(payloadState);
   }
 
@@ -403,7 +428,7 @@ async function main(hooks: ClientEntryHooks): Promise<void> {
         syncBrowserUrlToFinalRedirect(response);
         setClientI18n(payload.intl);
         applySeoToDocument(payload.seoMeta, payload.siteBaseUrl ?? undefined);
-        setPayload({ payload, generation });
+        setPayload(createPayloadState(payload, generation));
       }
     );
   }
@@ -423,12 +448,12 @@ async function main(hooks: ClientEntryHooks): Promise<void> {
       (payload, generation) => {
         setClientI18n(payload.intl);
         applySeoToDocument(payload.seoMeta, payload.siteBaseUrl ?? undefined);
-        setPayload({ payload, generation });
+        setPayload(createPayloadState(payload, generation));
         return payload;
       }
     );
-    if (result.status === 'superseded') return undefined;
-    const payload = result.value;
+    const payload = result.status === 'superseded' ? result.operationValue : result.value;
+    if (!payload) return undefined;
     const { ok, data } = payload.returnValue!;
     if (!ok) {
       captureActionError(observability, data, id);
@@ -457,9 +482,17 @@ async function main(hooks: ClientEntryHooks): Promise<void> {
 
   if (import.meta.hot) {
     import.meta.hot.on('rsc:update', () => {
-      void fetchRscPayload();
+      observeDevNavigationFailure(fetchRscPayload());
     });
   }
+}
+
+function observeDevNavigationFailure(operation: Promise<void>): void {
+  void operation.catch(error => {
+    const reportError = (globalThis as { reportError?: (error: unknown) => void }).reportError;
+    if (reportError) reportError(error);
+    else console.error(error);
+  });
 }
 
 function captureActionError(

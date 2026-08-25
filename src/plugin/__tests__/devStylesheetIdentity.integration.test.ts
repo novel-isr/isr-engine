@@ -1,6 +1,7 @@
 import http from 'node:http';
 import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises';
 import path from 'node:path';
+import { pathToFileURL } from 'node:url';
 
 import vitePluginRsc from '@vitejs/plugin-rsc';
 import { afterEach, describe, expect, it } from 'vitest';
@@ -42,7 +43,7 @@ describe('development RSC stylesheet identity', () => {
         ...vitePluginRsc({
           entries: {
             client: '/src/entry.browser.ts',
-            rsc: '/src/entry.rsc.ts',
+            rsc: '/src/entry.rsc.tsx',
             ssr: '/src/entry.ssr.ts',
           },
         }),
@@ -62,7 +63,10 @@ describe('development RSC stylesheet identity', () => {
     ).not.toContain('reconcileDocumentStyles');
 
     const clientReferenceId = '/src/ClientCard.tsx';
-    await server.environments.rsc.transformRequest(clientReferenceId);
+    const transformedClientReference =
+      await server.environments.rsc.transformRequest(clientReferenceId);
+    expect(transformedClientReference?.code).toContain('registerDevClientReferenceStyles');
+    expect(transformedClientReference?.code).toContain('/src/ClientCard.module.scss');
     await server.environments.ssr.transformRequest('/src/ClientCard.tsx');
     const virtualId = `virtual:vite-rsc/css?type=ssr&id=${encodeURIComponent(clientReferenceId)}&lang.js`;
     const resolved = await server.environments.ssr.pluginContainer.resolveId(virtualId);
@@ -70,6 +74,28 @@ describe('development RSC stylesheet identity', () => {
 
     const transformed = await server.environments.ssr.transformRequest(resolved!.id);
     expect(transformed?.code).toContain('/src/ClientCard.module.scss?direct');
+
+    const transformedPage = await server.environments.rsc.transformRequest('/src/Page.tsx');
+    const rscCssId = transformedPage?.code.match(/virtual:vite-rsc\/css\?[^"']+/)?.[0];
+    expect(rscCssId).toBeTruthy();
+    const resolvedRscCss = await server.environments.rsc.pluginContainer.resolveId(rscCssId!);
+    expect(resolvedRscCss).toBeTruthy();
+    const transformedRscCss = await server.environments.rsc.transformRequest(resolvedRscCss!.id);
+    expect(transformedRscCss?.code).toContain('declareDevStyleDependencies');
+    expect(transformedRscCss?.code).toContain('/src/Page.scss');
+
+    const rscEnvironment = server.environments.rsc as typeof server.environments.rsc & {
+      runner: { import(id: string): Promise<unknown> };
+    };
+    const rscEntry = (await rscEnvironment.runner.import('/src/entry.rsc.tsx')) as {
+      render(): Promise<{ devStyleIds: string[]; stream: ReadableStream<Uint8Array> }>;
+    };
+    const rendered = await rscEntry.render();
+    await new Response(rendered.stream).text();
+    expect([...rendered.devStyleIds].sort()).toEqual([
+      '/src/ClientCard.module.scss',
+      '/src/Page.scss',
+    ]);
 
     const listener = http.createServer(server.middlewares);
     await new Promise<void>(resolve => listener.listen(0, '127.0.0.1', resolve));
@@ -107,7 +133,24 @@ async function createFixture(): Promise<string> {
     JSON.stringify({ private: true, type: 'module' }, null, 2)
   );
   await writeFile(path.join(root, 'src/entry.browser.ts'), 'export {};\n');
-  await writeFile(path.join(root, 'src/entry.rsc.ts'), 'export {};\n');
+  const declarationsUrl = pathToFileURL(
+    path.resolve(process.cwd(), 'src/defaults/runtime/dev-style-declarations.server.ts')
+  ).href;
+  await writeFile(
+    path.join(root, 'src/entry.rsc.tsx'),
+    `import { renderToReadableStream } from '@vitejs/plugin-rsc/rsc';\n` +
+      `import { declareDevClientReferenceStyles, runWithDevStyleDeclarationCollection } from ${JSON.stringify(declarationsUrl)};\n` +
+      `import Page from './Page';\n` +
+      `export async function render() {\n` +
+      `  const devStyleIds: string[] = [];\n` +
+      `  const stream = runWithDevStyleDeclarationCollection(devStyleIds, () =>\n` +
+      `    renderToReadableStream({ root: <Page />, devStyleIds }, undefined, {\n` +
+      `      onClientReference: declareDevClientReferenceStyles,\n` +
+      `    })\n` +
+      `  );\n` +
+      `  return { devStyleIds, stream };\n` +
+      `}\n`
+  );
   await writeFile(path.join(root, 'src/entry.ssr.ts'), 'export {};\n');
   await writeFile(
     path.join(root, 'src/ClientCard.tsx'),
@@ -117,5 +160,10 @@ async function createFixture(): Promise<string> {
     path.join(root, 'src/ClientCard.module.scss'),
     '.card { color: rgb(1, 2, 3); }\n'
   );
+  await writeFile(
+    path.join(root, 'src/Page.tsx'),
+    `import './Page.scss';\nimport ClientCard from './ClientCard';\nexport default function Page() { return <main><ClientCard /></main>; }\n`
+  );
+  await writeFile(path.join(root, 'src/Page.scss'), 'main { display: block; }\n');
   return root;
 }

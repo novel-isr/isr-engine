@@ -49,8 +49,69 @@ describe('development style navigation lifecycle', () => {
 
     resolveFirst('B');
 
-    await expect(first).resolves.toEqual({ status: 'superseded' });
+    await expect(first).resolves.toEqual({ status: 'superseded', operationValue: 'B' });
     expect(sideEffects).toEqual(['url:C', 'i18n:C', 'seo:C', 'payload:C']);
+  });
+
+  it('silences a stale failure after a newer generation wins but preserves a current failure', async () => {
+    const lifecycle = createDevStyleNavigationLifecycle();
+    let rejectFirst!: (error: Error) => void;
+    const first = lifecycle.run(
+      () =>
+        new Promise<string>((_resolve, reject) => {
+          rejectFirst = reject;
+        }),
+      value => value
+    );
+    await lifecycle.run(
+      async () => 'C',
+      value => value
+    );
+
+    rejectFirst(new Error('stale B failed'));
+
+    await expect(first).resolves.toEqual({ status: 'superseded' });
+    await expect(
+      lifecycle.run(
+        async () => {
+          throw new Error('current D failed');
+        },
+        value => value
+      )
+    ).rejects.toThrow('current D failed');
+  });
+
+  it('retains a stale Server Action result while suppressing its UI tree application', async () => {
+    const lifecycle = createDevStyleNavigationLifecycle();
+    const appliedTrees: string[] = [];
+    let resolveFirst!: (value: { tree: string; data: string }) => void;
+    const first = lifecycle.run(
+      () =>
+        new Promise<{ tree: string; data: string }>(resolve => {
+          resolveFirst = resolve;
+        }),
+      value => {
+        appliedTrees.push(value.tree);
+        return value;
+      }
+    );
+    await lifecycle.run(
+      async () => ({ tree: 'C', data: 'action-C' }),
+      value => {
+        appliedTrees.push(value.tree);
+        return value;
+      }
+    );
+
+    resolveFirst({ tree: 'B', data: 'action-B' });
+    const result = await first;
+
+    expect(result).toEqual({
+      status: 'superseded',
+      operationValue: { tree: 'B', data: 'action-B' },
+    });
+    expect(result.status === 'superseded' && result.operationValue?.data).toBe('action-B');
+    expect(appliedTrees).toEqual(['C']);
   });
 
   it('does not add navigation supersession semantics when disabled for production', async () => {
@@ -102,39 +163,39 @@ describe('development style navigation lifecycle', () => {
 
     appendRscLink(document, '/src/A.scss?direct');
     registry.publish('/src/A.scss', '.a{display:block}');
-    lifecycle.commitTree(0);
+    lifecycle.prepareTree(0, ['/src/A.scss']);
+    lifecycle.commitTree(0, ['/src/A.scss']);
 
     const b = await lifecycle.run(
       async () => 'B',
-      (value, generation) => ({ value, generation: generation! })
+      (value, generation) => {
+        lifecycle.prepareTree(generation!, ['/src/B.scss']);
+        return { value, generation: generation! };
+      }
     );
     expect(b.status).toBe('applied');
     if (b.status !== 'applied') throw new Error('B should be accepted');
 
-    let resolveC!: (value: string) => void;
-    const cPromise = lifecycle.run(
-      () =>
-        new Promise<string>(resolve => {
-          resolveC = resolve;
-        }),
-      (value, generation) => ({ value, generation: generation! })
+    const c = await lifecycle.run(
+      async () => 'C',
+      (value, generation) => {
+        lifecycle.prepareTree(generation!, ['/src/C.scss']);
+        return { value, generation: generation! };
+      }
     );
+    expect(c.status).toBe('applied');
+    if (c.status !== 'applied') throw new Error('C should be accepted');
 
     registry.publish('/src/B.scss', '.b{display:grid}');
+    registry.publish('/src/C.scss', '.c{display:flex}');
     appendRscLink(document, '/src/B.scss?direct');
-    lifecycle.commitTree(b.value.generation);
+    appendRscLink(document, '/src/C.scss?direct');
+    lifecycle.commitTree(b.value.generation, ['/src/B.scss']);
 
     expect(document.querySelector('style[data-novel-isr-dev-style="/src/B.scss"]')).not.toBeNull();
     expect(document.querySelector('style[data-novel-isr-dev-style="/src/A.scss"]')).toBeNull();
 
-    registry.publish('/src/C.scss', '.c{display:flex}');
-    lifecycle.commitTree(b.value.generation);
-    resolveC('C');
-    const c = await cPromise;
-    expect(c.status).toBe('applied');
-    if (c.status !== 'applied') throw new Error('C should be accepted');
-    appendRscLink(document, '/src/C.scss?direct');
-    lifecycle.commitTree(c.value.generation);
+    lifecycle.commitTree(c.value.generation, ['/src/C.scss']);
 
     expect(document.querySelector('style[data-novel-isr-dev-style="/src/C.scss"]')).not.toBeNull();
     expect(document.querySelector('style[data-novel-isr-dev-style="/src/B.scss"]')).toBeNull();
@@ -153,7 +214,7 @@ describe('development style navigation lifecycle', () => {
 
     appendRscLink(document, '/src/A.scss?direct');
     registry.publish('/src/A.scss', '.a{display:block}');
-    registry.reconcileDocumentStyles(0);
+    registry.reconcileDocumentStyles(0, ['/src/A.scss']);
 
     await expect(
       lifecycle.run(

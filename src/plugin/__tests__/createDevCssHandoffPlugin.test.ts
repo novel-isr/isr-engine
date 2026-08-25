@@ -3,10 +3,12 @@ import path from 'node:path';
 import { describe, expect, it } from 'vitest';
 
 import {
+  clientReferenceIdFromProxy,
   createDevCssLifecyclePlugins,
   DEV_CSS_HANDOFF_RESOLVED_ID,
   DEV_STYLE_REGISTRY_ID,
   DEV_STYLE_REGISTRY_RESOLVED_ID,
+  instrumentDevRscStylesheetModule,
   VITE_RSC_REMOVE_DUPLICATE_CSS_ID,
 } from '../createDevCssHandoffPlugin';
 
@@ -65,8 +67,47 @@ describe('createDevCssLifecyclePlugins', () => {
     );
   });
 
+  it('binds the pinned plugin-rsc server resource set to the current payload collector', () => {
+    const id = '\0virtual:vite-rsc/css?type=rsc&id=%2Fworkspace%2Fsrc%2FPage.tsx&lang.js';
+    const code = `
+      import React from "react";
+      export const Resources = ((React, deps, RemoveDuplicateServerCss, precedence) => {
+        return function Resources() { return React.createElement("link"); };
+      })(React, { js: [], css: ["/src/Page.scss?direct"] }, undefined, "vite-rsc/importer-resources");
+    `;
+
+    const result = instrumentDevRscStylesheetModule(code, id, 'file:///engine/declarations.js');
+
+    expect(result?.code).toContain('declareDevStyleDependencies');
+    expect(result?.code).toContain('{ js: [], css: ["/src/Page.scss?direct"] }');
+    expect(result?.code).toContain('export function Resources()');
+  });
+
+  it('fails explicitly when the pinned plugin-rsc server resource shape changes', () => {
+    const id = '\0virtual:vite-rsc/css?type=rsc&id=%2Fworkspace%2Fsrc%2FPage.tsx&lang.js';
+
+    expect(() =>
+      instrumentDevRscStylesheetModule(
+        'export function Resources() { return null; }',
+        id,
+        'file:///engine/declarations.js'
+      )
+    ).toThrow(/unsupported @vitejs\/plugin-rsc server stylesheet resource shape.*Page\.tsx/i);
+  });
+
+  it('fails explicitly when the pinned plugin-rsc client reference proxy shape changes', () => {
+    expect(() =>
+      clientReferenceIdFromProxy(
+        'export default registerReference("/src/ClientCard.tsx")',
+        '/src/ClientCard.tsx'
+      )
+    ).toThrow(/unsupported @vitejs\/plugin-rsc client reference proxy shape.*ClientCard\.tsx/i);
+  });
+
   it('adds a post-CSS plugin that supplies the singleton client registry', async () => {
-    const [prePlugin, postPlugin] = createDevCssLifecyclePlugins(defaultsDir);
+    const plugins = createDevCssLifecyclePlugins(defaultsDir);
+    const prePlugin = plugins.find(plugin => plugin.name === 'isr:dev-css-handoff')!;
+    const postPlugin = plugins.find(plugin => plugin.name === 'isr:dev-style-registry')!;
     const resolveId = postPlugin.resolveId as (id: string) => string | undefined;
     const load = postPlugin.load as (id: string) => string | undefined;
     const transform = postPlugin.transform as (

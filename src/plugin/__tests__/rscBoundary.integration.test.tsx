@@ -102,6 +102,56 @@ describe('RSC client boundary integration', () => {
     );
     expect(rscPayload).toContain('onClick');
   });
+
+  it('serializes the exact client-reference stylesheet declarations in the RSC payload', async () => {
+    const declarationsUrl = pathToFileURL(
+      path.resolve(process.cwd(), 'src/defaults/runtime/dev-style-declarations.server.ts')
+    ).href;
+    const root = await createFixture({
+      'src/entry.rsc.tsx': `
+        import { renderToReadableStream } from '@vitejs/plugin-rsc/rsc';
+        import {
+          declareDevStyleDependencies,
+          runWithDevStyleDeclarationCollection,
+        } from ${JSON.stringify(declarationsUrl)};
+        import { App } from './app';
+
+        export default {
+          async fetch(request: Request) {
+            const devStyleIds: string[] = [];
+            const payload = { root: <App />, devStyleIds };
+            const stream = runWithDevStyleDeclarationCollection(devStyleIds, () =>
+              renderToReadableStream(payload, undefined, {
+                onClientReference(reference: { deps: unknown }) {
+                  declareDevStyleDependencies(reference.deps);
+                },
+              })
+            );
+            return new Response(stream, {
+              headers: { 'content-type': 'text/x-component;charset=utf-8' },
+            });
+          },
+        };
+      `,
+      'src/app.tsx': `
+        import ClientCard from './ClientCard';
+        export function App() { return <ClientCard />; }
+      `,
+      'src/ClientCard.tsx': `
+        'use client';
+        import styles from './ClientCard.module.css';
+        export default function ClientCard() { return <div className={styles.card}>card</div>; }
+      `,
+      'src/ClientCard.module.css': '.card { color: red; }\n',
+    });
+
+    const handler = await loadBuiltRscHandler(root);
+    const response = await handler.fetch(new Request('http://fixture.test/_.rsc'));
+    const payload = await response.text();
+
+    expect(payload).toContain('devStyleIds');
+    expect(payload).toMatch(/\/assets\/[^"\\]+\.css/);
+  });
 });
 
 async function createFixture(files: Record<string, string>): Promise<string> {
@@ -172,7 +222,7 @@ async function createFixture(files: Record<string, string>): Promise<string> {
   await writeFile(
     path.join(root, 'src/entry.browser.tsx'),
     `
-      export {};
+      import '@vitejs/plugin-rsc/browser';
     `
   );
   await writeFile(

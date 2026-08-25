@@ -34,6 +34,10 @@ import { App } from '@app/_entry';
 import '@app/_routes';
 
 import { parseRenderRequest } from './request';
+import {
+  declareDevClientReferenceStyles,
+  runWithDevStyleDeclarationCollection,
+} from './dev-style-declarations.server';
 import { type IntlPayload, type PageSeoMeta, injectSeoMeta, mergePageSeoMeta } from './seo-runtime';
 import { injectHeadExtras } from './head-extras-runtime';
 import { runWithI18n } from './i18n-server';
@@ -55,6 +59,7 @@ interface DefaultRscPayload {
   siteBaseUrl?: string | null;
   returnValue?: { ok: boolean; data: unknown };
   formState?: ReactFormState;
+  devStyleIds?: string[];
 }
 
 /** 默认始终注入的请求上下文 —— engine 自动维护，不需要用户写代码 */
@@ -324,6 +329,7 @@ async function runRscPipeline(request: Request, extras: PipelineExtras): Promise
     }
   }
 
+  const devStyleIds = import.meta.env.DEV ? [] : undefined;
   const rscPayload: DefaultRscPayload = {
     root: <App url={renderRequest.url} intl={extras.intl ?? undefined} />,
     intl: extras.intl ?? null,
@@ -331,8 +337,19 @@ async function runRscPipeline(request: Request, extras: PipelineExtras): Promise
     siteBaseUrl: extras.siteBaseUrl ?? null,
     formState,
     returnValue,
+    ...(devStyleIds ? { devStyleIds } : {}),
   };
-  const rscStream = renderToReadableStream<DefaultRscPayload>(rscPayload, { temporaryReferences });
+  const rscStream = import.meta.env.DEV
+    ? runWithDevStyleDeclarationCollection(devStyleIds!, () =>
+        renderToReadableStream<DefaultRscPayload>(
+          rscPayload,
+          { temporaryReferences },
+          {
+            onClientReference: declareDevClientReferenceStyles,
+          }
+        )
+      )
+    : renderToReadableStream<DefaultRscPayload>(rscPayload, { temporaryReferences });
 
   if (renderRequest.isRsc) {
     return new Response(rscStream, {
