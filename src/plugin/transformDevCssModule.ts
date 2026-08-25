@@ -17,12 +17,14 @@ interface MutatorBinding {
   declaration: ts.Identifier;
 }
 
+type ImportMetaHotInternalAccess = ts.PropertyAccessExpression | ts.ElementAccessExpression;
+
 interface ViteStyleBindings {
   hasEvidence: boolean;
   updateStyleBindings: MutatorBinding[];
   removeStyleBindings: MutatorBinding[];
-  internalAccesses: ts.PropertyAccessExpression[];
-  supportedInternalAccesses: Set<ts.PropertyAccessExpression>;
+  internalAccesses: ImportMetaHotInternalAccess[];
+  supportedInternalAccesses: Set<ImportMetaHotInternalAccess>;
 }
 
 function isViteClientSpecifier(value: string): boolean {
@@ -47,12 +49,38 @@ function isImportMetaHot(node: ts.Node): boolean {
   );
 }
 
-function isImportMetaHotInternal(node: ts.Node): node is ts.PropertyAccessExpression {
-  return (
-    ts.isPropertyAccessExpression(node) &&
-    node.name.text === '_internal' &&
-    isImportMetaHot(node.expression)
-  );
+function isImportMetaHotInternalAccess(node: ts.Node): node is ImportMetaHotInternalAccess {
+  if (
+    (!ts.isPropertyAccessExpression(node) && !ts.isElementAccessExpression(node)) ||
+    !isImportMetaHot(node.expression)
+  ) {
+    return false;
+  }
+  return ts.isPropertyAccessExpression(node)
+    ? node.name.text === '_internal'
+    : node.argumentExpression !== undefined &&
+        ts.isStringLiteral(node.argumentExpression) &&
+        node.argumentExpression.text === '_internal';
+}
+
+function isCanonicalImportMetaHotInternal(node: ts.Node): node is ts.PropertyAccessExpression {
+  return ts.isPropertyAccessExpression(node) && isImportMetaHotInternalAccess(node);
+}
+
+function isNamespaceMutatorAccess(node: ts.Node, namespaceBindings: Set<string>): boolean {
+  if (
+    (!ts.isPropertyAccessExpression(node) && !ts.isElementAccessExpression(node)) ||
+    !ts.isIdentifier(node.expression) ||
+    !namespaceBindings.has(node.expression.text)
+  ) {
+    return false;
+  }
+  const propertyName = ts.isPropertyAccessExpression(node)
+    ? node.name.text
+    : ts.isStringLiteral(node.argumentExpression)
+      ? node.argumentExpression.text
+      : undefined;
+  return propertyName === 'updateStyle' || propertyName === 'removeStyle';
 }
 
 function collectViteStyleBindings(source: ts.SourceFile): ViteStyleBindings {
@@ -68,25 +96,22 @@ function collectViteStyleBindings(source: ts.SourceFile): ViteStyleBindings {
     bindings.hasEvidence = true;
     bindings[`${name}Bindings`].push({ name: declaration.text, declaration });
   };
-
-  const visit = (node: ts.Node) => {
-    if (isImportMetaHotInternal(node)) {
-      bindings.hasEvidence = true;
-      bindings.internalAccesses.push(node);
-    }
-    ts.forEachChild(node, visit);
-  };
-  visit(source);
+  const namespaceBindings = new Set<string>();
 
   for (const statement of source.statements) {
     if (
       ts.isImportDeclaration(statement) &&
       ts.isStringLiteral(statement.moduleSpecifier) &&
-      isViteClientSpecifier(statement.moduleSpecifier.text) &&
-      statement.importClause?.namedBindings !== undefined &&
-      ts.isNamedImports(statement.importClause.namedBindings)
+      isViteClientSpecifier(statement.moduleSpecifier.text)
     ) {
-      for (const specifier of statement.importClause.namedBindings.elements) {
+      const namedBindings = statement.importClause?.namedBindings;
+      if (namedBindings !== undefined && ts.isNamespaceImport(namedBindings)) {
+        namespaceBindings.add(namedBindings.name.text);
+        continue;
+      }
+      if (namedBindings === undefined || !ts.isNamedImports(namedBindings)) continue;
+
+      for (const specifier of namedBindings.elements) {
         const importedName = specifier.propertyName?.text ?? specifier.name.text;
         if (importedName === 'updateStyle' || importedName === 'removeStyle') {
           addBinding(importedName, specifier.name);
@@ -106,7 +131,7 @@ function collectViteStyleBindings(source: ts.SourceFile): ViteStyleBindings {
     const declaration = statement.declarationList.declarations[0];
     if (declaration === undefined) continue;
     const internalAccess = declaration.initializer;
-    if (internalAccess === undefined || !isImportMetaHotInternal(internalAccess)) continue;
+    if (internalAccess === undefined || !isCanonicalImportMetaHotInternal(internalAccess)) continue;
     if (!ts.isObjectBindingPattern(declaration.name) || declaration.name.elements.length !== 2)
       continue;
 
@@ -136,6 +161,16 @@ function collectViteStyleBindings(source: ts.SourceFile): ViteStyleBindings {
     }
     bindings.supportedInternalAccesses.add(internalAccess);
   }
+
+  const visit = (node: ts.Node) => {
+    if (isImportMetaHotInternalAccess(node)) {
+      bindings.hasEvidence = true;
+      bindings.internalAccesses.push(node);
+    }
+    if (isNamespaceMutatorAccess(node, namespaceBindings)) bindings.hasEvidence = true;
+    ts.forEachChild(node, visit);
+  };
+  visit(source);
 
   return bindings;
 }

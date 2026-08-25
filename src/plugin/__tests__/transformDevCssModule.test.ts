@@ -71,6 +71,28 @@ describe('transformDevCssModule', () => {
     expect(result?.code).toContain('__novel_isr_dev_styles.prune(__vite__id)');
   });
 
+  it.each([
+    [
+      'dot-property access',
+      'viteClient.updateStyle("/src/Card.module.scss", ".card{color:green}");',
+    ],
+    [
+      'computed-property access',
+      'viteClient["updateStyle"]("/src/Card.module.scss", ".card{color:green}");',
+    ],
+  ])('rejects namespace Vite client imports with %s', (_description, mutatorCall) => {
+    expect(() =>
+      transformDevCssModule(
+        `
+          import * as viteClient from "/app/@vite/client";
+          ${mutatorCall}
+        `,
+        '/src/Card.module.scss',
+        'virtual:novel-isr/dev-style-registry'
+      )
+    ).toThrow(/Vite development CSS wrapper compatibility error.*\/src\/Card\.module\.scss/);
+  });
+
   it('routes Vite bundled-development wrappers through the registry', () => {
     const result = transformDevCssModule(
       VITE_BUNDLED_WRAPPER,
@@ -92,6 +114,25 @@ describe('transformDevCssModule', () => {
         '/src/Card.module.scss',
         'virtual:novel-isr/dev-style-registry'
       )
+    ).toThrow(/Vite development CSS wrapper compatibility error.*\/src\/Card\.module\.scss/);
+  });
+
+  it.each([
+    [
+      'computed internal destructuring',
+      `
+        const { updateStyle: __vite__updateStyle, removeStyle: __vite__removeStyle } = import.meta.hot["_internal"];
+        __vite__updateStyle("/src/Card.module.scss", ".card{color:green}");
+        import.meta.hot.prune(() => __vite__removeStyle("/src/Card.module.scss"));
+      `,
+    ],
+    [
+      'direct computed internal mutator access',
+      'import.meta.hot["_internal"].updateStyle("/src/Card.module.scss", ".card{color:green}");',
+    ],
+  ])('rejects %s', (_description, code) => {
+    expect(() =>
+      transformDevCssModule(code, '/src/Card.module.scss', 'virtual:novel-isr/dev-style-registry')
     ).toThrow(/Vite development CSS wrapper compatibility error.*\/src\/Card\.module\.scss/);
   });
 
