@@ -32,13 +32,22 @@ function getPinnedRscServerRuntimePath(): string {
   return pinnedRscServerRuntimePath;
 }
 
-const VITE_MODULE_TRANSPORT_QUERY_KEYS = new Set([
-  'direct',
-  't',
-  'v',
-  'import',
-  DEV_STYLE_TRANSPORT_GENERATION_PARAM,
-]);
+const VITE_HMR_TIMESTAMP_VALUE = /^\d{13}$/;
+const VITE_DEP_VERSION_VALUE = /^[\w.-]+$/;
+const DEV_STYLE_GENERATION_VALUE = /^(?:0|[1-9]\d*)$/;
+
+function isModuleTransportQueryParameter(parameter: string): boolean {
+  const separator = parameter.indexOf('=');
+  const key = separator === -1 ? parameter : parameter.slice(0, separator);
+  const value = separator === -1 ? '' : parameter.slice(separator + 1);
+
+  if (key === 'direct' || key === 'import') return value === '';
+  if (key === 't') return VITE_HMR_TIMESTAMP_VALUE.test(value);
+  if (key === 'v') return VITE_DEP_VERSION_VALUE.test(value);
+  if (key !== DEV_STYLE_TRANSPORT_GENERATION_PARAM) return false;
+  if (!DEV_STYLE_GENERATION_VALUE.test(value)) return false;
+  return Number.isSafeInteger(Number(value));
+}
 
 function semanticModuleIdentity(id: string): string {
   const hashStart = id.indexOf('#');
@@ -51,11 +60,7 @@ function semanticModuleIdentity(id: string): string {
   const semanticQuery = resource
     .slice(queryStart + 1)
     .split('&')
-    .filter(parameter => {
-      const separator = parameter.indexOf('=');
-      const key = separator === -1 ? parameter : parameter.slice(0, separator);
-      return !VITE_MODULE_TRANSPORT_QUERY_KEYS.has(key);
-    })
+    .filter(parameter => !isModuleTransportQueryParameter(parameter))
     .join('&');
   return `${pathname}${semanticQuery ? `?${semanticQuery}` : ''}${hash}`;
 }

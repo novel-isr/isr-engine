@@ -4,6 +4,7 @@ import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 
 import { describe, expect, it } from 'vitest';
+import { type Plugin, version as viteVersion } from 'vite';
 
 import {
   clientReferenceIdFromProxy,
@@ -14,6 +15,7 @@ import {
   instrumentDevRscStylesheetModule,
   VITE_RSC_REMOVE_DUPLICATE_CSS_ID,
 } from '../createDevCssHandoffPlugin';
+import { createIsrPlugin } from '../createIsrPlugin';
 
 describe('createDevCssLifecyclePlugins', () => {
   const defaultsDir = path.resolve(process.cwd(), 'src/defaults');
@@ -343,10 +345,10 @@ describe('createDevCssLifecyclePlugins', () => {
     ).toBe('/@id/__x00__virtual:fixture/card?theme=dark');
     expect(
       validate(
-        '/@id/__x00__virtual:fixture/card?t=11&theme=dark&v=12&import',
-        '\0virtual:fixture/card?theme=dark&t=13&direct&__novel_isr_style_generation=4'
+        '/@id/__x00__virtual:fixture/card?t=1234567890123&theme=dark&v=12&import',
+        '\0virtual:fixture/card?theme=dark&t=1234567890124&direct&__novel_isr_style_generation=4'
       )
-    ).toBe('/@id/__x00__virtual:fixture/card?t=11&theme=dark&v=12&import');
+    ).toBe('/@id/__x00__virtual:fixture/card?t=1234567890123&theme=dark&v=12&import');
 
     expect(() =>
       validate('/@id/__x00__virtual:fixture/card?theme=light', '\0virtual:fixture/card?theme=dark')
@@ -357,6 +359,49 @@ describe('createDevCssLifecyclePlugins', () => {
     expect(() =>
       validate('/@id/__x00__virtual:fixture/card%3Ftheme=dark', '\0virtual:fixture/card?theme=dark')
     ).toThrow(/unsupported @vitejs\/plugin-rsc client reference proxy shape/i);
+  });
+
+  it('matches only the pinned Vite 8.0.14 transport query grammar', () => {
+    expect(viteVersion).toBe('8.0.14');
+    const proxyFor = (referenceId: string) => `
+      import * as $$ReactServer from ${JSON.stringify(pinnedRscRuntime)};
+      export default $$ReactServer.registerClientReference(
+        () => { throw new Error("Unexpectedly client reference export '" + "default" + "' is called on server"); },
+        ${JSON.stringify(referenceId)},
+        "default"
+      );
+    `;
+    const validate = (referenceId: string, moduleId: string) =>
+      clientReferenceIdFromProxy(proxyFor(referenceId), moduleId, '/fixture');
+
+    const mixedReference =
+      '/@id/__x00__virtual:fixture/card?direct&direct=dark&import=&import=x' +
+      '&t=1234567890123&t=11&v=12&v=&theme=dark' +
+      '&__novel_isr_style_generation=4&__novel_isr_style_generation=-1';
+    const mixedModule =
+      '\0virtual:fixture/card?direct=&direct=dark&import&import=x' +
+      '&t=1234567890124&t=11&v=other.version&v=&theme=dark' +
+      '&__novel_isr_style_generation=5&__novel_isr_style_generation=-1';
+    expect(validate(mixedReference, mixedModule)).toBe(mixedReference);
+
+    for (const [referenceQuery, moduleQuery] of [
+      ['direct=dark', 'direct=light'],
+      ['import=x', 'import=y'],
+      ['t=11', 't=dark'],
+      ['v=', ''],
+      ['__novel_isr_style_generation=-1', ''],
+      ['__novel_isr_style_generation=9007199254740992', ''],
+      ['variant=a%2Fb', 'variant=a/b'],
+    ]) {
+      expect(
+        () =>
+          validate(
+            `/@id/__x00__virtual:fixture/card${referenceQuery ? `?${referenceQuery}` : ''}`,
+            `\0virtual:fixture/card${moduleQuery ? `?${moduleQuery}` : ''}`
+          ),
+        `${referenceQuery} must remain semantic`
+      ).toThrow(/unsupported @vitejs\/plugin-rsc client reference proxy shape/i);
+    }
   });
 
   it('does not treat a non-prologue use-client string as a client reference target', async () => {
@@ -393,7 +438,27 @@ describe('createDevCssLifecyclePlugins', () => {
   });
 
   it('prunes only the exact semantic virtual client-reference candidate during HMR', async () => {
-    const [prePlugin, clientReferencePlugin] = createDevCssLifecyclePlugins(defaultsDir);
+    const plugins = createIsrPlugin({
+      root: path.resolve(process.cwd(), 'examples/hello-world'),
+      isrCache: { enabled: false },
+    });
+    const findPlugin = (name: string): Plugin => {
+      const plugin = plugins.find(
+        (candidate): candidate is Plugin =>
+          candidate !== null &&
+          candidate !== false &&
+          !Array.isArray(candidate) &&
+          typeof candidate === 'object' &&
+          'name' in candidate &&
+          candidate.name === name
+      );
+      if (!plugin) {
+        throw new Error(`Missing ${name} from public createIsrPlugin().`);
+      }
+      return plugin;
+    };
+    const prePlugin = findPlugin('isr:dev-css-handoff');
+    const clientReferencePlugin = findPlugin('isr:dev-client-reference-styles');
     const preTransform = prePlugin!.transform as (code: string, id: string) => unknown;
     const postTransform = clientReferencePlugin!.transform as (
       code: string,
@@ -408,14 +473,18 @@ describe('createDevCssLifecyclePlugins', () => {
     await preTransform.call(
       context,
       'export default function NotClient() {}',
-      `${darkId}&t=17&import`
+      `${darkId}&t=1234567890123&import`
     );
 
     await expect(
       postTransform.call(context, 'export default function NotClient() {}', darkId)
     ).resolves.toBeUndefined();
     await expect(
-      postTransform.call(context, 'export default function Light() {}', `${lightId}&t=18&import`)
+      postTransform.call(
+        context,
+        'export default function Light() {}',
+        `${lightId}&t=1234567890124&import`
+      )
     ).rejects.toThrow(/development server is unavailable/i);
   });
 
