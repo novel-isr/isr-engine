@@ -1,14 +1,16 @@
 import { describe, expect, it } from 'vitest';
 
 import {
-  createDevCssHandoffPlugin,
+  createDevCssLifecyclePlugins,
   DEV_CSS_HANDOFF_RESOLVED_ID,
+  DEV_STYLE_REGISTRY_ID,
+  DEV_STYLE_REGISTRY_RESOLVED_ID,
   VITE_RSC_REMOVE_DUPLICATE_CSS_ID,
 } from '../createDevCssHandoffPlugin';
 
-describe('createDevCssHandoffPlugin', () => {
+describe('createDevCssLifecyclePlugins', () => {
   it('owns plugin-rsc dev stylesheet cleanup before the upstream virtual module resolves', async () => {
-    const plugin = createDevCssHandoffPlugin('/engine/defaults');
+    const [plugin] = createDevCssLifecyclePlugins('/engine/defaults');
     const resolveId = plugin.resolveId as (id: string) => string | undefined;
     const load = plugin.load as (id: string) => string | undefined;
 
@@ -18,7 +20,7 @@ describe('createDevCssHandoffPlugin', () => {
   });
 
   it('gives development RSC stylesheet resources a CSS-only URL identity', async () => {
-    const plugin = createDevCssHandoffPlugin('/engine/defaults');
+    const [plugin] = createDevCssLifecyclePlugins('/engine/defaults');
     const transform = plugin.transform as (
       code: string,
       id: string
@@ -45,7 +47,7 @@ describe('createDevCssHandoffPlugin', () => {
   });
 
   it('does not rewrite CSS imports outside plugin-rsc stylesheet resource modules', async () => {
-    const plugin = createDevCssHandoffPlugin('/engine/defaults');
+    const [plugin] = createDevCssLifecyclePlugins('/engine/defaults');
     const transform = plugin.transform as (
       code: string,
       id: string
@@ -53,6 +55,42 @@ describe('createDevCssHandoffPlugin', () => {
 
     expect(await transform('import styles from "/src/Page.module.scss";', '/src/Page.tsx')).toBe(
       undefined
+    );
+  });
+
+  it('adds a post-CSS plugin that supplies the singleton client registry', async () => {
+    const [prePlugin, postPlugin] = createDevCssLifecyclePlugins('/engine/defaults');
+    const resolveId = postPlugin.resolveId as (id: string) => string | undefined;
+    const load = postPlugin.load as (id: string) => string | undefined;
+    const transform = postPlugin.transform as (
+      code: string,
+      id: string
+    ) => Promise<{ code: string; map: null } | undefined>;
+
+    expect(prePlugin.enforce).toBe('pre');
+    expect(postPlugin.enforce).toBe('post');
+    expect(resolveId(DEV_STYLE_REGISTRY_ID)).toBe(DEV_STYLE_REGISTRY_RESOLVED_ID);
+    expect(load(DEV_STYLE_REGISTRY_RESOLVED_ID)).toContain('createDevStyleRegistry(document)');
+    expect(load(DEV_STYLE_REGISTRY_RESOLVED_ID)).toContain(
+      "import.meta.hot?.on('vite:beforeUpdate'"
+    );
+    expect(load(DEV_STYLE_REGISTRY_RESOLVED_ID)).toContain(
+      "import.meta.hot?.on('vite:afterUpdate'"
+    );
+    expect(load(DEV_STYLE_REGISTRY_RESOLVED_ID)).toContain("import.meta.hot?.on('vite:error'");
+
+    const result = await transform(
+      `
+        import { updateStyle, removeStyle } from "/@vite/client";
+        updateStyle("/src/Card.css", ".card{color:green}");
+        import.meta.hot.prune(() => removeStyle("/src/Card.css"));
+      `,
+      '/src/Card.css'
+    );
+
+    expect(result?.code).toContain(`from "${DEV_STYLE_REGISTRY_ID}"`);
+    expect(result?.code).toContain(
+      '__novel_isr_dev_styles.publish("/src/Card.css", ".card{color:green}")'
     );
   });
 });

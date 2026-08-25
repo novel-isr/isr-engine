@@ -4,8 +4,12 @@ import { pathToFileURL } from 'node:url';
 import ts from 'typescript';
 import type { Plugin } from 'vite';
 
+import { transformDevCssModule } from './transformDevCssModule';
+
 export const VITE_RSC_REMOVE_DUPLICATE_CSS_ID = 'virtual:vite-rsc/remove-duplicate-server-css';
 export const DEV_CSS_HANDOFF_RESOLVED_ID = '\0virtual:novel-isr/dev-css-handoff';
+export const DEV_STYLE_REGISTRY_ID = 'virtual:novel-isr/dev-style-registry';
+export const DEV_STYLE_REGISTRY_RESOLVED_ID = '\0virtual:novel-isr/dev-style-registry';
 const VITE_RSC_CSS_RESOLVED_PREFIX = '\0virtual:vite-rsc/css?';
 const STYLESHEET_URL = /\.(?:css|less|sass|scss|styl|stylus|pcss|postcss|sss)(?:[?#]|$)/i;
 
@@ -59,33 +63,67 @@ export function canonicalizeDevRscStylesheetModule(
 }
 
 export function createDevCssHandoffPlugin(defaultsDir: string): Plugin {
+  const plugin = createDevCssLifecyclePlugins(defaultsDir)[0];
+  if (plugin === undefined) throw new Error('Development CSS handoff plugin was not created.');
+  return plugin;
+}
+
+export function createDevCssLifecyclePlugins(defaultsDir: string): Plugin[] {
   const helperUrl = pathToFileURL(
     path.resolve(defaultsDir, 'runtime/dev-css-handoff.client.ts')
   ).href;
+  const registryUrl = pathToFileURL(
+    path.resolve(defaultsDir, 'runtime/dev-style-registry.client.ts')
+  ).href;
 
-  return {
-    name: 'isr:dev-css-handoff',
-    apply: 'serve',
-    enforce: 'pre',
-    resolveId(id) {
-      if (id === VITE_RSC_REMOVE_DUPLICATE_CSS_ID) return DEV_CSS_HANDOFF_RESOLVED_ID;
-      return undefined;
-    },
-    load(id) {
-      if (id !== DEV_CSS_HANDOFF_RESOLVED_ID) return undefined;
-      return `
-        "use client";
-        import * as React from "react";
-        import { handoffDevClientReferenceStyles } from ${JSON.stringify(helperUrl)};
+  return [
+    {
+      name: 'isr:dev-css-handoff',
+      apply: 'serve',
+      enforce: 'pre',
+      resolveId(id) {
+        if (id === VITE_RSC_REMOVE_DUPLICATE_CSS_ID) return DEV_CSS_HANDOFF_RESOLVED_ID;
+        return undefined;
+      },
+      load(id) {
+        if (id !== DEV_CSS_HANDOFF_RESOLVED_ID) return undefined;
+        return `
+          "use client";
+          import * as React from "react";
+          import { handoffDevClientReferenceStyles } from ${JSON.stringify(helperUrl)};
 
-        export default function DevCssHandoff() {
-          React.useEffect(() => handoffDevClientReferenceStyles(), []);
-          return null;
-        }
-      `;
+          export default function DevCssHandoff() {
+            React.useEffect(() => handoffDevClientReferenceStyles(), []);
+            return null;
+          }
+        `;
+      },
+      transform(code, id) {
+        return canonicalizeDevRscStylesheetModule(code, id);
+      },
     },
-    transform(code, id) {
-      return canonicalizeDevRscStylesheetModule(code, id);
+    {
+      name: 'isr:dev-style-registry',
+      apply: 'serve',
+      enforce: 'post',
+      resolveId(id) {
+        return id === DEV_STYLE_REGISTRY_ID ? DEV_STYLE_REGISTRY_RESOLVED_ID : undefined;
+      },
+      load(id) {
+        if (id !== DEV_STYLE_REGISTRY_RESOLVED_ID) return undefined;
+        return `
+          "use client";
+          import { createDevStyleRegistry } from ${JSON.stringify(registryUrl)};
+
+          export const devStyleRegistry = createDevStyleRegistry(document);
+          import.meta.hot?.on('vite:beforeUpdate', () => devStyleRegistry.beginUpdate());
+          import.meta.hot?.on('vite:afterUpdate', () => devStyleRegistry.commitUpdate());
+          import.meta.hot?.on('vite:error', () => devStyleRegistry.abortUpdate());
+        `;
+      },
+      transform(code, id) {
+        return transformDevCssModule(code, id, DEV_STYLE_REGISTRY_ID);
+      },
     },
-  };
+  ];
 }
