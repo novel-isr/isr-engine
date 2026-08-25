@@ -12,9 +12,21 @@ interface StyleRecord {
   pendingRelease: boolean;
 }
 
+interface RscStyleTransaction {
+  generation: number;
+  declaredActiveIds: Set<string>;
+  reconciledActiveIds?: string[];
+}
+
+export interface DevStyleRegistryOptions {
+  onRscCommit?(generation: number): void;
+}
+
 export interface DevStyleRegistry {
   publish(id: string, cssText: string): void;
   prune(id: string): void;
+  beginRscUpdate(generation: number): void;
+  abortRscUpdate(generation: number): void;
   beginUpdate(): void;
   commitUpdate(activeIds?: Iterable<string>): void;
   abortUpdate(): void;
@@ -22,10 +34,16 @@ export interface DevStyleRegistry {
   dispose(): void;
 }
 
-export function createDevStyleRegistry(document: Document): DevStyleRegistry {
+export function createDevStyleRegistry(
+  document: Document,
+  options: DevStyleRegistryOptions = {}
+): DevStyleRegistry {
   const records = new Map<string, StyleRecord>();
-  const declaredActiveIds = new Set<string>();
-  let reconciledActiveIds: string[] | undefined;
+  let committedActiveIds: string[] = [];
+  let rscTransaction: RscStyleTransaction | undefined = {
+    generation: 0,
+    declaredActiveIds: new Set(),
+  };
 
   const canonicalId = (id: string): string => {
     if (!id.trim())
@@ -100,17 +118,21 @@ export function createDevStyleRegistry(document: Document): DevStyleRegistry {
         release(record);
       }
     }
+    committedActiveIds = [...activeIds];
   };
 
-  const clearReconciledSet = () => {
-    declaredActiveIds.clear();
-    reconciledActiveIds = undefined;
+  const rollbackRscTransaction = (transaction: RscStyleTransaction) => {
+    if (rscTransaction !== transaction) return;
+    rscTransaction = undefined;
+    commitActiveSet(committedActiveIds);
   };
 
-  const commitReconciledSetWhenReady = (): boolean => {
-    if (reconciledActiveIds === undefined) return false;
+  const commitRscTransactionWhenReady = (): boolean => {
+    const transaction = rscTransaction;
+    const activeIds = transaction?.reconciledActiveIds;
+    if (transaction === undefined || activeIds === undefined) return false;
     if (
-      !reconciledActiveIds.every(id => {
+      !activeIds.every(id => {
         const record = matchingRecord(id);
         if (record?.node?.isConnected === true) return true;
         return matchingLinks(id).some(
@@ -121,15 +143,24 @@ export function createDevStyleRegistry(document: Document): DevStyleRegistry {
       return false;
     }
 
-    const activeIds = reconciledActiveIds;
     for (const id of activeIds) {
       if (matchingRecord(id)?.node?.isConnected === true) {
         for (const link of matchingLinks(id)) link.remove();
       }
     }
-    clearReconciledSet();
+    rscTransaction = undefined;
     commitActiveSet(activeIds);
+    options.onRscCommit?.(transaction.generation);
     return true;
+  };
+
+  const reconcileCommittedSet = () => {
+    for (const id of committedActiveIds) {
+      if (matchingRecord(id)?.node?.isConnected === true) {
+        for (const link of matchingLinks(id)) link.remove();
+      }
+    }
+    commitActiveSet(committedActiveIds);
   };
 
   return {
@@ -143,11 +174,11 @@ export function createDevStyleRegistry(document: Document): DevStyleRegistry {
       if (node.isConnected && node.textContent === cssText) {
         for (const link of matchingLinks(record.id)) {
           const linkId = stylesheetId(link);
-          if (linkId) declaredActiveIds.add(linkId);
+          if (linkId) rscTransaction?.declaredActiveIds.add(linkId);
           link.remove();
         }
       }
-      commitReconciledSetWhenReady();
+      commitRscTransactionWhenReady();
     },
 
     prune(id) {
@@ -157,8 +188,20 @@ export function createDevStyleRegistry(document: Document): DevStyleRegistry {
       record.state = 'pending-release';
     },
 
+    beginRscUpdate(generation) {
+      if (rscTransaction?.generation === generation) return;
+      if (rscTransaction !== undefined) rollbackRscTransaction(rscTransaction);
+      rscTransaction = {
+        generation,
+        declaredActiveIds: new Set(),
+      };
+    },
+
+    abortRscUpdate(generation) {
+      if (rscTransaction?.generation === generation) rollbackRscTransaction(rscTransaction);
+    },
+
     beginUpdate() {
-      clearReconciledSet();
       for (const record of records.values()) {
         if (!record.pendingRelease) record.state = 'updating';
       }
@@ -166,7 +209,7 @@ export function createDevStyleRegistry(document: Document): DevStyleRegistry {
 
     commitUpdate(activeIds) {
       if (activeIds === undefined) {
-        if (commitReconciledSetWhenReady()) return;
+        if (commitRscTransactionWhenReady()) return;
         for (const record of records.values()) {
           if (record.pendingRelease) restoreActiveState(record);
         }
@@ -174,31 +217,37 @@ export function createDevStyleRegistry(document: Document): DevStyleRegistry {
       }
 
       const active = Array.from(activeIds, canonicalId);
-      clearReconciledSet();
+      rscTransaction = undefined;
       commitActiveSet(active);
     },
 
     abortUpdate() {
-      clearReconciledSet();
       for (const record of records.values()) {
         if (record.pendingRelease || record.state === 'updating') restoreActiveState(record);
       }
     },
 
     reconcileDocumentStyles() {
-      for (const link of document.querySelectorAll<HTMLLinkElement>(SSR_STYLESHEET)) {
+      const transaction = rscTransaction;
+      if (transaction === undefined) {
+        reconcileCommittedSet();
+        return;
+      }
+
+      for (const link of Array.from(document.querySelectorAll<HTMLLinkElement>(SSR_STYLESHEET))) {
         const id = stylesheetId(link);
         if (id) {
-          declaredActiveIds.add(id);
+          transaction.declaredActiveIds.add(id);
           findOrCreateRecord(id);
         }
       }
-      reconciledActiveIds = Array.from(declaredActiveIds);
-      commitReconciledSetWhenReady();
+      transaction.reconciledActiveIds = Array.from(transaction.declaredActiveIds);
+      commitRscTransactionWhenReady();
     },
 
     dispose() {
-      clearReconciledSet();
+      rscTransaction = undefined;
+      committedActiveIds = [];
       for (const record of Array.from(records.values())) {
         record.node?.remove();
         record.state = 'released';

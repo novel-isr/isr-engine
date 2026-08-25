@@ -205,6 +205,53 @@ describe('development style registry', () => {
     expect(document.querySelector('style[data-novel-isr-dev-style="/src/A.scss"]')).toBeNull();
   });
 
+  it('keeps the committed owner across repeated boundary effects for the same RSC tree', () => {
+    const { document, registry } = createFixture();
+
+    appendRscLink(document, '/src/B.scss?direct');
+    registry.publish('/src/B.scss', '.b{display:grid}');
+    registry.reconcileDocumentStyles();
+    const owner = document.querySelector('style[data-novel-isr-dev-style="/src/B.scss"]');
+
+    registry.reconcileDocumentStyles();
+    registry.reconcileDocumentStyles();
+
+    expect(owner).not.toBeNull();
+    expect(owner?.isConnected).toBe(true);
+    expect(document.querySelectorAll('style[data-novel-isr-dev-style="/src/B.scss"]')).toHaveLength(
+      1
+    );
+  });
+
+  it('discards an aborted RSC generation before the next committed tree', () => {
+    const { document, registry } = createFixture();
+
+    appendRscLink(document, '/src/A.scss?direct');
+    registry.publish('/src/A.scss', '.a{display:block}');
+    registry.reconcileDocumentStyles();
+
+    registry.beginRscUpdate(1);
+    appendRscLink(document, '/src/B.scss?direct');
+    registry.publish('/src/B.scss', '.b{display:grid}');
+
+    registry.beginRscUpdate(2);
+
+    expect(document.querySelector('style[data-novel-isr-dev-style="/src/A.scss"]')).not.toBeNull();
+    expect(document.querySelector('style[data-novel-isr-dev-style="/src/B.scss"]')).toBeNull();
+
+    appendRscLink(document, '/src/C.scss?direct');
+    registry.reconcileDocumentStyles();
+
+    expect(document.querySelector('style[data-novel-isr-dev-style="/src/A.scss"]')).not.toBeNull();
+    expect(document.querySelector('style[data-novel-isr-dev-style="/src/B.scss"]')).toBeNull();
+
+    registry.publish('/src/C.scss', '.c{display:flex}');
+
+    expect(document.querySelector('style[data-novel-isr-dev-style="/src/A.scss"]')).toBeNull();
+    expect(document.querySelector('style[data-novel-isr-dev-style="/src/B.scss"]')).toBeNull();
+    expect(document.querySelector('style[data-novel-isr-dev-style="/src/C.scss"]')).not.toBeNull();
+  });
+
   it('treats a committed importer-resource link as an active owner', () => {
     const { document, registry } = createFixture();
 

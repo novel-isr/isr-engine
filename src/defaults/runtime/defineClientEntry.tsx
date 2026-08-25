@@ -32,6 +32,7 @@ import { rscStream } from 'rsc-html-stream/client';
 import { GlobalErrorBoundary } from './error-boundary';
 import { HydrationShell } from './hydration-shell';
 import { createRscRenderRequest } from './request';
+import { runWithDevStyleNavigation } from './dev-style-navigation.client';
 import { installDevRenderInspector } from './dev-render-inspector';
 import { setClientI18n } from '../../runtime/i18n-store';
 import { applySeoToDocument, type IntlPayload, type PageSeoMeta } from './seo-runtime';
@@ -243,12 +244,15 @@ async function main(hooks: ClientEntryHooks): Promise<void> {
     let setPayload: (v: DefaultRscPayload) => void = () => {};
 
     async function fetchRscPayload(): Promise<void> {
-      const renderRequest = createRscRenderRequest(window.location.href);
-      const fetchPromise = fetch(renderRequest);
-      const payload = await createFromFetch<DefaultRscPayload>(fetchPromise);
-      syncBrowserUrlToFinalRedirect(await fetchPromise);
-      setClientI18n(payload.intl);
-      applySeoToDocument(payload.seoMeta, payload.siteBaseUrl ?? undefined);
+      const payload = await runWithDevStyleNavigation(async () => {
+        const renderRequest = createRscRenderRequest(window.location.href);
+        const fetchPromise = fetch(renderRequest);
+        const nextPayload = await createFromFetch<DefaultRscPayload>(fetchPromise);
+        syncBrowserUrlToFinalRedirect(await fetchPromise);
+        setClientI18n(nextPayload.intl);
+        applySeoToDocument(nextPayload.seoMeta, nextPayload.siteBaseUrl ?? undefined);
+        return nextPayload;
+      });
       setPayload(payload);
     }
 
@@ -289,16 +293,19 @@ async function main(hooks: ClientEntryHooks): Promise<void> {
     }
 
     setServerCallback(async (id: string, args: unknown[]) => {
-      const temporaryReferences = createTemporaryReferenceSet();
-      const renderRequest = createRscRenderRequest(window.location.href, {
-        id,
-        body: await encodeReply(args, { temporaryReferences }),
+      const payload = await runWithDevStyleNavigation(async () => {
+        const temporaryReferences = createTemporaryReferenceSet();
+        const renderRequest = createRscRenderRequest(window.location.href, {
+          id,
+          body: await encodeReply(args, { temporaryReferences }),
+        });
+        const nextPayload = await createFromFetch<DefaultRscPayload>(fetch(renderRequest), {
+          temporaryReferences,
+        });
+        setClientI18n(nextPayload.intl);
+        applySeoToDocument(nextPayload.seoMeta, nextPayload.siteBaseUrl ?? undefined);
+        return nextPayload;
       });
-      const payload = await createFromFetch<DefaultRscPayload>(fetch(renderRequest), {
-        temporaryReferences,
-      });
-      setClientI18n(payload.intl);
-      applySeoToDocument(payload.seoMeta, payload.siteBaseUrl ?? undefined);
       setPayload(payload);
       const { ok, data } = payload.returnValue!;
       if (!ok) {
@@ -356,30 +363,36 @@ async function main(hooks: ClientEntryHooks): Promise<void> {
   }
 
   async function fetchRscPayload(): Promise<void> {
-    const renderRequest = createRscRenderRequest(window.location.href);
-    const fetchPromise = fetch(renderRequest);
-    const payload = await createFromFetch<DefaultRscPayload>(fetchPromise);
-    // 同步 server 302 / 308 redirect 后的 URL 到浏览器地址栏。
-    // 例：用户从 /zh-CN/books 点 logo 链 href="/"，pushState('/') 后 RSC fetch
-    // 命中 LocaleRedirect → /zh-CN，response.url 是带 /zh-CN 前缀的最终 URL。
-    // 不修齐就出现"地址栏 / + 内容是 /zh-CN 首页"的错位，刷新后才纠正。
-    syncBrowserUrlToFinalRedirect(await fetchPromise);
-    setClientI18n(payload.intl);
-    applySeoToDocument(payload.seoMeta, payload.siteBaseUrl ?? undefined);
+    const payload = await runWithDevStyleNavigation(async () => {
+      const renderRequest = createRscRenderRequest(window.location.href);
+      const fetchPromise = fetch(renderRequest);
+      const nextPayload = await createFromFetch<DefaultRscPayload>(fetchPromise);
+      // 同步 server 302 / 308 redirect 后的 URL 到浏览器地址栏。
+      // 例：用户从 /zh-CN/books 点 logo 链 href="/"，pushState('/') 后 RSC fetch
+      // 命中 LocaleRedirect → /zh-CN，response.url 是带 /zh-CN 前缀的最终 URL。
+      // 不修齐就出现"地址栏 / + 内容是 /zh-CN 首页"的错位，刷新后才纠正。
+      syncBrowserUrlToFinalRedirect(await fetchPromise);
+      setClientI18n(nextPayload.intl);
+      applySeoToDocument(nextPayload.seoMeta, nextPayload.siteBaseUrl ?? undefined);
+      return nextPayload;
+    });
     setPayload(payload);
   }
 
   setServerCallback(async (id: string, args: unknown[]) => {
-    const temporaryReferences = createTemporaryReferenceSet();
-    const renderRequest = createRscRenderRequest(window.location.href, {
-      id,
-      body: await encodeReply(args, { temporaryReferences }),
+    const payload = await runWithDevStyleNavigation(async () => {
+      const temporaryReferences = createTemporaryReferenceSet();
+      const renderRequest = createRscRenderRequest(window.location.href, {
+        id,
+        body: await encodeReply(args, { temporaryReferences }),
+      });
+      const nextPayload = await createFromFetch<DefaultRscPayload>(fetch(renderRequest), {
+        temporaryReferences,
+      });
+      setClientI18n(nextPayload.intl);
+      applySeoToDocument(nextPayload.seoMeta, nextPayload.siteBaseUrl ?? undefined);
+      return nextPayload;
     });
-    const payload = await createFromFetch<DefaultRscPayload>(fetch(renderRequest), {
-      temporaryReferences,
-    });
-    setClientI18n(payload.intl);
-    applySeoToDocument(payload.seoMeta, payload.siteBaseUrl ?? undefined);
     setPayload(payload);
     const { ok, data } = payload.returnValue!;
     if (!ok) {

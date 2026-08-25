@@ -74,6 +74,9 @@ export function createDevCssLifecyclePlugins(defaultsDir: string): Plugin[] {
   const registryUrl = pathToFileURL(
     path.resolve(defaultsDir, 'runtime/dev-style-registry.client.ts')
   ).href;
+  const navigationLifecycleUrl = pathToFileURL(
+    path.resolve(defaultsDir, 'runtime/dev-style-navigation.client.ts')
+  ).href;
 
   return [
     {
@@ -104,8 +107,15 @@ export function createDevCssLifecyclePlugins(defaultsDir: string): Plugin[] {
         return `
           "use client";
           import { createDevStyleRegistry } from ${JSON.stringify(registryUrl)};
+          import {
+            commitDevStyleNavigation,
+            registerDevStyleRegistry,
+          } from ${JSON.stringify(navigationLifecycleUrl)};
 
-          export const devStyleRegistry = createDevStyleRegistry(document);
+          export const devStyleRegistry = createDevStyleRegistry(document, {
+            onRscCommit: commitDevStyleNavigation,
+          });
+          registerDevStyleRegistry(devStyleRegistry);
           import.meta.hot?.on('vite:beforeUpdate', () => devStyleRegistry.beginUpdate());
           import.meta.hot?.on('vite:afterUpdate', () => devStyleRegistry.commitUpdate());
           import.meta.hot?.on('vite:error', () => devStyleRegistry.abortUpdate());
