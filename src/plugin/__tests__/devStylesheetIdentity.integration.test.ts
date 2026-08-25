@@ -419,7 +419,7 @@ async function createFixture(): Promise<string> {
   await writeFile(path.join(root, 'src/NestedPanel.module.scss'), '.panel { padding: 3px; }\n');
   await writeFile(
     path.join(root, 'src/NestedLeaf.tsx'),
-    `'use client';\nimport { panelCycle } from './NestedPanel';\nimport styles from './NestedLeaf.module.scss';\nimport contentUrl from '../content/example.md?url';\nimport Worker from '../content/worker.ts?worker';\nimport SharedWorker from '../content/worker.ts?sharedworker';\nconst content = import.meta.glob('../content/*.md', { query: '?raw', import: 'default', eager: true });\nexport default function NestedLeaf() { void contentUrl; void Worker; void SharedWorker; return <span className={styles.leaf}>{panelCycle}{Object.keys(content).length}</span>; }\n`
+    `'use client';\nimport { panelCycle } from './NestedPanel';\nimport styles from './NestedLeaf.module.scss';\nimport '../content/Worker.module.scss?worker';\nimport '../content/Worker.module.scss?sharedworker';\nimport '../content/Worker.module.scss?raw';\nimport '../content/Worker.module.scss?url';\nimport '../content/Worker.module.scss?inline';\nimport contentUrl from '../content/example.md?url';\nimport Worker from '../content/worker.ts?worker';\nimport SharedWorker from '../content/worker.ts?sharedworker';\nconst content = import.meta.glob('../content/*.md', { query: '?raw', import: 'default', eager: true });\nexport default function NestedLeaf() { void contentUrl; void Worker; void SharedWorker; return <span className={styles.leaf}>{panelCycle}{Object.keys(content).length}</span>; }\n`
   );
   await writeFile(path.join(root, 'src/NestedLeaf.module.scss'), '.leaf { display: inline; }\n');
   await mkdir(path.join(root, 'content'));

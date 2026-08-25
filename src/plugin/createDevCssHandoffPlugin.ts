@@ -495,9 +495,10 @@ async function collectClientReferenceStyles(server: ViteDevServer, id: string): 
 
     for (const dependency of transformed.importedModules) {
       const dependencyId = dependency.url || dependency.id;
+      if (dependencyId && TERMINAL_CLIENT_RESOURCE_QUERY.test(dependencyId)) continue;
       if (dependencyId && STYLESHEET_URL.test(dependencyId)) {
         if (!SPECIAL_STYLESHEET_QUERY.test(dependencyId)) styleIds.add(dependencyId);
-      } else if (!dependencyId || !TERMINAL_CLIENT_RESOURCE_QUERY.test(dependencyId)) {
+      } else {
         await visit(dependency);
       }
     }
