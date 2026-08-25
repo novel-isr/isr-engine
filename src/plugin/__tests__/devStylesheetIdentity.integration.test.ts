@@ -57,9 +57,9 @@ describe('development RSC stylesheet identity', () => {
     const boundaryModule = await server.environments.client.pluginContainer.load(
       lifecycleBoundary!.id
     );
-    expect(typeof boundaryModule === 'string' ? boundaryModule : boundaryModule?.code).toContain(
-      'devStyleRegistry.reconcileDocumentStyles()'
-    );
+    expect(
+      typeof boundaryModule === 'string' ? boundaryModule : boundaryModule?.code
+    ).not.toContain('reconcileDocumentStyles');
 
     const clientReferenceId = '/src/ClientCard.tsx';
     await server.environments.rsc.transformRequest(clientReferenceId);

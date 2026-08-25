@@ -32,6 +32,7 @@ import { rscStream } from 'rsc-html-stream/client';
 import { GlobalErrorBoundary } from './error-boundary';
 import { HydrationShell } from './hydration-shell';
 import { createRscRenderRequest } from './request';
+import { DevStyleCommitBoundary } from './dev-style-commit-boundary.client';
 import { runWithDevStyleNavigation } from './dev-style-navigation.client';
 import { installDevRenderInspector } from './dev-render-inspector';
 import { setClientI18n } from '../../runtime/i18n-store';
@@ -50,6 +51,20 @@ interface DefaultRscPayload {
   siteBaseUrl?: string | null;
   formState?: import('react-dom/client').ReactFormState;
   returnValue?: { ok: boolean; data: unknown };
+}
+
+interface DefaultRscPayloadState {
+  payload: DefaultRscPayload;
+  generation: number | undefined;
+}
+
+function renderPayloadRoot({ payload, generation }: DefaultRscPayloadState): React.ReactNode {
+  if (!import.meta.env.DEV || generation === undefined) return payload.root;
+  return (
+    <DevStyleCommitBoundary key={generation} generation={generation}>
+      {payload.root}
+    </DevStyleCommitBoundary>
+  );
 }
 
 const RSC_POSTFIX = '_.rsc';
@@ -241,23 +256,27 @@ async function main(hooks: ClientEntryHooks): Promise<void> {
     document.body.classList.remove('csr-shell-body');
     document.body.removeAttribute('style');
 
-    let setPayload: (v: DefaultRscPayload) => void = () => {};
+    let setPayload: (v: DefaultRscPayloadState) => void = () => {};
 
     async function fetchRscPayload(): Promise<void> {
-      const payload = await runWithDevStyleNavigation(async () => {
-        const renderRequest = createRscRenderRequest(window.location.href);
-        const fetchPromise = fetch(renderRequest);
-        const nextPayload = await createFromFetch<DefaultRscPayload>(fetchPromise);
-        syncBrowserUrlToFinalRedirect(await fetchPromise);
-        setClientI18n(nextPayload.intl);
-        applySeoToDocument(nextPayload.seoMeta, nextPayload.siteBaseUrl ?? undefined);
-        return nextPayload;
-      });
-      setPayload(payload);
+      await runWithDevStyleNavigation(
+        async () => {
+          const renderRequest = createRscRenderRequest(window.location.href);
+          const fetchPromise = fetch(renderRequest);
+          const payload = await createFromFetch<DefaultRscPayload>(fetchPromise);
+          return { payload, response: await fetchPromise };
+        },
+        ({ payload, response }, generation) => {
+          syncBrowserUrlToFinalRedirect(response);
+          setClientI18n(payload.intl);
+          applySeoToDocument(payload.seoMeta, payload.siteBaseUrl ?? undefined);
+          setPayload({ payload, generation });
+        }
+      );
     }
 
     function RscShellRoot(): React.ReactNode {
-      const [payload, setPayload_] = React.useState<DefaultRscPayload | null>(null);
+      const [payloadState, setPayload_] = React.useState<DefaultRscPayloadState | null>(null);
       const [failed, setFailed] = React.useState(false);
 
       React.useEffect(() => {
@@ -278,7 +297,7 @@ async function main(hooks: ClientEntryHooks): Promise<void> {
       }, []);
 
       if (failed) return React.createElement(CsrShellFallback);
-      if (!payload) {
+      if (!payloadState) {
         return React.createElement(
           'html',
           { lang: 'zh-CN' },
@@ -289,24 +308,30 @@ async function main(hooks: ClientEntryHooks): Promise<void> {
           )
         );
       }
-      return payload.root;
+      return renderPayloadRoot(payloadState);
     }
 
     setServerCallback(async (id: string, args: unknown[]) => {
-      const payload = await runWithDevStyleNavigation(async () => {
-        const temporaryReferences = createTemporaryReferenceSet();
-        const renderRequest = createRscRenderRequest(window.location.href, {
-          id,
-          body: await encodeReply(args, { temporaryReferences }),
-        });
-        const nextPayload = await createFromFetch<DefaultRscPayload>(fetch(renderRequest), {
-          temporaryReferences,
-        });
-        setClientI18n(nextPayload.intl);
-        applySeoToDocument(nextPayload.seoMeta, nextPayload.siteBaseUrl ?? undefined);
-        return nextPayload;
-      });
-      setPayload(payload);
+      const result = await runWithDevStyleNavigation(
+        async () => {
+          const temporaryReferences = createTemporaryReferenceSet();
+          const renderRequest = createRscRenderRequest(window.location.href, {
+            id,
+            body: await encodeReply(args, { temporaryReferences }),
+          });
+          return createFromFetch<DefaultRscPayload>(fetch(renderRequest), {
+            temporaryReferences,
+          });
+        },
+        (payload, generation) => {
+          setClientI18n(payload.intl);
+          applySeoToDocument(payload.seoMeta, payload.siteBaseUrl ?? undefined);
+          setPayload({ payload, generation });
+          return payload;
+        }
+      );
+      if (result.status === 'superseded') return undefined;
+      const payload = result.value;
       const { ok, data } = payload.returnValue!;
       if (!ok) {
         captureActionError(observability, data, id);
@@ -346,12 +371,15 @@ async function main(hooks: ClientEntryHooks): Promise<void> {
     return;
   }
 
-  let setPayload: (v: DefaultRscPayload) => void = () => {};
+  let setPayload: (v: DefaultRscPayloadState) => void = () => {};
   const initialPayload = await createFromReadableStream<DefaultRscPayload>(rscStream);
   setClientI18n(initialPayload.intl);
 
   function BrowserRoot(): React.ReactNode {
-    const [payload, setPayload_] = React.useState(initialPayload);
+    const [payloadState, setPayload_] = React.useState<DefaultRscPayloadState>({
+      payload: initialPayload,
+      generation: import.meta.env.DEV ? 0 : undefined,
+    });
     React.useEffect(() => {
       setPayload = v => React.startTransition(() => setPayload_(v));
     }, [setPayload_]);
@@ -359,41 +387,48 @@ async function main(hooks: ClientEntryHooks): Promise<void> {
       () => listenNavigation(fetchRscPayload, hooks.onNavigate, observability, hookContext),
       []
     );
-    return payload.root;
+    return renderPayloadRoot(payloadState);
   }
 
   async function fetchRscPayload(): Promise<void> {
-    const payload = await runWithDevStyleNavigation(async () => {
-      const renderRequest = createRscRenderRequest(window.location.href);
-      const fetchPromise = fetch(renderRequest);
-      const nextPayload = await createFromFetch<DefaultRscPayload>(fetchPromise);
-      // 同步 server 302 / 308 redirect 后的 URL 到浏览器地址栏。
-      // 例：用户从 /zh-CN/books 点 logo 链 href="/"，pushState('/') 后 RSC fetch
-      // 命中 LocaleRedirect → /zh-CN，response.url 是带 /zh-CN 前缀的最终 URL。
-      // 不修齐就出现"地址栏 / + 内容是 /zh-CN 首页"的错位，刷新后才纠正。
-      syncBrowserUrlToFinalRedirect(await fetchPromise);
-      setClientI18n(nextPayload.intl);
-      applySeoToDocument(nextPayload.seoMeta, nextPayload.siteBaseUrl ?? undefined);
-      return nextPayload;
-    });
-    setPayload(payload);
+    await runWithDevStyleNavigation(
+      async () => {
+        const renderRequest = createRscRenderRequest(window.location.href);
+        const fetchPromise = fetch(renderRequest);
+        const payload = await createFromFetch<DefaultRscPayload>(fetchPromise);
+        return { payload, response: await fetchPromise };
+      },
+      ({ payload, response }, generation) => {
+        // Keep every browser mutation behind the generation freshness check.
+        syncBrowserUrlToFinalRedirect(response);
+        setClientI18n(payload.intl);
+        applySeoToDocument(payload.seoMeta, payload.siteBaseUrl ?? undefined);
+        setPayload({ payload, generation });
+      }
+    );
   }
 
   setServerCallback(async (id: string, args: unknown[]) => {
-    const payload = await runWithDevStyleNavigation(async () => {
-      const temporaryReferences = createTemporaryReferenceSet();
-      const renderRequest = createRscRenderRequest(window.location.href, {
-        id,
-        body: await encodeReply(args, { temporaryReferences }),
-      });
-      const nextPayload = await createFromFetch<DefaultRscPayload>(fetch(renderRequest), {
-        temporaryReferences,
-      });
-      setClientI18n(nextPayload.intl);
-      applySeoToDocument(nextPayload.seoMeta, nextPayload.siteBaseUrl ?? undefined);
-      return nextPayload;
-    });
-    setPayload(payload);
+    const result = await runWithDevStyleNavigation(
+      async () => {
+        const temporaryReferences = createTemporaryReferenceSet();
+        const renderRequest = createRscRenderRequest(window.location.href, {
+          id,
+          body: await encodeReply(args, { temporaryReferences }),
+        });
+        return createFromFetch<DefaultRscPayload>(fetch(renderRequest), {
+          temporaryReferences,
+        });
+      },
+      (payload, generation) => {
+        setClientI18n(payload.intl);
+        applySeoToDocument(payload.seoMeta, payload.siteBaseUrl ?? undefined);
+        setPayload({ payload, generation });
+        return payload;
+      }
+    );
+    if (result.status === 'superseded') return undefined;
+    const payload = result.value;
     const { ok, data } = payload.returnValue!;
     if (!ok) {
       captureActionError(observability, data, id);

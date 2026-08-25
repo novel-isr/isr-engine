@@ -1,6 +1,6 @@
 import { canonicalizeDevStyleId, styleIdsMatch } from './dev-style-id';
 
-const SSR_STYLESHEET = 'link[rel="stylesheet"][data-precedence^="vite-rsc/"]';
+const RSC_STYLESHEET = 'link[rel="stylesheet"][data-precedence^="vite-rsc/"]';
 
 type DevStyleState = 'ssr-active' | 'client-active' | 'updating' | 'pending-release' | 'released';
 
@@ -10,12 +10,6 @@ interface StyleRecord {
   node?: HTMLStyleElement;
   cssText?: string;
   pendingRelease: boolean;
-}
-
-interface RscStyleTransaction {
-  generation: number;
-  declaredActiveIds: Set<string>;
-  reconciledActiveIds?: string[];
 }
 
 export interface DevStyleRegistryOptions {
@@ -30,7 +24,7 @@ export interface DevStyleRegistry {
   beginUpdate(): void;
   commitUpdate(activeIds?: Iterable<string>): void;
   abortUpdate(): void;
-  reconcileDocumentStyles(): void;
+  reconcileDocumentStyles(generation: number): void;
   dispose(): void;
 }
 
@@ -39,11 +33,9 @@ export function createDevStyleRegistry(
   options: DevStyleRegistryOptions = {}
 ): DevStyleRegistry {
   const records = new Map<string, StyleRecord>();
+  const pendingRscGenerations = new Set<number>();
   let committedActiveIds: string[] = [];
-  let rscTransaction: RscStyleTransaction | undefined = {
-    generation: 0,
-    declaredActiveIds: new Set(),
-  };
+  let latestCommittedGeneration = -1;
 
   const canonicalId = (id: string): string => {
     if (!id.trim())
@@ -72,29 +64,30 @@ export function createDevStyleRegistry(
   const findOrCreateRecord = (id: string): StyleRecord => {
     const existing = matchingRecord(id);
     if (existing) return existing;
-
-    const record: StyleRecord = {
-      id,
-      state: 'ssr-active',
-      pendingRelease: false,
-    };
+    const record: StyleRecord = { id, state: 'ssr-active', pendingRelease: false };
     records.set(id, record);
     return record;
   };
 
   const matchingLinks = (id: string): HTMLLinkElement[] =>
-    Array.from(document.querySelectorAll<HTMLLinkElement>(SSR_STYLESHEET)).filter(link => {
+    Array.from(document.querySelectorAll<HTMLLinkElement>(RSC_STYLESHEET)).filter(link => {
       const linkId = stylesheetId(link);
       return linkId !== undefined && styleIdsMatch(linkId, id, document.baseURI);
     });
 
-  const installManagedNode = (record: StyleRecord): HTMLStyleElement => {
-    if (record.node?.isConnected) return record.node;
+  const isCommitted = (id: string): boolean =>
+    committedActiveIds.some(activeId => styleIdsMatch(activeId, id, document.baseURI));
 
-    const node = document.createElement('style');
-    node.setAttribute('data-novel-isr-dev-style', record.id);
-    document.head.appendChild(node);
-    record.node = node;
+  const installManagedNode = (record: StyleRecord): HTMLStyleElement => {
+    const node = record.node?.isConnected ? record.node : document.createElement('style');
+    if (!node.isConnected) {
+      node.setAttribute('data-novel-isr-dev-style', record.id);
+      document.head.appendChild(node);
+      record.node = node;
+    }
+    if (record.cssText !== undefined) node.textContent = record.cssText;
+    record.pendingRelease = false;
+    record.state = 'client-active';
     return node;
   };
 
@@ -121,64 +114,27 @@ export function createDevStyleRegistry(
     committedActiveIds = [...activeIds];
   };
 
-  const rollbackRscTransaction = (transaction: RscStyleTransaction) => {
-    if (rscTransaction !== transaction) return;
-    rscTransaction = undefined;
-    commitActiveSet(committedActiveIds);
-  };
-
-  const commitRscTransactionWhenReady = (): boolean => {
-    const transaction = rscTransaction;
-    const activeIds = transaction?.reconciledActiveIds;
-    if (transaction === undefined || activeIds === undefined) return false;
-    if (
-      !activeIds.every(id => {
-        const record = matchingRecord(id);
-        if (record?.node?.isConnected === true) return true;
-        return matchingLinks(id).some(
-          link => !link.dataset.precedence?.startsWith('vite-rsc/client-reference')
-        );
-      })
-    ) {
-      return false;
-    }
-
-    for (const id of activeIds) {
-      if (matchingRecord(id)?.node?.isConnected === true) {
-        for (const link of matchingLinks(id)) link.remove();
-      }
-    }
-    rscTransaction = undefined;
-    commitActiveSet(activeIds);
-    options.onRscCommit?.(transaction.generation);
-    return true;
-  };
-
   const reconcileCommittedSet = () => {
     for (const id of committedActiveIds) {
-      if (matchingRecord(id)?.node?.isConnected === true) {
+      const record = matchingRecord(id);
+      if (record?.cssText !== undefined) installManagedNode(record);
+      if (record?.node?.isConnected) {
         for (const link of matchingLinks(id)) link.remove();
       }
     }
-    commitActiveSet(committedActiveIds);
   };
 
   return {
     publish(id, cssText) {
       const record = findOrCreateRecord(canonicalId(id));
-      const node = installManagedNode(record);
-      node.textContent = cssText;
       record.cssText = cssText;
-      restoreActiveState(record);
+      const links = matchingLinks(record.id);
 
-      if (node.isConnected && node.textContent === cssText) {
-        for (const link of matchingLinks(record.id)) {
-          const linkId = stylesheetId(link);
-          if (linkId) rscTransaction?.declaredActiveIds.add(linkId);
-          link.remove();
-        }
+      if (isCommitted(record.id) || (pendingRscGenerations.size === 0 && links.length === 0)) {
+        installManagedNode(record);
+        if (!isCommitted(record.id)) committedActiveIds.push(record.id);
+        for (const link of links) link.remove();
       }
-      commitRscTransactionWhenReady();
     },
 
     prune(id) {
@@ -189,16 +145,12 @@ export function createDevStyleRegistry(
     },
 
     beginRscUpdate(generation) {
-      if (rscTransaction?.generation === generation) return;
-      if (rscTransaction !== undefined) rollbackRscTransaction(rscTransaction);
-      rscTransaction = {
-        generation,
-        declaredActiveIds: new Set(),
-      };
+      if (generation > latestCommittedGeneration) pendingRscGenerations.add(generation);
     },
 
     abortRscUpdate(generation) {
-      if (rscTransaction?.generation === generation) rollbackRscTransaction(rscTransaction);
+      pendingRscGenerations.delete(generation);
+      reconcileCommittedSet();
     },
 
     beginUpdate() {
@@ -209,16 +161,12 @@ export function createDevStyleRegistry(
 
     commitUpdate(activeIds) {
       if (activeIds === undefined) {
-        if (commitRscTransactionWhenReady()) return;
         for (const record of records.values()) {
           if (record.pendingRelease) restoreActiveState(record);
         }
         return;
       }
-
-      const active = Array.from(activeIds, canonicalId);
-      rscTransaction = undefined;
-      commitActiveSet(active);
+      commitActiveSet(Array.from(activeIds, canonicalId));
     },
 
     abortUpdate() {
@@ -227,26 +175,47 @@ export function createDevStyleRegistry(
       }
     },
 
-    reconcileDocumentStyles() {
-      const transaction = rscTransaction;
-      if (transaction === undefined) {
+    reconcileDocumentStyles(generation) {
+      if (generation < latestCommittedGeneration) return;
+      if (generation === latestCommittedGeneration) {
         reconcileCommittedSet();
         return;
       }
 
-      for (const link of Array.from(document.querySelectorAll<HTMLLinkElement>(SSR_STYLESHEET))) {
-        const id = stylesheetId(link);
-        if (id) {
-          transaction.declaredActiveIds.add(id);
-          findOrCreateRecord(id);
+      const links = Array.from(document.querySelectorAll<HTMLLinkElement>(RSC_STYLESHEET));
+      const activeIds = Array.from(
+        new Set(links.map(stylesheetId).filter((id): id is string => id !== undefined))
+      );
+
+      for (const id of activeIds) {
+        const record = findOrCreateRecord(id);
+        if (record.cssText !== undefined) installManagedNode(record);
+      }
+
+      const ready = activeIds.every(id => {
+        const record = matchingRecord(id);
+        if (record?.node?.isConnected) return true;
+        return matchingLinks(id).some(
+          link => !link.dataset.precedence?.startsWith('vite-rsc/client-reference')
+        );
+      });
+      if (!ready) return;
+
+      for (const id of activeIds) {
+        if (matchingRecord(id)?.node?.isConnected) {
+          for (const link of matchingLinks(id)) link.remove();
         }
       }
-      transaction.reconciledActiveIds = Array.from(transaction.declaredActiveIds);
-      commitRscTransactionWhenReady();
+      commitActiveSet(activeIds);
+      latestCommittedGeneration = generation;
+      for (const pending of pendingRscGenerations) {
+        if (pending <= generation) pendingRscGenerations.delete(pending);
+      }
+      options.onRscCommit?.(generation);
     },
 
     dispose() {
-      rscTransaction = undefined;
+      pendingRscGenerations.clear();
       committedActiveIds = [];
       for (const record of Array.from(records.values())) {
         record.node?.remove();

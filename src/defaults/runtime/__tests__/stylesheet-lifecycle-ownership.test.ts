@@ -32,4 +32,15 @@ describe('stylesheet lifecycle ownership', () => {
       expect(packageJson.devDependencies[dependency]).toBe(reactWithStyleHintFix);
     }
   });
+
+  it('carries each development generation into an engine-owned React commit boundary', () => {
+    const clientEntry = source('src/defaults/runtime/defineClientEntry.tsx');
+    const commitBoundary = source('src/defaults/runtime/dev-style-commit-boundary.client.tsx');
+    const pluginRscBoundary = source('src/defaults/runtime/dev-css-handoff.client.ts');
+
+    expect(clientEntry).toContain('DevStyleCommitBoundary');
+    expect(clientEntry).toContain('generation');
+    expect(commitBoundary).toContain('commitDevStyleTree(generation)');
+    expect(pluginRscBoundary).not.toContain('reconcileDocumentStyles');
+  });
 });

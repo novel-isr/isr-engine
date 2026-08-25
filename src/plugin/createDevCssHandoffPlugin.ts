@@ -108,12 +108,12 @@ export function createDevCssLifecyclePlugins(defaultsDir: string): Plugin[] {
           "use client";
           import { createDevStyleRegistry } from ${JSON.stringify(registryUrl)};
           import {
-            commitDevStyleNavigation,
+            completeDevStyleNavigation,
             registerDevStyleRegistry,
           } from ${JSON.stringify(navigationLifecycleUrl)};
 
           export const devStyleRegistry = createDevStyleRegistry(document, {
-            onRscCommit: commitDevStyleNavigation,
+            onRscCommit: completeDevStyleNavigation,
           });
           registerDevStyleRegistry(devStyleRegistry);
           import.meta.hot?.on('vite:beforeUpdate', () => devStyleRegistry.beginUpdate());

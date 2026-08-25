@@ -39,8 +39,8 @@ describe('dev client-reference stylesheet ownership', () => {
     const registry = createDevStyleRegistry(document as unknown as Document);
 
     try {
-      registry.reconcileDocumentStyles();
       registry.publish('/workspace/app/src/Card.scss', '.card { color: green; }');
+      registry.reconcileDocumentStyles(0);
       expect(document.querySelector('link[href*="Card.scss"]')).toBeNull();
       registry.beginUpdate();
       registry.prune('/workspace/app/src/Card.scss');

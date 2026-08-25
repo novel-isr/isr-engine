@@ -21,10 +21,8 @@ describe('createDevCssLifecyclePlugins', () => {
     expect(plugin.enforce).toBe('pre');
     expect(resolveId(VITE_RSC_REMOVE_DUPLICATE_CSS_ID)).toBe(DEV_CSS_HANDOFF_RESOLVED_ID);
     expect(load(DEV_CSS_HANDOFF_RESOLVED_ID)).toContain('DevCssLifecycleBoundary');
-    expect(load(DEV_CSS_HANDOFF_RESOLVED_ID)).toContain('React.useLayoutEffect');
-    expect(load(DEV_CSS_HANDOFF_RESOLVED_ID)).toContain(
-      'devStyleRegistry.reconcileDocumentStyles()'
-    );
+    expect(load(DEV_CSS_HANDOFF_RESOLVED_ID)).not.toContain('React.useLayoutEffect');
+    expect(load(DEV_CSS_HANDOFF_RESOLVED_ID)).not.toContain('reconcileDocumentStyles');
     expect(load(DEV_CSS_HANDOFF_RESOLVED_ID)).not.toContain('handoffDevClientReferenceStyles');
   });
 
@@ -81,7 +79,9 @@ describe('createDevCssLifecyclePlugins', () => {
     expect(resolveId(DEV_STYLE_REGISTRY_ID)).toBe(DEV_STYLE_REGISTRY_RESOLVED_ID);
     expect(load(DEV_STYLE_REGISTRY_RESOLVED_ID)).toContain('createDevStyleRegistry(document,');
     expect(load(DEV_STYLE_REGISTRY_RESOLVED_ID)).toContain('registerDevStyleRegistry');
-    expect(load(DEV_STYLE_REGISTRY_RESOLVED_ID)).toContain('onRscCommit: commitDevStyleNavigation');
+    expect(load(DEV_STYLE_REGISTRY_RESOLVED_ID)).toContain(
+      'onRscCommit: completeDevStyleNavigation'
+    );
     expect(load(DEV_STYLE_REGISTRY_RESOLVED_ID)).toContain(
       "import.meta.hot?.on('vite:beforeUpdate'"
     );
