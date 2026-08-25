@@ -53,17 +53,56 @@ describe('dev asset request middleware', () => {
 
   it('leaves generated optimize-dependency URLs under Vite ownership', async () => {
     const root = await createRoot({});
-    const handler = installMiddleware(root);
-    const req = { url: '/node_modules/.vite/deps/rsc-html-stream_client.js?v=cold-start' };
-    const res = createResponse();
-    let nextCalled = false;
+    const cacheDir = path.join(root, 'node_modules/.vite');
+    const handler = installMiddleware(root, cacheDir);
+    const optimizedPaths = [
+      '/node_modules/.vite/deps/rsc-html-stream_client.js?v=cold-start',
+      `/@fs/${path.join(cacheDir, 'deps_rsc/react.js')}`,
+      `/@fs/${path.join(cacheDir, 'deps_ssr_temp_deadbeef/react-dom.js')}`,
+      `/@fs/${path.join(cacheDir, 'deps_temp_0123abcd/react.js')}`,
+    ];
 
-    handler(req as Connect.IncomingMessage, res as never, () => {
-      nextCalled = true;
-    });
+    for (const url of optimizedPaths) {
+      const result = handleRequest(handler, url);
+      expect(result.nextCalled, url).toBe(true);
+      expect(result.res.ended, url).toBe(false);
+    }
+  });
 
-    expect(nextCalled).toBe(true);
-    expect(res.ended).toBe(false);
+  it('keeps missing source assets guarded when cacheDir contains the project', async () => {
+    const root = await createRoot({});
+
+    for (const cacheDir of [root, path.dirname(root)]) {
+      const handler = installMiddleware(root, cacheDir);
+      for (const url of [
+        '/src/missing.js',
+        '/node_modules/missing-package/index.js',
+        `/@fs/${path.join(root, 'src/missing.js')}`,
+      ]) {
+        const result = handleRequest(handler, url);
+        expect(result.nextCalled, `${cacheDir}: ${url}`).toBe(false);
+        expect(result.res.statusCode, `${cacheDir}: ${url}`).toBe(404);
+      }
+    }
+  });
+
+  it('does not delegate unrelated or escaping cache paths as optimized dependencies', async () => {
+    const root = await createRoot({});
+    const cacheDir = path.join(root, 'node_modules/.vite');
+    const handler = installMiddleware(root, cacheDir);
+    const guardedPaths = [
+      '/node_modules/.vite/metadata.js',
+      '/node_modules/.vite/deps-other/not-vite.js',
+      '/node_modules/.vite/deps_temp_not-a-vite-hash/not-vite.js',
+      '/node_modules/.vite/deps/../../escaped.js',
+      '/node_modules/.vite/deps/%2e%2e/%2e%2e/encoded-escape.js',
+    ];
+
+    for (const url of guardedPaths) {
+      const result = handleRequest(handler, url);
+      expect(result.nextCalled, url).toBe(false);
+      expect(result.res.statusCode, url).toBe(404);
+    }
   });
 
   it('keeps query strings when stripping cache suffixes', () => {
@@ -88,7 +127,10 @@ async function createRoot(files: Record<string, string>): Promise<string> {
   return root;
 }
 
-function installMiddleware(root: string): Connect.NextHandleFunction {
+function installMiddleware(
+  root: string,
+  cacheDir = path.join(root, 'node_modules/.vite')
+): Connect.NextHandleFunction {
   const plugin = createDevAssetRequestMiddleware(root);
   const handlers: Connect.NextHandleFunction[] = [];
   const configureServer = plugin.configureServer;
@@ -99,7 +141,7 @@ function installMiddleware(root: string): Connect.NextHandleFunction {
   configureServer.call(
     {} as never,
     {
-      config: { root, cacheDir: path.join(root, 'node_modules/.vite') },
+      config: { root, cacheDir },
       middlewares: {
         use(handler: Connect.NextHandleFunction) {
           handlers.push(handler);
@@ -111,6 +153,19 @@ function installMiddleware(root: string): Connect.NextHandleFunction {
   const handler = handlers[0];
   if (!handler) throw new Error('middleware was not installed');
   return handler;
+}
+
+function handleRequest(
+  handler: Connect.NextHandleFunction,
+  url: string
+): { nextCalled: boolean; res: ReturnType<typeof createResponse> } {
+  const req = { url };
+  const res = createResponse();
+  let nextCalled = false;
+  handler(req as Connect.IncomingMessage, res as never, () => {
+    nextCalled = true;
+  });
+  return { nextCalled, res };
 }
 
 function createResponse(): {

@@ -7,6 +7,9 @@ const CACHE_SUFFIX_MARKERS = ['$$cache=', '%24%24cache='] as const;
 const DEV_ASSET_EXT_RE =
   /\.(js|mjs|cjs|ts|tsx|jsx|json|map|css|scss|sass|less|stylus|png|jpe?g|gif|webp|avif|svg|ico|woff2?|ttf|eot|mp3|mp4|webm|ogg|wasm|zip|pdf)$/i;
 
+// Vite 8.0.14: cacheDir/deps + non-client environment suffix + _temp_<getHash()>.
+const VITE_OPTIMIZED_DEPS_DIR_RE = /^deps(?:_(?:rsc|ssr))?(?:_temp_[0-9a-f]{8})?$/;
+
 /**
  * plugin-rsc puts a `$$cache=<id>` suffix into client reference module ids.
  * Browser requests must go back to the real source URL before Vite's transform
@@ -51,7 +54,7 @@ export function createDevAssetRequestMiddleware(root: string): Plugin {
         if (
           pathname &&
           isDevAssetPath(pathname) &&
-          !isViteCacheAsset(projectRoot, viteCacheDir, pathname) &&
+          !isViteOptimizedDepsAsset(projectRoot, viteCacheDir, pathname) &&
           !assetExists(projectRoot, pathname)
         ) {
           res.statusCode = 404;
@@ -66,10 +69,12 @@ export function createDevAssetRequestMiddleware(root: string): Plugin {
   };
 }
 
-function isViteCacheAsset(root: string, cacheDir: string, pathname: string): boolean {
+function isViteOptimizedDepsAsset(root: string, cacheDir: string, pathname: string): boolean {
   const assetPath = resolveAssetPath(root, pathname);
   const relative = path.relative(cacheDir, assetPath);
-  return relative === '' || (!relative.startsWith('..') && !path.isAbsolute(relative));
+  if (relative === '' || relative.startsWith('..') || path.isAbsolute(relative)) return false;
+  const [depsDirectory, ...assetSegments] = relative.split(path.sep);
+  return assetSegments.length > 0 && VITE_OPTIMIZED_DEPS_DIR_RE.test(depsDirectory ?? '');
 }
 
 function getPathname(url: string): string {
