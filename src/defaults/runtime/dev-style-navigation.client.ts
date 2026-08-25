@@ -11,7 +11,7 @@ export interface DevStyleNavigationLifecycle {
     apply: (value: T, generation: number | undefined) => R,
     prepare?: (value: T, generation: number | undefined) => void | Promise<void>
   ): Promise<DevStyleNavigationResult<R, T>>;
-  prepareTree(generation: number, styleIds: Iterable<string>): Promise<void>;
+  prepareTree(generation: number, styleIds?: Iterable<string>): Promise<string[]>;
   commitTree(generation: number, styleIds: Iterable<string>): void;
   complete(generation: number): void;
 }
@@ -31,7 +31,7 @@ export function createDevStyleNavigationLifecycle(
         const value = await operation(undefined);
         return { status: 'applied', value: apply(value, undefined), generation: undefined };
       },
-      prepareTree: async () => {},
+      prepareTree: async (_generation, styleIds) => (styleIds ? Array.from(styleIds) : []),
       commitTree: () => {},
       complete: () => {},
     };
@@ -116,15 +116,17 @@ export function createDevStyleNavigationLifecycle(
     },
 
     async prepareTree(generation, styleIds) {
-      const declared = Array.from(styleIds);
-      pendingStyleIds.set(generation, declared);
+      const declared = styleIds === undefined ? undefined : Array.from(styleIds);
+      if (declared) pendingStyleIds.set(generation, declared);
       if (!registry) {
-        if (declared.length === 0) return;
+        if (declared === undefined || declared.length === 0) return [];
         throw new Error(
           `Development stylesheet registry is unavailable for RSC generation ${generation}.`
         );
       }
-      await registry.prepareRscStyles(generation, declared);
+      const resolved = await registry.prepareRscStyles(generation, declared);
+      pendingStyleIds.set(generation, resolved);
+      return resolved;
     },
 
     commitTree(generation, styleIds) {

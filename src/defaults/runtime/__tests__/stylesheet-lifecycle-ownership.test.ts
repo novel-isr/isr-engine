@@ -43,12 +43,23 @@ describe('stylesheet lifecycle ownership', () => {
     const commitBoundary = source('src/defaults/runtime/dev-style-commit-boundary.client.tsx');
     const pluginRscBoundary = source('src/defaults/runtime/dev-css-handoff.client.ts');
     const registry = source('src/defaults/runtime/dev-style-registry.client.ts');
+    const responseObserver = source('src/defaults/runtime/dev-rsc-response.client.ts');
+    const resourceDispatcher = source(
+      'src/defaults/runtime/dev-style-resource-dispatcher.server.ts'
+    );
+    const plugin = source('src/plugin/createDevCssHandoffPlugin.ts');
     const request = source('src/defaults/runtime/request.tsx');
 
     expect(clientEntry).toContain('DevStyleCommitBoundary');
-    expect(clientEntry).toContain('devStyleIds');
-    expect(serverEntry).toContain('devStyleIds');
+    expect(clientEntry).not.toContain('devStyleIds');
+    expect(serverEntry).not.toContain('devStyleIds');
     expect(serverEntry).toContain('onClientReference');
+    expect(clientEntry).toContain('observeDevRscResponse');
+    expect(clientEntry).toContain('getOrCreateDevStyleRegistry');
+    expect(responseObserver).toContain('queueMicrotask(resolveCompletion)');
+    expect(resourceDispatcher).toContain(".S(href, 'vite-rsc/client-reference'");
+    expect(resourceDispatcher).toContain("{ media: 'not all' }");
+    expect(plugin).toContain('assertPinnedDevStyleResourceDispatcher();');
     expect(clientEntry).toContain('devStyleGeneration: generation');
     expect(serverEntry).toContain('transportGeneration: renderRequest.devStyleGeneration');
     expect(request).toContain(
@@ -57,8 +68,7 @@ describe('stylesheet lifecycle ownership', () => {
     expect(request).toContain('if (import.meta.env.DEV && encodedGeneration !== null)');
     expect(commitBoundary).toContain('commitDevStyleTree(generation, styleIds)');
     expect(pluginRscBoundary).not.toContain('reconcileDocumentStyles');
-    expect(registry).not.toContain(
-      'const links = Array.from(document.querySelectorAll<HTMLLinkElement>(RSC_STYLESHEET))'
-    );
+    expect(registry).toContain('const bootstrapLinks = new Map');
+    expect(registry).toContain('generationLinks(generation)');
   });
 });

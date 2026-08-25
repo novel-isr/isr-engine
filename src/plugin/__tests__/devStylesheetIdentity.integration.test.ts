@@ -73,15 +73,11 @@ describe('development RSC stylesheet identity', () => {
       runner: { import(id: string): Promise<unknown> };
     };
     const rscEntry = (await rscEnvironment.runner.import('/src/entry.rsc.tsx')) as {
-      render(): Promise<{
-        devStyleIds: string[];
-        stream: ReadableStream<Uint8Array>;
-      }>;
+      render(generation?: number): Promise<ReadableStream<Uint8Array>>;
     };
-    const rendered = await rscEntry.render();
-    await new Response(rendered.stream).text();
+    const flight = await new Response(await rscEntry.render(1)).text();
 
-    expect(rendered.devStyleIds).toContain('/src/ClientCard.module.scss');
+    expect(flight).toContain('/src/ClientCard.module.scss?direct=&__novel_isr_style_generation=1');
   });
 
   it('keeps query-bearing virtual client references distinct through the standard engine pipeline', async () => {
@@ -209,22 +205,17 @@ describe('development RSC stylesheet identity', () => {
       runner: { import(id: string): Promise<unknown> };
     };
     const rscEntry = (await rscEnvironment.runner.import('/src/entry.rsc.tsx')) as {
-      render(generation?: number): Promise<{
-        devStyleIds: string[];
-        stream: ReadableStream<Uint8Array>;
-      }>;
+      render(generation?: number): Promise<ReadableStream<Uint8Array>>;
     };
-    const rendered = await rscEntry.render(3);
-    const flight = await new Response(rendered.stream).text();
-    expect([...rendered.devStyleIds].sort()).toEqual([
-      '/src/ClientCard.module.scss',
-      '/src/Page.scss',
-    ]);
+    const flight = await new Response(await rscEntry.render(3)).text();
     expect(flight).toContain('__novel_isr_style_generation=3');
     expect(flight).toContain('not all');
+    expect(flight).toContain('/src/ClientCard.module.scss?direct=&__novel_isr_style_generation=3');
+    expect(flight).toMatch(
+      /:HS\["\/src\/ClientCard\.module\.scss\?direct=&__novel_isr_style_generation=3","vite-rsc\/client-reference",\{"media":"not all"\}\]/
+    );
 
-    const initial = await rscEntry.render();
-    const initialFlight = await new Response(initial.stream).text();
+    const initialFlight = await new Response(await rscEntry.render()).text();
     expect(initialFlight).not.toContain('not all');
 
     const listener = http.createServer(server.middlewares);
@@ -302,14 +293,13 @@ async function createFixture(): Promise<string> {
       `import { declareDevClientReferenceStyles, runWithDevStyleDeclarationCollection } from ${JSON.stringify(declarationsUrl)};\n` +
       `import Page from './Page';\n` +
       `export async function render(generation?: number) {\n` +
-      `  const devStyleIds: string[] = [];\n` +
-      `  const stream = runWithDevStyleDeclarationCollection(devStyleIds, () =>\n` +
-      `    renderToReadableStream({ root: <Page />, devStyleIds }, undefined, {\n` +
+      `  const declarations: string[] = [];\n` +
+      `  return runWithDevStyleDeclarationCollection(declarations, () =>\n` +
+      `    renderToReadableStream({ root: <Page /> }, undefined, {\n` +
       `      onClientReference: declareDevClientReferenceStyles,\n` +
       `    }),\n` +
       `    { transportGeneration: generation },\n` +
       `  );\n` +
-      `  return { devStyleIds, stream };\n` +
       `}\n`
   );
   await writeFile(path.join(root, 'src/entry.ssr.ts'), 'export {};\n');

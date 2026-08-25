@@ -13,6 +13,77 @@ function appendRscLink(document: Document, href: string): void {
 }
 
 describe('development style navigation lifecycle', () => {
+  it('adopts bootstrap styles before hydration can remove the React resource links', async () => {
+    const window = new Window({ url: 'http://localhost:3000/' });
+    const document = window.document as unknown as Document;
+    const bootstrap = document.createElement('link');
+    bootstrap.rel = 'stylesheet';
+    bootstrap.href = '/src/Home.module.scss?direct';
+    bootstrap.dataset.precedence = 'vite-rsc/client-reference';
+    document.head.appendChild(bootstrap);
+
+    const lifecycle = createDevStyleNavigationLifecycle();
+    const registry = createDevStyleRegistry(document, {
+      onRscCommit: generation => lifecycle.complete(generation),
+    });
+    lifecycle.register(registry);
+
+    registry.publish('/src/Home.module.scss', '.home{color:green}');
+    const styleIds = await lifecycle.prepareTree(0);
+
+    // React owns its hydration resources and may remove their DOM nodes before layout effects run.
+    bootstrap.remove();
+    lifecycle.commitTree(0, styleIds);
+
+    expect(
+      document.querySelector<HTMLStyleElement>(
+        'style[data-novel-isr-dev-style="/src/Home.module.scss"]'
+      )?.textContent
+    ).toBe('.home{color:green}');
+
+    registry.dispose();
+    window.close();
+  });
+
+  it('keeps the bootstrap owner active until an engine-owned link has loaded', async () => {
+    const window = new Window({ url: 'http://localhost:3000/' });
+    const document = window.document as unknown as Document;
+    const bootstrap = document.createElement('link');
+    bootstrap.rel = 'stylesheet';
+    bootstrap.href = '/src/ServerOnly.scss?direct';
+    bootstrap.dataset.precedence = 'vite-rsc/importer-resources';
+    document.head.appendChild(bootstrap);
+
+    const lifecycle = createDevStyleNavigationLifecycle();
+    const registry = createDevStyleRegistry(document, {
+      onRscCommit: generation => lifecycle.complete(generation),
+    });
+    lifecycle.register(registry);
+
+    const preparation = lifecycle.prepareTree(0);
+    const adopted = document.querySelector<HTMLLinkElement>(
+      'link[data-novel-isr-dev-style-link="/src/ServerOnly.scss"]'
+    );
+    expect(adopted).not.toBeNull();
+    expect(bootstrap.isConnected).toBe(true);
+
+    adopted!.dispatchEvent(new window.Event('load'));
+    const styleIds = await preparation;
+
+    expect(styleIds).toEqual(['/src/ServerOnly.scss']);
+    expect(adopted!.isConnected).toBe(true);
+    expect(adopted!.dataset.precedence).toBe('vite-rsc/importer-resources');
+    expect(
+      document.querySelector(
+        'link[rel="stylesheet"][data-precedence^="vite-rsc/"][href*="ServerOnly.scss"]'
+      )
+    ).toBe(adopted);
+    expect(bootstrap.isConnected).toBe(false);
+
+    registry.dispose();
+    window.close();
+  });
+
   it('commits generation-zero Server CSS through the real prepare and commit sequence', async () => {
     const window = new Window({ url: 'http://localhost:3000/' });
     const document = window.document as unknown as Document;

@@ -663,7 +663,7 @@ describe('createDevCssLifecyclePlugins', () => {
     expect(prePlugin.enforce).toBe('pre');
     expect(postPlugin.enforce).toBe('post');
     expect(resolveId(DEV_STYLE_REGISTRY_ID)).toBe(DEV_STYLE_REGISTRY_RESOLVED_ID);
-    expect(load(DEV_STYLE_REGISTRY_RESOLVED_ID)).toContain('createDevStyleRegistry(document,');
+    expect(load(DEV_STYLE_REGISTRY_RESOLVED_ID)).toContain('getOrCreateDevStyleRegistry(document,');
     expect(load(DEV_STYLE_REGISTRY_RESOLVED_ID)).toContain('registerDevStyleRegistry');
     expect(load(DEV_STYLE_REGISTRY_RESOLVED_ID)).toContain(
       'onRscCommit: completeDevStyleNavigation'

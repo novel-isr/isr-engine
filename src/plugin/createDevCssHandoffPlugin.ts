@@ -19,6 +19,7 @@ import {
   canonicalizeDevStyleId,
   DEV_STYLE_TRANSPORT_GENERATION_PARAM,
 } from '../defaults/runtime/dev-style-id';
+import { assertPinnedDevStyleResourceDispatcher } from '../defaults/runtime/dev-style-resource-dispatcher.server';
 
 export const VITE_RSC_REMOVE_DUPLICATE_CSS_ID = 'virtual:vite-rsc/remove-duplicate-server-css';
 export const DEV_CSS_HANDOFF_RESOLVED_ID = '\0virtual:novel-isr/dev-css-handoff';
@@ -946,6 +947,7 @@ export function createDevCssLifecyclePluginPhases(
       enforce: 'pre',
       configResolved() {
         assertPinnedViteVersion(viteVersion);
+        assertPinnedDevStyleResourceDispatcher();
       },
       configureServer(server) {
         devServer = server;
@@ -1015,13 +1017,13 @@ export function createDevCssLifecyclePluginPhases(
         if (id !== DEV_STYLE_REGISTRY_RESOLVED_ID) return undefined;
         return `
           "use client";
-          import { createDevStyleRegistry } from ${JSON.stringify(registryUrl)};
+          import { getOrCreateDevStyleRegistry } from ${JSON.stringify(registryUrl)};
           import {
             completeDevStyleNavigation,
             registerDevStyleRegistry,
           } from ${JSON.stringify(navigationLifecycleUrl)};
 
-          export const devStyleRegistry = createDevStyleRegistry(document, {
+          export const devStyleRegistry = getOrCreateDevStyleRegistry(document, {
             onRscCommit: completeDevStyleNavigation,
           });
           registerDevStyleRegistry(devStyleRegistry);

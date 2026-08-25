@@ -59,7 +59,6 @@ interface DefaultRscPayload {
   siteBaseUrl?: string | null;
   returnValue?: { ok: boolean; data: unknown };
   formState?: ReactFormState;
-  devStyleIds?: string[];
 }
 
 /** 默认始终注入的请求上下文 —— engine 自动维护，不需要用户写代码 */
@@ -329,7 +328,7 @@ async function runRscPipeline(request: Request, extras: PipelineExtras): Promise
     }
   }
 
-  const devStyleIds = import.meta.env.DEV ? [] : undefined;
+  const devStyleDeclarations = import.meta.env.DEV ? [] : undefined;
   const rscPayload: DefaultRscPayload = {
     root: <App url={renderRequest.url} intl={extras.intl ?? undefined} />,
     intl: extras.intl ?? null,
@@ -337,11 +336,10 @@ async function runRscPipeline(request: Request, extras: PipelineExtras): Promise
     siteBaseUrl: extras.siteBaseUrl ?? null,
     formState,
     returnValue,
-    ...(devStyleIds ? { devStyleIds } : {}),
   };
   const rscStream = import.meta.env.DEV
     ? runWithDevStyleDeclarationCollection(
-        devStyleIds!,
+        devStyleDeclarations!,
         () =>
           renderToReadableStream<DefaultRscPayload>(
             rscPayload,

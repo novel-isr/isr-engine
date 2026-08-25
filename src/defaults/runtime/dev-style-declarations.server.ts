@@ -1,6 +1,10 @@
 import { AsyncLocalStorage } from 'node:async_hooks';
 
 import { canonicalizeDevStyleId, createDevStyleTransportHref } from './dev-style-id';
+import {
+  assertPinnedDevStyleResourceDispatcher,
+  emitDevStylesheetResource,
+} from './dev-style-resource-dispatcher.server';
 
 const DEV_STYLE_DECLARATIONS_KEY = '__NOVEL_ISR_DEV_STYLE_DECLARATIONS_V2__';
 const DEV_CLIENT_REFERENCE_STYLES_KEY = '__NOVEL_ISR_DEV_CLIENT_REFERENCE_STYLES__';
@@ -95,6 +99,7 @@ export function registerDevClientReferenceStyles(
   if (!referenceId || !styleIds.every(styleId => typeof styleId === 'string')) {
     throw new Error('[novel-isr] Invalid development client-reference stylesheet mapping.');
   }
+  assertPinnedDevStyleResourceDispatcher();
   getClientReferenceStyles().set(
     referenceId,
     Array.from(new Set(styleIds.map(styleId => canonicalizeDevStyleId(styleId))))
@@ -123,7 +128,11 @@ export function declareDevClientReferenceStyles(reference: unknown): void {
   }
   const collector = getDeclarationStorage().getStore()?.styleIds;
   if (!collector) return;
+  const generation = getDeclarationStorage().getStore()?.transportGeneration;
   for (const styleId of styleIds) {
     if (!collector.includes(styleId)) collector.push(styleId);
+    if (generation !== undefined) {
+      emitDevStylesheetResource(createDevStyleTransportHref(styleId, generation));
+    }
   }
 }

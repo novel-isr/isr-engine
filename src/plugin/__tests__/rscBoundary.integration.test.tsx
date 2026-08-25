@@ -103,30 +103,15 @@ describe('RSC client boundary integration', () => {
     expect(rscPayload).toContain('onClick');
   });
 
-  it('serializes the exact client-reference stylesheet declarations in the RSC payload', async () => {
-    const declarationsUrl = pathToFileURL(
-      path.resolve(process.cwd(), 'src/defaults/runtime/dev-style-declarations.server.ts')
-    ).href;
+  it('keeps engine development stylesheet ownership out of the application RSC payload', async () => {
     const root = await createFixture({
       'src/entry.rsc.tsx': `
         import { renderToReadableStream } from '@vitejs/plugin-rsc/rsc';
-        import {
-          declareDevStyleDependencies,
-          runWithDevStyleDeclarationCollection,
-        } from ${JSON.stringify(declarationsUrl)};
         import { App } from './app';
 
         export default {
           async fetch(request: Request) {
-            const devStyleIds: string[] = [];
-            const payload = { root: <App />, devStyleIds };
-            const stream = runWithDevStyleDeclarationCollection(devStyleIds, () =>
-              renderToReadableStream(payload, undefined, {
-                onClientReference(reference: { deps: unknown }) {
-                  declareDevStyleDependencies(reference.deps);
-                },
-              })
-            );
+            const stream = renderToReadableStream({ root: <App /> });
             return new Response(stream, {
               headers: { 'content-type': 'text/x-component;charset=utf-8' },
             });
@@ -149,8 +134,8 @@ describe('RSC client boundary integration', () => {
     const response = await handler.fetch(new Request('http://fixture.test/_.rsc'));
     const payload = await response.text();
 
-    expect(payload).toContain('devStyleIds');
-    expect(payload).toMatch(/\/assets\/[^"\\]+\.css/);
+    expect(payload).not.toContain('devStyleIds');
+    expect(payload).toContain('0:{"root"');
   });
 });
 

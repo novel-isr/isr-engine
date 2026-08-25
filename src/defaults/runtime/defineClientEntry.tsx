@@ -33,7 +33,18 @@ import { GlobalErrorBoundary } from './error-boundary';
 import { HydrationShell } from './hydration-shell';
 import { createRscRenderRequest, type RscRenderRequestOptions } from './request';
 import { DevStyleCommitBoundary } from './dev-style-commit-boundary.client';
-import { prepareDevStyleTree, runWithDevStyleNavigation } from './dev-style-navigation.client';
+import {
+  completeDevStyleNavigation,
+  prepareDevStyleTree,
+  registerDevStyleRegistry,
+  runWithDevStyleNavigation,
+} from './dev-style-navigation.client';
+import { getOrCreateDevStyleRegistry } from './dev-style-registry.client';
+import { observeDevRscResponse } from './dev-rsc-response.client';
+import {
+  isInternalNavigationHistoryMutation,
+  syncBrowserUrlToFinalRedirect,
+} from './navigation-history.client';
 import { installDevRenderInspector } from './dev-render-inspector';
 import { setClientI18n } from '../../runtime/i18n-store';
 import { applySeoToDocument, type IntlPayload, type PageSeoMeta } from './seo-runtime';
@@ -51,7 +62,6 @@ interface DefaultRscPayload {
   siteBaseUrl?: string | null;
   formState?: import('react-dom/client').ReactFormState;
   returnValue?: { ok: boolean; data: unknown };
-  devStyleIds?: string[];
 }
 
 interface DefaultRscPayloadState {
@@ -60,30 +70,61 @@ interface DefaultRscPayloadState {
   styleIds: string[];
 }
 
-function payloadDevStyleIds(payload: DefaultRscPayload): string[] {
-  if (!import.meta.env.DEV) return [];
-  if (
-    !Array.isArray(payload.devStyleIds) ||
-    !payload.devStyleIds.every(id => typeof id === 'string')
-  ) {
-    throw new Error('Development RSC payload is missing its canonical devStyleIds declaration.');
-  }
-  return [...payload.devStyleIds];
-}
-
-async function preparePayloadDevStyles(
-  payload: DefaultRscPayload,
-  generation: number | undefined
-): Promise<void> {
-  if (!import.meta.env.DEV || generation === undefined) return;
-  await prepareDevStyleTree(generation, payloadDevStyleIds(payload));
+async function preparePayloadDevStyles(generation: number | undefined): Promise<string[]> {
+  if (!import.meta.env.DEV || generation === undefined) return [];
+  return prepareDevStyleTree(generation);
 }
 
 function createPayloadState(
   payload: DefaultRscPayload,
-  generation: number | undefined
+  generation: number | undefined,
+  styleIds: string[] = []
 ): DefaultRscPayloadState {
-  return { payload, generation, styleIds: payloadDevStyleIds(payload) };
+  return { payload, generation, styleIds };
+}
+
+type TemporaryReferences = ReturnType<typeof createTemporaryReferenceSet>;
+
+interface FetchedRscPayload {
+  payload: DefaultRscPayload;
+  response: Response;
+  requestedUrl: string;
+  styleIds: string[];
+}
+
+async function fetchRscResponse(
+  request: Request,
+  temporaryReferences?: TemporaryReferences
+): Promise<FetchedRscPayload> {
+  const responsePromise = fetch(request);
+  if (!import.meta.env.DEV) {
+    const payload = await createFromFetch<DefaultRscPayload>(
+      responsePromise,
+      temporaryReferences ? { temporaryReferences } : undefined
+    );
+    return { payload, response: await responsePromise, requestedUrl: request.url, styleIds: [] };
+  }
+
+  const observationPromise = responsePromise.then(observeDevRscResponse);
+  const payload = await createFromFetch<DefaultRscPayload>(
+    observationPromise.then(observation => observation.response),
+    temporaryReferences ? { temporaryReferences } : undefined
+  );
+  const observation = await observationPromise;
+  await observation.completed;
+  return {
+    payload,
+    response: observation.original,
+    requestedUrl: request.url,
+    styleIds: [],
+  };
+}
+
+async function prepareFetchedDevStyles(
+  result: FetchedRscPayload,
+  generation: number | undefined
+): Promise<void> {
+  result.styleIds = await preparePayloadDevStyles(generation);
 }
 
 function renderPayloadRoot({
@@ -99,41 +140,11 @@ function renderPayloadRoot({
   );
 }
 
-const RSC_POSTFIX = '_.rsc';
-
 function devStyleRequestOptions(
   generation: number | undefined
 ): RscRenderRequestOptions | undefined {
   if (!import.meta.env.DEV || generation === undefined) return undefined;
   return { devStyleGeneration: generation };
-}
-
-/**
- * 把 RSC fetch 的 final URL（跟过 302/308 redirect）同步回浏览器地址栏。
- * Next.js / Remix 同款做法：客户端 router 必须感知 server redirect，否则
- * 出现"URL 没变但内容已经换"的错位。
- *
- * 失败兜底（非 http(s) URL / 解析异常）静默跳过 —— 不影响主流程。
- */
-function syncBrowserUrlToFinalRedirect(response: Response): void {
-  if (typeof window === 'undefined') return;
-  const finalUrl = response.url;
-  if (!finalUrl) return;
-  let parsed: URL;
-  try {
-    parsed = new URL(finalUrl);
-  } catch {
-    return;
-  }
-  // RSC 后缀剥掉，得到业务路径（locale-redirect / canonical-redirect 命中后这里
-  // 会跟当前 window.location.pathname 不同）
-  const finalPath = parsed.pathname.endsWith(RSC_POSTFIX)
-    ? parsed.pathname.slice(0, -RSC_POSTFIX.length)
-    : parsed.pathname;
-  if (finalPath === window.location.pathname) return;
-  // replaceState 不触发 popstate / 不进 history stack —— 跟 next/router 同款，
-  // 用户按 Back 仍然回到点击前的页面而不是 redirect 中间态
-  window.history.replaceState(null, '', finalPath + window.location.search + window.location.hash);
 }
 
 /**
@@ -254,6 +265,13 @@ export function defineClientEntry(hooks: ClientEntryHooks = {}): void {
 }
 
 async function main(hooks: ClientEntryHooks): Promise<void> {
+  if (import.meta.env.DEV) {
+    const registry = getOrCreateDevStyleRegistry(document, {
+      onRscCommit: completeDevStyleNavigation,
+    });
+    registerDevStyleRegistry(registry);
+  }
+
   const observability =
     hooks.telemetry && hooks.telemetry !== false
       ? await installBrowserObservability(hooks.telemetry)
@@ -305,17 +323,15 @@ async function main(hooks: ClientEntryHooks): Promise<void> {
             undefined,
             devStyleRequestOptions(generation)
           );
-          const fetchPromise = fetch(renderRequest);
-          const payload = await createFromFetch<DefaultRscPayload>(fetchPromise);
-          return { payload, response: await fetchPromise };
+          return fetchRscResponse(renderRequest);
         },
-        ({ payload, response }, generation) => {
-          syncBrowserUrlToFinalRedirect(response);
+        ({ payload, response, requestedUrl, styleIds }, generation) => {
+          syncBrowserUrlToFinalRedirect(response, requestedUrl);
           setClientI18n(payload.intl);
           applySeoToDocument(payload.seoMeta, payload.siteBaseUrl ?? undefined);
-          setPayload(createPayloadState(payload, generation));
+          setPayload(createPayloadState(payload, generation, styleIds));
         },
-        ({ payload }, generation) => preparePayloadDevStyles(payload, generation)
+        prepareFetchedDevStyles
       );
     }
 
@@ -367,19 +383,18 @@ async function main(hooks: ClientEntryHooks): Promise<void> {
             },
             devStyleRequestOptions(generation)
           );
-          return createFromFetch<DefaultRscPayload>(fetch(renderRequest), {
-            temporaryReferences,
-          });
+          return fetchRscResponse(renderRequest, temporaryReferences);
         },
-        (payload, generation) => {
+        ({ payload, styleIds }, generation) => {
           setClientI18n(payload.intl);
           applySeoToDocument(payload.seoMeta, payload.siteBaseUrl ?? undefined);
-          setPayload(createPayloadState(payload, generation));
+          setPayload(createPayloadState(payload, generation, styleIds));
           return payload;
         },
-        (payload, generation) => preparePayloadDevStyles(payload, generation)
+        prepareFetchedDevStyles
       );
-      const payload = result.status === 'superseded' ? result.operationValue : result.value;
+      const payload =
+        result.status === 'superseded' ? result.operationValue?.payload : result.value;
       if (!payload) return undefined;
       const { ok, data } = payload.returnValue!;
       if (!ok) {
@@ -423,10 +438,11 @@ async function main(hooks: ClientEntryHooks): Promise<void> {
   let setPayload: (v: DefaultRscPayloadState) => void = () => {};
   const initialPayload = await createFromReadableStream<DefaultRscPayload>(rscStream);
   setClientI18n(initialPayload.intl);
-  if (import.meta.env.DEV) await preparePayloadDevStyles(initialPayload, 0);
+  const initialStyleIds = import.meta.env.DEV ? await preparePayloadDevStyles(0) : [];
   const initialPayloadState = createPayloadState(
     initialPayload,
-    import.meta.env.DEV ? 0 : undefined
+    import.meta.env.DEV ? 0 : undefined,
+    initialStyleIds
   );
 
   function BrowserRoot(): React.ReactNode {
@@ -451,18 +467,16 @@ async function main(hooks: ClientEntryHooks): Promise<void> {
           undefined,
           devStyleRequestOptions(generation)
         );
-        const fetchPromise = fetch(renderRequest);
-        const payload = await createFromFetch<DefaultRscPayload>(fetchPromise);
-        return { payload, response: await fetchPromise };
+        return fetchRscResponse(renderRequest);
       },
-      ({ payload, response }, generation) => {
+      ({ payload, response, requestedUrl, styleIds }, generation) => {
         // Keep every browser mutation behind the generation freshness check.
-        syncBrowserUrlToFinalRedirect(response);
+        syncBrowserUrlToFinalRedirect(response, requestedUrl);
         setClientI18n(payload.intl);
         applySeoToDocument(payload.seoMeta, payload.siteBaseUrl ?? undefined);
-        setPayload(createPayloadState(payload, generation));
+        setPayload(createPayloadState(payload, generation, styleIds));
       },
-      ({ payload }, generation) => preparePayloadDevStyles(payload, generation)
+      prepareFetchedDevStyles
     );
   }
 
@@ -478,19 +492,17 @@ async function main(hooks: ClientEntryHooks): Promise<void> {
           },
           devStyleRequestOptions(generation)
         );
-        return createFromFetch<DefaultRscPayload>(fetch(renderRequest), {
-          temporaryReferences,
-        });
+        return fetchRscResponse(renderRequest, temporaryReferences);
       },
-      (payload, generation) => {
+      ({ payload, styleIds }, generation) => {
         setClientI18n(payload.intl);
         applySeoToDocument(payload.seoMeta, payload.siteBaseUrl ?? undefined);
-        setPayload(createPayloadState(payload, generation));
+        setPayload(createPayloadState(payload, generation, styleIds));
         return payload;
       },
-      (payload, generation) => preparePayloadDevStyles(payload, generation)
+      prepareFetchedDevStyles
     );
-    const payload = result.status === 'superseded' ? result.operationValue : result.value;
+    const payload = result.status === 'superseded' ? result.operationValue?.payload : result.value;
     if (!payload) return undefined;
     const { ok, data } = payload.returnValue!;
     if (!ok) {
@@ -573,14 +585,14 @@ function listenNavigation(
   const oldPushState = window.history.pushState;
   window.history.pushState = function (...args) {
     const res = oldPushState.apply(this, args);
-    fire();
+    if (!isInternalNavigationHistoryMutation()) fire();
     return res;
   };
 
   const oldReplaceState = window.history.replaceState;
   window.history.replaceState = function (...args) {
     const res = oldReplaceState.apply(this, args);
-    fire();
+    if (!isInternalNavigationHistoryMutation()) fire();
     return res;
   };
 
