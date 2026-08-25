@@ -11,6 +11,15 @@ import.meta.hot.prune(() => __vite__removeStyle(__vite__id));
 export default { card: "_card_123" };
 `;
 
+const VITE_BUNDLED_WRAPPER = `
+const { updateStyle: __vite__updateStyle, removeStyle: __vite__removeStyle } = import.meta.hot._internal;
+const __vite__id = "/src/Card.module.scss";
+const __vite__css = ".card{color:green}";
+__vite__updateStyle(__vite__id, __vite__css);
+import.meta.hot.prune(() => __vite__removeStyle(__vite__id));
+export default { card: "_card_123" };
+`;
+
 describe('transformDevCssModule', () => {
   it.each(['/src/Card.css', '/src/Card.scss', '/src/Card.module.scss'])(
     'routes Vite DOM mutations for %s through the development style registry',
@@ -51,6 +60,51 @@ describe('transformDevCssModule', () => {
     expect(result?.code).not.toContain('disposeStyle(__vite__id)');
   });
 
+  it('recognizes Vite client imports under an arbitrary configured base path', () => {
+    const result = transformDevCssModule(
+      VITE_WRAPPER.replace('"/@vite/client"', '"/app/@vite/client"'),
+      '/src/Card.module.scss',
+      'virtual:novel-isr/dev-style-registry'
+    );
+
+    expect(result?.code).toContain('__novel_isr_dev_styles.publish(__vite__id, __vite__css);');
+    expect(result?.code).toContain('__novel_isr_dev_styles.prune(__vite__id)');
+  });
+
+  it('routes Vite bundled-development wrappers through the registry', () => {
+    const result = transformDevCssModule(
+      VITE_BUNDLED_WRAPPER,
+      '/src/Card.module.scss',
+      'virtual:novel-isr/dev-style-registry'
+    );
+
+    expect(result?.code).toContain('__novel_isr_dev_styles.publish(__vite__id, __vite__css);');
+    expect(result?.code).toContain('__novel_isr_dev_styles.prune(__vite__id)');
+  });
+
+  it('rejects unsupported Vite bundled-development mutator access', () => {
+    expect(() =>
+      transformDevCssModule(
+        `
+          const mutators = import.meta.hot._internal;
+          mutators.updateStyle("/src/Card.module.scss", ".card{color:green}");
+        `,
+        '/src/Card.module.scss',
+        'virtual:novel-isr/dev-style-registry'
+      )
+    ).toThrow(/Vite development CSS wrapper compatibility error.*\/src\/Card\.module\.scss/);
+  });
+
+  it('rejects a bundled wrapper that leaves an additional internal mutator call executable', () => {
+    expect(() =>
+      transformDevCssModule(
+        `${VITE_BUNDLED_WRAPPER}\nimport.meta.hot._internal.updateStyle(__vite__id, ".extra{color:red}");`,
+        '/src/Card.module.scss',
+        'virtual:novel-isr/dev-style-registry'
+      )
+    ).toThrow(/Vite development CSS wrapper compatibility error.*\/src\/Card\.module\.scss/);
+  });
+
   it('does not transform direct stylesheet resources', () => {
     expect(
       transformDevCssModule(
@@ -84,6 +138,28 @@ describe('transformDevCssModule', () => {
         '/src/Card.module.scss',
         'virtual:novel-isr/dev-style-registry'
       )
+    ).toThrow(/Vite development CSS wrapper compatibility error.*\/src\/Card\.module\.scss/);
+  });
+
+  it.each([
+    [
+      'an extra top-level updateStyle call',
+      VITE_WRAPPER.replace(
+        'import.meta.hot.prune(() => __vite__removeStyle(__vite__id));',
+        '__vite__updateStyle(__vite__id, ".extra{color:red}");\nimport.meta.hot.prune(() => __vite__removeStyle(__vite__id));'
+      ),
+    ],
+    [
+      'a nested removeStyle call',
+      `${VITE_WRAPPER}\nfunction removeUnexpectedStyle() { __vite__removeStyle(__vite__id); }`,
+    ],
+    [
+      'a removeStyle call outside the prune callback',
+      `${VITE_WRAPPER}\nimport.meta.hot.accept(() => __vite__removeStyle(__vite__id));`,
+    ],
+  ])('rejects wrappers with %s', (_description, code) => {
+    expect(() =>
+      transformDevCssModule(code, '/src/Card.module.scss', 'virtual:novel-isr/dev-style-registry')
     ).toThrow(/Vite development CSS wrapper compatibility error.*\/src\/Card\.module\.scss/);
   });
 });
