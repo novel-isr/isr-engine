@@ -24,6 +24,8 @@ export interface DevStyleRegistry {
 
 export function createDevStyleRegistry(document: Document): DevStyleRegistry {
   const records = new Map<string, StyleRecord>();
+  const declaredActiveIds = new Set<string>();
+  let reconciledActiveIds: string[] | undefined;
 
   const canonicalId = (id: string): string => {
     if (!id.trim())
@@ -90,6 +92,46 @@ export function createDevStyleRegistry(document: Document): DevStyleRegistry {
     record.state = record.node?.isConnected ? 'client-active' : 'ssr-active';
   };
 
+  const commitActiveSet = (activeIds: string[]) => {
+    for (const record of Array.from(records.values())) {
+      if (activeIds.some(id => styleIdsMatch(record.id, id, document.baseURI))) {
+        restoreActiveState(record);
+      } else {
+        release(record);
+      }
+    }
+  };
+
+  const clearReconciledSet = () => {
+    declaredActiveIds.clear();
+    reconciledActiveIds = undefined;
+  };
+
+  const commitReconciledSetWhenReady = (): boolean => {
+    if (reconciledActiveIds === undefined) return false;
+    if (
+      !reconciledActiveIds.every(id => {
+        const record = matchingRecord(id);
+        if (record?.node?.isConnected === true) return true;
+        return matchingLinks(id).some(
+          link => !link.dataset.precedence?.startsWith('vite-rsc/client-reference')
+        );
+      })
+    ) {
+      return false;
+    }
+
+    const activeIds = reconciledActiveIds;
+    for (const id of activeIds) {
+      if (matchingRecord(id)?.node?.isConnected === true) {
+        for (const link of matchingLinks(id)) link.remove();
+      }
+    }
+    clearReconciledSet();
+    commitActiveSet(activeIds);
+    return true;
+  };
+
   return {
     publish(id, cssText) {
       const record = findOrCreateRecord(canonicalId(id));
@@ -99,8 +141,13 @@ export function createDevStyleRegistry(document: Document): DevStyleRegistry {
       restoreActiveState(record);
 
       if (node.isConnected && node.textContent === cssText) {
-        for (const link of matchingLinks(record.id)) link.remove();
+        for (const link of matchingLinks(record.id)) {
+          const linkId = stylesheetId(link);
+          if (linkId) declaredActiveIds.add(linkId);
+          link.remove();
+        }
       }
+      commitReconciledSetWhenReady();
     },
 
     prune(id) {
@@ -111,6 +158,7 @@ export function createDevStyleRegistry(document: Document): DevStyleRegistry {
     },
 
     beginUpdate() {
+      clearReconciledSet();
       for (const record of records.values()) {
         if (!record.pendingRelease) record.state = 'updating';
       }
@@ -118,6 +166,7 @@ export function createDevStyleRegistry(document: Document): DevStyleRegistry {
 
     commitUpdate(activeIds) {
       if (activeIds === undefined) {
+        if (commitReconciledSetWhenReady()) return;
         for (const record of records.values()) {
           if (record.pendingRelease) restoreActiveState(record);
         }
@@ -125,30 +174,31 @@ export function createDevStyleRegistry(document: Document): DevStyleRegistry {
       }
 
       const active = Array.from(activeIds, canonicalId);
-      for (const record of Array.from(records.values())) {
-        if (!record.pendingRelease) continue;
-        if (active.some(id => styleIdsMatch(record.id, id, document.baseURI))) {
-          restoreActiveState(record);
-        } else {
-          release(record);
-        }
-      }
+      clearReconciledSet();
+      commitActiveSet(active);
     },
 
     abortUpdate() {
+      clearReconciledSet();
       for (const record of records.values()) {
-        if (record.pendingRelease) restoreActiveState(record);
+        if (record.pendingRelease || record.state === 'updating') restoreActiveState(record);
       }
     },
 
     reconcileDocumentStyles() {
       for (const link of document.querySelectorAll<HTMLLinkElement>(SSR_STYLESHEET)) {
         const id = stylesheetId(link);
-        if (id) findOrCreateRecord(id);
+        if (id) {
+          declaredActiveIds.add(id);
+          findOrCreateRecord(id);
+        }
       }
+      reconciledActiveIds = Array.from(declaredActiveIds);
+      commitReconciledSetWhenReady();
     },
 
     dispose() {
+      clearReconciledSet();
       for (const record of Array.from(records.values())) {
         record.node?.remove();
         record.state = 'released';

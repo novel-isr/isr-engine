@@ -1,3 +1,4 @@
+import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 
@@ -69,9 +70,7 @@ export function createDevCssHandoffPlugin(defaultsDir: string): Plugin {
 }
 
 export function createDevCssLifecyclePlugins(defaultsDir: string): Plugin[] {
-  const helperUrl = pathToFileURL(
-    path.resolve(defaultsDir, 'runtime/dev-css-handoff.client.ts')
-  ).href;
+  const lifecycleBoundaryPath = path.resolve(defaultsDir, 'runtime/dev-css-handoff.client.ts');
   const registryUrl = pathToFileURL(
     path.resolve(defaultsDir, 'runtime/dev-style-registry.client.ts')
   ).href;
@@ -87,16 +86,7 @@ export function createDevCssLifecyclePlugins(defaultsDir: string): Plugin[] {
       },
       load(id) {
         if (id !== DEV_CSS_HANDOFF_RESOLVED_ID) return undefined;
-        return `
-          "use client";
-          import * as React from "react";
-          import { handoffDevClientReferenceStyles } from ${JSON.stringify(helperUrl)};
-
-          export default function DevCssHandoff() {
-            React.useEffect(() => handoffDevClientReferenceStyles(), []);
-            return null;
-          }
-        `;
+        return readFileSync(lifecycleBoundaryPath, 'utf8');
       },
       transform(code, id) {
         return canonicalizeDevRscStylesheetModule(code, id);

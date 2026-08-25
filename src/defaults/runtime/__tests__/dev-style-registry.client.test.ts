@@ -23,6 +23,15 @@ function createFixture(markup = ''): RegistryFixture {
   return fixture;
 }
 
+function appendRscLink(document: Document, href: string): HTMLLinkElement {
+  const link = document.createElement('link');
+  link.rel = 'stylesheet';
+  link.href = href;
+  link.dataset.precedence = 'vite-rsc/client-reference';
+  document.head.appendChild(link);
+  return link;
+}
+
 afterEach(() => {
   for (const fixture of fixtures.splice(0)) fixture.window.close();
 });
@@ -124,6 +133,89 @@ describe('development style registry', () => {
         .querySelector('style[data-novel-isr-dev-style]')
         ?.getAttribute('data-novel-isr-dev-style')
     ).toBe('/src/Card.scss');
+  });
+
+  it('installs the next committed owner before releasing its RSC link and prior owner', async () => {
+    const { document, registry, window } = createFixture();
+
+    registry.publish('/src/A.scss', '.a{display:block}');
+    const mutations: string[] = [];
+    const observer = new window.MutationObserver(records => {
+      for (const record of records) {
+        for (const node of record.addedNodes) {
+          if (node instanceof window.HTMLStyleElement) {
+            mutations.push(`insert-style:${node.dataset.novelIsrDevStyle}`);
+          }
+        }
+        for (const node of record.removedNodes) {
+          if (node instanceof window.HTMLLinkElement) {
+            mutations.push(`remove-link:${node.getAttribute('href')}`);
+          }
+          if (node instanceof window.HTMLStyleElement) {
+            mutations.push(`remove-style:${node.dataset.novelIsrDevStyle}`);
+          }
+        }
+      }
+    });
+    observer.observe(document.head, { childList: true });
+
+    registry.beginUpdate();
+    appendRscLink(document, '/src/B.scss?direct');
+    registry.reconcileDocumentStyles();
+    registry.publish('/src/B.scss', '.b{display:grid}');
+    registry.commitUpdate(['/src/B.scss']);
+    await window.happyDOM.whenAsyncComplete();
+    observer.disconnect();
+
+    expect(document.querySelector('style[data-novel-isr-dev-style="/src/B.scss"]')).not.toBeNull();
+    expect(document.querySelector('style[data-novel-isr-dev-style="/src/A.scss"]')).toBeNull();
+
+    const insertB = mutations.indexOf('insert-style:/src/B.scss');
+    const removeBLink = mutations.indexOf('remove-link:/src/B.scss?direct');
+    const removeA = mutations.indexOf('remove-style:/src/A.scss');
+    expect(insertB).toBeGreaterThanOrEqual(0);
+    expect(removeBLink).toBeGreaterThan(insertB);
+    expect(removeA).toBeGreaterThan(removeBLink);
+  });
+
+  it('keeps the committed owner when an RSC update aborts', () => {
+    const { document, registry } = createFixture();
+
+    registry.publish('/src/A.scss', '.a{display:block}');
+    registry.beginUpdate();
+    registry.prune('/src/A.scss');
+    appendRscLink(document, '/src/B.scss?direct');
+    registry.reconcileDocumentStyles();
+    registry.abortUpdate();
+
+    expect(document.querySelector('style[data-novel-isr-dev-style="/src/A.scss"]')).not.toBeNull();
+  });
+
+  it('commits an RSC DOM resource set when its managed owners are already active', () => {
+    const { document, registry } = createFixture();
+
+    registry.publish('/src/A.scss', '.a{display:block}');
+    registry.beginUpdate();
+    registry.publish('/src/B.scss', '.b{display:grid}');
+    appendRscLink(document, '/src/B.scss?direct');
+    registry.reconcileDocumentStyles();
+
+    expect(document.querySelector('style[data-novel-isr-dev-style="/src/B.scss"]')).not.toBeNull();
+    expect(document.querySelector('link[href*="/src/B.scss"]')).toBeNull();
+    expect(document.querySelector('style[data-novel-isr-dev-style="/src/A.scss"]')).toBeNull();
+  });
+
+  it('treats a committed importer-resource link as an active owner', () => {
+    const { document, registry } = createFixture();
+
+    registry.publish('/src/A.scss', '.a{display:block}');
+    registry.beginUpdate();
+    const link = appendRscLink(document, '/src/B.scss?direct');
+    link.dataset.precedence = 'vite-rsc/importer-resources';
+    registry.reconcileDocumentStyles();
+
+    expect(link.isConnected).toBe(true);
+    expect(document.querySelector('style[data-novel-isr-dev-style="/src/A.scss"]')).toBeNull();
   });
 
   it('disposes managed nodes idempotently', () => {

@@ -6,7 +6,11 @@ import vitePluginRsc from '@vitejs/plugin-rsc';
 import { afterEach, describe, expect, it } from 'vitest';
 import { createServer, type ViteDevServer } from 'vite';
 
-import { createDevCssHandoffPlugin } from '../createDevCssHandoffPlugin';
+import {
+  createDevCssLifecyclePlugins,
+  DEV_CSS_HANDOFF_RESOLVED_ID,
+  VITE_RSC_REMOVE_DUPLICATE_CSS_ID,
+} from '../createDevCssHandoffPlugin';
 
 const fixtureRoots: string[] = [];
 const viteServers: ViteDevServer[] = [];
@@ -34,7 +38,7 @@ describe('development RSC stylesheet identity', () => {
       logLevel: 'silent',
       server: { middlewareMode: true, hmr: false },
       plugins: [
-        createDevCssHandoffPlugin(path.resolve(process.cwd(), 'src/defaults')),
+        ...createDevCssLifecyclePlugins(path.resolve(process.cwd(), 'src/defaults')),
         ...vitePluginRsc({
           entries: {
             client: '/src/entry.browser.ts',
@@ -45,6 +49,17 @@ describe('development RSC stylesheet identity', () => {
       ],
     });
     viteServers.push(server);
+
+    const lifecycleBoundary = await server.environments.client.pluginContainer.resolveId(
+      VITE_RSC_REMOVE_DUPLICATE_CSS_ID
+    );
+    expect(lifecycleBoundary?.id).toBe(DEV_CSS_HANDOFF_RESOLVED_ID);
+    const boundaryModule = await server.environments.client.pluginContainer.load(
+      lifecycleBoundary!.id
+    );
+    expect(typeof boundaryModule === 'string' ? boundaryModule : boundaryModule?.code).toContain(
+      'devStyleRegistry.reconcileDocumentStyles()'
+    );
 
     const clientReferenceId = '/src/ClientCard.tsx';
     await server.environments.rsc.transformRequest(clientReferenceId);
@@ -73,7 +88,13 @@ describe('development RSC stylesheet identity', () => {
     expect(stylesheet.headers.get('content-type')).toContain('text/css');
     expect(await stylesheet.text()).toContain('color: rgb(1, 2, 3)');
     expect(cssModule.headers.get('content-type')).toContain('text/javascript');
-    expect(await cssModule.text()).toContain('__vite__updateStyle');
+    const cssModuleCode = await cssModule.text();
+    expect(cssModuleCode).toMatch(/export default\s*\{[^}]*["']?card["']?\s*:\s*card/);
+    expect(cssModuleCode).toContain('virtual:novel-isr/dev-style-registry');
+    expect(cssModuleCode).toContain('__novel_isr_dev_styles.publish(');
+    expect(cssModuleCode).toContain('__novel_isr_dev_styles.prune(');
+    expect(cssModuleCode).not.toMatch(/__vite__updateStyle\s*\(/);
+    expect(cssModuleCode).not.toMatch(/__vite__removeStyle\s*\(/);
   });
 });
 

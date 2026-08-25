@@ -31,7 +31,7 @@ import type { PluginOption, Plugin } from 'vite';
 import vitePluginRsc from '@vitejs/plugin-rsc';
 
 import { createDevAssetRequestMiddleware } from './devAssetRequestMiddleware';
-import { createDevCssHandoffPlugin } from './createDevCssHandoffPlugin';
+import { createDevCssLifecyclePlugins } from './createDevCssHandoffPlugin';
 import { createIsrCacheMiddleware } from './isrCacheMiddleware';
 import { createSsgPostBuildPlugin } from './createSsgPostBuildPlugin';
 import { resolveClientObservabilityOptions } from './clientObservabilityConfig';
@@ -560,7 +560,7 @@ export function createIsrPlugin(options: CreateIsrPluginOptions = {}): PluginOpt
     createEngineDefaultEntriesPlugin(root, userConfig),
     createAppAliasPlugin(root),
     createDevAssetRequestMiddleware(root),
-    createDevCssHandoffPlugin(resolveEngineDefaultsDir()),
+    ...createDevCssLifecyclePlugins(resolveEngineDefaultsDir()),
     createBrowserShimPlugin(),
   ];
 

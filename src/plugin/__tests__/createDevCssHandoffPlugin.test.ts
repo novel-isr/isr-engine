@@ -1,3 +1,5 @@
+import path from 'node:path';
+
 import { describe, expect, it } from 'vitest';
 
 import {
@@ -9,18 +11,25 @@ import {
 } from '../createDevCssHandoffPlugin';
 
 describe('createDevCssLifecyclePlugins', () => {
+  const defaultsDir = path.resolve(process.cwd(), 'src/defaults');
+
   it('owns plugin-rsc dev stylesheet cleanup before the upstream virtual module resolves', async () => {
-    const [plugin] = createDevCssLifecyclePlugins('/engine/defaults');
+    const [plugin] = createDevCssLifecyclePlugins(defaultsDir);
     const resolveId = plugin.resolveId as (id: string) => string | undefined;
     const load = plugin.load as (id: string) => string | undefined;
 
     expect(plugin.enforce).toBe('pre');
     expect(resolveId(VITE_RSC_REMOVE_DUPLICATE_CSS_ID)).toBe(DEV_CSS_HANDOFF_RESOLVED_ID);
-    expect(load(DEV_CSS_HANDOFF_RESOLVED_ID)).toContain('handoffDevClientReferenceStyles');
+    expect(load(DEV_CSS_HANDOFF_RESOLVED_ID)).toContain('DevCssLifecycleBoundary');
+    expect(load(DEV_CSS_HANDOFF_RESOLVED_ID)).toContain('React.useLayoutEffect');
+    expect(load(DEV_CSS_HANDOFF_RESOLVED_ID)).toContain(
+      'devStyleRegistry.reconcileDocumentStyles()'
+    );
+    expect(load(DEV_CSS_HANDOFF_RESOLVED_ID)).not.toContain('handoffDevClientReferenceStyles');
   });
 
   it('gives development RSC stylesheet resources a CSS-only URL identity', async () => {
-    const [plugin] = createDevCssLifecyclePlugins('/engine/defaults');
+    const [plugin] = createDevCssLifecyclePlugins(defaultsDir);
     const transform = plugin.transform as (
       code: string,
       id: string
@@ -47,7 +56,7 @@ describe('createDevCssLifecyclePlugins', () => {
   });
 
   it('does not rewrite CSS imports outside plugin-rsc stylesheet resource modules', async () => {
-    const [plugin] = createDevCssLifecyclePlugins('/engine/defaults');
+    const [plugin] = createDevCssLifecyclePlugins(defaultsDir);
     const transform = plugin.transform as (
       code: string,
       id: string
@@ -59,7 +68,7 @@ describe('createDevCssLifecyclePlugins', () => {
   });
 
   it('adds a post-CSS plugin that supplies the singleton client registry', async () => {
-    const [prePlugin, postPlugin] = createDevCssLifecyclePlugins('/engine/defaults');
+    const [prePlugin, postPlugin] = createDevCssLifecyclePlugins(defaultsDir);
     const resolveId = postPlugin.resolveId as (id: string) => string | undefined;
     const load = postPlugin.load as (id: string) => string | undefined;
     const transform = postPlugin.transform as (
