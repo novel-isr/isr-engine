@@ -10,6 +10,7 @@ import { createServer, type ViteDevServer } from 'vite';
 import {
   createDevCssLifecyclePlugins,
   DEV_CSS_HANDOFF_RESOLVED_ID,
+  DEV_STYLE_REGISTRY_ID,
   VITE_RSC_REMOVE_DUPLICATE_CSS_ID,
 } from '../createDevCssHandoffPlugin';
 import { createIsrPlugin } from '../createIsrPlugin';
@@ -268,6 +269,61 @@ describe('development RSC stylesheet identity', () => {
       `__novel_isr_dev_styles.publish(${JSON.stringify(externalUrl)}`
     );
     expect(externalWrapper?.code).not.toContain('__novel_isr_dev_styles.publish("/src/Page.scss"');
+  });
+
+  it('keeps the stylesheet cleanup boundary SSR-safe for pure Server Component CSS', async () => {
+    const root = await createFixture();
+    const server = await createServer({
+      root,
+      configFile: false,
+      appType: 'custom',
+      logLevel: 'silent',
+      server: {
+        middlewareMode: true,
+        hmr: false,
+        fs: { allow: [root, process.cwd()] },
+      },
+      plugins: [
+        ...createDevCssLifecyclePlugins(path.resolve(process.cwd(), 'src/defaults')),
+        ...vitePluginRsc({
+          entries: {
+            client: '/src/entry.browser.ts',
+            rsc: '/src/entry.rsc.tsx',
+            ssr: '/src/entry.ssr.ts',
+          },
+        }),
+      ],
+    });
+    viteServers.push(server);
+
+    const ssrEnvironment = server.environments.ssr as typeof server.environments.ssr & {
+      runner: { import(id: string): Promise<Record<string, unknown>> };
+    };
+    const rscEnvironment = server.environments.rsc as typeof server.environments.rsc & {
+      runner: { import(id: string): Promise<Record<string, unknown>> };
+    };
+
+    const ssrBoundary = await ssrEnvironment.runner.import(VITE_RSC_REMOVE_DUPLICATE_CSS_ID);
+    expect(typeof ssrBoundary.default).toBe('function');
+    expect((ssrBoundary.default as () => unknown)()).toBeNull();
+    await expect(
+      rscEnvironment.runner.import(VITE_RSC_REMOVE_DUPLICATE_CSS_ID)
+    ).resolves.toBeTruthy();
+
+    for (const [name, shouldImportRegistry] of [
+      ['client', true],
+      ['ssr', false],
+      ['rsc', false],
+    ] as const) {
+      const environment = server.environments[name];
+      const resolved = await environment.pluginContainer.resolveId(
+        VITE_RSC_REMOVE_DUPLICATE_CSS_ID
+      );
+      expect(resolved?.id).toBe(DEV_CSS_HANDOFF_RESOLVED_ID);
+      const loaded = await environment.pluginContainer.load(resolved!.id);
+      const code = typeof loaded === 'string' ? loaded : loaded?.code;
+      expect(code?.includes(`import "${DEV_STYLE_REGISTRY_ID}"`)).toBe(shouldImportRegistry);
+    }
   });
 });
 

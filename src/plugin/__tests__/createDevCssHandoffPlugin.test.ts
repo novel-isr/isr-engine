@@ -48,15 +48,35 @@ describe('createDevCssLifecyclePlugins', () => {
   it('owns plugin-rsc dev stylesheet cleanup before the upstream virtual module resolves', async () => {
     const [plugin] = createDevCssLifecyclePlugins(defaultsDir);
     const resolveId = plugin.resolveId as (id: string) => string | undefined;
-    const load = plugin.load as (id: string) => string | undefined;
+    const load = plugin.load as (
+      this: { environment: { name: string } },
+      id: string
+    ) => string | undefined;
+    const clientContext = { environment: { name: 'client' } };
 
     expect(plugin.enforce).toBe('pre');
     expect(resolveId(VITE_RSC_REMOVE_DUPLICATE_CSS_ID)).toBe(DEV_CSS_HANDOFF_RESOLVED_ID);
-    expect(load(DEV_CSS_HANDOFF_RESOLVED_ID)).toContain('DevCssLifecycleBoundary');
-    expect(load(DEV_CSS_HANDOFF_RESOLVED_ID)).toContain(`import "${DEV_STYLE_REGISTRY_ID}"`);
-    expect(load(DEV_CSS_HANDOFF_RESOLVED_ID)).not.toContain('React.useLayoutEffect');
-    expect(load(DEV_CSS_HANDOFF_RESOLVED_ID)).not.toContain('reconcileDocumentStyles');
-    expect(load(DEV_CSS_HANDOFF_RESOLVED_ID)).not.toContain('handoffDevClientReferenceStyles');
+    expect(load.call(clientContext, DEV_CSS_HANDOFF_RESOLVED_ID)).toContain(
+      'DevCssLifecycleBoundary'
+    );
+    expect(load.call(clientContext, DEV_CSS_HANDOFF_RESOLVED_ID)).toContain(
+      `import "${DEV_STYLE_REGISTRY_ID}"`
+    );
+    expect(load.call(clientContext, DEV_CSS_HANDOFF_RESOLVED_ID)).not.toContain(
+      'React.useLayoutEffect'
+    );
+    expect(load.call(clientContext, DEV_CSS_HANDOFF_RESOLVED_ID)).not.toContain(
+      'reconcileDocumentStyles'
+    );
+    expect(load.call(clientContext, DEV_CSS_HANDOFF_RESOLVED_ID)).not.toContain(
+      'handoffDevClientReferenceStyles'
+    );
+    expect(load.call({ environment: { name: 'ssr' } }, DEV_CSS_HANDOFF_RESOLVED_ID)).not.toContain(
+      DEV_STYLE_REGISTRY_ID
+    );
+    expect(load.call({ environment: { name: 'rsc' } }, DEV_CSS_HANDOFF_RESOLVED_ID)).not.toContain(
+      DEV_STYLE_REGISTRY_ID
+    );
   });
 
   it('gives development RSC stylesheet resources a CSS-only URL identity', async () => {
@@ -654,7 +674,10 @@ describe('createDevCssLifecyclePlugins', () => {
     const prePlugin = plugins.find(plugin => plugin.name === 'isr:dev-css-handoff')!;
     const postPlugin = plugins.find(plugin => plugin.name === 'isr:dev-style-registry')!;
     const resolveId = postPlugin.resolveId as (id: string) => string | undefined;
-    const load = postPlugin.load as (id: string) => string | undefined;
+    const load = postPlugin.load as (
+      this: { environment: { name: string } },
+      id: string
+    ) => string | undefined;
     const transform = postPlugin.transform as (
       code: string,
       id: string
@@ -663,18 +686,23 @@ describe('createDevCssLifecyclePlugins', () => {
     expect(prePlugin.enforce).toBe('pre');
     expect(postPlugin.enforce).toBe('post');
     expect(resolveId(DEV_STYLE_REGISTRY_ID)).toBe(DEV_STYLE_REGISTRY_RESOLVED_ID);
-    expect(load(DEV_STYLE_REGISTRY_RESOLVED_ID)).toContain('getOrCreateDevStyleRegistry(document,');
-    expect(load(DEV_STYLE_REGISTRY_RESOLVED_ID)).toContain('registerDevStyleRegistry');
-    expect(load(DEV_STYLE_REGISTRY_RESOLVED_ID)).toContain(
-      'onRscCommit: completeDevStyleNavigation'
+    const clientRegistry = load.call(
+      { environment: { name: 'client' } },
+      DEV_STYLE_REGISTRY_RESOLVED_ID
     );
-    expect(load(DEV_STYLE_REGISTRY_RESOLVED_ID)).toContain(
-      "import.meta.hot?.on('vite:beforeUpdate'"
+    expect(clientRegistry).toContain('getOrCreateDevStyleRegistry(document,');
+    expect(clientRegistry).toContain('registerDevStyleRegistry');
+    expect(clientRegistry).toContain('onRscCommit: completeDevStyleNavigation');
+    expect(clientRegistry).toContain("import.meta.hot?.on('vite:beforeUpdate'");
+    expect(clientRegistry).toContain("import.meta.hot?.on('vite:afterUpdate'");
+    expect(clientRegistry).toContain("import.meta.hot?.on('vite:error'");
+    const serverRegistry = load.call(
+      { environment: { name: 'ssr' } },
+      DEV_STYLE_REGISTRY_RESOLVED_ID
     );
-    expect(load(DEV_STYLE_REGISTRY_RESOLVED_ID)).toContain(
-      "import.meta.hot?.on('vite:afterUpdate'"
-    );
-    expect(load(DEV_STYLE_REGISTRY_RESOLVED_ID)).toContain("import.meta.hot?.on('vite:error'");
+    expect(serverRegistry).toContain('publish() {}');
+    expect(serverRegistry).not.toContain('document');
+    expect(serverRegistry).not.toContain('import.meta.hot');
 
     const result = await transform(
       `

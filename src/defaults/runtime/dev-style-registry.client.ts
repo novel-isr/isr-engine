@@ -154,8 +154,10 @@ export function createDevStyleRegistry(
     committedTransportNodes.set(id, link);
   }
 
+  const hasManagedStyle = (record: StyleRecord | undefined): boolean => !!record?.node?.isConnected;
+
   const hasManagedOwner = (record: StyleRecord | undefined): boolean =>
-    !!record?.node?.isConnected || !!record?.ownedLink?.isConnected;
+    hasManagedStyle(record) || !!record?.ownedLink?.isConnected;
 
   const isCommitted = (id: string): boolean => committedActiveIds.includes(id);
 
@@ -286,7 +288,7 @@ export function createDevStyleRegistry(
     for (const id of committedActiveIds) {
       const record = matchingRecord(id);
       if (record?.cssText !== undefined) installManagedNode(record);
-      convergeCommittedTransport(id, committedGenerationWatermark, hasManagedOwner(record));
+      convergeCommittedTransport(id, committedGenerationWatermark, hasManagedStyle(record));
     }
   };
 
@@ -694,7 +696,7 @@ export function createDevStyleRegistry(
         convergeCommittedTransport(
           id,
           generation,
-          hasManagedOwner(matchingRecord(id)),
+          hasManagedStyle(matchingRecord(id)),
           exactPreparedOwner
         );
       }

@@ -963,6 +963,7 @@ export function createDevCssLifecyclePluginPhases(
         if (!boundary.startsWith(directive)) {
           throw new Error('[novel-isr] Development CSS boundary lost its client directive.');
         }
+        if (this.environment.name !== 'client') return boundary;
         return boundary.replace(
           directive,
           `${directive}\n\nimport ${JSON.stringify(DEV_STYLE_REGISTRY_ID)};`
@@ -1015,6 +1016,14 @@ export function createDevCssLifecyclePluginPhases(
       },
       load(id) {
         if (id !== DEV_STYLE_REGISTRY_RESOLVED_ID) return undefined;
+        if (this.environment.name !== 'client') {
+          return `
+            export const devStyleRegistry = {
+              publish() {},
+              prune() {},
+            };
+          `;
+        }
         return `
           "use client";
           import { getOrCreateDevStyleRegistry } from ${JSON.stringify(registryUrl)};

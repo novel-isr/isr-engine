@@ -80,6 +80,15 @@ describe('development style navigation lifecycle', () => {
     ).toBe(adopted);
     expect(bootstrap.isConnected).toBe(false);
 
+    lifecycle.commitTree(0, styleIds);
+
+    expect(adopted!.isConnected).toBe(true);
+    expect(
+      document.querySelector(
+        'link[rel="stylesheet"][data-precedence^="vite-rsc/"][href*="ServerOnly.scss"]'
+      )
+    ).toBe(adopted);
+
     registry.dispose();
     window.close();
   });
