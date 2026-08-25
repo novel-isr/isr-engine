@@ -417,7 +417,7 @@ describe('createDevCssLifecyclePlugins', () => {
     expect(pinnedDepVersionRE.test('/entry?v=release.12')).toBe(true);
   });
 
-  it('fails loudly for an unsupported imported Vite before lifecycle transforms are created', () => {
+  it('validates pinned Vite versions and registers the serve-time compatibility gate', () => {
     const assertPinnedViteVersion = Reflect.get(devCssHandoffPlugin, 'assertPinnedViteVersion') as (
       actualVersion: string
     ) => void;

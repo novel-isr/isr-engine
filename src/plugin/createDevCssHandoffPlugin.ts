@@ -920,7 +920,6 @@ export interface DevCssLifecyclePluginPhases {
 export function createDevCssLifecyclePluginPhases(
   defaultsDir: string
 ): DevCssLifecyclePluginPhases {
-  assertPinnedViteVersion(viteVersion);
   const lifecycleBoundaryPath = path.resolve(defaultsDir, 'runtime/dev-css-handoff.client.ts');
   const registryUrl = pathToFileURL(
     path.resolve(defaultsDir, 'runtime/dev-style-registry.client.ts')
