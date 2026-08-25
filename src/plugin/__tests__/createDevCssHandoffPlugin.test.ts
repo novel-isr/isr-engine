@@ -341,6 +341,12 @@ describe('createDevCssLifecyclePlugins', () => {
     expect(
       validate('/@id/__x00__virtual:fixture/card?theme=dark', '\0virtual:fixture/card?theme=dark')
     ).toBe('/@id/__x00__virtual:fixture/card?theme=dark');
+    expect(
+      validate(
+        '/@id/__x00__virtual:fixture/card?t=11&theme=dark&v=12&import',
+        '\0virtual:fixture/card?theme=dark&t=13&direct&__novel_isr_style_generation=4'
+      )
+    ).toBe('/@id/__x00__virtual:fixture/card?t=11&theme=dark&v=12&import');
 
     expect(() =>
       validate('/@id/__x00__virtual:fixture/card?theme=light', '\0virtual:fixture/card?theme=dark')
@@ -384,6 +390,57 @@ describe('createDevCssLifecyclePlugins', () => {
     await expect(
       postTransform.call(context, 'export default function NotRsc() {}', id)
     ).resolves.toBeUndefined();
+  });
+
+  it('prunes only the exact semantic virtual client-reference candidate during HMR', async () => {
+    const [prePlugin, clientReferencePlugin] = createDevCssLifecyclePlugins(defaultsDir);
+    const preTransform = prePlugin!.transform as (code: string, id: string) => unknown;
+    const postTransform = clientReferencePlugin!.transform as (
+      code: string,
+      id: string
+    ) => Promise<unknown>;
+    const context = { environment: { name: 'rsc' } };
+    const darkId = '\0virtual:fixture/card?variant=dark';
+    const lightId = '\0virtual:fixture/card?variant=light';
+
+    await preTransform.call(context, `'use client';\nexport default function Dark() {}`, darkId);
+    await preTransform.call(context, `'use client';\nexport default function Light() {}`, lightId);
+    await preTransform.call(
+      context,
+      'export default function NotClient() {}',
+      `${darkId}&t=17&import`
+    );
+
+    await expect(
+      postTransform.call(context, 'export default function NotClient() {}', darkId)
+    ).resolves.toBeUndefined();
+    await expect(
+      postTransform.call(context, 'export default function Light() {}', `${lightId}&t=18&import`)
+    ).rejects.toThrow(/development server is unavailable/i);
+  });
+
+  it('does not decode reserved path bytes while tracking virtual client-reference candidates', async () => {
+    const [prePlugin, clientReferencePlugin] = createDevCssLifecyclePlugins(defaultsDir);
+    const preTransform = prePlugin!.transform as (code: string, id: string) => unknown;
+    const postTransform = clientReferencePlugin!.transform as (
+      code: string,
+      id: string
+    ) => Promise<unknown>;
+    const context = { environment: { name: 'rsc' } };
+    const encodedPathId = '\0virtual:fixture/card%3Fvariant=dark';
+    const queryId = '\0virtual:fixture/card?variant=dark';
+
+    await preTransform.call(
+      context,
+      `'use client';\nexport default function Encoded() {}`,
+      encodedPathId
+    );
+    await preTransform.call(context, `'use client';\nexport default function Query() {}`, queryId);
+    await preTransform.call(context, 'export default function NotClient() {}', encodedPathId);
+
+    await expect(
+      postTransform.call(context, 'export default function Query() {}', queryId)
+    ).rejects.toThrow(/development server is unavailable/i);
   });
 
   it('fails explicitly when the pinned plugin-rsc client reference proxy shape changes', () => {

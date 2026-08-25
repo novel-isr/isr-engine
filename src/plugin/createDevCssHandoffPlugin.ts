@@ -7,7 +7,10 @@ import ts from 'typescript';
 import { normalizePath, type EnvironmentModuleNode, type Plugin, type ViteDevServer } from 'vite';
 
 import { transformDevCssModule } from './transformDevCssModule';
-import { canonicalizeDevStyleId } from '../defaults/runtime/dev-style-id';
+import {
+  canonicalizeDevStyleId,
+  DEV_STYLE_TRANSPORT_GENERATION_PARAM,
+} from '../defaults/runtime/dev-style-id';
 
 export const VITE_RSC_REMOVE_DUPLICATE_CSS_ID = 'virtual:vite-rsc/remove-duplicate-server-css';
 export const DEV_CSS_HANDOFF_RESOLVED_ID = '\0virtual:novel-isr/dev-css-handoff';
@@ -29,8 +32,44 @@ function getPinnedRscServerRuntimePath(): string {
   return pinnedRscServerRuntimePath;
 }
 
-function cleanModuleId(id: string): string {
+const VITE_MODULE_TRANSPORT_QUERY_KEYS = new Set([
+  'direct',
+  't',
+  'v',
+  'import',
+  DEV_STYLE_TRANSPORT_GENERATION_PARAM,
+]);
+
+function semanticModuleIdentity(id: string): string {
+  const hashStart = id.indexOf('#');
+  const resource = hashStart === -1 ? id : id.slice(0, hashStart);
+  const hash = hashStart === -1 ? '' : id.slice(hashStart);
+  const queryStart = resource.indexOf('?');
+  if (queryStart === -1) return id;
+
+  const pathname = resource.slice(0, queryStart);
+  const semanticQuery = resource
+    .slice(queryStart + 1)
+    .split('&')
+    .filter(parameter => {
+      const separator = parameter.indexOf('=');
+      const key = separator === -1 ? parameter : parameter.slice(0, separator);
+      return !VITE_MODULE_TRANSPORT_QUERY_KEYS.has(key);
+    })
+    .join('&');
+  return `${pathname}${semanticQuery ? `?${semanticQuery}` : ''}${hash}`;
+}
+
+function modulePathname(id: string): string {
   return id.replace(/[?#].*$/, '');
+}
+
+function moduleSemanticQuery(id: string): string {
+  const semanticId = semanticModuleIdentity(id);
+  const queryStart = semanticId.indexOf('?');
+  if (queryStart === -1) return '';
+  const hashStart = semanticId.indexOf('#', queryStart);
+  return semanticId.slice(queryStart, hashStart === -1 ? undefined : hashStart);
 }
 
 function browserStyleIdForResolvedModule(
@@ -59,7 +98,7 @@ function browserStyleIdForResolvedModule(
   }
   if (mappedId === undefined) return undefined;
 
-  const cleanNode = moduleGraph?.getModuleById(cleanModuleId(id));
+  const cleanNode = moduleGraph?.getModuleById(modulePathname(id));
   if (cleanNode?.url && !cleanNode.url.startsWith('\0')) {
     const cleanGraphPath = new URL(canonicalizeDevStyleId(cleanNode.url), 'http://novel-isr.local/')
       .pathname;
@@ -171,7 +210,7 @@ function filePathFromFsUrl(value: string): string | undefined {
 }
 
 function canonicalModuleFilePath(moduleId: string): string | undefined {
-  const cleanId = cleanModuleId(moduleId);
+  const cleanId = modulePathname(moduleId);
   return filePathFromFsUrl(cleanId) ?? canonicalFilePath(cleanId);
 }
 
@@ -191,29 +230,34 @@ function rootRelativeFilePath(root: string, referenceId: string): string | undef
 }
 
 function referenceMatchesModule(referenceId: string, moduleId: string, root: string): boolean {
-  const normalizedModuleId = moduleId.replaceAll('\\', '/');
+  const normalizedModuleId = semanticModuleIdentity(moduleId.replaceAll('\\', '/'));
+  const normalizedReferenceId = semanticModuleIdentity(referenceId);
   if (normalizedModuleId.startsWith('\0')) {
-    return referenceId === `/@id/__x00__${normalizedModuleId.slice(1)}`;
+    return normalizedReferenceId === `/@id/__x00__${normalizedModuleId.slice(1)}`;
   }
-  const cleanId = cleanModuleId(normalizedModuleId);
+  const cleanId = modulePathname(normalizedModuleId);
 
   const packageProxy = '/@id/__x00__virtual:vite-rsc/client-in-server-package-proxy/';
-  if (referenceId.startsWith(packageProxy)) {
-    const target = decodePackageProxyTarget(referenceId.slice(packageProxy.length));
+  if (normalizedReferenceId.startsWith(packageProxy)) {
+    const target = decodePackageProxyTarget(normalizedReferenceId.slice(packageProxy.length));
     const targetPath = target === undefined ? undefined : canonicalModuleFilePath(target);
     const modulePath = canonicalModuleFilePath(cleanId);
     return targetPath !== undefined && modulePath !== undefined && targetPath === modulePath;
   }
 
+  if (moduleSemanticQuery(normalizedReferenceId) !== moduleSemanticQuery(normalizedModuleId)) {
+    return false;
+  }
   const moduleFilePath = canonicalModuleFilePath(cleanId);
   if (!moduleFilePath) return false;
-  const fsReference = filePathFromFsUrl(referenceId);
+  const cleanReferenceId = modulePathname(normalizedReferenceId);
+  const fsReference = filePathFromFsUrl(cleanReferenceId);
   if (fsReference) return moduleFilePath === fsReference;
 
-  const browserReference = rootRelativeFilePath(root, referenceId);
+  const browserReference = rootRelativeFilePath(root, cleanReferenceId);
   if (!browserReference) return false;
   if (cleanId.startsWith('/') && !cleanId.startsWith('/@fs/')) {
-    if (canonicalFilePath(cleanId) === canonicalFilePath(referenceId)) return true;
+    if (canonicalFilePath(cleanId) === canonicalFilePath(cleanReferenceId)) return true;
   }
   return moduleFilePath === browserReference;
 }
@@ -387,14 +431,19 @@ export function clientReferenceIdFromProxy(code: string, id: string, root: strin
 
 async function collectClientReferenceStyles(server: ViteDevServer, id: string): Promise<string[]> {
   const environment = server.environments.client;
-  const cleanId = cleanModuleId(id);
-  const requestUrl = cleanId.startsWith(server.config.root)
-    ? cleanId.slice(server.config.root.length) || '/'
-    : cleanId;
-  await environment.transformRequest(requestUrl);
+  const moduleId = semanticModuleIdentity(id);
+  const requestUrl = moduleId.startsWith('\0')
+    ? `/@id/__x00__${moduleId.slice(1)}`
+    : moduleId.startsWith(server.config.root)
+      ? moduleId.slice(server.config.root.length) || '/'
+      : moduleId;
+  // `transformRequest()` receives Vite's resolved null-byte id directly; the public request URL is
+  // retained in full for module-graph lookup. Vite's HTTP transform middleware performs this same
+  // `/@id/__x00__` unwrap before calling the environment API.
+  await environment.transformRequest(moduleId.startsWith('\0') ? moduleId : requestUrl);
   const entry =
-    environment.moduleGraph.getModuleById(cleanId) ??
-    (await environment.moduleGraph.getModuleByUrl(requestUrl));
+    (await environment.moduleGraph.getModuleByUrl(requestUrl)) ??
+    environment.moduleGraph.getModuleById(moduleId);
   if (!entry) {
     throw new Error(`[novel-isr] Could not inspect the client dependency graph for ${id}.`);
   }
@@ -889,7 +938,7 @@ export function createDevCssLifecyclePluginPhases(
       },
       transform(code, id) {
         if (this?.environment.name === 'rsc') {
-          const moduleId = cleanModuleId(id);
+          const moduleId = semanticModuleIdentity(id);
           if (hasUseClientDirective(code, id)) clientReferenceModuleIds.add(moduleId);
           else clientReferenceModuleIds.delete(moduleId);
         }
@@ -905,7 +954,8 @@ export function createDevCssLifecyclePluginPhases(
       apply: 'serve',
       enforce: 'post',
       async transform(code, id) {
-        if (this.environment.name !== 'rsc' || !clientReferenceModuleIds.has(cleanModuleId(id))) {
+        const moduleId = semanticModuleIdentity(id);
+        if (this.environment.name !== 'rsc' || !clientReferenceModuleIds.has(moduleId)) {
           return undefined;
         }
         if (!devServer) {
@@ -913,8 +963,8 @@ export function createDevCssLifecyclePluginPhases(
             '[novel-isr] Development server is unavailable for CSS dependency mapping.'
           );
         }
-        const referenceId = clientReferenceIdFromProxy(code, id, devServer.config.root);
-        const styleIds = await collectClientReferenceStyles(devServer, id);
+        const referenceId = clientReferenceIdFromProxy(code, moduleId, devServer.config.root);
+        const styleIds = await collectClientReferenceStyles(devServer, moduleId);
         return {
           code:
             `import { registerDevClientReferenceStyles as __novel_isr_register_client_styles } from ${JSON.stringify(declarationsUrl)};\n` +

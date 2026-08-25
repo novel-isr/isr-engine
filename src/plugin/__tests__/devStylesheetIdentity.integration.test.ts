@@ -84,6 +84,69 @@ describe('development RSC stylesheet identity', () => {
     expect(rendered.devStyleIds).toContain('/src/ClientCard.module.scss');
   });
 
+  it('keeps query-bearing virtual client references distinct through the standard engine pipeline', async () => {
+    const root = await createFixture();
+    const virtualClientId = 'virtual:fixture/client-card';
+    const loadedClientIds: string[] = [];
+    const server = await createServer({
+      root,
+      configFile: false,
+      appType: 'custom',
+      logLevel: 'silent',
+      server: {
+        middlewareMode: true,
+        hmr: false,
+        fs: { allow: [root, process.cwd()] },
+      },
+      plugins: [
+        {
+          name: 'fixture:query-bearing-client-reference',
+          resolveId(id) {
+            if (id.startsWith(virtualClientId)) return `\0${id}`;
+          },
+          load(id) {
+            if (!id.startsWith(`\0${virtualClientId}`)) return;
+            loadedClientIds.push(id);
+            const queryStart = id.indexOf('?');
+            const variant = new URLSearchParams(
+              queryStart === -1 ? '' : id.slice(queryStart + 1)
+            ).get('variant');
+            const stylesheet =
+              variant === 'dark'
+                ? '/src/VirtualDark.scss'
+                : variant === 'light'
+                  ? '/src/VirtualLight.scss'
+                  : '/src/VirtualFallback.scss';
+            return (
+              `'use client';\n` +
+              `import ${JSON.stringify(stylesheet)};\n` +
+              `export default function VirtualCard() { return null; }\n`
+            );
+          },
+        },
+        ...createIsrPlugin({ root, isrCache: { enabled: false } }),
+      ],
+    });
+    viteServers.push(server);
+
+    const darkId = `${virtualClientId}?variant=dark`;
+    const lightId = `${virtualClientId}?variant=light`;
+    const dark = await server.environments.rsc.transformRequest(`\0${darkId}`);
+    const light = await server.environments.rsc.transformRequest(`\0${lightId}`);
+
+    expect(dark?.code).toContain(`/@id/__x00__${darkId}`);
+    expect(dark?.code).toContain('/src/VirtualDark.scss');
+    expect(dark?.code).not.toContain('/src/VirtualLight.scss');
+    expect(dark?.code).not.toContain('/src/VirtualFallback.scss');
+    expect(light?.code).toContain(`/@id/__x00__${lightId}`);
+    expect(light?.code).toContain('/src/VirtualLight.scss');
+    expect(light?.code).not.toContain('/src/VirtualDark.scss');
+    expect(light?.code).not.toContain('/src/VirtualFallback.scss');
+    expect(loadedClientIds).toContain(`\0${darkId}`);
+    expect(loadedClientIds).toContain(`\0${lightId}`);
+    expect(loadedClientIds).not.toContain(`\0${virtualClientId}`);
+  });
+
   it('separates the SSR stylesheet URL from the JavaScript CSS-module URL', async () => {
     const root = await createFixture();
     const server = await createServer({
@@ -263,5 +326,8 @@ async function createFixture(): Promise<string> {
     `import './Page.scss';\nimport ClientCard from './ClientCard';\nexport default function Page() { return <main><ClientCard /></main>; }\n`
   );
   await writeFile(path.join(root, 'src/Page.scss'), 'main { display: block; }\n');
+  await writeFile(path.join(root, 'src/VirtualDark.scss'), '.virtual { color: black; }\n');
+  await writeFile(path.join(root, 'src/VirtualLight.scss'), '.virtual { color: white; }\n');
+  await writeFile(path.join(root, 'src/VirtualFallback.scss'), '.virtual { color: red; }\n');
   return root;
 }
