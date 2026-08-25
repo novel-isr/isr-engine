@@ -49,6 +49,7 @@ export function createDevStyleRegistry(
   const preparationPromises = new Map<number, Promise<void>>();
   const generationPreloads = new Map<number, Map<string, HTMLLinkElement>>();
   const rscDeclarations = new Map<number, string[]>();
+  const committedTransportNodes = new Map<string, HTMLLinkElement>();
   let committedActiveIds: string[] = [];
   let committedGenerationWatermark = -1;
 
@@ -142,6 +143,13 @@ export function createDevStyleRegistry(
 
   const isCommitted = (id: string): boolean => committedActiveIds.includes(id);
 
+  const committedTransportNode = (id: string): HTMLLinkElement | undefined => {
+    const node = committedTransportNodes.get(id);
+    if (node?.isConnected && stylesheetId(node) === id) return node;
+    committedTransportNodes.delete(id);
+    return undefined;
+  };
+
   const installManagedNode = (record: StyleRecord): HTMLStyleElement => {
     const node = record.node?.isConnected ? record.node : document.createElement('style');
     if (!node.isConnected) {
@@ -152,12 +160,16 @@ export function createDevStyleRegistry(
     if (record.cssText !== undefined) node.textContent = record.cssText;
     record.pendingRelease = false;
     record.state = 'client-active';
+    const transport = committedTransportNode(record.id);
+    committedTransportNodes.delete(record.id);
+    transport?.remove();
     return node;
   };
 
   const release = (record: StyleRecord, generation?: number) => {
     record.node?.remove();
     record.node = undefined;
+    committedTransportNodes.delete(record.id);
     for (const link of matchingLinks(record.id)) {
       const owner = linkGeneration(link);
       if (generation === undefined || owner === undefined || owner <= generation) link.remove();
@@ -193,15 +205,18 @@ export function createDevStyleRegistry(
     generation: number,
     exactGeneration = false
   ): HTMLLinkElement | undefined => {
+    const current = committedTransportNode(id);
     let selected: HTMLLinkElement | undefined;
     let selectedGeneration = Number.NEGATIVE_INFINITY;
     for (const link of matchingLinks(id)) {
       const owner = linkGeneration(link);
+      const isCurrent = link === current;
       if (
         !isImporterResource(link) ||
         (exactGeneration && owner !== generation && !(generation === 0 && owner === undefined)) ||
-        (owner === undefined && committedGenerationWatermark > 0) ||
-        (owner !== undefined &&
+        (!isCurrent && owner === undefined && committedGenerationWatermark > 0) ||
+        (!isCurrent &&
+          owner !== undefined &&
           (owner < committedGenerationWatermark ||
             owner > generation ||
             isInvalidatedGeneration(owner)))
@@ -229,7 +244,12 @@ export function createDevStyleRegistry(
   ): boolean => {
     const selected = managed ? undefined : committedTransportOwner(id, generation, exactGeneration);
     if (!managed && !selected) return false;
-    if (selected) activateTransportOwner(selected);
+    if (selected) {
+      activateTransportOwner(selected);
+      committedTransportNodes.set(id, selected);
+    } else {
+      committedTransportNodes.delete(id);
+    }
     for (const link of matchingLinks(id)) {
       const owner = linkGeneration(link);
       if (
@@ -309,7 +329,11 @@ export function createDevStyleRegistry(
   };
 
   const removeGenerationTransport = (generation: number) => {
-    for (const link of generationLinks(generation)) link.remove();
+    for (const link of generationLinks(generation)) {
+      const id = stylesheetId(link);
+      if (id !== undefined && committedTransportNode(id) === link) continue;
+      link.remove();
+    }
   };
 
   const clearObsoleteGeneration = (generation: number) => {
@@ -378,7 +402,13 @@ export function createDevStyleRegistry(
     }
     for (const link of generationTransportLinks()) {
       const owner = linkGeneration(link);
-      if (owner !== undefined && owner < generation && isInvalidatedGeneration(owner)) {
+      const id = stylesheetId(link);
+      if (
+        owner !== undefined &&
+        owner < generation &&
+        isInvalidatedGeneration(owner) &&
+        (id === undefined || committedTransportNode(id) !== link)
+      ) {
         link.remove();
       }
     }
@@ -601,6 +631,7 @@ export function createDevStyleRegistry(
       preparedRscGenerations.clear();
       for (const generation of generationPreloads.keys()) removeGenerationPreloads(generation);
       rscDeclarations.clear();
+      committedTransportNodes.clear();
       committedActiveIds = [];
       for (const record of Array.from(records.values())) {
         record.node?.remove();

@@ -59,6 +59,21 @@ function appendRscLink(document: Document, href: string, generation?: number): H
   return link;
 }
 
+function createPromotedTransportFixture(): RegistryFixture & { promoted: HTMLLinkElement } {
+  const fixture = createFixture();
+  const { document, registry } = fixture;
+  registry.beginRscUpdate(1);
+  const promoted = appendRscLink(document, '/src/A.scss?direct', 1);
+  promoted.dataset.precedence = 'vite-rsc/importer-resources';
+  registry.reconcileDocumentStyles(1, ['/src/A.scss']);
+
+  registry.beginRscUpdate(2);
+  registry.declareRscStyles(2, ['/src/A.scss']);
+  registry.reconcileDocumentStyles(2, ['/src/A.scss']);
+
+  return { ...fixture, promoted };
+}
+
 afterEach(() => {
   for (const fixture of fixtures.splice(0)) fixture.window.close();
 });
@@ -528,6 +543,150 @@ describe('development style registry', () => {
     expect(bootstrap.isConnected).toBe(false);
     expect(generation1.isConnected).toBe(true);
     expect(document.querySelectorAll('link[href*="/src/A.scss"]')).toHaveLength(1);
+  });
+
+  it.each([
+    ['begin', (registry: DevStyleRegistry) => registry.beginRscUpdate(1)],
+    ['declare', (registry: DevStyleRegistry) => registry.declareRscStyles(1, ['/src/A.scss'])],
+    ['prepare', (registry: DevStyleRegistry) => registry.prepareRscStyles(1, ['/src/A.scss'])],
+    [
+      'reconcile',
+      (registry: DevStyleRegistry) => registry.reconcileDocumentStyles(1, ['/src/A.scss']),
+    ],
+    ['abort', (registry: DevStyleRegistry) => registry.abortRscUpdate(1)],
+  ])(
+    'protects a promoted committed transport across stale %s lifecycle touches',
+    async (_name, touch) => {
+      const { document, promoted, registry } = createPromotedTransportFixture();
+      let committedOwnerRemoved = false;
+      const removePromoted = promoted.remove.bind(promoted);
+      promoted.remove = () => {
+        committedOwnerRemoved = true;
+        removePromoted();
+      };
+
+      await touch(registry);
+
+      expect(promoted.isConnected).toBe(true);
+      expect(committedOwnerRemoved).toBe(false);
+      expect(document.querySelectorAll('link[href*="/src/A.scss"]')).toHaveLength(1);
+
+      const duplicate = appendRscLink(document, '/src/A.scss?direct', 1);
+      duplicate.dataset.precedence = 'vite-rsc/importer-resources';
+      duplicate.media = 'not all';
+      await touch(registry);
+
+      expect(promoted.isConnected).toBe(true);
+      expect(committedOwnerRemoved).toBe(false);
+      expect(duplicate.isConnected).toBe(false);
+      expect(duplicate.media).toBe('not all');
+      expect(Array.from(document.querySelectorAll('link[href*="/src/A.scss"]'))).toEqual([
+        promoted,
+      ]);
+    }
+  );
+
+  it('keeps a promoted generation-zero transport eligible across later fallback commits', () => {
+    const { document, registry } = createFixture();
+    const bootstrap = appendRscLink(document, '/src/A.scss?direct');
+    bootstrap.dataset.precedence = 'vite-rsc/importer-resources';
+    registry.reconcileDocumentStyles(0, ['/src/A.scss']);
+
+    for (const generation of [2, 3]) {
+      registry.beginRscUpdate(generation);
+      registry.declareRscStyles(generation, ['/src/A.scss']);
+      registry.reconcileDocumentStyles(generation, ['/src/A.scss']);
+    }
+
+    expect(generationState(registry).committedWatermark).toBe(3);
+    expect(bootstrap.isConnected).toBe(true);
+    expect(document.querySelectorAll('link[href*="/src/A.scss"]')).toHaveLength(1);
+  });
+
+  it('activates a new exact transport before releasing the promoted committed owner', () => {
+    const { document, promoted, registry } = createPromotedTransportFixture();
+    const mutations: string[] = [];
+    const exact = appendRscLink(document, '/src/A.scss?direct', 3);
+    exact.dataset.precedence = 'vite-rsc/importer-resources';
+    exact.media = 'not all';
+    const removeExactAttribute = exact.removeAttribute.bind(exact);
+    exact.removeAttribute = name => {
+      if (name === 'media') mutations.push('activate-exact');
+      removeExactAttribute(name);
+    };
+    const removePromoted = promoted.remove.bind(promoted);
+    promoted.remove = () => {
+      mutations.push('remove-promoted');
+      removePromoted();
+    };
+
+    registry.beginRscUpdate(3);
+    registry.declareRscStyles(3, ['/src/A.scss']);
+    registry.reconcileDocumentStyles(3, ['/src/A.scss']);
+
+    expect(exact.isConnected).toBe(true);
+    expect(exact.media).toBe('');
+    expect(promoted.isConnected).toBe(false);
+    expect(mutations.indexOf('activate-exact')).toBeGreaterThanOrEqual(0);
+    expect(mutations.indexOf('remove-promoted')).toBeGreaterThan(
+      mutations.indexOf('activate-exact')
+    );
+
+    registry.reconcileDocumentStyles(3, ['/src/A.scss']);
+    expect(Array.from(document.querySelectorAll('link[href*="/src/A.scss"]'))).toEqual([exact]);
+  });
+
+  it('installs managed CSS before releasing the promoted committed owner', async () => {
+    const { document, promoted, registry, window } = createPromotedTransportFixture();
+    const mutations: string[] = [];
+    const observer = new window.MutationObserver(records => {
+      for (const record of records) {
+        for (const node of record.addedNodes) {
+          if (node instanceof window.HTMLStyleElement) mutations.push('insert-managed');
+        }
+        for (const node of record.removedNodes) {
+          if (node === promoted) mutations.push('remove-promoted');
+        }
+      }
+    });
+    observer.observe(document.head, { childList: true });
+
+    registry.publish('/src/A.scss', '.a{color:green}');
+    await window.happyDOM.whenAsyncComplete();
+    observer.disconnect();
+
+    expect(document.querySelector('style[data-novel-isr-dev-style="/src/A.scss"]')).not.toBeNull();
+    expect(promoted.isConnected).toBe(false);
+    expect(mutations.indexOf('insert-managed')).toBeGreaterThanOrEqual(0);
+    expect(mutations.indexOf('remove-promoted')).toBeGreaterThan(
+      mutations.indexOf('insert-managed')
+    );
+  });
+
+  it('clears promoted transport ownership when a route removes the stylesheet', () => {
+    const { document, promoted, registry } = createPromotedTransportFixture();
+
+    registry.beginRscUpdate(3);
+    registry.declareRscStyles(3, []);
+    registry.reconcileDocumentStyles(3, []);
+    registry.reconcileDocumentStyles(3, []);
+
+    expect(promoted.isConnected).toBe(false);
+    expect(document.querySelectorAll('link[href*="/src/A.scss"]')).toHaveLength(0);
+
+    const late = appendRscLink(document, '/src/A.scss?direct', 1);
+    late.dataset.precedence = 'vite-rsc/importer-resources';
+    registry.abortRscUpdate(1);
+    expect(late.isConnected).toBe(false);
+  });
+
+  it('clears promoted transport identity when the registry is disposed', () => {
+    const { promoted, registry } = createPromotedTransportFixture();
+
+    registry.dispose();
+    registry.abortRscUpdate(1);
+
+    expect(promoted.isConnected).toBe(false);
   });
 
   it('keeps only the latest importer when one generation renders duplicate owners', () => {
