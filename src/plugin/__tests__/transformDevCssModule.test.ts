@@ -93,6 +93,26 @@ describe('transformDevCssModule', () => {
     ).toThrow(/Vite development CSS wrapper compatibility error.*\/src\/Card\.module\.scss/);
   });
 
+  it('rejects a canonical wrapper with additional namespace mutator accesses', () => {
+    expect(() =>
+      transformDevCssModule(
+        `
+          import { updateStyle as __vite__updateStyle, removeStyle as __vite__removeStyle } from "/app/@vite/client";
+          import * as viteClient from "/app/@vite/client";
+          const __vite__id = "/src/Card.module.scss";
+          const __vite__css = ".card{color:green}";
+          __vite__updateStyle(__vite__id, __vite__css);
+          import.meta.hot.prune(() => __vite__removeStyle(__vite__id));
+          viteClient.updateStyle(__vite__id, ".extra{color:red}");
+          import.meta.hot.accept(() => viteClient.removeStyle(__vite__id));
+          export default { card: "_card_123" };
+        `,
+        '/src/Card.module.scss',
+        'virtual:novel-isr/dev-style-registry'
+      )
+    ).toThrow(/Vite development CSS wrapper compatibility error.*\/src\/Card\.module\.scss/);
+  });
+
   it('routes Vite bundled-development wrappers through the registry', () => {
     const result = transformDevCssModule(
       VITE_BUNDLED_WRAPPER,
@@ -140,6 +160,16 @@ describe('transformDevCssModule', () => {
     expect(() =>
       transformDevCssModule(
         `${VITE_BUNDLED_WRAPPER}\nimport.meta.hot._internal.updateStyle(__vite__id, ".extra{color:red}");`,
+        '/src/Card.module.scss',
+        'virtual:novel-isr/dev-style-registry'
+      )
+    ).toThrow(/Vite development CSS wrapper compatibility error.*\/src\/Card\.module\.scss/);
+  });
+
+  it('rejects a canonical bundled wrapper with additional computed internal mutator access', () => {
+    expect(() =>
+      transformDevCssModule(
+        `${VITE_BUNDLED_WRAPPER}\nimport.meta.hot["_internal"].removeStyle(__vite__id);`,
         '/src/Card.module.scss',
         'virtual:novel-isr/dev-style-registry'
       )

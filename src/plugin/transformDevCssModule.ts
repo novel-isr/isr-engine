@@ -23,8 +23,8 @@ interface ViteStyleBindings {
   hasEvidence: boolean;
   updateStyleBindings: MutatorBinding[];
   removeStyleBindings: MutatorBinding[];
-  internalAccesses: ImportMetaHotInternalAccess[];
   supportedInternalAccesses: Set<ImportMetaHotInternalAccess>;
+  unsupportedMutatorAccesses: ts.Node[];
 }
 
 function isViteClientSpecifier(value: string): boolean {
@@ -88,8 +88,8 @@ function collectViteStyleBindings(source: ts.SourceFile): ViteStyleBindings {
     hasEvidence: false,
     updateStyleBindings: [],
     removeStyleBindings: [],
-    internalAccesses: [],
     supportedInternalAccesses: new Set(),
+    unsupportedMutatorAccesses: [],
   };
 
   const addBinding = (name: 'updateStyle' | 'removeStyle', declaration: ts.Identifier) => {
@@ -165,9 +165,14 @@ function collectViteStyleBindings(source: ts.SourceFile): ViteStyleBindings {
   const visit = (node: ts.Node) => {
     if (isImportMetaHotInternalAccess(node)) {
       bindings.hasEvidence = true;
-      bindings.internalAccesses.push(node);
+      if (!bindings.supportedInternalAccesses.has(node)) {
+        bindings.unsupportedMutatorAccesses.push(node);
+      }
     }
-    if (isNamespaceMutatorAccess(node, namespaceBindings)) bindings.hasEvidence = true;
+    if (isNamespaceMutatorAccess(node, namespaceBindings)) {
+      bindings.hasEvidence = true;
+      bindings.unsupportedMutatorAccesses.push(node);
+    }
     ts.forEachChild(node, visit);
   };
   visit(source);
@@ -257,8 +262,8 @@ export function transformDevCssModule(
   const source = ts.createSourceFile(id, code, ts.ScriptTarget.Latest, true, ts.ScriptKind.JS);
   const bindings = collectViteStyleBindings(source);
   if (!bindings.hasEvidence) return undefined;
-  if (bindings.internalAccesses.some(access => !bindings.supportedInternalAccesses.has(access))) {
-    throw compatibilityError(id, 'contains unsupported import.meta.hot._internal mutator access.');
+  if (bindings.unsupportedMutatorAccesses.length > 0) {
+    throw compatibilityError(id, 'contains unsupported Vite DOM-mutator access.');
   }
   if (bindings.updateStyleBindings.length !== 1 || bindings.removeStyleBindings.length !== 1) {
     throw compatibilityError(id, 'expected one updateStyle and one removeStyle binding.');
