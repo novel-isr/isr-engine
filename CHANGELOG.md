@@ -39,6 +39,36 @@
 
 ---
 
+## [2.6.2] - 2026-08-25
+
+发布主题：**Vite dev 首屏 stylesheet 资源身份根治**。
+
+### Fixed
+
+- **刷新时首屏仍会短暂丢失路由样式**：Vite dev 的同一个 `.css` / `.scss` URL
+  同时表示两类响应：stylesheet 请求根据 `Accept: text/css` 在服务器内部临时转为
+  `?direct` 并返回 CSS，JavaScript import 则返回调用 `__vite__updateStyle` 的模块。
+  `@vitejs/plugin-rsc@0.5.34` 此前把未带 `direct` 的普通模块 URL 直接交给 React
+  stylesheet resource，导致 SSR stylesheet 与 JavaScript 模块共享外部 URL 身份；
+  浏览器缓存或请求调度一旦先看到模块响应，首屏只能等客户端重新注入样式后恢复。
+- engine 现在在 `virtual:vite-rsc/css` 资源清单生成边界，用 AST 只规范化其中的样式
+  href，为所有 dev SSR stylesheet 追加 Vite 原生 `direct` 查询标记。stylesheet 从
+  HTML、HTTP 缓存到 Vite 模块图均拥有 CSS-only 身份，CSS module 的 JavaScript import
+  仍使用原 URL；修复不依赖延迟、重试、DOM 隐藏或业务 preload。
+- v2.6.1 的逐资源原子交接继续保留：SSR `link` 在对应 Vite inline style 就绪前仍不会
+  被移除，分别覆盖首次绘制的资源身份和 hydration 后的样式所有权交接。
+
+### Tests
+
+- 新增虚拟 RSC CSS 模块测试，覆盖无 query、已有 query、已带 `direct`、非样式资源和
+  普通业务模块不受影响。
+- 新增真实 Vite + plugin-rsc 开发集成测试，验证生成清单使用 `?direct`、stylesheet
+  请求返回 `text/css`，而原始 CSS module URL 继续返回 `text/javascript`。
+- 使用未增加业务样式代码的隔离消费者验证首页、博客、项目、关于、联系五条 SSR
+  路由，所有首屏 stylesheet 均带 `direct` 且响应为 CSS。
+
+---
+
 ## [2.6.1] - 2026-08-25
 
 发布主题：**Vite dev 样式资源原子交接**。
