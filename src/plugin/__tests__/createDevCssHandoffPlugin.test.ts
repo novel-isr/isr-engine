@@ -1,4 +1,7 @@
+import { realpathSync } from 'node:fs';
+import { createRequire } from 'node:module';
 import path from 'node:path';
+import { pathToFileURL } from 'node:url';
 
 import { describe, expect, it } from 'vitest';
 
@@ -14,6 +17,9 @@ import {
 
 describe('createDevCssLifecyclePlugins', () => {
   const defaultsDir = path.resolve(process.cwd(), 'src/defaults');
+  const pinnedRscRuntime = pathToFileURL(
+    realpathSync(createRequire(import.meta.url).resolve('@vitejs/plugin-rsc/react/rsc/server'))
+  ).href;
   const pinnedRscResources = (extraBody = '') => `
     import __vite_rsc_react__ from "react";
     import RemoveDuplicateServerCss from "virtual:vite-rsc/remove-duplicate-server-css";
@@ -146,9 +152,14 @@ describe('createDevCssLifecyclePlugins', () => {
 
   it('accepts only client proxies bound to the pinned plugin-rsc runtime and module identity', () => {
     const validProxy = `
-      import * as $$ReactServer from "file:///workspace/node_modules/.pnpm/@vitejs+plugin-rsc@0.5.34_peer/node_modules/@vitejs/plugin-rsc/dist/react/rsc/server.js";
+      import * as $$ReactServer from ${JSON.stringify(pinnedRscRuntime)};
+      export const Badge = $$ReactServer.registerClientReference(
+        () => { throw new Error("Unexpectedly client reference export '" + "Badge" + "' is called on server"); },
+        "/src/ClientCard.tsx",
+        "Badge"
+      );
       export default $$ReactServer.registerClientReference(
-        () => { throw new Error("Unexpected client call"); },
+        () => { throw new Error("Unexpectedly client reference export '" + "default" + "' is called on server"); },
         "/src/ClientCard.tsx",
         "default"
       );
@@ -163,6 +174,45 @@ describe('createDevCssLifecyclePlugins', () => {
           '@vitejs/plugin-rsc/dist/react/rsc/server.js',
           'lookalike/rsc/server.js'
         ),
+        '/src/ClientCard.tsx'
+      )
+    ).toThrow(/unsupported @vitejs\/plugin-rsc client reference proxy shape/i);
+    expect(() =>
+      clientReferenceIdFromProxy(
+        validProxy.replace(
+          pinnedRscRuntime,
+          'file:///tmp/fake/@vitejs/plugin-rsc/dist/react/rsc/server.js'
+        ),
+        '/src/ClientCard.tsx'
+      )
+    ).toThrow(/unsupported @vitejs\/plugin-rsc client reference proxy shape/i);
+    expect(() =>
+      clientReferenceIdFromProxy(
+        validProxy.replace(
+          `() => { throw new Error("Unexpectedly client reference export '" + "Badge" + "' is called on server"); }`,
+          'sideEffect()'
+        ),
+        '/src/ClientCard.tsx'
+      )
+    ).toThrow(/unsupported @vitejs\/plugin-rsc client reference proxy shape/i);
+    expect(() =>
+      clientReferenceIdFromProxy(
+        validProxy.replace(
+          `"Unexpectedly client reference export '" + "Badge" + "' is called on server"`,
+          `"Unexpectedly client reference export 'Badge' is called on server"`
+        ),
+        '/src/ClientCard.tsx'
+      )
+    ).toThrow(/unsupported @vitejs\/plugin-rsc client reference proxy shape/i);
+    expect(() =>
+      clientReferenceIdFromProxy(
+        validProxy.replace('export const Badge', 'export var Badge'),
+        '/src/ClientCard.tsx'
+      )
+    ).toThrow(/unsupported @vitejs\/plugin-rsc client reference proxy shape/i);
+    expect(() =>
+      clientReferenceIdFromProxy(
+        validProxy.replaceAll('$$ReactServer', 'Runtime'),
         '/src/ClientCard.tsx'
       )
     ).toThrow(/unsupported @vitejs\/plugin-rsc client reference proxy shape/i);

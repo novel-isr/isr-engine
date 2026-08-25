@@ -163,17 +163,43 @@ export function createDevStyleRegistry(
     committedActiveIds = [...activeIds];
   };
 
-  const releaseCommittedTransportLinks = (id: string, generation: number) => {
+  const isImporterResource = (link: HTMLLinkElement): boolean =>
+    !!link.dataset.precedence?.startsWith('vite-rsc/importer-resources');
+
+  const committedTransportOwner = (id: string, generation: number): HTMLLinkElement | undefined => {
+    let selected: HTMLLinkElement | undefined;
+    let selectedGeneration = Number.NEGATIVE_INFINITY;
     for (const link of matchingLinks(id)) {
       const owner = linkGeneration(link);
-      if (owner === undefined || owner === generation) link.remove();
+      if (!isImporterResource(link) || (owner !== undefined && owner > generation)) continue;
+      const rank = owner ?? Number.NEGATIVE_INFINITY;
+      if (rank >= selectedGeneration) {
+        selected = link;
+        selectedGeneration = rank;
+      }
     }
+    return selected;
+  };
+
+  const convergeCommittedTransport = (
+    id: string,
+    generation: number,
+    managed: boolean
+  ): boolean => {
+    const selected = managed ? undefined : committedTransportOwner(id, generation);
+    if (!managed && !selected) return false;
+    for (const link of matchingLinks(id)) {
+      const owner = linkGeneration(link);
+      if ((owner === undefined || owner <= generation) && link !== selected) link.remove();
+    }
+    return true;
   };
 
   const reconcileCommittedSet = () => {
     for (const id of committedActiveIds) {
       const record = matchingRecord(id);
       if (record?.cssText !== undefined) installManagedNode(record);
+      convergeCommittedTransport(id, latestCommittedGeneration, !!record?.node?.isConnected);
     }
   };
 
@@ -189,7 +215,11 @@ export function createDevStyleRegistry(
       ) {
         installManagedNode(record);
         if (!isCommitted(record.id)) committedActiveIds.push(record.id);
-        for (const link of links) link.remove();
+        convergeCommittedTransport(
+          record.id,
+          latestCommittedGeneration,
+          !!record.node?.isConnected
+        );
       }
     },
 
@@ -259,7 +289,6 @@ export function createDevStyleRegistry(
           throw new Error(`Conflicting committed stylesheet set for RSC generation ${generation}.`);
         }
         reconcileCommittedSet();
-        for (const id of active) releaseCommittedTransportLinks(id, generation);
         return;
       }
 
@@ -279,20 +308,12 @@ export function createDevStyleRegistry(
       const ready = active.every(id => {
         const record = matchingRecord(id);
         if (record?.node?.isConnected) return true;
-        return matchingLinks(id).some(
-          link =>
-            (generation === 0
-              ? linkGeneration(link) === undefined
-              : linkGeneration(link) === generation) &&
-            !link.dataset.precedence?.startsWith('vite-rsc/client-reference')
-        );
+        return committedTransportOwner(id, generation) !== undefined;
       });
       if (!ready) return;
 
       for (const id of active) {
-        if (matchingRecord(id)?.node?.isConnected) {
-          releaseCommittedTransportLinks(id, generation);
-        }
+        convergeCommittedTransport(id, generation, !!matchingRecord(id)?.node?.isConnected);
       }
       commitActiveSet(active, generation);
       latestCommittedGeneration = generation;

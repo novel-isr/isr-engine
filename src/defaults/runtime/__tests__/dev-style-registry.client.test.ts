@@ -382,6 +382,153 @@ describe('development style registry', () => {
     expect(document.querySelector('style[data-novel-isr-dev-style="/src/A.scss"]')).toBeNull();
   });
 
+  it('converges a shared importer to one owner across generations 0 through 3', () => {
+    const { document, registry } = createFixture();
+    const bootstrap = appendRscLink(document, '/src/A.scss?direct');
+    bootstrap.dataset.precedence = 'vite-rsc/importer-resources';
+
+    registry.beginRscUpdate(0);
+    registry.declareRscStyles(0, ['/src/A.scss']);
+    registry.reconcileDocumentStyles(0, ['/src/A.scss']);
+
+    registry.beginRscUpdate(1);
+    registry.declareRscStyles(1, ['/src/A.scss']);
+    const generation1 = appendRscLink(document, '/src/A.scss?direct', 1);
+    generation1.dataset.precedence = 'vite-rsc/importer-resources';
+    registry.reconcileDocumentStyles(1, ['/src/A.scss']);
+
+    expect(bootstrap.isConnected).toBe(false);
+    expect(generation1.isConnected).toBe(true);
+
+    registry.beginRscUpdate(2);
+    registry.declareRscStyles(2, ['/src/A.scss']);
+    const generation2 = appendRscLink(document, '/src/A.scss?direct', 2);
+    generation2.dataset.precedence = 'vite-rsc/importer-resources';
+    registry.beginRscUpdate(3);
+    registry.declareRscStyles(3, ['/src/A.scss']);
+    const generation3 = appendRscLink(document, '/src/A.scss?direct', 3);
+    generation3.dataset.precedence = 'vite-rsc/importer-resources';
+
+    registry.reconcileDocumentStyles(2, ['/src/A.scss']);
+
+    expect(generation1.isConnected).toBe(false);
+    expect(generation2.isConnected).toBe(true);
+    expect(generation3.isConnected).toBe(true);
+
+    registry.reconcileDocumentStyles(3, ['/src/A.scss']);
+
+    expect(generation2.isConnected).toBe(false);
+    expect(generation3.isConnected).toBe(true);
+    expect(document.querySelectorAll('link[href*="/src/A.scss"]')).toHaveLength(1);
+  });
+
+  it('keeps the latest available importer owner when the committed token is absent', () => {
+    const window = new Window({ url: 'http://localhost:3000/' });
+    const document = window.document as unknown as Document;
+    const committed: number[] = [];
+    const registry = createDevStyleRegistry(document, {
+      onRscCommit: generation => committed.push(generation),
+    });
+    fixtures.push({ document, registry, window });
+    const bootstrap = appendRscLink(document, '/src/A.scss?direct');
+    bootstrap.dataset.precedence = 'vite-rsc/importer-resources';
+    registry.reconcileDocumentStyles(0, ['/src/A.scss']);
+
+    registry.beginRscUpdate(1);
+    const generation1 = appendRscLink(document, '/src/A.scss?direct', 1);
+    generation1.dataset.precedence = 'vite-rsc/importer-resources';
+    registry.reconcileDocumentStyles(1, ['/src/A.scss']);
+
+    registry.beginRscUpdate(2);
+    registry.declareRscStyles(2, ['/src/A.scss']);
+    registry.reconcileDocumentStyles(2, ['/src/A.scss']);
+
+    expect(committed).toEqual([0, 1, 2]);
+    expect(bootstrap.isConnected).toBe(false);
+    expect(generation1.isConnected).toBe(true);
+    expect(document.querySelectorAll('link[href*="/src/A.scss"]')).toHaveLength(1);
+  });
+
+  it('keeps only the latest importer when one generation renders duplicate owners', () => {
+    const { document, registry } = createFixture();
+    const bootstrap = appendRscLink(document, '/src/A.scss?direct');
+    bootstrap.dataset.precedence = 'vite-rsc/importer-resources';
+    registry.reconcileDocumentStyles(0, ['/src/A.scss']);
+
+    registry.beginRscUpdate(1);
+    registry.declareRscStyles(1, ['/src/A.scss']);
+    const first = appendRscLink(document, '/src/A.scss?direct', 1);
+    first.dataset.precedence = 'vite-rsc/importer-resources';
+    const latest = appendRscLink(document, '/src/A.scss?direct', 1);
+    latest.dataset.precedence = 'vite-rsc/importer-resources';
+    registry.reconcileDocumentStyles(1, ['/src/A.scss']);
+
+    expect(bootstrap.isConnected).toBe(false);
+    expect(first.isConnected).toBe(false);
+    expect(latest.isConnected).toBe(true);
+    expect(document.querySelectorAll('link[href*="/src/A.scss"]')).toHaveLength(1);
+  });
+
+  it('reclaims a shared aborted owner at the next owning commit', () => {
+    const { document, registry } = createFixture();
+    const bootstrap = appendRscLink(document, '/src/A.scss?direct');
+    bootstrap.dataset.precedence = 'vite-rsc/importer-resources';
+    registry.reconcileDocumentStyles(0, ['/src/A.scss']);
+
+    registry.beginRscUpdate(1);
+    registry.declareRscStyles(1, ['/src/A.scss']);
+    const aborted = appendRscLink(document, '/src/A.scss?direct', 1);
+    aborted.dataset.precedence = 'vite-rsc/importer-resources';
+    registry.abortRscUpdate(1);
+
+    expect(aborted.isConnected).toBe(true);
+
+    registry.beginRscUpdate(2);
+    registry.declareRscStyles(2, ['/src/A.scss']);
+    const generation2 = appendRscLink(document, '/src/A.scss?direct', 2);
+    generation2.dataset.precedence = 'vite-rsc/importer-resources';
+    registry.reconcileDocumentStyles(2, ['/src/A.scss']);
+
+    expect(bootstrap.isConnected).toBe(false);
+    expect(aborted.isConnected).toBe(false);
+    expect(generation2.isConnected).toBe(true);
+    expect(document.querySelectorAll('link[href*="/src/A.scss"]')).toHaveLength(1);
+  });
+
+  it('removes every committed transport owner after managed CSS is ready but preserves the future', () => {
+    const { document, registry } = createFixture();
+    const bootstrap = appendRscLink(document, '/src/A.scss?direct');
+    bootstrap.dataset.precedence = 'vite-rsc/importer-resources';
+    registry.reconcileDocumentStyles(0, ['/src/A.scss']);
+
+    registry.beginRscUpdate(1);
+    const generation1 = appendRscLink(document, '/src/A.scss?direct', 1);
+    generation1.dataset.precedence = 'vite-rsc/importer-resources';
+    registry.reconcileDocumentStyles(1, ['/src/A.scss']);
+
+    registry.beginRscUpdate(2);
+    registry.declareRscStyles(2, ['/src/A.scss']);
+    const generation2 = appendRscLink(document, '/src/A.scss?direct', 2);
+    generation2.dataset.precedence = 'vite-rsc/importer-resources';
+    registry.beginRscUpdate(3);
+    registry.declareRscStyles(3, ['/src/A.scss']);
+    const generation3 = appendRscLink(document, '/src/A.scss?direct', 3);
+    generation3.dataset.precedence = 'vite-rsc/importer-resources';
+
+    registry.publish('/src/A.scss', '.a{color:green}');
+
+    expect(bootstrap.isConnected).toBe(false);
+    expect(generation1.isConnected).toBe(false);
+    expect(generation2.isConnected).toBe(true);
+    expect(generation3.isConnected).toBe(true);
+
+    registry.reconcileDocumentStyles(2, ['/src/A.scss']);
+
+    expect(generation2.isConnected).toBe(false);
+    expect(generation3.isConnected).toBe(true);
+    expect(document.querySelector('style[data-novel-isr-dev-style="/src/A.scss"]')).not.toBeNull();
+  });
+
   it('disposes managed nodes idempotently', () => {
     const { document, registry } = createFixture();
 

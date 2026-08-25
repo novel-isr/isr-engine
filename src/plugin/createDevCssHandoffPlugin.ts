@@ -1,6 +1,7 @@
-import { readFileSync } from 'node:fs';
+import { readFileSync, realpathSync } from 'node:fs';
+import { createRequire } from 'node:module';
 import path from 'node:path';
-import { pathToFileURL } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 
 import ts from 'typescript';
 import type { EnvironmentModuleNode, Plugin, ViteDevServer } from 'vite';
@@ -14,6 +15,18 @@ export const DEV_STYLE_REGISTRY_RESOLVED_ID = '\0virtual:novel-isr/dev-style-reg
 const VITE_RSC_CSS_RESOLVED_PREFIX = '\0virtual:vite-rsc/css?';
 const STYLESHEET_URL = /\.(?:css|less|sass|scss|styl|stylus|pcss|postcss|sss)(?:[?#]|$)/i;
 const SPECIAL_STYLESHEET_QUERY = /[?&](?:direct|inline|raw|url)(?:[=&]|$)/;
+let pinnedRscServerRuntimePath: string | undefined;
+
+function getPinnedRscServerRuntimePath(): string {
+  if (pinnedRscServerRuntimePath) return pinnedRscServerRuntimePath;
+  const requireFromEngine = createRequire(
+    typeof import.meta.url === 'string' ? import.meta.url : __filename
+  );
+  pinnedRscServerRuntimePath = realpathSync(
+    requireFromEngine.resolve('@vitejs/plugin-rsc/react/rsc/server')
+  );
+  return pinnedRscServerRuntimePath;
+}
 
 function cleanModuleId(id: string): string {
   return id.replace(/[?#].*$/, '');
@@ -38,8 +51,15 @@ function unsupportedClientProxy(id: string): Error {
 }
 
 function isPinnedRscServerRuntime(value: string): boolean {
-  const clean = value.replace(/[?#].*$/, '').replaceAll('\\', '/');
-  return clean.endsWith('/@vitejs/plugin-rsc/dist/react/rsc/server.js');
+  try {
+    const url = new URL(value);
+    if (url.protocol !== 'file:') return false;
+    url.search = '';
+    url.hash = '';
+    return realpathSync(fileURLToPath(url)) === getPinnedRscServerRuntimePath();
+  } catch {
+    return false;
+  }
 }
 
 function decodeModuleId(value: string): string | undefined {
@@ -73,11 +93,15 @@ function registerClientReferenceCall(
 ): string | undefined {
   if (
     !ts.isCallExpression(expression) ||
+    expression.questionDotToken !== undefined ||
+    expression.typeArguments !== undefined ||
     expression.arguments.length !== 3 ||
     !ts.isPropertyAccessExpression(expression.expression) ||
+    expression.expression.questionDotToken !== undefined ||
     !ts.isIdentifier(expression.expression.expression) ||
     expression.expression.expression.text !== runtimeBinding ||
     expression.expression.name.text !== 'registerClientReference' ||
+    !isPinnedClientReferenceProxy(expression.arguments[0], exportName) ||
     !ts.isStringLiteral(expression.arguments[1]) ||
     !ts.isStringLiteral(expression.arguments[2]) ||
     expression.arguments[2].text !== exportName ||
@@ -88,6 +112,56 @@ function registerClientReferenceCall(
   return expression.arguments[1].text;
 }
 
+function isPinnedClientReferenceError(node: ts.Expression, exportName: string): boolean {
+  if (
+    !ts.isBinaryExpression(node) ||
+    node.operatorToken.kind !== ts.SyntaxKind.PlusToken ||
+    !ts.isBinaryExpression(node.left) ||
+    node.left.operatorToken.kind !== ts.SyntaxKind.PlusToken
+  ) {
+    return false;
+  }
+  return (
+    ts.isStringLiteral(node.left.left) &&
+    node.left.left.text === "Unexpectedly client reference export '" &&
+    ts.isStringLiteral(node.left.right) &&
+    node.left.right.text === exportName &&
+    ts.isStringLiteral(node.right) &&
+    node.right.text === "' is called on server"
+  );
+}
+
+function isPinnedClientReferenceProxy(
+  expression: ts.Expression | undefined,
+  exportName: string
+): boolean {
+  if (
+    !expression ||
+    !ts.isArrowFunction(expression) ||
+    expression.modifiers !== undefined ||
+    expression.typeParameters !== undefined ||
+    expression.parameters.length !== 0 ||
+    expression.type !== undefined ||
+    !ts.isBlock(expression.body) ||
+    expression.body.statements.length !== 1
+  ) {
+    return false;
+  }
+  const statement = expression.body.statements[0];
+  if (!statement || !ts.isThrowStatement(statement) || !statement.expression) return false;
+  const error = statement.expression;
+  const message = ts.isNewExpression(error) ? error.arguments?.[0] : undefined;
+  return (
+    ts.isNewExpression(error) &&
+    ts.isIdentifier(error.expression) &&
+    error.expression.text === 'Error' &&
+    error.typeArguments === undefined &&
+    error.arguments?.length === 1 &&
+    message !== undefined &&
+    isPinnedClientReferenceError(message, exportName)
+  );
+}
+
 export function clientReferenceIdFromProxy(code: string, id: string): string {
   const source = ts.createSourceFile(id, code, ts.ScriptTarget.Latest, true, ts.ScriptKind.JS);
   const runtimeImports = source.statements.filter(
@@ -95,9 +169,13 @@ export function clientReferenceIdFromProxy(code: string, id: string): string {
       ts.isImportDeclaration(statement) &&
       ts.isStringLiteral(statement.moduleSpecifier) &&
       isPinnedRscServerRuntime(statement.moduleSpecifier.text) &&
+      statement.modifiers === undefined &&
       statement.importClause?.name === undefined &&
+      statement.importClause?.isTypeOnly === false &&
       statement.importClause?.namedBindings !== undefined &&
-      ts.isNamespaceImport(statement.importClause.namedBindings)
+      ts.isNamespaceImport(statement.importClause.namedBindings) &&
+      statement.importClause.namedBindings.name.text === '$$ReactServer' &&
+      statement.attributes === undefined
   );
   if (runtimeImports.length !== 1) throw unsupportedClientProxy(id);
   const runtimeImport = runtimeImports[0];
@@ -123,11 +201,19 @@ export function clientReferenceIdFromProxy(code: string, id: string): string {
     }
     if (
       ts.isVariableStatement(statement) &&
-      statement.modifiers?.some(modifier => modifier.kind === ts.SyntaxKind.ExportKeyword) &&
-      statement.declarationList.declarations.length > 0
+      statement.modifiers?.length === 1 &&
+      statement.modifiers[0]?.kind === ts.SyntaxKind.ExportKeyword &&
+      (statement.declarationList.flags & (ts.NodeFlags.Let | ts.NodeFlags.Const)) ===
+        ts.NodeFlags.Const &&
+      statement.declarationList.declarations.length === 1
     ) {
       for (const declaration of statement.declarationList.declarations) {
-        if (!ts.isIdentifier(declaration.name) || !declaration.initializer) {
+        if (
+          !ts.isIdentifier(declaration.name) ||
+          declaration.exclamationToken !== undefined ||
+          declaration.type !== undefined ||
+          !declaration.initializer
+        ) {
           throw unsupportedClientProxy(id);
         }
         const referenceId = registerClientReferenceCall(
