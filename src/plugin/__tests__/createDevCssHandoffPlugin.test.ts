@@ -14,6 +14,27 @@ import {
 
 describe('createDevCssLifecyclePlugins', () => {
   const defaultsDir = path.resolve(process.cwd(), 'src/defaults');
+  const pinnedRscResources = (extraBody = '') => `
+    import __vite_rsc_react__ from "react";
+    import RemoveDuplicateServerCss from "virtual:vite-rsc/remove-duplicate-server-css";
+    export const Resources = ((React, deps, RemoveDuplicateServerCss, precedence) => {
+      return function Resources() {
+        ${extraBody}
+        return React.createElement(React.Fragment, null, [...deps.css.map((href) => React.createElement("link", {
+          key: "css:" + href,
+          rel: "stylesheet",
+          ...precedence ? { precedence } : {},
+          href,
+          "data-rsc-css-href": href
+        })), RemoveDuplicateServerCss && React.createElement(RemoveDuplicateServerCss, { key: "remove-duplicate-css" })]);
+      };
+    })(
+      __vite_rsc_react__,
+      { js: [], css: ["/src/Page.scss"] },
+      RemoveDuplicateServerCss,
+      "vite-rsc/importer-resources",
+    );
+  `;
 
   it('owns plugin-rsc dev stylesheet cleanup before the upstream virtual module resolves', async () => {
     const [plugin] = createDevCssLifecyclePlugins(defaultsDir);
@@ -69,18 +90,27 @@ describe('createDevCssLifecyclePlugins', () => {
 
   it('binds the pinned plugin-rsc server resource set to the current payload collector', () => {
     const id = '\0virtual:vite-rsc/css?type=rsc&id=%2Fworkspace%2Fsrc%2FPage.tsx&lang.js';
-    const code = `
-      import React from "react";
-      export const Resources = ((React, deps, RemoveDuplicateServerCss, precedence) => {
-        return function Resources() { return React.createElement("link"); };
-      })(React, { js: [], css: ["/src/Page.scss?direct"] }, undefined, "vite-rsc/importer-resources");
-    `;
+    const code = pinnedRscResources();
 
     const result = instrumentDevRscStylesheetModule(code, id, 'file:///engine/declarations.js');
 
-    expect(result?.code).toContain('declareDevStyleDependencies');
-    expect(result?.code).toContain('{ js: [], css: ["/src/Page.scss?direct"] }');
+    expect(result?.code).toContain('prepareDevStyleDependencies');
+    expect(result?.code).toContain('{ js: [], css: ["/src/Page.scss"] }');
     expect(result?.code).toContain('export function Resources()');
+  });
+
+  it('composes RSC instrumentation after direct transport canonicalization', async () => {
+    const [plugin] = createDevCssLifecyclePlugins(defaultsDir);
+    const transform = plugin.transform as (
+      code: string,
+      id: string
+    ) => Promise<{ code: string; map: null } | undefined>;
+    const id = '\0virtual:vite-rsc/css?type=rsc&id=%2Fworkspace%2Fsrc%2FPage.tsx&lang.js';
+
+    const result = await transform(pinnedRscResources(), id);
+
+    expect(result?.code).toContain('prepareDevStyleDependencies');
+    expect(result?.code).toContain('"/src/Page.scss?direct"');
   });
 
   it('fails explicitly when the pinned plugin-rsc server resource shape changes', () => {
@@ -93,6 +123,97 @@ describe('createDevCssLifecyclePlugins', () => {
         'file:///engine/declarations.js'
       )
     ).toThrow(/unsupported @vitejs\/plugin-rsc server stylesheet resource shape.*Page\.tsx/i);
+  });
+
+  it('rejects surplus or changed statements inside the pinned server Resources factory', () => {
+    const id = '\0virtual:vite-rsc/css?type=rsc&id=%2Fworkspace%2Fsrc%2FPage.tsx&lang.js';
+
+    expect(() =>
+      instrumentDevRscStylesheetModule(
+        pinnedRscResources('console.log("surplus");'),
+        id,
+        'file:///engine/declarations.js'
+      )
+    ).toThrow(/unsupported @vitejs\/plugin-rsc server stylesheet resource shape/i);
+    expect(() =>
+      instrumentDevRscStylesheetModule(
+        pinnedRscResources().replace('React.Fragment', '"main"'),
+        id,
+        'file:///engine/declarations.js'
+      )
+    ).toThrow(/unsupported @vitejs\/plugin-rsc server stylesheet resource shape/i);
+  });
+
+  it('accepts only client proxies bound to the pinned plugin-rsc runtime and module identity', () => {
+    const validProxy = `
+      import * as $$ReactServer from "file:///workspace/node_modules/.pnpm/@vitejs+plugin-rsc@0.5.34_peer/node_modules/@vitejs/plugin-rsc/dist/react/rsc/server.js";
+      export default $$ReactServer.registerClientReference(
+        () => { throw new Error("Unexpected client call"); },
+        "/src/ClientCard.tsx",
+        "default"
+      );
+    `;
+
+    expect(clientReferenceIdFromProxy(validProxy, '/src/ClientCard.tsx')).toBe(
+      '/src/ClientCard.tsx'
+    );
+    expect(() =>
+      clientReferenceIdFromProxy(
+        validProxy.replace(
+          '@vitejs/plugin-rsc/dist/react/rsc/server.js',
+          'lookalike/rsc/server.js'
+        ),
+        '/src/ClientCard.tsx'
+      )
+    ).toThrow(/unsupported @vitejs\/plugin-rsc client reference proxy shape/i);
+    expect(() =>
+      clientReferenceIdFromProxy(
+        validProxy.replace('"/src/ClientCard.tsx"', '"/src/Other.tsx"'),
+        '/src/ClientCard.tsx'
+      )
+    ).toThrow(/unsupported @vitejs\/plugin-rsc client reference proxy shape/i);
+    expect(() =>
+      clientReferenceIdFromProxy(
+        validProxy.replace('"/src/ClientCard.tsx"', '"/%ZZ.tsx"'),
+        '/src/ClientCard.tsx'
+      )
+    ).toThrow(/unsupported @vitejs\/plugin-rsc client reference proxy shape/i);
+    expect(() =>
+      clientReferenceIdFromProxy(`${validProxy}\nconsole.log("surplus");`, '/src/ClientCard.tsx')
+    ).toThrow(/unsupported @vitejs\/plugin-rsc client reference proxy shape/i);
+  });
+
+  it('does not treat a non-prologue use-client string as a client reference target', async () => {
+    const [prePlugin, clientReferencePlugin] = createDevCssLifecyclePlugins(defaultsDir);
+    const preTransform = prePlugin!.transform as (code: string, id: string) => unknown;
+    const postTransform = clientReferencePlugin!.transform as (
+      code: string,
+      id: string
+    ) => Promise<unknown>;
+    const code = `const marker = 'not a directive';\n'use client';\nexport const NotRsc = marker;`;
+
+    await preTransform.call({ environment: { name: 'rsc' } }, code, '/src/NotRsc.tsx');
+    await expect(
+      postTransform.call({ environment: { name: 'rsc' } }, code, '/src/NotRsc.tsx')
+    ).resolves.toBeUndefined();
+  });
+
+  it('forgets a prior client-reference target when HMR removes its directive', async () => {
+    const [prePlugin, clientReferencePlugin] = createDevCssLifecyclePlugins(defaultsDir);
+    const preTransform = prePlugin!.transform as (code: string, id: string) => unknown;
+    const postTransform = clientReferencePlugin!.transform as (
+      code: string,
+      id: string
+    ) => Promise<unknown>;
+    const context = { environment: { name: 'rsc' } };
+    const id = '/src/NotRsc.tsx';
+
+    await preTransform.call(context, `'use client';\nexport default function Old() {}`, id);
+    await preTransform.call(context, 'export default function NotRsc() {}', id);
+
+    await expect(
+      postTransform.call(context, 'export default function NotRsc() {}', id)
+    ).resolves.toBeUndefined();
   });
 
   it('fails explicitly when the pinned plugin-rsc client reference proxy shape changes', () => {

@@ -23,10 +23,16 @@ function createFixture(markup = ''): RegistryFixture {
   return fixture;
 }
 
-function appendRscLink(document: Document, href: string): HTMLLinkElement {
+function appendRscLink(document: Document, href: string, generation?: number): HTMLLinkElement {
   const link = document.createElement('link');
   link.rel = 'stylesheet';
-  link.href = href;
+  if (generation === undefined) {
+    link.href = href;
+  } else {
+    const url = new URL(href, document.baseURI);
+    url.searchParams.set('__novel_isr_style_generation', String(generation));
+    link.href = `${url.pathname}${url.search}`;
+  }
   link.dataset.precedence = 'vite-rsc/client-reference';
   document.head.appendChild(link);
   return link;
@@ -224,7 +230,7 @@ describe('development style registry', () => {
     );
   });
 
-  it('discards an aborted RSC generation before the next committed tree', () => {
+  it('removes only an aborted generation transport link while a newer generation stays pending', () => {
     const { document, registry } = createFixture();
 
     registry.beginRscUpdate(0);
@@ -233,23 +239,61 @@ describe('development style registry', () => {
     registry.reconcileDocumentStyles(0, ['/src/A.scss']);
 
     registry.beginRscUpdate(1);
-    appendRscLink(document, '/src/B.scss?direct');
+    registry.declareRscStyles(1, ['/src/B.scss']);
+    appendRscLink(document, '/src/B.scss?direct', 1);
     registry.publish('/src/B.scss', '.b{display:grid}');
 
-    registry.abortRscUpdate(1);
-    document.querySelector('link[href*="/src/B.scss"]')?.remove();
     registry.beginRscUpdate(2);
+    registry.declareRscStyles(2, ['/src/C.scss']);
+    const cLink = appendRscLink(document, '/src/C.scss?direct', 2);
+
+    registry.abortRscUpdate(1);
 
     expect(document.querySelector('style[data-novel-isr-dev-style="/src/A.scss"]')).not.toBeNull();
     expect(document.querySelector('style[data-novel-isr-dev-style="/src/B.scss"]')).toBeNull();
+    expect(document.querySelector('link[href*="/src/B.scss"]')).toBeNull();
+    expect(cLink.isConnected).toBe(true);
 
-    appendRscLink(document, '/src/C.scss?direct');
+    registry.publish('/src/B.scss', '.b{display:grid}');
+    expect(document.querySelector('style[data-novel-isr-dev-style="/src/B.scss"]')).toBeNull();
+    expect(document.querySelector('link[href*="/src/B.scss"]')).toBeNull();
+
     registry.publish('/src/C.scss', '.c{display:flex}');
     registry.reconcileDocumentStyles(2, ['/src/C.scss']);
 
     expect(document.querySelector('style[data-novel-isr-dev-style="/src/A.scss"]')).toBeNull();
     expect(document.querySelector('style[data-novel-isr-dev-style="/src/B.scss"]')).toBeNull();
     expect(document.querySelector('style[data-novel-isr-dev-style="/src/C.scss"]')).not.toBeNull();
+  });
+
+  it('does not remove an aborted transport owner still required by a committed or pending set', () => {
+    const { document, registry } = createFixture();
+
+    appendRscLink(document, '/src/A.scss?direct');
+    registry.publish('/src/A.scss', '.a{display:block}');
+    registry.reconcileDocumentStyles(0, ['/src/A.scss']);
+
+    registry.beginRscUpdate(1);
+    registry.declareRscStyles(1, ['/src/A.scss', '/src/Shared.scss']);
+    const committedLink = appendRscLink(document, '/src/A.scss?direct', 1);
+    const sharedLink = appendRscLink(document, '/src/Shared.scss?direct', 1);
+
+    registry.beginRscUpdate(2);
+    registry.declareRscStyles(2, ['/src/Shared.scss']);
+    registry.abortRscUpdate(1);
+
+    expect(committedLink.isConnected).toBe(true);
+    expect(sharedLink.isConnected).toBe(true);
+  });
+
+  it('removes an aborted generation transport link before payload declarations finish', () => {
+    const { document, registry } = createFixture();
+
+    registry.beginRscUpdate(1);
+    const link = appendRscLink(document, '/src/Partial.scss?direct', 1);
+    registry.abortRscUpdate(1);
+
+    expect(link.isConnected).toBe(false);
   });
 
   it('commits the exact visible generation without consuming a newer pending generation', () => {
@@ -272,8 +316,8 @@ describe('development style registry', () => {
     registry.declareRscStyles(2, ['/src/C.scss']);
     registry.publish('/src/C.scss', '.c{display:flex}');
 
-    appendRscLink(document, '/src/B.scss?direct');
-    appendRscLink(document, '/src/C.scss?direct');
+    const bLink = appendRscLink(document, '/src/B.scss?direct', 1);
+    const cLink = appendRscLink(document, '/src/C.scss?direct', 2);
     registry.reconcileDocumentStyles(1, ['/src/B.scss']);
 
     expect(committed).toEqual([0, 1]);
@@ -282,6 +326,8 @@ describe('development style registry', () => {
         document.querySelectorAll<HTMLStyleElement>('style[data-novel-isr-dev-style]')
       ).map(node => node.dataset.novelIsrDevStyle)
     ).toEqual(['/src/B.scss']);
+    expect(bLink.isConnected).toBe(false);
+    expect(cLink.isConnected).toBe(true);
 
     registry.reconcileDocumentStyles(2, ['/src/C.scss']);
     registry.reconcileDocumentStyles(2, ['/src/C.scss']);
@@ -328,7 +374,7 @@ describe('development style registry', () => {
 
     registry.publish('/src/A.scss', '.a{display:block}');
     registry.beginRscUpdate(1);
-    const link = appendRscLink(document, '/src/B.scss?direct');
+    const link = appendRscLink(document, '/src/B.scss?direct', 1);
     link.dataset.precedence = 'vite-rsc/importer-resources';
     registry.reconcileDocumentStyles(1, ['/src/B.scss']);
 

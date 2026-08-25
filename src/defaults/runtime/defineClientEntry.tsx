@@ -31,7 +31,7 @@ import { rscStream } from 'rsc-html-stream/client';
 
 import { GlobalErrorBoundary } from './error-boundary';
 import { HydrationShell } from './hydration-shell';
-import { createRscRenderRequest } from './request';
+import { createRscRenderRequest, type RscRenderRequestOptions } from './request';
 import { DevStyleCommitBoundary } from './dev-style-commit-boundary.client';
 import { prepareDevStyleTree, runWithDevStyleNavigation } from './dev-style-navigation.client';
 import { installDevRenderInspector } from './dev-render-inspector';
@@ -90,6 +90,13 @@ function renderPayloadRoot({
 }
 
 const RSC_POSTFIX = '_.rsc';
+
+function devStyleRequestOptions(
+  generation: number | undefined
+): RscRenderRequestOptions | undefined {
+  if (!import.meta.env.DEV || generation === undefined) return undefined;
+  return { devStyleGeneration: generation };
+}
 
 /**
  * 把 RSC fetch 的 final URL（跟过 302/308 redirect）同步回浏览器地址栏。
@@ -282,8 +289,12 @@ async function main(hooks: ClientEntryHooks): Promise<void> {
 
     async function fetchRscPayload(): Promise<void> {
       await runWithDevStyleNavigation(
-        async () => {
-          const renderRequest = createRscRenderRequest(window.location.href);
+        async generation => {
+          const renderRequest = createRscRenderRequest(
+            window.location.href,
+            undefined,
+            devStyleRequestOptions(generation)
+          );
           const fetchPromise = fetch(renderRequest);
           const payload = await createFromFetch<DefaultRscPayload>(fetchPromise);
           return { payload, response: await fetchPromise };
@@ -335,12 +346,16 @@ async function main(hooks: ClientEntryHooks): Promise<void> {
 
     setServerCallback(async (id: string, args: unknown[]) => {
       const result = await runWithDevStyleNavigation(
-        async () => {
+        async generation => {
           const temporaryReferences = createTemporaryReferenceSet();
-          const renderRequest = createRscRenderRequest(window.location.href, {
-            id,
-            body: await encodeReply(args, { temporaryReferences }),
-          });
+          const renderRequest = createRscRenderRequest(
+            window.location.href,
+            {
+              id,
+              body: await encodeReply(args, { temporaryReferences }),
+            },
+            devStyleRequestOptions(generation)
+          );
           return createFromFetch<DefaultRscPayload>(fetch(renderRequest), {
             temporaryReferences,
           });
@@ -417,8 +432,12 @@ async function main(hooks: ClientEntryHooks): Promise<void> {
 
   async function fetchRscPayload(): Promise<void> {
     await runWithDevStyleNavigation(
-      async () => {
-        const renderRequest = createRscRenderRequest(window.location.href);
+      async generation => {
+        const renderRequest = createRscRenderRequest(
+          window.location.href,
+          undefined,
+          devStyleRequestOptions(generation)
+        );
         const fetchPromise = fetch(renderRequest);
         const payload = await createFromFetch<DefaultRscPayload>(fetchPromise);
         return { payload, response: await fetchPromise };
@@ -435,12 +454,16 @@ async function main(hooks: ClientEntryHooks): Promise<void> {
 
   setServerCallback(async (id: string, args: unknown[]) => {
     const result = await runWithDevStyleNavigation(
-      async () => {
+      async generation => {
         const temporaryReferences = createTemporaryReferenceSet();
-        const renderRequest = createRscRenderRequest(window.location.href, {
-          id,
-          body: await encodeReply(args, { temporaryReferences }),
-        });
+        const renderRequest = createRscRenderRequest(
+          window.location.href,
+          {
+            id,
+            body: await encodeReply(args, { temporaryReferences }),
+          },
+          devStyleRequestOptions(generation)
+        );
         return createFromFetch<DefaultRscPayload>(fetch(renderRequest), {
           temporaryReferences,
         });

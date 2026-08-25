@@ -1,4 +1,9 @@
-import { canonicalizeDevStyleId, styleIdsMatch } from './dev-style-id';
+import {
+  DEV_STYLE_TRANSPORT_GENERATION_PARAM,
+  canonicalizeDevStyleId,
+  getDevStyleTransportGeneration,
+  styleIdsMatch,
+} from './dev-style-id';
 
 const RSC_STYLESHEET = 'link[rel="stylesheet"][data-precedence^="vite-rsc/"]';
 
@@ -77,6 +82,18 @@ export function createDevStyleRegistry(
       return linkId !== undefined && styleIdsMatch(linkId, id, document.baseURI);
     });
 
+  const linkGeneration = (link: HTMLLinkElement): number | undefined => {
+    const href = link.getAttribute('href') ?? link.href;
+    return href ? getDevStyleTransportGeneration(href, document.baseURI) : undefined;
+  };
+
+  const generationLinks = (generation: number): HTMLLinkElement[] =>
+    Array.from(
+      document.querySelectorAll<HTMLLinkElement>(
+        `${RSC_STYLESHEET}[href*="${DEV_STYLE_TRANSPORT_GENERATION_PARAM}="]`
+      )
+    ).filter(link => linkGeneration(link) === generation);
+
   const isCommitted = (id: string): boolean =>
     committedActiveIds.some(activeId => styleIdsMatch(activeId, id, document.baseURI));
 
@@ -93,9 +110,12 @@ export function createDevStyleRegistry(
     return node;
   };
 
-  const release = (record: StyleRecord) => {
+  const release = (record: StyleRecord, generation?: number) => {
     record.node?.remove();
-    for (const link of matchingLinks(record.id)) link.remove();
+    for (const link of matchingLinks(record.id)) {
+      const owner = linkGeneration(link);
+      if (generation === undefined || owner === undefined || owner <= generation) link.remove();
+    }
     record.state = 'released';
     records.delete(record.id);
   };
@@ -108,6 +128,14 @@ export function createDevStyleRegistry(
   const sameActiveSet = (left: string[], right: string[]): boolean =>
     left.length === right.length &&
     left.every(id => right.some(other => styleIdsMatch(id, other, document.baseURI)));
+
+  const requiredByPendingGeneration = (id: string, exceptGeneration?: number): boolean =>
+    Array.from(rscDeclarations).some(
+      ([pending, ids]) =>
+        pending !== exceptGeneration &&
+        pendingRscGenerations.has(pending) &&
+        ids.some(pendingId => styleIdsMatch(pendingId, id, document.baseURI))
+    );
 
   const commitActiveSet = (activeIds: string[], generation?: number) => {
     const hasNewerPendingGeneration =
@@ -129,19 +157,23 @@ export function createDevStyleRegistry(
       ) {
         restoreActiveState(record);
       } else {
-        release(record);
+        release(record, generation);
       }
     }
     committedActiveIds = [...activeIds];
+  };
+
+  const releaseCommittedTransportLinks = (id: string, generation: number) => {
+    for (const link of matchingLinks(id)) {
+      const owner = linkGeneration(link);
+      if (owner === undefined || owner === generation) link.remove();
+    }
   };
 
   const reconcileCommittedSet = () => {
     for (const id of committedActiveIds) {
       const record = matchingRecord(id);
       if (record?.cssText !== undefined) installManagedNode(record);
-      if (record?.node?.isConnected) {
-        for (const link of matchingLinks(id)) link.remove();
-      }
     }
   };
 
@@ -189,6 +221,12 @@ export function createDevStyleRegistry(
       pendingRscGenerations.delete(generation);
       rscDeclarations.delete(generation);
       reconcileCommittedSet();
+      for (const link of generationLinks(generation)) {
+        const id = stylesheetId(link);
+        if (id !== undefined && !isCommitted(id) && !requiredByPendingGeneration(id, generation)) {
+          link.remove();
+        }
+      }
     },
 
     beginUpdate() {
@@ -221,6 +259,7 @@ export function createDevStyleRegistry(
           throw new Error(`Conflicting committed stylesheet set for RSC generation ${generation}.`);
         }
         reconcileCommittedSet();
+        for (const id of active) releaseCommittedTransportLinks(id, generation);
         return;
       }
 
@@ -241,14 +280,18 @@ export function createDevStyleRegistry(
         const record = matchingRecord(id);
         if (record?.node?.isConnected) return true;
         return matchingLinks(id).some(
-          link => !link.dataset.precedence?.startsWith('vite-rsc/client-reference')
+          link =>
+            (generation === 0
+              ? linkGeneration(link) === undefined
+              : linkGeneration(link) === generation) &&
+            !link.dataset.precedence?.startsWith('vite-rsc/client-reference')
         );
       });
       if (!ready) return;
 
       for (const id of active) {
         if (matchingRecord(id)?.node?.isConnected) {
-          for (const link of matchingLinks(id)) link.remove();
+          releaseCommittedTransportLinks(id, generation);
         }
       }
       commitActiveSet(active, generation);

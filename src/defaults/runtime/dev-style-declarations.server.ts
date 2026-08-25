@@ -1,15 +1,29 @@
 import { AsyncLocalStorage } from 'node:async_hooks';
 
-import { canonicalizeDevStyleId } from './dev-style-id';
+import { canonicalizeDevStyleId, withDevStyleTransportGeneration } from './dev-style-id';
 
-const DEV_STYLE_DECLARATIONS_KEY = '__NOVEL_ISR_DEV_STYLE_DECLARATIONS__';
+const DEV_STYLE_DECLARATIONS_KEY = '__NOVEL_ISR_DEV_STYLE_DECLARATIONS_V2__';
 const DEV_CLIENT_REFERENCE_STYLES_KEY = '__NOVEL_ISR_DEV_CLIENT_REFERENCE_STYLES__';
 
-function getDeclarationStorage(): AsyncLocalStorage<string[]> {
+interface DevStyleDeclarationStore {
+  styleIds: string[];
+  transportGeneration?: number;
+}
+
+interface DevStyleDeclarationOptions {
+  transportGeneration?: number;
+}
+
+interface PluginRscDependencies {
+  css: string[];
+  [key: string]: unknown;
+}
+
+function getDeclarationStorage(): AsyncLocalStorage<DevStyleDeclarationStore> {
   const globalState = globalThis as typeof globalThis & {
-    [DEV_STYLE_DECLARATIONS_KEY]?: AsyncLocalStorage<string[]>;
+    [DEV_STYLE_DECLARATIONS_KEY]?: AsyncLocalStorage<DevStyleDeclarationStore>;
   };
-  globalState[DEV_STYLE_DECLARATIONS_KEY] ??= new AsyncLocalStorage<string[]>();
+  globalState[DEV_STYLE_DECLARATIONS_KEY] ??= new AsyncLocalStorage<DevStyleDeclarationStore>();
   return globalState[DEV_STYLE_DECLARATIONS_KEY];
 }
 
@@ -21,11 +35,18 @@ function getClientReferenceStyles(): Map<string, string[]> {
   return globalState[DEV_CLIENT_REFERENCE_STYLES_KEY];
 }
 
-export function runWithDevStyleDeclarationCollection<T>(styleIds: string[], operation: () => T): T {
-  return getDeclarationStorage().run(styleIds, operation);
+export function runWithDevStyleDeclarationCollection<T>(
+  styleIds: string[],
+  operation: () => T,
+  options: DevStyleDeclarationOptions = {}
+): T {
+  return getDeclarationStorage().run(
+    { styleIds, transportGeneration: options.transportGeneration },
+    operation
+  );
 }
 
-export function declareDevStyleDependencies(dependencies: unknown): void {
+function validateDependencies(dependencies: unknown): PluginRscDependencies {
   if (
     dependencies === null ||
     typeof dependencies !== 'object' ||
@@ -36,13 +57,29 @@ export function declareDevStyleDependencies(dependencies: unknown): void {
       '[novel-isr] Unsupported @vitejs/plugin-rsc dependency shape. Expected deps.css to be a string array.'
     );
   }
+  return dependencies as PluginRscDependencies;
+}
 
-  const collector = getDeclarationStorage().getStore();
-  if (!collector) return;
-  for (const href of (dependencies as { css: string[] }).css) {
+export function declareDevStyleDependencies(dependencies: unknown): void {
+  const validated = validateDependencies(dependencies);
+
+  const store = getDeclarationStorage().getStore();
+  if (!store) return;
+  for (const href of validated.css) {
     const id = canonicalizeDevStyleId(href);
-    if (!collector.includes(id)) collector.push(id);
+    if (!store.styleIds.includes(id)) store.styleIds.push(id);
   }
+}
+
+export function prepareDevStyleDependencies(dependencies: unknown): PluginRscDependencies {
+  const validated = validateDependencies(dependencies);
+  declareDevStyleDependencies(validated);
+  const generation = getDeclarationStorage().getStore()?.transportGeneration;
+  if (generation === undefined) return validated;
+  return {
+    ...validated,
+    css: validated.css.map(href => withDevStyleTransportGeneration(href, generation)),
+  };
 }
 
 export function registerDevClientReferenceStyles(
@@ -78,7 +115,7 @@ export function declareDevClientReferenceStyles(reference: unknown): void {
       `[novel-isr] Missing development stylesheet mapping for client reference ${reference.id}.`
     );
   }
-  const collector = getDeclarationStorage().getStore();
+  const collector = getDeclarationStorage().getStore()?.styleIds;
   if (!collector) return;
   for (const styleId of styleIds) {
     if (!collector.includes(styleId)) collector.push(styleId);

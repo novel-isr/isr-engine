@@ -23,6 +23,7 @@ describe('stylesheet lifecycle ownership', () => {
 
   it('pins one React build that emits CSS Flight hints with as=style', () => {
     const packageJson = JSON.parse(source('package.json')) as {
+      dependencies: Record<string, string>;
       peerDependencies: Record<string, string>;
       devDependencies: Record<string, string>;
     };
@@ -31,6 +32,7 @@ describe('stylesheet lifecycle ownership', () => {
       expect(packageJson.peerDependencies[dependency]).toBe(reactWithStyleHintFix);
       expect(packageJson.devDependencies[dependency]).toBe(reactWithStyleHintFix);
     }
+    expect(packageJson.dependencies['@vitejs/plugin-rsc']).toBe('0.5.34');
   });
 
   it('carries each development generation into an engine-owned React commit boundary', () => {
@@ -39,11 +41,18 @@ describe('stylesheet lifecycle ownership', () => {
     const commitBoundary = source('src/defaults/runtime/dev-style-commit-boundary.client.tsx');
     const pluginRscBoundary = source('src/defaults/runtime/dev-css-handoff.client.ts');
     const registry = source('src/defaults/runtime/dev-style-registry.client.ts');
+    const request = source('src/defaults/runtime/request.tsx');
 
     expect(clientEntry).toContain('DevStyleCommitBoundary');
     expect(clientEntry).toContain('devStyleIds');
     expect(serverEntry).toContain('devStyleIds');
     expect(serverEntry).toContain('onClientReference');
+    expect(clientEntry).toContain('devStyleGeneration: generation');
+    expect(serverEntry).toContain('transportGeneration: renderRequest.devStyleGeneration');
+    expect(request).toContain(
+      'if (import.meta.env.DEV && options.devStyleGeneration !== undefined)'
+    );
+    expect(request).toContain('if (import.meta.env.DEV && encodedGeneration !== null)');
     expect(commitBoundary).toContain('commitDevStyleTree(generation, styleIds)');
     expect(pluginRscBoundary).not.toContain('reconcileDocumentStyles');
     expect(registry).not.toContain(

@@ -340,14 +340,17 @@ async function runRscPipeline(request: Request, extras: PipelineExtras): Promise
     ...(devStyleIds ? { devStyleIds } : {}),
   };
   const rscStream = import.meta.env.DEV
-    ? runWithDevStyleDeclarationCollection(devStyleIds!, () =>
-        renderToReadableStream<DefaultRscPayload>(
-          rscPayload,
-          { temporaryReferences },
-          {
-            onClientReference: declareDevClientReferenceStyles,
-          }
-        )
+    ? runWithDevStyleDeclarationCollection(
+        devStyleIds!,
+        () =>
+          renderToReadableStream<DefaultRscPayload>(
+            rscPayload,
+            { temporaryReferences },
+            {
+              onClientReference: declareDevClientReferenceStyles,
+            }
+          ),
+        { transportGeneration: renderRequest.devStyleGeneration }
       )
     : renderToReadableStream<DefaultRscPayload>(rscPayload, { temporaryReferences });
 

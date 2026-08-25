@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import {
   declareDevClientReferenceStyles,
   declareDevStyleDependencies,
+  prepareDevStyleDependencies,
   registerDevClientReferenceStyles,
   runWithDevStyleDeclarationCollection,
 } from '../dev-style-declarations.server';
@@ -25,6 +26,41 @@ describe('development RSC style declarations', () => {
         declareDevStyleDependencies({ stylesheets: ['/src/A.scss'] })
       )
     ).toThrow(/unsupported @vitejs\/plugin-rsc dependency shape/i);
+  });
+
+  it('adds the request generation only to transport hrefs while collecting canonical ids', () => {
+    const styleIds: string[] = [];
+    let prepared: unknown;
+
+    runWithDevStyleDeclarationCollection(
+      styleIds,
+      () => {
+        prepared = prepareDevStyleDependencies({
+          css: ['/src/A.scss?direct', '/src/B.css?theme=dark&direct'],
+          js: ['/src/chunk.js'],
+        });
+      },
+      { transportGeneration: 4 }
+    );
+
+    expect(prepared).toEqual({
+      css: [
+        '/src/A.scss?direct=&__novel_isr_style_generation=4',
+        '/src/B.css?theme=dark&direct=&__novel_isr_style_generation=4',
+      ],
+      js: ['/src/chunk.js'],
+    });
+    expect(styleIds).toEqual(['/src/A.scss', '/src/B.css?theme=dark']);
+  });
+
+  it('does not add a transport generation outside a development navigation request', () => {
+    let prepared: unknown;
+
+    runWithDevStyleDeclarationCollection([], () => {
+      prepared = prepareDevStyleDependencies({ css: ['/src/A.scss?direct'], js: [] });
+    });
+
+    expect(prepared).toEqual({ css: ['/src/A.scss?direct'], js: [] });
   });
 
   it('combines upstream and engine-mapped client-reference styles in the request scope', () => {

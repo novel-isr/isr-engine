@@ -13,6 +13,31 @@ function appendRscLink(document: Document, href: string): void {
 }
 
 describe('development style navigation lifecycle', () => {
+  it('assigns the generation before transport starts and leaves disabled transport untouched', async () => {
+    const lifecycle = createDevStyleNavigationLifecycle();
+    let developmentGeneration: number | undefined;
+    await lifecycle.run(
+      async generation => {
+        developmentGeneration = generation;
+        return 'B';
+      },
+      value => value
+    );
+
+    const production = createDevStyleNavigationLifecycle({ enabled: false });
+    let productionGeneration: number | undefined = 99;
+    await production.run(
+      async generation => {
+        productionGeneration = generation;
+        return 'B';
+      },
+      value => value
+    );
+
+    expect(developmentGeneration).toBe(1);
+    expect(productionGeneration).toBeUndefined();
+  });
+
   it('silently supersedes a stale response before any payload side effects run', async () => {
     const lifecycle = createDevStyleNavigationLifecycle();
     const sideEffects: string[] = [];

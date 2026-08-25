@@ -7,7 +7,7 @@ export type DevStyleNavigationResult<R, T = R> =
 export interface DevStyleNavigationLifecycle {
   register(registry: DevStyleRegistry): () => void;
   run<T, R>(
-    operation: () => Promise<T>,
+    operation: (generation: number | undefined) => Promise<T>,
     apply: (value: T, generation: number | undefined) => R
   ): Promise<DevStyleNavigationResult<R, T>>;
   prepareTree(generation: number, styleIds: Iterable<string>): void;
@@ -27,7 +27,7 @@ export function createDevStyleNavigationLifecycle(
     return {
       register: () => () => {},
       async run(operation, apply) {
-        const value = await operation();
+        const value = await operation(undefined);
         return { status: 'applied', value: apply(value, undefined), generation: undefined };
       },
       prepareTree: () => {},
@@ -71,7 +71,7 @@ export function createDevStyleNavigationLifecycle(
 
       let value: Awaited<ReturnType<typeof operation>>;
       try {
-        value = await operation();
+        value = await operation(generation);
       } catch (error) {
         pendingGenerations.delete(generation);
         registry?.abortRscUpdate(generation);

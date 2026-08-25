@@ -8,6 +8,11 @@
  */
 const URL_POSTFIX = '_.rsc';
 const HEADER_ACTION_ID = 'x-rsc-action';
+const HEADER_DEV_STYLE_GENERATION = 'x-novel-isr-dev-style-generation';
+
+export interface RscRenderRequestOptions {
+  devStyleGeneration?: number;
+}
 
 export type RenderRequest = {
   /** 为 true 时响应纯 Flight 流（text/x-component） */
@@ -20,6 +25,8 @@ export type RenderRequest = {
   request: Request;
   /** 已去除 `_.rsc` 后缀的规范化 URL */
   url: URL;
+  /** engine 开发态样式 transport generation；生产请求不携带 */
+  devStyleGeneration?: number;
 };
 
 /**
@@ -27,13 +34,20 @@ export type RenderRequest = {
  */
 export function createRscRenderRequest(
   urlString: string,
-  action?: { id: string; body: BodyInit }
+  action?: { id: string; body: BodyInit },
+  options: RscRenderRequestOptions = {}
 ): Request {
   const url = new URL(urlString);
   url.pathname += URL_POSTFIX;
   const headers = new Headers();
   if (action) {
     headers.set(HEADER_ACTION_ID, action.id);
+  }
+  if (import.meta.env.DEV && options.devStyleGeneration !== undefined) {
+    if (!Number.isSafeInteger(options.devStyleGeneration) || options.devStyleGeneration < 0) {
+      throw new Error('Invalid development style generation in RSC request.');
+    }
+    headers.set(HEADER_DEV_STYLE_GENERATION, String(options.devStyleGeneration));
   }
   return new Request(url.toString(), {
     method: action ? 'POST' : 'GET',
@@ -48,6 +62,17 @@ export function createRscRenderRequest(
 export function parseRenderRequest(request: Request): RenderRequest {
   const url = new URL(request.url);
   const isAction = request.method === 'POST';
+  const encodedGeneration = request.headers.get(HEADER_DEV_STYLE_GENERATION);
+  let devStyleGeneration: number | undefined;
+  if (import.meta.env.DEV && encodedGeneration !== null) {
+    if (!/^(?:0|[1-9]\d*)$/.test(encodedGeneration)) {
+      throw new Error('Invalid development style generation in RSC request.');
+    }
+    devStyleGeneration = Number(encodedGeneration);
+    if (!Number.isSafeInteger(devStyleGeneration)) {
+      throw new Error('Invalid development style generation in RSC request.');
+    }
+  }
 
   if (url.pathname.endsWith(URL_POSTFIX)) {
     url.pathname = url.pathname.slice(0, -URL_POSTFIX.length);
@@ -61,6 +86,7 @@ export function parseRenderRequest(request: Request): RenderRequest {
       actionId,
       request: new Request(url, request),
       url,
+      devStyleGeneration,
     };
   }
 
@@ -69,5 +95,6 @@ export function parseRenderRequest(request: Request): RenderRequest {
     isAction,
     request,
     url,
+    devStyleGeneration,
   };
 }
