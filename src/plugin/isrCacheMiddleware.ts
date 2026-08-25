@@ -76,6 +76,8 @@ const INVALIDATION_LOG_MAX = 1000;
 const PREFETCH_COOLDOWN_TRACK_MAX = 1000;
 /** “最近失败” 窗口（毫秒）—— 在窗口内的 STALE 标记为 swr-bg-failed-recent */
 const BG_FAILURE_RECENT_WINDOW_MS = 60_000;
+/** Dev-only RSC transport identity. Generation-bound responses are single-use representations. */
+const DEV_STYLE_GENERATION_HEADER = 'x-novel-isr-dev-style-generation';
 
 /** 路由匹配解析结果（对应一个请求的缓存策略） */
 interface ResolvedRouteRule {
@@ -93,6 +95,8 @@ interface RoutingRules {
 
 /** 插件选项 */
 export interface IsrCacheMiddlewareOptions {
+  /** @internal Enables development-only transport semantics for the Vite middleware. */
+  development?: boolean;
   /** 缓存最大条目数，默认 1000 */
   max?: number;
   /** 默认 TTL（秒），若未显式配置 revalidate 时兜底 */
@@ -527,6 +531,7 @@ export function createIsrCacheHandler(
       prefetchCooldownMs,
       prefetchCooldown,
       bgRevalidateFailures,
+      development: options.development ?? false,
     }).catch(err => {
       logger.warn('ISR cache handler 异常，回退到下游处理:', err);
       if (!res.headersSent) {
@@ -643,7 +648,7 @@ export function createIsrCacheMiddleware(
 
       handler = createIsrCacheHandler(
         resolvedConfig,
-        withRuntimeCacheOptions(resolvedConfig, options)
+        withRuntimeCacheOptions(resolvedConfig, { ...options, development: true })
       );
       const opsConfig = resolveOpsConfig(resolvedConfig, 'development');
 
@@ -704,6 +709,7 @@ interface HandleContext {
   prefetchCooldown: LRUCache<string, number>;
   /** bg revalidate 失败 cache key → 失败时间戳；STALE 路径计算 X-Cache-Stale-Reason 用 */
   bgRevalidateFailures: LRUCache<string, number>;
+  development: boolean;
 }
 
 /**
@@ -742,6 +748,21 @@ async function handleRequest(
   });
 
   if ((method !== 'GET' && method !== 'HEAD') || isBypassPath(url)) {
+    setHeaderOnce(res, 'X-Cache-Status', 'BYPASS');
+    next();
+    return Promise.resolve();
+  }
+
+  // A generation-bound Flight response is a one-request transport representation:
+  // its stylesheet hrefs are stamped for exactly one client navigation generation.
+  // Reading or writing it through the URL-keyed ISR cache would either lose that
+  // generation (prefetch poisoning) or retain one entry per navigation forever.
+  // Keep validation downstream so malformed headers still fail at the request parser.
+  if (
+    ctx.development &&
+    stripQuery(url).endsWith(RSC_URL_POSTFIX) &&
+    req.headers[DEV_STYLE_GENERATION_HEADER] !== undefined
+  ) {
     setHeaderOnce(res, 'X-Cache-Status', 'BYPASS');
     next();
     return Promise.resolve();

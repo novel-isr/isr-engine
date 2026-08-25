@@ -257,6 +257,113 @@ describe('isrCacheMiddleware —— dev/client-reference 资源旁路', () => {
   });
 });
 
+describe('isrCacheMiddleware —— dev stylesheet transport representations', () => {
+  let fx: TestFixture;
+  beforeEach(async () => {
+    fx = await startFixture({ development: true });
+  });
+  afterEach(async () => {
+    await teardown(fx);
+  });
+
+  it('never reads or writes cache entries for generation-bound RSC responses', async () => {
+    let callCount = 0;
+    fx.renderImpl.current = (req, res) => {
+      callCount++;
+      res.setHeader('content-type', 'text/x-component;charset=utf-8');
+      const generation = req.headers['x-novel-isr-dev-style-generation'];
+      if (generation === '-1') {
+        res.statusCode = 400;
+        res.end('Invalid development style generation in RSC request.');
+        return;
+      }
+      res.statusCode = 200;
+      res.end(`call=${callCount};generation=${String(generation)}`);
+    };
+
+    const prefetch = await httpGet(`${fx.baseUrl}/page_.rsc`);
+    expect(prefetch.cacheStatus).toBe('MISS');
+    expect(prefetch.body).toBe('call=1;generation=undefined');
+
+    const generation1 = await httpGet(`${fx.baseUrl}/page_.rsc`, {
+      'x-novel-isr-dev-style-generation': '1',
+    });
+    expect(generation1.cacheStatus).toBe('BYPASS');
+    expect(generation1.body).toBe('call=2;generation=1');
+
+    const repeatedGeneration1 = await httpGet(`${fx.baseUrl}/page_.rsc`, {
+      'x-novel-isr-dev-style-generation': '1',
+    });
+    expect(repeatedGeneration1.cacheStatus).toBe('BYPASS');
+    expect(repeatedGeneration1.body).toBe('call=3;generation=1');
+
+    const generation2 = await httpGet(`${fx.baseUrl}/page_.rsc`, {
+      'x-novel-isr-dev-style-generation': '2',
+    });
+    expect(generation2.cacheStatus).toBe('BYPASS');
+    expect(generation2.body).toBe('call=4;generation=2');
+
+    const cachedPrefetch = await httpGet(`${fx.baseUrl}/page_.rsc`);
+    expect(cachedPrefetch.cacheStatus).toBe('HIT');
+    expect(cachedPrefetch.body).toBe('call=1;generation=undefined');
+
+    const malformed = await httpGet(`${fx.baseUrl}/page_.rsc`, {
+      'x-novel-isr-dev-style-generation': '-1',
+    });
+    expect(malformed.cacheStatus).toBe('BYPASS');
+    expect(malformed.status).toBe(400);
+    expect(malformed.body).toMatch(/invalid development style generation/i);
+    expect(callCount).toBe(5);
+  });
+
+  it('keeps generation headers cacheable outside the RSC transport', async () => {
+    let callCount = 0;
+    fx.renderImpl.current = (_req, res) => {
+      callCount++;
+      res.setHeader('content-type', 'text/html;charset=utf-8');
+      res.statusCode = 200;
+      res.end(`call=${callCount}`);
+    };
+
+    const first = await httpGet(`${fx.baseUrl}/page`, {
+      'x-novel-isr-dev-style-generation': '1',
+    });
+    const second = await httpGet(`${fx.baseUrl}/page`, {
+      'x-novel-isr-dev-style-generation': '2',
+    });
+
+    expect(first.cacheStatus).toBe('MISS');
+    expect(second.cacheStatus).toBe('HIT');
+    expect(second.body).toBe('call=1');
+  });
+});
+
+describe('isrCacheMiddleware —— production stylesheet transport isolation', () => {
+  it('does not change cache semantics when development mode is disabled', async () => {
+    const fx = await startFixture();
+    try {
+      let callCount = 0;
+      fx.renderImpl.current = (_req, res) => {
+        callCount++;
+        res.setHeader('content-type', 'text/x-component;charset=utf-8');
+        res.statusCode = 200;
+        res.end(`call=${callCount}`);
+      };
+
+      const first = await httpGet(`${fx.baseUrl}/page_.rsc`);
+      const withDevelopmentHeader = await httpGet(`${fx.baseUrl}/page_.rsc`, {
+        'x-novel-isr-dev-style-generation': '1',
+      });
+
+      expect(first.cacheStatus).toBe('MISS');
+      expect(withDevelopmentHeader.cacheStatus).toBe('HIT');
+      expect(withDevelopmentHeader.body).toBe('call=1');
+    } finally {
+      await teardown(fx);
+    }
+  });
+});
+
 describe('isrCacheMiddleware —— A/B variant 隔离', () => {
   it('variantIsolation=false（默认）→ 不同 ab cookie 共享缓存', async () => {
     const fx = await startFixture({});
