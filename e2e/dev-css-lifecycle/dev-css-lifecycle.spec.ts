@@ -48,6 +48,48 @@ test.afterEach(async ({ page }) => {
   assertCleanDiagnostics(Reflect.get(page, '__devCssDiagnostics') as Diagnostics);
 });
 
+test('cold SSR applies direct and transitive client CSS before the client entry starts', async ({
+  page,
+}) => {
+  await page.route(/virtual:vite-rsc\/entry-browser/, route =>
+    route.fulfill({
+      status: 200,
+      contentType: 'text/javascript',
+      body: 'export {};',
+    })
+  );
+
+  await page.goto('/');
+
+  const home = page.locator('[data-style-sentinel="home"]');
+  const nested = page.locator('[data-transient-panel="primary"]');
+  await expect(home).toBeVisible();
+  await expect
+    .poll(() =>
+      home.evaluate(node => getComputedStyle(node).getPropertyValue('--route-style-ready').trim())
+    )
+    .toBe('home');
+  await expect
+    .poll(() =>
+      nested.evaluate(node =>
+        getComputedStyle(node).getPropertyValue('--transient-style-ready').trim()
+      )
+    )
+    .toBe('primary');
+
+  await expect(page.locator('style[data-novel-isr-dev-style]')).toHaveCount(0);
+  await expect(
+    page.locator(
+      'link[rel="stylesheet"][data-precedence="vite-rsc/client-reference"][href*="Home.module.scss"]'
+    )
+  ).toHaveCount(1);
+  await expect(
+    page.locator(
+      'link[rel="stylesheet"][data-precedence="vite-rsc/client-reference"][href*="Transient.module.scss"]'
+    )
+  ).toHaveCount(1);
+});
+
 test('hard refresh and hydration keep the home stylesheet active every frame', async ({ page }) => {
   await page.goto('/');
   await waitForRoute(page, 'home');

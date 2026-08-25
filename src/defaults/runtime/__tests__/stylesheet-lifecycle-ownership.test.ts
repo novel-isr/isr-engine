@@ -47,6 +47,7 @@ describe('stylesheet lifecycle ownership', () => {
     const resourceDispatcher = source(
       'src/defaults/runtime/dev-style-resource-dispatcher.server.ts'
     );
+    const declarations = source('src/defaults/runtime/dev-style-declarations.server.ts');
     const plugin = source('src/plugin/createDevCssHandoffPlugin.ts');
     const request = source('src/defaults/runtime/request.tsx');
 
@@ -58,8 +59,10 @@ describe('stylesheet lifecycle ownership', () => {
     expect(clientEntry).toContain('getOrCreateDevStyleRegistry');
     expect(responseObserver).toContain('queueMicrotask(resolveCompletion)');
     expect(responseObserver).toContain('void completed.catch(() => {})');
-    expect(resourceDispatcher).toContain(".S(href, 'vite-rsc/client-reference'");
-    expect(resourceDispatcher).toContain("{ media: 'not all' }");
+    expect(resourceDispatcher).toContain("'vite-rsc/client-reference'");
+    expect(resourceDispatcher).toContain('media === undefined ? undefined : { media }');
+    expect(declarations).toContain("generation === undefined ? undefined : 'not all'");
+    expect(declarations).toContain('createDevStyleStylesheetHref(styleId)');
     expect(plugin).toContain('assertPinnedDevStyleResourceDispatcher();');
     expect(clientEntry).toContain('devStyleGeneration: generation');
     expect(serverEntry).toContain('transportGeneration: renderRequest.devStyleGeneration');

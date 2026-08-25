@@ -60,10 +60,20 @@ export function createDevStyleTransportHref(
   generation: number,
   baseUrl = 'http://novel-isr.local/'
 ): string {
+  return withDevStyleTransportGeneration(
+    createDevStyleStylesheetHref(value, baseUrl),
+    generation,
+    baseUrl
+  );
+}
+
+export function createDevStyleStylesheetHref(
+  value: string,
+  baseUrl = 'http://novel-isr.local/'
+): string {
   const canonical = canonicalizeDevStyleId(value, baseUrl);
   const url = new URL(canonical, baseUrl);
-  url.searchParams.set('direct', '');
-  return withDevStyleTransportGeneration(`${url.pathname}${url.search}`, generation, baseUrl);
+  return `${url.pathname}${url.search}${url.search ? '&' : '?'}direct`;
 }
 
 export function getDevStyleTransportGeneration(

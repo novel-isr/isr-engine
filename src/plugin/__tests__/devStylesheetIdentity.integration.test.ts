@@ -218,6 +218,9 @@ describe('development RSC stylesheet identity', () => {
 
     const initialFlight = await new Response(await rscEntry.render()).text();
     expect(initialFlight).not.toContain('not all');
+    expect(initialFlight).toMatch(
+      /:HS\["\/src\/ClientCard\.module\.scss\?direct","vite-rsc\/client-reference"\]/
+    );
 
     const listener = http.createServer(server.middlewares);
     await new Promise<void>(resolve => listener.listen(0, '127.0.0.1', resolve));

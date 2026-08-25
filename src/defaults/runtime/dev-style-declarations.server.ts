@@ -1,6 +1,10 @@
 import { AsyncLocalStorage } from 'node:async_hooks';
 
-import { canonicalizeDevStyleId, createDevStyleTransportHref } from './dev-style-id';
+import {
+  canonicalizeDevStyleId,
+  createDevStyleStylesheetHref,
+  createDevStyleTransportHref,
+} from './dev-style-id';
 import {
   assertPinnedDevStyleResourceDispatcher,
   emitDevStylesheetResource,
@@ -131,8 +135,10 @@ export function declareDevClientReferenceStyles(reference: unknown): void {
   const generation = getDeclarationStorage().getStore()?.transportGeneration;
   for (const styleId of styleIds) {
     if (!collector.includes(styleId)) collector.push(styleId);
-    if (generation !== undefined) {
-      emitDevStylesheetResource(createDevStyleTransportHref(styleId, generation));
-    }
+    const href =
+      generation === undefined
+        ? createDevStyleStylesheetHref(styleId)
+        : createDevStyleTransportHref(styleId, generation);
+    emitDevStylesheetResource(href, generation === undefined ? undefined : 'not all');
   }
 }

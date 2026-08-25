@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import {
   canonicalizeDevStyleId,
+  createDevStyleStylesheetHref,
   getDevStyleTransportGeneration,
   styleIdsMatch,
   withDevStyleTransportGeneration,
@@ -46,5 +47,11 @@ describe('development stylesheet identifiers', () => {
     expect(getDevStyleTransportGeneration(transport)).toBe(7);
     expect(canonicalizeDevStyleId(transport)).toBe('/src/Card.scss?theme=dark');
     expect(getDevStyleTransportGeneration('/src/Card.scss?direct')).toBeUndefined();
+  });
+
+  it('creates an applying direct stylesheet href from the canonical identity', () => {
+    expect(createDevStyleStylesheetHref('/src/Card.scss?z=2&direct&a=1&t=old')).toBe(
+      '/src/Card.scss?a=1&z=2&direct'
+    );
   });
 });
