@@ -5,9 +5,11 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 
 import ts from 'typescript';
 import {
+  type ConfigEnv,
   normalizePath,
   type EnvironmentModuleNode,
   type Plugin,
+  type UserConfig,
   version as viteVersion,
   type ViteDevServer,
 } from 'vite';
@@ -50,6 +52,10 @@ export function assertPinnedViteVersion(actualVersion: string): void {
         `detected ${actualVersion}. Install the engine's exact Vite peer version.`
     );
   }
+}
+
+function applyDevCssLifecycle(_config: UserConfig, environment: ConfigEnv): boolean {
+  return environment.command === 'serve' && environment.isPreview !== true;
 }
 
 function isModuleTransportQueryParameter(parameter: string): boolean {
@@ -936,7 +942,7 @@ export function createDevCssLifecyclePluginPhases(
   const plugins = [
     {
       name: 'isr:dev-css-handoff',
-      apply: 'serve',
+      apply: applyDevCssLifecycle,
       enforce: 'pre',
       configResolved() {
         assertPinnedViteVersion(viteVersion);
@@ -975,7 +981,7 @@ export function createDevCssLifecyclePluginPhases(
     },
     {
       name: 'isr:dev-client-reference-styles',
-      apply: 'serve',
+      apply: applyDevCssLifecycle,
       enforce: 'post',
       async transform(code, id) {
         const moduleId = semanticModuleIdentity(id);
@@ -1000,7 +1006,7 @@ export function createDevCssLifecyclePluginPhases(
     },
     {
       name: 'isr:dev-style-registry',
-      apply: 'serve',
+      apply: applyDevCssLifecycle,
       enforce: 'post',
       resolveId(id) {
         return id === DEV_STYLE_REGISTRY_ID ? DEV_STYLE_REGISTRY_RESOLVED_ID : undefined;

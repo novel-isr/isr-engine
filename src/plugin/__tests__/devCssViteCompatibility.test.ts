@@ -33,6 +33,29 @@ describe('development CSS Vite compatibility gate', () => {
     ).resolves.toMatchObject({ command: 'build' });
   });
 
+  it('does not apply development CSS plugins while resolving a production preview', async () => {
+    const plugins = createDevCssLifecyclePlugins(defaultsDir);
+
+    const resolved = await resolveConfig(
+      {
+        configFile: false,
+        logLevel: 'silent',
+        plugins,
+        root: process.cwd(),
+      },
+      'serve',
+      'production',
+      'production',
+      true
+    );
+
+    expect(resolved).toMatchObject({ command: 'serve' });
+    const pluginNames = resolved.plugins.map(plugin => plugin.name);
+    expect(pluginNames).not.toContain('isr:dev-css-handoff');
+    expect(pluginNames).not.toContain('isr:dev-client-reference-styles');
+    expect(pluginNames).not.toContain('isr:dev-style-registry');
+  });
+
   it('rejects an unsupported Vite during serve config resolution before transforms', async () => {
     const plugins = createDevCssLifecyclePlugins(defaultsDir);
     const transform = vi.fn();
