@@ -163,7 +163,14 @@ function isPinnedClientReferenceProxy(
 }
 
 export function clientReferenceIdFromProxy(code: string, id: string): string {
-  const source = ts.createSourceFile(id, code, ts.ScriptTarget.Latest, true, ts.ScriptKind.JS);
+  const source = ts.createSourceFile(
+    id,
+    code,
+    ts.ScriptTarget.Latest,
+    true,
+    ts.ScriptKind.JS
+  ) as ts.SourceFile & { readonly parseDiagnostics: readonly ts.Diagnostic[] };
+  if (source.parseDiagnostics.length > 0) throw unsupportedClientProxy(id);
   const runtimeImports = source.statements.filter(
     (statement): statement is ts.ImportDeclaration =>
       ts.isImportDeclaration(statement) &&
@@ -185,10 +192,12 @@ export function clientReferenceIdFromProxy(code: string, id: string): string {
   }
   const runtimeBinding = runtimeBindings.name.text;
   const referenceIds = new Set<string>();
+  const exportNames = new Set<string>();
 
   for (const statement of source.statements) {
     if (statement === runtimeImport) continue;
     if (ts.isExportAssignment(statement) && !statement.isExportEquals) {
+      if (exportNames.has('default')) throw unsupportedClientProxy(id);
       const referenceId = registerClientReferenceCall(
         statement.expression,
         runtimeBinding,
@@ -197,6 +206,7 @@ export function clientReferenceIdFromProxy(code: string, id: string): string {
       );
       if (!referenceId) throw unsupportedClientProxy(id);
       referenceIds.add(referenceId);
+      exportNames.add('default');
       continue;
     }
     if (
@@ -210,6 +220,7 @@ export function clientReferenceIdFromProxy(code: string, id: string): string {
       for (const declaration of statement.declarationList.declarations) {
         if (
           !ts.isIdentifier(declaration.name) ||
+          exportNames.has(declaration.name.text) ||
           declaration.exclamationToken !== undefined ||
           declaration.type !== undefined ||
           !declaration.initializer
@@ -224,6 +235,7 @@ export function clientReferenceIdFromProxy(code: string, id: string): string {
         );
         if (!referenceId) throw unsupportedClientProxy(id);
         referenceIds.add(referenceId);
+        exportNames.add(declaration.name.text);
       }
       continue;
     }

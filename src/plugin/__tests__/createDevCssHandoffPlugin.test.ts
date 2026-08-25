@@ -275,6 +275,60 @@ describe('createDevCssLifecyclePlugins', () => {
     ).toThrow(/unsupported @vitejs\/plugin-rsc client reference proxy shape.*ClientCard\.tsx/i);
   });
 
+  it.each([
+    ['parser recovery', '}'],
+    [
+      'duplicate default',
+      `export default $$ReactServer.registerClientReference(
+        () => { throw new Error("Unexpectedly client reference export '" + "default" + "' is called on server") },
+        "/src/ClientCard.tsx",
+        "default"
+      );`,
+    ],
+    [
+      'duplicate named export',
+      `export const Badge = $$ReactServer.registerClientReference(
+        () => { throw new Error("Unexpectedly client reference export '" + "Badge" + "' is called on server") },
+        "/src/ClientCard.tsx",
+        "Badge"
+      );`,
+    ],
+  ])('rejects %s in an otherwise supported client proxy', (_label, surplus) => {
+    const proxy = `
+      import * as $$ReactServer from ${JSON.stringify(pinnedRscRuntime)};
+      export const Badge = $$ReactServer.registerClientReference(
+        () => { throw new Error("Unexpectedly client reference export '" + "Badge" + "' is called on server") },
+        "/src/ClientCard.tsx",
+        "Badge"
+      );
+      export default $$ReactServer.registerClientReference(
+        () => { throw new Error("Unexpectedly client reference export '" + "default" + "' is called on server") },
+        "/src/ClientCard.tsx",
+        "default"
+      );
+      ${surplus}
+    `;
+
+    expect(() => clientReferenceIdFromProxy(proxy, '/src/ClientCard.tsx')).toThrow(
+      /unsupported @vitejs\/plugin-rsc client reference proxy shape/i
+    );
+  });
+
+  it('rejects a named wrapper whose reference name conflicts with its export identity', () => {
+    const proxy = `
+      import * as $$ReactServer from ${JSON.stringify(pinnedRscRuntime)};
+      export const Badge = $$ReactServer.registerClientReference(
+        () => { throw new Error("Unexpectedly client reference export '" + "Badge" + "' is called on server") },
+        "/src/ClientCard.tsx",
+        "default"
+      );
+    `;
+
+    expect(() => clientReferenceIdFromProxy(proxy, '/src/ClientCard.tsx')).toThrow(
+      /unsupported @vitejs\/plugin-rsc client reference proxy shape/i
+    );
+  });
+
   it('adds a post-CSS plugin that supplies the singleton client registry', async () => {
     const plugins = createDevCssLifecyclePlugins(defaultsDir);
     const prePlugin = plugins.find(plugin => plugin.name === 'isr:dev-css-handoff')!;
