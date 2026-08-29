@@ -4,6 +4,12 @@
 
 ---
 
+## [2.6.8] - 2026-08-29
+
+### Security
+
+- 升级依赖修复安全漏洞：`vite` 8.0.14 → 8.0.16（`server.fs.deny` bypass 等）、`sharp` ^0.33.5 → ^0.35.0。
+
 ## [Unreleased]
 
 ### Added
