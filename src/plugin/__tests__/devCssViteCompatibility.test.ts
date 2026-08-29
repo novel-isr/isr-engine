@@ -75,7 +75,7 @@ describe('development CSS Vite compatibility gate', () => {
         },
         'serve'
       )
-    ).rejects.toThrow(/requires Vite 8\.0\.14.*detected 8\.0\.15/i);
+    ).rejects.toThrow(/requires Vite 8\.0\.16.*detected 8\.0\.15/i);
     expect(transform).not.toHaveBeenCalled();
   });
 });

@@ -28,7 +28,7 @@ export const DEV_STYLE_REGISTRY_RESOLVED_ID = '\0virtual:novel-isr/dev-style-reg
 const VITE_RSC_CSS_RESOLVED_PREFIX = '\0virtual:vite-rsc/css?';
 const STYLESHEET_URL = /\.(?:css|less|sass|scss|styl|stylus|pcss|postcss|sss)(?:[?#]|$)/i;
 const SPECIAL_STYLESHEET_QUERY = /[?&](?:direct|inline|raw|url)(?:[=&]|$)/;
-// Keep this in lockstep with Vite 8.0.14's SPECIAL_QUERY_RE: these requests produce values or
+// Keep this in lockstep with Vite 8.0.16's SPECIAL_QUERY_RE: these requests produce values or
 // separate execution contexts, so they cannot contribute stylesheets to the document graph.
 const TERMINAL_CLIENT_RESOURCE_QUERY = /[?&](?:worker|sharedworker|raw|url)\b/;
 let pinnedRscServerRuntimePath: string | undefined;
@@ -47,7 +47,7 @@ function getPinnedRscServerRuntimePath(): string {
 const VITE_HMR_TIMESTAMP_VALUE = /^\d{13}$/;
 const VITE_DEP_VERSION_RE = /[?&](v=[\w.-]+)\b/;
 const DEV_STYLE_GENERATION_VALUE = /^(?:0|[1-9]\d*)$/;
-const PINNED_VITE_VERSION = '8.0.14';
+const PINNED_VITE_VERSION = '8.0.16';
 
 export function assertPinnedViteVersion(actualVersion: string): void {
   if (actualVersion !== PINNED_VITE_VERSION) {

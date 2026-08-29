@@ -382,8 +382,8 @@ describe('createDevCssLifecyclePlugins', () => {
     ).toThrow(/unsupported @vitejs\/plugin-rsc client reference proxy shape/i);
   });
 
-  it('matches only the pinned Vite 8.0.14 transport query grammar', () => {
-    expect(viteVersion).toBe('8.0.14');
+  it('matches only the pinned Vite 8.0.16 transport query grammar', () => {
+    expect(viteVersion).toBe('8.0.16');
     const proxyFor = (referenceId: string) => `
       import * as $$ReactServer from ${JSON.stringify(pinnedRscRuntime)};
       export default $$ReactServer.registerClientReference(
@@ -426,7 +426,7 @@ describe('createDevCssLifecyclePlugins', () => {
   });
 
   it('characterizes the pinned Vite dependency-version URL regex', () => {
-    expect(viteVersion).toBe('8.0.14');
+    expect(viteVersion).toBe('8.0.16');
     const pinnedDepVersionRE = /[?&](v=[\w.-]+)\b/;
 
     expect(pinnedDepVersionRE.test('/entry?v=-')).toBe(false);
@@ -443,7 +443,7 @@ describe('createDevCssLifecyclePlugins', () => {
     ) => void;
 
     expect(() => assertPinnedViteVersion('8.0.15')).toThrow(
-      /requires Vite 8\.0\.14.*detected 8\.0\.15/i
+      /requires Vite 8\.0\.16.*detected 8\.0\.15/i
     );
     expect(() => assertPinnedViteVersion(viteVersion)).not.toThrow();
     const plugins = createDevCssLifecyclePlugins(defaultsDir);
