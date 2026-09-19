@@ -4,6 +4,15 @@
 
 ---
 
+## [2.6.9] - 2026-09-20
+
+### Fixed
+
+- **客户端 RSC 导航切语言不生效（必须刷新才换成对应语言）**：`detectLocale` 之前直接用原始
+  pathname 的首段匹配 locale，而客户端导航请求 URL 带 `_.rsc` 后缀（如 `/ja_.rsc`），导致首段变成
+  `ja_.rsc` 命中不了 locale，回退到 cookie / Accept-Language / defaultLocale，拿到的 intl 语言与 URL
+  前缀不一致。现在先剥掉 `_.rsc` 后缀再检测，`/ja_.rsc` 正确命中 `ja`。
+
 ## [2.6.8] - 2026-08-29
 
 ### Security

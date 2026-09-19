@@ -574,7 +574,14 @@ function createSiteHooks(config: SiteHooksConfig, runtime: SiteRuntimeConfig): S
       if (supportedLocales) {
         try {
           const pathname = new URL(req.url).pathname;
-          const first = pathname.split('/')[1];
+          // 客户端 RSC 导航 URL 带 `_.rsc` 后缀（如 `/ja_.rsc`），不剥掉的话
+          // 首段会变成 `ja_.rsc` 命中不了 locale，从而错误回退到 cookie /
+          // Accept-Language / defaultLocale —— 这正是「切换语言必须刷新才生效」
+          // 的根因（RSC 导航拿到的 intl 语言与 URL 前缀不一致）。
+          const cleanPath = pathname.endsWith('_.rsc')
+            ? pathname.slice(0, -'_.rsc'.length) || '/'
+            : pathname;
+          const first = cleanPath.split('/')[1];
           if (first && supportedLocales.includes(first)) return first;
         } catch {
           // 非法 URL（极少见，比如内部调用喂了相对路径）→ 继续后续策略
