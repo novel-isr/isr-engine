@@ -30,6 +30,7 @@ import { createRoot, hydrateRoot } from 'react-dom/client';
 import { rscStream } from 'rsc-html-stream/client';
 
 import { GlobalErrorBoundary } from './error-boundary';
+import { createNavigationRequestLifecycle } from './navigation-request.client';
 import {
   createPrefetcher,
   isRscNavigation,
@@ -315,6 +316,8 @@ async function main(hooks: ClientEntryHooks): Promise<void> {
     window.setTimeout(installAfterCommit, 0);
   }
 
+  const navigationRequests = createNavigationRequestLifecycle();
+
   function mountRscShellFallback(): void {
     document.body.classList.remove('csr-shell-body');
     document.body.removeAttribute('style');
@@ -322,23 +325,30 @@ async function main(hooks: ClientEntryHooks): Promise<void> {
     let setPayload: (v: DefaultRscPayloadState) => void = () => {};
 
     async function fetchRscPayload(): Promise<void> {
-      await runWithDevStyleNavigation(
-        async generation => {
-          const renderRequest = createRscRenderRequest(
-            window.location.href,
-            undefined,
-            devStyleRequestOptions(generation)
-          );
-          return fetchRscResponse(renderRequest);
-        },
-        ({ payload, response, requestedUrl, styleIds }, generation) => {
-          syncBrowserUrlToFinalRedirect(response, requestedUrl);
-          setClientI18n(payload.intl);
-          applySeoToDocument(payload.seoMeta, payload.siteBaseUrl ?? undefined);
-          setPayload(createPayloadState(payload, generation, styleIds));
-        },
-        prepareFetchedDevStyles
-      );
+      await navigationRequests.run(async signal => {
+        await runWithDevStyleNavigation(
+          async generation => {
+            const renderRequest = createRscRenderRequest(
+              window.location.href,
+              undefined,
+              devStyleRequestOptions(generation)
+            );
+            return fetchRscResponse(new Request(renderRequest, { signal }));
+          },
+          ({ payload, response, requestedUrl, styleIds }, generation) => {
+            signal.throwIfAborted();
+            syncBrowserUrlToFinalRedirect(response, requestedUrl);
+            setClientI18n(payload.intl);
+            applySeoToDocument(payload.seoMeta, payload.siteBaseUrl ?? undefined);
+            setPayload(createPayloadState(payload, generation, styleIds));
+          },
+          async (result, generation) => {
+            signal.throwIfAborted();
+            await prepareFetchedDevStyles(result, generation);
+            signal.throwIfAborted();
+          }
+        );
+      });
     }
 
     function RscShellRoot(): React.ReactNode {
@@ -472,24 +482,31 @@ async function main(hooks: ClientEntryHooks): Promise<void> {
   }
 
   async function fetchRscPayload(): Promise<void> {
-    await runWithDevStyleNavigation(
-      async generation => {
-        const renderRequest = createRscRenderRequest(
-          window.location.href,
-          undefined,
-          devStyleRequestOptions(generation)
-        );
-        return fetchRscResponse(renderRequest);
-      },
-      ({ payload, response, requestedUrl, styleIds }, generation) => {
-        // Keep every browser mutation behind the generation freshness check.
-        syncBrowserUrlToFinalRedirect(response, requestedUrl);
-        setClientI18n(payload.intl);
-        applySeoToDocument(payload.seoMeta, payload.siteBaseUrl ?? undefined);
-        setPayload(createPayloadState(payload, generation, styleIds));
-      },
-      prepareFetchedDevStyles
-    );
+    await navigationRequests.run(async signal => {
+      await runWithDevStyleNavigation(
+        async generation => {
+          const renderRequest = createRscRenderRequest(
+            window.location.href,
+            undefined,
+            devStyleRequestOptions(generation)
+          );
+          return fetchRscResponse(new Request(renderRequest, { signal }));
+        },
+        ({ payload, response, requestedUrl, styleIds }, generation) => {
+          // Keep every browser mutation behind the generation freshness check.
+          signal.throwIfAborted();
+          syncBrowserUrlToFinalRedirect(response, requestedUrl);
+          setClientI18n(payload.intl);
+          applySeoToDocument(payload.seoMeta, payload.siteBaseUrl ?? undefined);
+          setPayload(createPayloadState(payload, generation, styleIds));
+        },
+        async (result, generation) => {
+          signal.throwIfAborted();
+          await prepareFetchedDevStyles(result, generation);
+          signal.throwIfAborted();
+        }
+      );
+    });
   }
 
   setServerCallback(async (id: string, args: unknown[]) => {

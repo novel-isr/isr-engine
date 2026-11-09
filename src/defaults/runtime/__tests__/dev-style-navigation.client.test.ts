@@ -46,7 +46,20 @@ describe('development style navigation lifecycle', () => {
   });
 
   it('keeps the bootstrap owner active until an engine-owned link has loaded', async () => {
-    const window = new Window({ url: 'http://localhost:3000/' });
+    const window = new Window({
+      url: 'http://localhost:3000/',
+      settings: {
+        // Happy DOM 21 emits a synchronous error when CSS loading is disabled.
+        // Use its async loader with an in-memory transport; this test controls load delivery.
+        enableCSSFileLoading: true,
+        fetch: {
+          interceptor: {
+            beforeAsyncRequest: async ({ window }) =>
+              new window.Response('', { headers: { 'content-type': 'text/css' } }),
+          },
+        },
+      },
+    });
     const document = window.document as unknown as Document;
     const bootstrap = document.createElement('link');
     bootstrap.rel = 'stylesheet';

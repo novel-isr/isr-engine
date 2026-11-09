@@ -277,76 +277,120 @@ test('removing and restoring an imported stylesheet releases only the removed ow
   }
 });
 
-test('an aborted RSC fetch cannot publish or commit its route stylesheet', async ({ page }) => {
-  const diagnostics = Reflect.get(page, '__devCssDiagnostics') as Diagnostics;
-  diagnostics.allowedFailurePatterns.push(
-    /\/article_\.rsc\?abort=1/,
-    /Article\.module\.scss.*__novel_isr_style_generation=/
-  );
+for (const mode of ['hydrated', 'CSR shell'] as const) {
+  test(`a superseded ${mode} navigation aborts its browser RSC fetch without publishing route styles`, async ({
+    page,
+  }) => {
+    if (mode === 'CSR shell') {
+      await page.addInitScript(() => {
+        Reflect.set(globalThis, '__SPA_MODE__', true);
+      });
+    }
+    const diagnostics = Reflect.get(page, '__devCssDiagnostics') as Diagnostics;
+    // StrictMode runs the CSR bootstrap effect twice; the second owns the request.
+    if (mode === 'CSR shell') diagnostics.allowedFailurePatterns.push(/\/_\.rsc$/);
+    diagnostics.allowedFailurePatterns.push(
+      /\/article_\.rsc\?abort=1/,
+      /Article\.module\.scss.*__novel_isr_style_generation=/
+    );
 
-  const bootstrap = deferred();
-  await page.route(/\/.*virtual:novel-isr\/client-entry(?:\?|$)/, async route => {
-    await bootstrap.promise;
-    await route.continue();
-  });
-  try {
-    // SSR styles can be ready while the navigation listener's hydration effect is absent.
-    await page.goto('/', { waitUntil: 'commit' });
-    await waitForRoute(page, 'home');
-    await expect(page.locator('[data-hydration-ready]')).toBeDisabled();
-  } finally {
-    bootstrap.resolve();
-  }
-  await waitForNavigationReady(page);
-  await resetTemporalHistory(page);
-
-  const responseReady = deferred();
-  const releaseResponse = deferred();
-  const responseSettled = deferred();
-  let routeError: unknown;
-  const delayedRoute = /\/article_\.rsc\?abort=1$/;
-  await page.route(delayedRoute, async route => {
+    const bootstrap = deferred();
+    await page.route(/\/.*virtual:novel-isr\/client-entry(?:\?|$)/, async route => {
+      await bootstrap.promise;
+      await route.continue();
+    });
     try {
-      await route.fetch();
-      responseReady.resolve();
-      await releaseResponse.promise;
-      await route.abort('aborted');
-    } catch (error) {
-      routeError = error;
-      responseReady.resolve();
+      // SSR styles can be ready while the navigation listener's hydration effect is absent.
+      await page.goto('/', { waitUntil: 'commit' });
+      await waitForRoute(page, 'home');
+      await expect(page.locator('[data-hydration-ready]')).toBeDisabled();
     } finally {
-      responseSettled.resolve();
+      bootstrap.resolve();
+    }
+    await waitForNavigationReady(page);
+    await resetTemporalHistory(page);
+
+    const responseReady = deferred();
+    const prefetchReady = deferred();
+    const releasePrefetch = deferred();
+    const releaseResponse = deferred();
+    const responseSettled = deferred();
+    let routeError: unknown;
+    const delayedRoute = /\/article_\.rsc\?abort=1$/;
+    await page.route(delayedRoute, async route => {
+      try {
+        const response = await route.fetch();
+        if (!route.request().headers()['x-novel-isr-dev-style-generation']) {
+          prefetchReady.resolve();
+          await releasePrefetch.promise;
+          await route.fulfill({ response });
+          return;
+        }
+        responseReady.resolve();
+        await releaseResponse.promise;
+        await route.fulfill({ response });
+      } catch (error) {
+        routeError = error;
+        responseReady.resolve();
+      } finally {
+        if (route.request().headers()['x-novel-isr-dev-style-generation'])
+          responseSettled.resolve();
+      }
+    });
+
+    try {
+      await page.evaluate(() => {
+        Reflect.set(globalThis, '__navigationDocument', true);
+        const link = document.createElement('a');
+        link.href = '/article?abort=1';
+        link.dataset.prefetch = 'intent';
+        document.body.append(link);
+        link.dispatchEvent(new FocusEvent('focusin', { bubbles: true }));
+      });
+      await prefetchReady.promise;
+      const prefetchFinished = page.waitForEvent('requestfinished', {
+        predicate: request =>
+          delayedRoute.test(request.url()) &&
+          !request.headers()['x-novel-isr-dev-style-generation'],
+      });
+      await page.evaluate(() => history.pushState(null, '', '/article?abort=1'));
+      await responseReady.promise;
+      expect(routeError).toBeUndefined();
+      const initialHomeToken = await page.locator('body').getAttribute('data-render-token');
+      const aborted = page.waitForEvent('requestfailed', {
+        predicate: request =>
+          delayedRoute.test(request.url()) &&
+          !!request.headers()['x-novel-isr-dev-style-generation'],
+      });
+      await page.evaluate(() => history.pushState(null, '', '/'));
+      await expect(page.locator('body')).not.toHaveAttribute(
+        'data-render-token',
+        initialHomeToken!
+      );
+      // Only the browser navigation lifecycle can cancel this request.
+      await aborted;
+      releasePrefetch.resolve();
+      expect((await prefetchFinished).failure()).toBeNull();
+      releaseResponse.resolve();
+      await responseSettled.promise;
+      expect(routeError).toBeUndefined();
+      await waitForRoute(page, 'home');
+      await expect(page).toHaveURL('/');
+      expect(await page.evaluate(() => Reflect.get(globalThis, '__navigationDocument'))).toBe(true);
+      await settleFrames(page);
+
+      await assertTemporalInvariants(page);
+      await assertActiveRulesExclude(page, '--article-only-rule');
+      await expectActiveOwnerCount(page, 'Article.module.scss', 0);
+      await expectManagedOwner(page, 'Home.module.scss');
+      await assertManagedOwnerCardinality(page);
+    } finally {
+      releasePrefetch.resolve();
+      releaseResponse.resolve();
+      if (!page.isClosed()) await page.unroute(delayedRoute);
     }
   });
-
-  try {
-    await page.evaluate(() => history.pushState(null, '', '/article?abort=1'));
-    await responseReady.promise;
-    expect(routeError).toBeUndefined();
-    const initialHomeToken = await page.locator('body').getAttribute('data-render-token');
-    const aborted = page.waitForEvent('requestfailed', {
-      predicate: request => delayedRoute.test(request.url()),
-    });
-    await page.evaluate(() => history.pushState(null, '', '/'));
-    await expect(page.locator('body')).not.toHaveAttribute('data-render-token', initialHomeToken!);
-    releaseResponse.resolve();
-    await aborted;
-    await responseSettled.promise;
-    expect(routeError).toBeUndefined();
-    await waitForRoute(page, 'home');
-    await expect(page).toHaveURL('/');
-    await settleFrames(page);
-
-    await assertTemporalInvariants(page);
-    await assertActiveRulesExclude(page, '--article-only-rule');
-    await expectActiveOwnerCount(page, 'Article.module.scss', 0);
-    await expectManagedOwner(page, 'Home.module.scss');
-    await assertManagedOwnerCardinality(page);
-  } finally {
-    releaseResponse.resolve();
-    if (!page.isClosed()) await page.unroute(delayedRoute);
-  }
-});
+}
 
 function deferred(): { promise: Promise<void>; resolve: () => void } {
   let resolve!: () => void;
