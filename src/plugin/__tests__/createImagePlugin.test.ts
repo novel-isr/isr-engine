@@ -7,6 +7,9 @@ import { createImageMiddleware, createImagePlugin } from '../createImagePlugin';
 
 vi.mock('sharp', () => ({
   default: () => ({
+    rotate() {
+      return this;
+    },
     resize() {
       return this;
     },
@@ -120,6 +123,9 @@ describe('production image service resilience', () => {
     const request = handler({}, true, {
       loadSharp: async () => ({
         default: () => ({
+          rotate() {
+            return this;
+          },
           resize() {
             return this;
           },
@@ -147,6 +153,9 @@ describe('production image service resilience', () => {
     const request = handler({}, true, {
       loadSharp: async () => ({
         default: () => ({
+          rotate() {
+            return this;
+          },
           toFormat() {
             return this;
           },

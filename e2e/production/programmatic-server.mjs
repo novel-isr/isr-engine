@@ -37,6 +37,9 @@ process.on('message', async message => {
       await app.shutdown();
       const restarted = await app.start();
       process.send({ ready: restarted.url });
+    } else if (message === 'invalidate-ssg') {
+      await revalidatePath('/regenerated');
+      process.send({ invalidated: true });
     } else if (message === 'invalidate') {
       await revalidatePath('/cached');
       process.send({ invalidated: true });

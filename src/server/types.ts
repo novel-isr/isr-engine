@@ -3,6 +3,7 @@
  */
 
 import type { Express } from 'express';
+import type { ProxyTrustPolicy } from '@/types';
 import type { Server } from 'node:http';
 import type { ViteDevServer } from 'vite';
 
@@ -11,6 +12,8 @@ export type RouteSetupFn = (requestHandler: Express) => void;
 
 /** 服务器配置 */
 export interface ServerConfig {
+  /** Express trust proxy policy; defaults to false. Prefer explicit proxy addresses/CIDRs. */
+  trustProxy?: ProxyTrustPolicy;
   port: number;
   host?: string;
   /** true: port in use fails fast; false: try following ports for local dev ergonomics. */

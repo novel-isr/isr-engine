@@ -16,7 +16,7 @@ import { resolveImageOptions } from '../config/resolveImageOptions';
 import { fetchRemoteImage, ImageSourceError } from './remoteImageSource';
 import { promises as fs } from 'node:fs';
 import { createHash } from 'node:crypto';
-import type { Plugin } from 'vite';
+import { isFileLoadingAllowed, normalizePath, type Plugin, type ViteDevServer } from 'vite';
 import { LRUCache } from 'lru-cache';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import type { Connect } from 'vite';
@@ -38,6 +38,7 @@ interface SharpModule {
   default: (input: Buffer | string, options?: { limitInputPixels: number }) => SharpInstance;
 }
 interface SharpInstance {
+  rotate(): SharpInstance;
   resize(opts: { width?: number; height?: number; withoutEnlargement?: boolean }): SharpInstance;
   toFormat(fmt: string, opts?: { quality?: number }): SharpInstance;
   toBuffer(): Promise<Buffer>;
@@ -70,14 +71,21 @@ export function createImagePlugin(
   options: ImagePluginOptions = {},
   dependencies: ImageProcessingDependencies = {}
 ): Plugin {
-  let publicDir = path.resolve(process.cwd(), 'public');
-  const handler = createImageHandler(options, () => publicDir, dependencies);
+  let publicDir: string | undefined = path.resolve(process.cwd(), 'public');
+  let devServer: ViteDevServer | undefined;
+  const handler = createImageHandler(
+    options,
+    () => publicDir,
+    dependencies,
+    () => devServer
+  );
   return {
     name: 'novel-isr:image-optimization',
     configResolved(c) {
-      publicDir = c.publicDir || path.resolve(c.root, 'public');
+      publicDir = c.publicDir || undefined;
     },
     configureServer(server) {
+      devServer = server;
       server.middlewares.use(handler);
     },
     configurePreviewServer(server) {
@@ -99,8 +107,9 @@ const ImageError = ImageSourceError;
 
 function createImageHandler(
   opts: ImagePluginOptions,
-  getPublicDir: () => string,
-  dependencies: ImageProcessingDependencies
+  getPublicDir: () => string | undefined,
+  dependencies: ImageProcessingDependencies,
+  getDevServer?: () => ViteDevServer | undefined
 ) {
   let sharpCapability: Promise<SharpModule | null> | undefined;
   const endpoint = opts.path ?? '/_/img';
@@ -175,13 +184,13 @@ function createImageHandler(
         let out: Buffer;
         let contentType: string;
         if (format === 'original') {
-          out = await loadSource(src, allow, getPublicDir());
+          out = await loadSource(src, allow, getPublicDir(), getDevServer?.());
           contentType = originalContentType(out);
         } else {
           const sharp = await (sharpCapability ??= (dependencies.loadSharp ?? loadSharp)());
           if (!sharp) throw new ImageError(501, 'image optimizer unavailable');
-          const input = await loadSource(src, allow, getPublicDir());
-          let pipe = sharp.default(input, { limitInputPixels: 40_000_000 });
+          const input = await loadSource(src, allow, getPublicDir(), getDevServer?.());
+          let pipe = sharp.default(input, { limitInputPixels: 40_000_000 }).rotate();
           if (w) pipe = pipe.resize({ width: w, withoutEnlargement: true });
           out = await pipe.toFormat(format === 'jpg' ? 'jpeg' : format, { quality: q }).toBuffer();
           contentType = `image/${format === 'jpg' ? 'jpeg' : format}`;
@@ -325,7 +334,12 @@ function inside(root: string, file: string): boolean {
   return relative !== '..' && !relative.startsWith(`..${path.sep}`) && !path.isAbsolute(relative);
 }
 
-async function loadSource(src: string, allow: Set<string>, publicDir: string): Promise<Buffer> {
+async function loadSource(
+  src: string,
+  allow: Set<string>,
+  publicDir: string | undefined,
+  server?: ViteDevServer
+): Promise<Buffer> {
   if (/^[a-z][a-z\d+.-]*:/i.test(src) || src.startsWith('//')) {
     let url: URL;
     try {
@@ -335,12 +349,39 @@ async function loadSource(src: string, allow: Set<string>, publicDir: string): P
     }
     return fetchRemoteImage(url.href, allow, MAX_INPUT_BYTES);
   }
+  // Split URL components before decoding: encoded '?' and '#' remain filename characters.
+  let pathname: string;
   try {
-    const root = await fs.realpath(publicDir);
-    const resolved = path.resolve(root, src.startsWith('/') ? src.slice(1) : src);
-    if (!inside(root, resolved)) throw new ImageError(400, 'path traversal blocked');
-    const real = await fs.realpath(resolved);
-    if (!inside(root, real)) throw new ImageError(400, 'path traversal blocked');
+    pathname = decodeURIComponent(src.split(/[?#]/, 1)[0]);
+  } catch {
+    throw new ImageError(400, 'invalid source URL');
+  }
+  if (pathname.includes('\0') || pathname.includes('\\') || pathname.split('/').includes('..'))
+    throw new ImageError(400, 'path traversal blocked');
+  try {
+    const root = publicDir
+      ? await fs.realpath(publicDir).catch(() => path.resolve(publicDir))
+      : undefined;
+    const resolved = root ? path.resolve(root, pathname.replace(/^\//, '')) : undefined;
+    if (root && resolved && !inside(root, resolved))
+      throw new ImageError(400, 'path traversal blocked');
+    let real: string;
+    try {
+      if (!root || !resolved) throw new Error('public directory disabled');
+      real = await fs.realpath(resolved);
+      if (!inside(root, real)) throw new ImageError(400, 'path traversal blocked');
+    } catch (error) {
+      if (error instanceof ImageError || !server?.config) throw error;
+      const candidate = pathname.startsWith('/@fs/')
+        ? path.resolve(pathname.slice('/@fs'.length))
+        : path.resolve(server.config.root, pathname.replace(/^\//, ''));
+      // Vite's public API applies fs.strict/allow/deny, including its module safe paths.
+      if (!isFileLoadingAllowed(server.config, normalizePath(candidate)))
+        throw new ImageError(403, 'source access denied');
+      real = await fs.realpath(candidate);
+      if (!isFileLoadingAllowed(server.config, normalizePath(real)))
+        throw new ImageError(403, 'source access denied');
+    }
     const file = await fs.open(real, 'r');
     try {
       const stat = await file.stat();

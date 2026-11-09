@@ -383,6 +383,14 @@ export const FallbackChain: Record<RenderModeType, InternalStrategyType[]> = {
 
 // 配置接口定义
 // 主配置接口
+/** Express-compatible policy for determining whether a remote proxy is trusted. */
+export type ProxyTrustPolicy =
+  | boolean
+  | number
+  | string
+  | string[]
+  | ((address: string, hop: number) => boolean);
+
 export interface ISRConfig {
   /** 全局默认渲染模式 */
   renderMode: RenderModeType;
@@ -432,6 +440,12 @@ export interface ISRConfig {
   revalidate: number;
 
   server: {
+    /**
+     * Express trust proxy policy. Defaults to false: ignore forwarded protocol/IP.
+     * Behind a proxy, explicitly configure trusted addresses/CIDRs (e.g. 'loopback').
+     * Hop counts/true require an ingress that overwrites client forwarded headers.
+     */
+    trustProxy?: ProxyTrustPolicy;
     /** Node origin 监听端口；缺省 3000。 */
     port: number;
     /** Node origin 监听地址；通常本地留空，容器/内网按部署平台注入。 */

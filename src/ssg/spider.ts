@@ -198,31 +198,50 @@ function computeBackoffDelay(baseDelay: number, attempts: number): number {
 }
 
 /**
- * 单次 fetch + 超时包裹。超时抛 AbortError（被 isRetryableError 捕获走 retry）。
+ * 同一请求截止时间覆盖响应头与完整响应体；超时取消源并交由重试策略处理。
  */
 async function fetchWithTimeout(
   handler: FetchHandler,
   url: string,
   timeoutMs: number
-): Promise<Response> {
-  if (timeoutMs <= 0) {
-    return handler.fetch(new Request(url, { method: 'GET' }));
-  }
+): Promise<{ response: Response; text: string }> {
   const ctrl = new AbortController();
-  const timer = setTimeout(() => ctrl.abort(), timeoutMs);
+  let reader: ReadableStreamDefaultReader<Uint8Array> | undefined;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const timeoutError = new Error(`SSG fetch timed out after ${timeoutMs}ms`);
+  const consume = async () => {
+    const response = await handler.fetch(new Request(url, { method: 'GET', signal: ctrl.signal }));
+    if (ctrl.signal.aborted) {
+      // Handlers may ignore abort and resolve later. Dispose of that body as well.
+      void response.body?.cancel(timeoutError).catch(() => {});
+      throw timeoutError;
+    }
+    reader = response.body?.getReader();
+    const decoder = new TextDecoder();
+    let text = '';
+    if (reader) {
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        text += decoder.decode(value, { stream: true });
+      }
+      text += decoder.decode();
+    }
+    return { response, text };
+  };
   try {
-    // 注意：Request 的 signal 由调用方传入；plugin-rsc 的 default fetch handler
-    // 接受 signal，会在 abort 时停止内部任务（v0.5+）。旧版本 handler 可能忽略，
-    // 但仍然 race 我们自己的 timer，最终通过 reject 让 retry 接管。
-    const response = await Promise.race<Response>([
-      handler.fetch(new Request(url, { method: 'GET', signal: ctrl.signal })),
-      new Promise<Response>((_, reject) => {
-        ctrl.signal.addEventListener('abort', () =>
-          reject(new Error(`SSG fetch timed out after ${timeoutMs}ms`))
-        );
+    if (timeoutMs <= 0) return await consume();
+    return await Promise.race([
+      consume(),
+      new Promise<never>((_, reject) => {
+        timer = setTimeout(() => {
+          // Reject independently of cancellation: a source may never settle cancel().
+          reject(timeoutError);
+          ctrl.abort(timeoutError);
+          void reader?.cancel(timeoutError).catch(() => {});
+        }, timeoutMs);
       }),
     ]);
-    return response;
   } finally {
     clearTimeout(timer);
   }
@@ -269,9 +288,8 @@ export async function spiderSsgRoutes(params: {
     while (attempts <= maxRetries) {
       attempts++;
       try {
-        const response = await fetchWithTimeout(handler, requestUrl, requestTimeoutMs);
+        const { response, text } = await fetchWithTimeout(handler, requestUrl, requestTimeoutMs);
         const contentType = response.headers.get('content-type') || '';
-        const text = await response.text();
 
         if (!response.ok) {
           lastStatus = response.status;

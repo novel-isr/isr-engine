@@ -6,8 +6,6 @@
  *   import handler from './entry.server';
  *   import { toCloudflareWorker } from '@novel-isr/engine/adapters/runtime';
  *   export default toCloudflareWorker(handler, {
- *     // 可选：把 cf KV 注入为 isr cache 的 L2 后端
- *     cacheKVBinding: 'ISR_CACHE',
  *     // 可选：把 env / ctx.waitUntil 通过 beforeFetch 暴露给 handler（常用于 ISR bg revalidate）
  *     beforeFetch: (req, env, ctx) => {
  *       globalThis.__isrEdgeCtx = { env, waitUntil: ctx.waitUntil.bind(ctx) };
@@ -21,6 +19,7 @@
  *   - 跨请求持久状态走 KV / R2 / Durable Objects（由 `env` 传入；engine 本身不耦合任何一个）
  */
 import type { FetchHandler, CloudflareExecutionContext } from './types';
+import { createEdgeErrorResponse } from './errorResponse';
 
 /** Cloudflare 为 Workers 注入的边缘上下文 —— 暴露给 handler 用于调度后台任务 / 访问 binding */
 export interface CloudflareEdgeContext {
@@ -43,7 +42,10 @@ export interface CloudflareAdapterOptions {
     env: Record<string, unknown>,
     ctx: CloudflareExecutionContext
   ) => void | Promise<void>;
-  /** 是否在异常时回源（默认 true，即调用 `ctx.passThroughOnException()`） */
+  /**
+   * 默认 true：未消费请求体时向平台传播异常，触发原生回源。
+   * 请求体已消费或锁定后无法安全重放，此时返回受控 500；false 始终返回受控 500。
+   */
   passThroughOnException?: boolean;
 }
 
@@ -86,9 +88,8 @@ export function toCloudflareWorker(
         await before(request, env, ctx);
         return await handler.fetch(request);
       } catch (err) {
-        // 边缘场景：Worker 抛错会被 CF 显示成 1101，我们包成 5xx 让客户端可恢复
-        const msg = err instanceof Error ? err.message : String(err);
-        return new Response(`Internal Edge Error: ${msg}`, { status: 500 });
+        if (passThrough && !request.bodyUsed && !request.body?.locked) throw err;
+        return createEdgeErrorResponse('cloudflare', err);
       }
     },
   };

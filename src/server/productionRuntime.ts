@@ -6,6 +6,7 @@ import { Readable } from 'node:stream';
 import pkg from '../../package.json';
 
 import { logger } from '@/logger';
+import { routeToFilePath } from '@/ssg/spider';
 import { createIsrCacheHandler } from '@/plugin/isrCacheMiddleware';
 import { resolveOpsConfig, createOpsAuthMiddleware } from '@/server/opsConfig';
 import type { ISRConfig, RuntimeConfig } from '@/types';
@@ -134,6 +135,36 @@ export async function createProductionRuntime(
 ): Promise<ProductionRuntime> {
   const { rscDistEntry, clientDir, staticCspIndex } =
     options.build ?? (await prepareProductionBuild(options.root));
+  const ssgRoutes =
+    staticCspIndex.ssgRoutes ?? (Array.isArray(config.ssg?.routes) ? config.ssg.routes : []);
+  const ssgFiles = new Map(ssgRoutes.map(route => [route, routeToFilePath(route)]));
+  const ssgAliases = new Map<string, string>();
+  const routeNames = new Set([...ssgFiles.keys(), ...Object.keys(config.routes ?? {})]);
+  const explicitRoutes = new Map<string, string>();
+  for (const route of routeNames) {
+    const target = new URL(route, 'http://localhost').pathname;
+    explicitRoutes.set(decodeHtmlPathname(route), target);
+    // Flight requests must retain the same explicitly configured page identity.
+    if ((route === '/' || !route.endsWith('/')) && !routeNames.has(route + '_.rsc')) {
+      explicitRoutes.set(decodeHtmlPathname(route + '_.rsc'), target + '_.rsc');
+    }
+  }
+  for (const [canonical, file] of ssgFiles) {
+    const logical = decodeHtmlPathname(canonical);
+    const target = new URL(canonical, 'http://localhost').pathname;
+    const base = logical.replace(/\/$/, '') || '/';
+    // URL aliases have decoded logical identities; artifact names are literal disk paths.
+    for (const alias of [
+      logical,
+      base,
+      base === '/' ? '/' : base + '/',
+      base === '/' ? '/index.html' : base + '/index.html',
+      '/' + file,
+    ]) {
+      ssgAliases.set(alias, target);
+      ssgAliases.set(alias + '_.rsc', target + '_.rsc');
+    }
+  }
   const cleanups: Array<() => void | Promise<void>> = [];
   let closed: Promise<void> | undefined;
   const close = () =>
@@ -179,6 +210,8 @@ export async function createProductionRuntime(
 
     const app: Express = express();
     app.disable('x-powered-by');
+    // Forwarded headers are authoritative only for explicitly trusted deployment proxies.
+    app.set('trust proxy', config.server.trustProxy ?? false);
     app.use(createProductionJsonMiddleware()); // 防 JSON 炸弹
     const opsConfig = resolveOpsConfig(config, 'production');
     for (const warning of opsConfig.warnings) {
@@ -328,8 +361,6 @@ export async function createProductionRuntime(
       await import('@/config/resolveRuntimeRedis');
     const redisCfg = resolveRuntimeRedisConfig(runtime?.redis);
     const hasRedisConfig = hasRuntimeRedisConnection(runtime?.redis);
-    const ssgRoutes =
-      staticCspIndex.ssgRoutes ?? (Array.isArray(config.ssg?.routes) ? config.ssg.routes : []);
     const cacheRoutes = { ...config.routes };
     for (const route of ssgRoutes) {
       const rule = cacheRoutes[route];
@@ -340,27 +371,16 @@ export async function createProductionRuntime(
       {
         buildId: process.env.APP_VERSION ?? staticCspIndex.buildId,
         staticSeedInfo: pathname => {
-          const relative = pathname.slice(1);
-          const htmlPath =
-            relative.endsWith('/') || !relative
-              ? relative + 'index.html'
-              : relative + '/index.html';
+          const htmlPath = ssgFiles.get(pathname);
+          if (!htmlPath) return;
           const generatedAt = staticCspIndex.generatedAt?.get(htmlPath);
           return generatedAt === undefined || generatedAt > Date.now()
             ? undefined
             : { generatedAt };
         },
         staticSeed: async (pathname, policy) => {
-          const relative = pathname.slice(1);
-          if (
-            relative.includes('\\') ||
-            relative.split('/').some(part => part === '..' || part === '.')
-          )
-            return;
-          const htmlPath =
-            relative.endsWith('/') || !relative
-              ? relative + 'index.html'
-              : relative + '/index.html';
+          const htmlPath = ssgFiles.get(pathname);
+          if (!htmlPath) return;
           const hashes = staticCspIndex.scriptHashes.get(htmlPath);
           if (!hashes) return;
           const absolute = path.join(clientDir, htmlPath);
@@ -413,11 +433,32 @@ export async function createProductionRuntime(
       logger.info('🔍 ISR cache inventory 已启用：GET /__isr/cache/inventory');
     }
 
+    app.use((req, res, next) => {
+      if (req.method !== 'GET' && req.method !== 'HEAD') return next();
+      let logical: string;
+      try {
+        logical = decodeHtmlPathname(req.path);
+      } catch {
+        res.status(400).end();
+        return;
+      }
+      const known = ssgAliases.get(logical);
+      if (!known) return next();
+      const canonical = explicitRoutes.get(logical) ?? known;
+      if (req.path === canonical) return next();
+      const queryStart = req.url.indexOf('?');
+      res.redirect(308, canonical + (queryStart < 0 ? '' : req.url.slice(queryStart)));
+    });
     app.use(cache);
     const staticHtml = createStaticHtmlMiddleware(clientDir, staticCspIndex);
     app.use((req, res, next) => {
       // Runtime SSG misses must reach the renderer; other indexed documents remain static.
-      if (res.getHeader('X-Resolved-Mode') === 'ssg') return next();
+      if (
+        res.getHeader('X-Resolved-Mode') === 'ssg' ||
+        (ssgAliases.has(decodeHtmlPathname(req.path)) &&
+          explicitRoutes.has(decodeHtmlPathname(req.path)))
+      )
+        return next();
       staticHtml(req, res, next);
     });
 
@@ -467,21 +508,18 @@ export async function createProductionRuntime(
     // 根处理器：Express req → Web Request → handler → Response → Express res
     const { renderError500Html } = await import('@/defaults/runtime/error500-template');
     const { getTraceId } = await import('@/context/RequestContext');
-    app.all(/.*/, async (req, res) => {
-      try {
-        const webRequest = nodeToWebRequest(req);
-        const webResponse = await rscHandler(webRequest);
-        await pipeWebResponse(webResponse, res);
-      } catch (err) {
+    app.all(
+      /.*/,
+      createProductionRequestHandler(rscHandler, (err, _req, res) => {
         logger.error('[Server]', '请求处理异常', err);
         if (!res.headersSent) {
-          // RequestContext 在前置中间件已经 run() 包住整个 handler，traceId 必有值。
-          // 静态 HTML 兜底比 text/plain 强：浏览器看到品牌一致的 500 页面 + 可复制 trace。
           const traceId = getTraceId();
           res.status(500).type('text/html; charset=utf-8').send(renderError500Html(traceId));
+        } else {
+          res.destroy();
         }
-      }
-    });
+      })
+    );
 
     return { app, close };
   } catch (error) {
@@ -506,9 +544,59 @@ export function createProductionJsonMiddleware(): express.RequestHandler {
   });
 }
 
-export function nodeToWebRequest(req: express.Request): Request {
+/** Own cancellation until the outgoing response finishes, not IncomingMessage.close. */
+export function createProductionRequestHandler(
+  handler: (request: Request) => Promise<Response>,
+  onError: (error: unknown, req: express.Request, res: express.Response) => void
+): express.RequestHandler {
+  return async (req, res) => {
+    const controller = new AbortController();
+    const cleanup = () => {
+      req.removeListener('aborted', onAborted);
+      res.removeListener('close', onClose);
+      res.removeListener('finish', cleanup);
+    };
+    const onAborted = () => {
+      controller.abort(new DOMException('Client disconnected', 'AbortError'));
+      cleanup();
+    };
+    const onClose = () => {
+      if (!res.writableFinished) onAborted();
+      else cleanup();
+    };
+    req.once('aborted', onAborted);
+    res.once('close', onClose);
+    res.once('finish', cleanup);
+    if (req.aborted || res.destroyed) onAborted();
+    try {
+      if (controller.signal.aborted) return;
+      const response = await handler(nodeToWebRequest(req, controller.signal));
+      if (controller.signal.aborted) {
+        // Upstream cleanup is cooperative: a stalled cancel hook must not retain
+        // this disconnected request's handler. Observe rejection without awaiting it.
+        void response.body?.cancel(controller.signal.reason).catch(() => {
+          // The peer is already gone; cancellation failures cannot produce a response.
+        });
+        return;
+      }
+      await pipeWebResponse(response, res);
+    } catch (error) {
+      if (!controller.signal.aborted) onError(error, req, res);
+    } finally {
+      if (controller.signal.aborted || res.writableFinished) cleanup();
+    }
+  };
+}
+
+export function nodeToWebRequest(req: express.Request, signal?: AbortSignal): Request {
   const host = String(req.headers.host || 'localhost');
-  const proto = (req.headers['x-forwarded-proto'] as string) || 'http';
+  // Express evaluates its configured trust proxy function and selects the first token.
+  // Reject arbitrary schemes by falling back to the actual connection transport.
+  const transport = (req.socket as typeof req.socket & { encrypted?: boolean })?.encrypted
+    ? 'https'
+    : 'http';
+  const selected = req.protocol?.toLowerCase();
+  const proto = selected === 'https' || selected === 'http' ? selected : transport;
   const url = `${proto}://${host}${req.url}`;
 
   const headers = new Headers();
@@ -522,7 +610,7 @@ export function nodeToWebRequest(req: express.Request): Request {
   }
 
   const method = req.method || 'GET';
-  const init: RequestInit & { duplex?: 'half' } = { method, headers };
+  const init: RequestInit & { duplex?: 'half' } = { method, headers, signal };
   if (method !== 'GET' && method !== 'HEAD') {
     init.body = (rawRequestBodies.get(req) ?? Readable.toWeb(req)) as unknown as BodyInit;
     init.duplex = 'half';
@@ -585,6 +673,19 @@ export async function pipeWebResponse(response: Response, res: express.Response)
   });
 }
 
+/** Match the static dispatcher's URL decoding and path safety rules in every alias lookup. */
+function decodeHtmlPathname(raw: string): string {
+  const pathname = decodeURIComponent(raw);
+  if (
+    pathname.includes('\\') ||
+    pathname.includes('\0') ||
+    pathname.split('/').some(segment => segment === '..' || segment === '.')
+  ) {
+    throw new Error('Invalid HTML pathname');
+  }
+  return pathname;
+}
+
 /** Static HTML can only be served from the build index validated before startup. */
 export function createStaticHtmlMiddleware(
   clientDir: string,
@@ -594,16 +695,8 @@ export function createStaticHtmlMiddleware(
     if (req.method !== 'GET' && req.method !== 'HEAD') return next();
     let pathname: string;
     try {
-      pathname = decodeURIComponent(req.path);
+      pathname = decodeHtmlPathname(req.path);
     } catch {
-      res.status(400).end();
-      return;
-    }
-    if (
-      pathname.includes('\\') ||
-      pathname.includes('\0') ||
-      pathname.split('/').some(segment => segment === '..' || segment === '.')
-    ) {
       res.status(400).end();
       return;
     }

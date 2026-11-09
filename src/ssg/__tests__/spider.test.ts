@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import fs from 'node:fs/promises';
+import { createServer } from 'node:http';
 import os from 'node:os';
 import path from 'node:path';
 import {
@@ -563,4 +564,94 @@ describe('extractSsgRoutes —— SSG 路由来源优先级', () => {
   it('两个来源都为空 → 空列表', async () => {
     expect(await extractSsgRoutes({})).toEqual([]);
   });
+});
+
+describe('whole-page deadline', () => {
+  it('fails when response headers arrive before a slow body', async () => {
+    const outDir = await tmpdir();
+    let timer: ReturnType<typeof setTimeout>;
+    const handler = {
+      fetch: async () =>
+        new Response(
+          new ReadableStream({
+            start(controller) {
+              timer = setTimeout(() => {
+                controller.enqueue(new TextEncoder().encode('late'));
+                controller.close();
+              }, 120);
+            },
+            cancel() {
+              clearTimeout(timer);
+            },
+          }),
+          { headers: { 'content-type': 'text/html' } }
+        ),
+    };
+    const result = await spiderSsgRoutes({
+      handler,
+      routes: ['/slow'],
+      outDir,
+      options: { requestTimeoutMs: 10, maxRetries: 0, failBuildThreshold: 1 },
+    });
+    expect(result.failed).toBe(1);
+    expect(result.routes[0].error).toMatch(/timed out/);
+    await fs.rm(outDir, { recursive: true, force: true });
+  });
+});
+
+it('cancels a never-ending body without waiting for a stuck cancel hook', async () => {
+  const outDir = await tmpdir();
+  const cancel = vi.fn(() => new Promise<void>(() => {}));
+  const handler = {
+    fetch: async () =>
+      new Response(new ReadableStream({ cancel }), { headers: { 'content-type': 'text/html' } }),
+  };
+  const result = await spiderSsgRoutes({
+    handler,
+    routes: ['/endless'],
+    outDir,
+    options: { requestTimeoutMs: 10, maxRetries: 1, retryBaseDelayMs: 0, failBuildThreshold: 1 },
+  });
+  expect(result.failed).toBe(1);
+  expect(result.routes[0].attempts).toBe(2);
+  expect(cancel).toHaveBeenCalledTimes(2);
+  await fs.rm(outDir, { recursive: true, force: true });
+});
+
+it('applies the page deadline to a real HTTP response body and closes the socket', async () => {
+  const outDir = await tmpdir();
+  let responseClosed!: () => void;
+  const closed = new Promise<void>(resolve => {
+    responseClosed = resolve;
+  });
+  const server = createServer((_req, res) => {
+    res.writeHead(200, { 'content-type': 'text/html' });
+    res.flushHeaders();
+    res.once('close', responseClosed);
+  });
+  await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve));
+  const address = server.address() as { port: number };
+  try {
+    const result = await spiderSsgRoutes({
+      handler: { fetch: request => fetch(request) },
+      routes: ['/stream'],
+      outDir,
+      options: {
+        baseUrl: `http://127.0.0.1:${address.port}`,
+        requestTimeoutMs: 100,
+        maxRetries: 0,
+        failBuildThreshold: 1,
+      },
+    });
+    expect(result.failed).toBe(1);
+    expect(result.routes[0].error).toMatch(/timed out/);
+    await closed;
+    await expect(fs.access(path.join(outDir, 'stream/index.html'))).rejects.toThrow();
+  } finally {
+    server.closeAllConnections();
+    await new Promise<void>((resolve, reject) =>
+      server.close(error => (error ? reject(error) : resolve()))
+    );
+    await fs.rm(outDir, { recursive: true, force: true });
+  }
 });

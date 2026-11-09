@@ -233,6 +233,8 @@ test('published programmatic app renders, hydrates, invalidates ISR and shuts do
   request,
 }) => {
   const { fork } = await import('node:child_process');
+  const fs = await import('node:fs/promises');
+  const source = new URL('./ssg-source.txt', import.meta.url);
   const { fileURLToPath } = await import('node:url');
   const child = fork(fileURLToPath(new URL('./programmatic-server.mjs', import.meta.url)), [], {
     cwd: fileURLToPath(new URL('.', import.meta.url)),
@@ -265,6 +267,26 @@ test('published programmatic app renders, hydrates, invalidates ISR and shuts do
     child.send('invalidate');
     await invalidated;
     expect((await request.get(`${url}/cached`)).headers()['x-cache-status']).toBe('MISS');
+    await fs.writeFile(source, 'programmatic-ssg-before');
+    await request.get(`${url}/regenerated`);
+    await fs.writeFile(source, 'programmatic-ssg-after');
+    const ssgInvalidated = new Promise<void>(resolve => child.once('message', () => resolve()));
+    child.send('invalidate-ssg');
+    await ssgInvalidated;
+    const fresh = await request.get(`${url}/regenerated/`);
+    expect(fresh.url()).toBe(`${url}/regenerated`);
+    expect(fresh.headers()['x-cache-status']).toBe('MISS');
+    expect(await fresh.text()).toContain('programmatic-ssg-after');
+    for (const alias of ['/regenerated/', '/regenerated/index.html']) {
+      const response = await page.goto(`${url}${alias}`);
+      await expect(page).toHaveURL(`${url}/regenerated`);
+      expect(response?.headers()['x-cache-key']).toBe(fresh.headers()['x-cache-key']);
+      expect(response?.headers()['x-served-by']).toBe('ssg-runtime');
+      expect(response?.headers()['content-security-policy']).toContain("'nonce-");
+      await expect(page.locator('[data-ssg-source]')).toHaveText('programmatic-ssg-after');
+      await page.getByRole('button', { name: 'Count 0' }).click();
+      await expect(page.getByRole('button', { name: 'Count 1' })).toBeVisible();
+    }
     expect((await request.get(`${url}/health`)).headers()['content-type']).toContain('text/html');
     const restarted = new Promise<string>(resolve =>
       child.once('message', message => resolve((message as { ready: string }).ready))
@@ -292,6 +314,7 @@ test('published programmatic app renders, hydrates, invalidates ISR and shuts do
     expect(await exited, output).toEqual({ code: 0, signal: null });
     await expect(fetch(`${url}/health`)).rejects.toThrow();
   } finally {
+    await fs.rm(source, { force: true });
     if (child.exitCode === null && child.signalCode === null) child.kill('SIGKILL');
   }
 });
@@ -321,11 +344,30 @@ test('SSG regenerates changed source after TTL with coherent hydration and CSP',
       })
       .toContain('runtime-source-two');
     const response = await page.goto('/regenerated');
+    const canonicalCacheKey = response?.headers()['x-cache-key'];
+    expect(canonicalCacheKey).toBeTruthy();
     expect(response?.headers()['x-served-by']).toBe('ssg-runtime');
     expect(response?.headers()['content-security-policy']).toContain("'nonce-");
     await expect(page.locator('[data-ssg-source]')).toHaveText('runtime-source-two');
     await page.getByRole('button', { name: 'Count 0' }).click();
     await expect(page.getByRole('button', { name: 'Count 1' })).toBeVisible();
+    for (const alias of ['/regenerated/', '/regenerated/index.html']) {
+      const redirect = await request.get(`${alias}?keep=a%2Fb`, { maxRedirects: 0 });
+      expect(redirect.status()).toBe(308);
+      expect(redirect.headers()['location']).toBe('/regenerated?keep=a%2Fb');
+      const response = await page.goto(alias);
+      await expect(page).toHaveURL(/\/regenerated$/);
+      expect(response?.headers()['x-cache-key']).toBe(canonicalCacheKey);
+      expect(response?.headers()['x-served-by']).toBe('ssg-runtime');
+      expect(response?.headers()['content-security-policy']).toContain("'nonce-");
+      await expect(page.locator('[data-ssg-source]')).toHaveText('runtime-source-two');
+      await page.getByRole('button', { name: 'Count 0' }).click();
+      await expect(page.getByRole('button', { name: 'Count 1' })).toBeVisible();
+    }
+    const rscAlias = await request.get('/regenerated/_.rsc');
+    expect(rscAlias.url()).toMatch(/\/regenerated_\.rsc$/);
+    expect(rscAlias.headers()['content-type']).toContain('text/x-component');
+    expect(await rscAlias.text()).toContain('runtime-source-two');
     expect(await fs.readFile(manifest, 'utf8')).toBe(immutable);
   } finally {
     await fs.rm(source, { force: true });

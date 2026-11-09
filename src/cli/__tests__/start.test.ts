@@ -293,6 +293,7 @@ function mockReq(opts: {
   method?: string;
   headers?: Record<string, string | string[] | undefined>;
   body?: Buffer | string;
+  protocol?: string;
 }): ExpressReq {
   const headers = opts.headers ?? { host: 'example.com' };
   const method = opts.method ?? 'GET';
@@ -303,6 +304,7 @@ function mockReq(opts: {
     url: opts.url ?? '/',
     method,
     headers,
+    protocol: opts.protocol,
   }) as unknown as ExpressReq;
 }
 
@@ -326,12 +328,20 @@ describe('nodeToWebRequest —— Express → Web Request 适配', () => {
     expect(webReq.url).toBe('http://localhost/');
   });
 
-  it('X-Forwarded-Proto=https → 用 https schema', () => {
+  it('does not trust a forwarded protocol without Express trust evaluation', () => {
     const req = mockReq({
       headers: { host: 'app.example.com', 'x-forwarded-proto': 'https' },
     });
     const webReq = nodeToWebRequest(req);
-    expect(webReq.url.startsWith('https://')).toBe(true);
+    expect(webReq.url.startsWith('http://')).toBe(true);
+  });
+
+  it('uses the protocol already selected by Express for a trusted proxy', () => {
+    const req = mockReq({
+      headers: { host: 'app.example.com', 'x-forwarded-proto': 'https, http' },
+      protocol: 'https',
+    });
+    expect(nodeToWebRequest(req).url).toBe('https://app.example.com/');
   });
 
   it('多值 header（如 cookie）→ append 而非覆盖', () => {

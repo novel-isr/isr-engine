@@ -24,6 +24,7 @@
  * Vercel Edge 是 Web Standards 子集（V8 isolates）—— 与 Cloudflare 类似的限制。
  */
 import type { FetchHandler } from './types';
+import { createEdgeErrorResponse } from './errorResponse';
 
 export type VercelEdgeHandler = (request: Request) => Promise<Response>;
 
@@ -39,8 +40,7 @@ export function toVercelEdge(handler: FetchHandler): VercelEdgeHandler {
     try {
       return await handler.fetch(request);
     } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      return new Response(`Internal Edge Error: ${msg}`, { status: 500 });
+      return createEdgeErrorResponse('vercel', err);
     }
   };
 }
@@ -53,8 +53,8 @@ export interface VercelMiddlewareOptions {
    */
   shouldPassthrough?: (request: Request) => boolean;
   /**
-   * 如果想在 passthrough 时注入响应头（常用：traceId / variant / geo 摘要）。
-   * 返回 { [name]: value } —— 框架会转成 `x-middleware-request-<name>` 供后端函数读取。
+   * 在 passthrough 时合并下游请求头（常用：traceId / variant / geo 摘要）。
+   * 框架序列化完整请求头集合及覆盖清单，保留原请求中未被修改的字段。
    */
   injectRequestHeaders?: (request: Request) => Record<string, string> | undefined;
 }
@@ -78,11 +78,16 @@ export function toVercelMiddleware(
       if (options.shouldPassthrough?.(request)) {
         const injectHeaders = options.injectRequestHeaders?.(request);
         if (injectHeaders && Object.keys(injectHeaders).length > 0) {
-          // Vercel middleware 要通过特殊响应头传递"注入到下游请求"的头部
+          // The override list is the complete downstream header set, not just the additions.
+          const downstream = new Headers(request.headers);
+          for (const [name, value] of Object.entries(injectHeaders)) downstream.set(name, value);
           const res = new Response(null, { status: 200 });
-          for (const [k, v] of Object.entries(injectHeaders)) {
-            res.headers.set(`x-middleware-request-${k}`, v);
-          }
+          const names: string[] = [];
+          downstream.forEach((value, name) => {
+            res.headers.set(`x-middleware-request-${name}`, value);
+            names.push(name);
+          });
+          res.headers.set('x-middleware-override-headers', names.join(','));
           res.headers.set('x-middleware-next', '1');
           return res;
         }
@@ -90,8 +95,7 @@ export function toVercelMiddleware(
       }
       return await handler.fetch(request);
     } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      return new Response(`Internal Edge Error: ${msg}`, { status: 500 });
+      return createEdgeErrorResponse('vercel', err);
     }
   };
 }
