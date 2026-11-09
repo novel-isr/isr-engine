@@ -15,7 +15,7 @@
  *
  * 自动行为：
  *   1. 内部 src 走 /_/img endpoint + srcset 多分辨率（1x / 2x）；
- *      外部 src 原样输出（src 是 http://* 或 https://*）。
+ *      外部 URL、data:image 和 blob URL 原样输出。
  *   2. 默认 loading="lazy" + decoding="async"；priority=true 切 eager + fetchPriority=high。
  *   3. priority=true 时通过 React 19 metadata hoisting 自动注入
  *      <link rel="preload" as="image">，浏览器 HTML 解析期立即发起加载，
@@ -46,11 +46,10 @@ export interface ImageProps {
   sizes?: string;
 }
 
-/** 判断 src 是不是绝对 URL（http(s):// 开头）。
- *  外部资源不走 /_/img sharp 优化端点（远端 URL 没法直接 pipe sharp），
- *  passthrough 由浏览器直接拉源站。 */
-function isExternalUrl(src: string): boolean {
-  return /^https?:\/\//i.test(src);
+/** 浏览器可直接加载的 URL 不交给仅接受本地路径的优化端点。
+ *  data 仅允许图片媒体类型；不将任意 URL scheme 视为 passthrough。 */
+function isBrowserImageUrl(src: string): boolean {
+  return /^(?:https?:\/\/|\/\/|blob:|data:image\/[^;,]+[;,])/i.test(src);
 }
 
 /** SVG 是矢量，不需要 sharp 优化也不需要 1x/2x srcset（无限分辨率），
@@ -61,7 +60,7 @@ function isSvg(src: string): boolean {
 }
 
 export function Image(props: ImageProps): React.ReactElement {
-  const passthrough = isExternalUrl(props.src) || isSvg(props.src);
+  const passthrough = isBrowserImageUrl(props.src) || isSvg(props.src);
   const endpoint = props.endpoint ?? '/_/img';
   const densities = props.densities ?? [1, 2];
 
@@ -69,7 +68,7 @@ export function Image(props: ImageProps): React.ReactElement {
   let srcSet: string | undefined;
 
   if (passthrough) {
-    // passthrough：外部 URL 或 SVG，不走 sharp 端点也不发 srcset，仍享有
+    // passthrough：浏览器原生 URL 或 SVG，不走 sharp 端点也不发 srcset，仍享有
     // priority / preload / width/height（CLS 防护）等所有 priority 行为
     src = props.src;
     srcSet = undefined;

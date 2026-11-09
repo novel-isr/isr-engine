@@ -195,3 +195,27 @@ it('rejects conflicting transformation props in original mode', () => {
     Image({ src: '/photo.png', alt: '', width: 100, unoptimized: true, format: 'png' })
   ).toThrow('cannot be combined');
 });
+
+it.each([
+  'data:image/png;base64,iVBORw0KGgo=',
+  'data:image/svg+xml,%3Csvg%3E%3C/svg%3E',
+  'blob:https://example.com/8ac81a1b',
+  '//cdn.example.com/cover.png',
+])('keeps browser-native image source %s out of the optimizer', src => {
+  const el = Image({ src, alt: 'cover', width: 100, height: 80, priority: true });
+  const props = renderProps<ImgProps>(el);
+  expect(props.src).toBe(src);
+  expect(props.srcSet).toBeUndefined();
+  expect(props.loading).toBe('eager');
+  expect(props.fetchPriority).toBe('high');
+  expect(getPreloadLink(el)?.href).toBe(src);
+  expect(getPreloadLink(el)?.imageSrcSet).toBeUndefined();
+});
+
+it.each(['data:text/html,hello', 'javascript:alert(1)', 'file:///photo.png'])(
+  'does not broaden passthrough to arbitrary schemes: %s',
+  src => {
+    const props = renderProps<ImgProps>(Image({ src, alt: '', width: 100 }));
+    expect(props.src).toContain('/_/img?');
+  }
+);

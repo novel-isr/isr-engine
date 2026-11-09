@@ -801,3 +801,69 @@ it('removes the destination probe when sensitivity detection fails', async () =>
     await fs.rm(outDir, { recursive: true, force: true });
   }
 });
+
+it.each(['headers', 'body', 'retry'] as const)(
+  'cancels fatal batch siblings waiting for %s before returning',
+  async phase => {
+    const outDir = await tmpdir();
+    let signal: AbortSignal | undefined;
+    let release!: (response: Response) => void;
+    // Even an uncooperative stream cancellation must not hold the batch open.
+    const cancel = vi.fn(() => new Promise<void>(() => {}));
+    const calls: string[] = [];
+    const handler = {
+      fetch: vi.fn(async (request: Request) => {
+        const route = new URL(request.url).pathname;
+        calls.push(route);
+        if (route === '/bad') {
+          await new Promise(resolve => setTimeout(resolve, 20));
+          return htmlResponse('missing', 404);
+        }
+        signal = request.signal;
+        if (phase === 'headers')
+          return new Promise<Response>(resolve => {
+            release = resolve;
+          });
+        if (phase === 'retry') return htmlResponse('retry', 503);
+        return new Response(new ReadableStream({ cancel }), {
+          headers: { 'content-type': 'text/html' },
+        });
+      }),
+    };
+    const random = vi.spyOn(Math, 'random').mockReturnValue(0.99);
+    try {
+      const build = spiderSsgRoutes({
+        handler,
+        routes: ['/slow', '/bad', '/never'],
+        outDir,
+        options: {
+          concurrency: 2,
+          continueOnError: false,
+          requestTimeoutMs: 0,
+          retryBaseDelayMs: 10_000,
+        },
+      });
+      const outcome = await Promise.race([
+        build.then(
+          () => 'resolved',
+          () => 'rejected'
+        ),
+        new Promise<string>(resolve => setTimeout(() => resolve('hung'), 150)),
+      ]);
+      expect(outcome).toBe('rejected');
+      if (phase !== 'retry') expect(signal?.aborted).toBe(true);
+      expect(calls).toEqual(['/slow', '/bad']);
+      if (phase === 'headers') {
+        release(
+          new Response(new ReadableStream({ cancel }), { headers: { 'content-type': 'text/html' } })
+        );
+      }
+      await new Promise(resolve => setTimeout(resolve, 10));
+      if (phase !== 'retry') expect(cancel).toHaveBeenCalledTimes(1);
+      expect(await fs.readdir(outDir)).toEqual([]);
+    } finally {
+      random.mockRestore();
+      await fs.rm(outDir, { recursive: true, force: true });
+    }
+  }
+);

@@ -3,6 +3,7 @@ import fs from 'node:fs/promises';
 import { createReadStream } from 'node:fs';
 import path from 'node:path';
 import { parse, type DefaultTreeAdapterMap } from 'parse5';
+import { assertDistinctHtmlRouteIdentities } from '../utils/htmlPathname';
 
 export const STATIC_CSP_MANIFEST = 'static-csp-manifest.json';
 const SCHEMA_VERSION = 3;
@@ -159,6 +160,7 @@ async function createManifest(
   distDir: string,
   ssgRoutes: readonly string[] = []
 ): Promise<StaticCspManifest> {
+  assertDistinctHtmlRouteIdentities(ssgRoutes);
   await fs.access(path.join(distDir, 'rsc/index.js'));
   const deploymentFiles = await readDeploymentFiles(distDir);
   const files = await readHtmlFiles(path.join(distDir, 'client'), true);
@@ -206,6 +208,7 @@ function validateManifest(value: unknown): asserts value is StaticCspManifest {
       ))
   )
     throw new Error('Invalid static CSP manifest SSG routes');
+  if (manifest.ssgRoutes) assertDistinctHtmlRouteIdentities(manifest.ssgRoutes);
   const digest = /^[a-f0-9]{64}$/;
   if (
     !Array.isArray(manifest.deploymentFiles) ||

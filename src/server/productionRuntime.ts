@@ -9,6 +9,7 @@ import { logger } from '@/logger';
 import { routeToFilePath } from '@/ssg/spider';
 import { createIsrCacheHandler } from '@/plugin/isrCacheMiddleware';
 import { resolveOpsConfig, createOpsAuthMiddleware } from '@/server/opsConfig';
+import { assertDistinctHtmlRouteIdentities, decodeHtmlPathname } from '@/utils/htmlPathname';
 import type { ISRConfig, RuntimeConfig } from '@/types';
 import type { RouteSetupFn } from './types';
 import {
@@ -140,12 +141,17 @@ export async function createProductionRuntime(
   const ssgFiles = new Map(ssgRoutes.map(route => [route, routeToFilePath(route)]));
   const ssgAliases = new Map<string, string>();
   const routeNames = new Set([...ssgFiles.keys(), ...Object.keys(config.routes ?? {})]);
+  assertDistinctHtmlRouteIdentities(routeNames);
+  const declaredIdentities = new Set([...routeNames].map(route => decodeHtmlPathname(route)));
   const explicitRoutes = new Map<string, string>();
   for (const route of routeNames) {
     const target = new URL(route, 'http://localhost').pathname;
     explicitRoutes.set(decodeHtmlPathname(route), target);
     // Flight requests must retain the same explicitly configured page identity.
-    if ((route === '/' || !route.endsWith('/')) && !routeNames.has(route + '_.rsc')) {
+    if (
+      (route === '/' || !route.endsWith('/')) &&
+      !declaredIdentities.has(decodeHtmlPathname(route + '_.rsc'))
+    ) {
       explicitRoutes.set(decodeHtmlPathname(route + '_.rsc'), target + '_.rsc');
     }
   }
@@ -677,19 +683,6 @@ export async function pipeWebResponse(response: Response, res: express.Response)
     if (res.destroyed) onClose();
     else nodeReadable.pipe(res);
   });
-}
-
-/** Match the static dispatcher's URL decoding and path safety rules in every alias lookup. */
-function decodeHtmlPathname(raw: string): string {
-  const pathname = decodeURIComponent(raw);
-  if (
-    pathname.includes('\\') ||
-    pathname.includes('\0') ||
-    pathname.split('/').some(segment => segment === '..' || segment === '.')
-  ) {
-    throw new Error('Invalid HTML pathname');
-  }
-  return pathname;
 }
 
 /** Static HTML can only be served from the build index validated before startup. */

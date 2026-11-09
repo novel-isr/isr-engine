@@ -32,6 +32,7 @@ import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { Logger } from '@/logger/Logger';
+import { assertDistinctHtmlRouteIdentities } from '@/utils/htmlPathname';
 
 const logger = Logger.getInstance();
 
@@ -182,7 +183,20 @@ function isRetryableStatus(status: number): boolean {
   return status >= 500 && status < 600;
 }
 
-const sleep = (ms: number): Promise<void> => new Promise(r => setTimeout(r, ms));
+function sleep(ms: number, signal: AbortSignal): Promise<void> {
+  return new Promise((resolve, reject) => {
+    signal.throwIfAborted();
+    const abort = () => {
+      clearTimeout(timer);
+      reject(signal.reason);
+    };
+    const timer = setTimeout(() => {
+      signal.removeEventListener('abort', abort);
+      resolve();
+    }, ms);
+    signal.addEventListener('abort', abort, { once: true });
+  });
+}
 
 /**
  * 指数退避 + 抖动（full jitter）
@@ -203,7 +217,8 @@ function computeBackoffDelay(baseDelay: number, attempts: number): number {
 async function fetchWithTimeout(
   handler: FetchHandler,
   url: string,
-  timeoutMs: number
+  timeoutMs: number,
+  batchSignal: AbortSignal
 ): Promise<{ response: Response; text: string }> {
   const ctrl = new AbortController();
   let reader: ReadableStreamDefaultReader<Uint8Array> | undefined;
@@ -213,8 +228,8 @@ async function fetchWithTimeout(
     const response = await handler.fetch(new Request(url, { method: 'GET', signal: ctrl.signal }));
     if (ctrl.signal.aborted) {
       // Handlers may ignore abort and resolve later. Dispose of that body as well.
-      void response.body?.cancel(timeoutError).catch(() => {});
-      throw timeoutError;
+      void response.body?.cancel(ctrl.signal.reason).catch(() => {});
+      throw ctrl.signal.reason;
     }
     reader = response.body?.getReader();
     const decoder = new TextDecoder();
@@ -229,21 +244,25 @@ async function fetchWithTimeout(
     }
     return { response, text };
   };
+  let rejectAbort!: (reason: unknown) => void;
+  const aborted = new Promise<never>((_, reject) => {
+    rejectAbort = reject;
+  });
+  const abort = (reason: unknown) => {
+    // Do not await sources that ignore abort or whose cancel promise never settles.
+    rejectAbort(reason);
+    ctrl.abort(reason);
+    void reader?.cancel(reason).catch(() => {});
+  };
+  const onBatchAbort = () => abort(batchSignal.reason);
+  batchSignal.addEventListener('abort', onBatchAbort, { once: true });
   try {
-    if (timeoutMs <= 0) return await consume();
-    return await Promise.race([
-      consume(),
-      new Promise<never>((_, reject) => {
-        timer = setTimeout(() => {
-          // Reject independently of cancellation: a source may never settle cancel().
-          reject(timeoutError);
-          ctrl.abort(timeoutError);
-          void reader?.cancel(timeoutError).catch(() => {});
-        }, timeoutMs);
-      }),
-    ]);
+    batchSignal.throwIfAborted();
+    if (timeoutMs > 0) timer = setTimeout(() => abort(timeoutError), timeoutMs);
+    return await Promise.race([consume(), aborted]);
   } finally {
     clearTimeout(timer);
+    batchSignal.removeEventListener('abort', onBatchAbort);
   }
 }
 
@@ -309,6 +328,7 @@ export async function spiderSsgRoutes(params: {
   // never race to publish one file. Case sensitivity belongs to the destination
   // filesystem, not the host OS (macOS and Windows can both use either mode).
   const uniqueRoutes = [...new Set(routes)];
+  assertDistinctHtmlRouteIdentities(uniqueRoutes);
   const artifacts = new Map<string, string>();
   const foldedArtifacts = new Map<string, { route: string; relative: string }>();
   let caseSensitive: boolean | undefined;
@@ -353,19 +373,34 @@ export async function spiderSsgRoutes(params: {
   let failed = 0;
 
   const active = new Set<Promise<void>>();
+  const batch = new AbortController();
+  let fatal: unknown;
+  const stop = (error: unknown) => {
+    if (!batch.signal.aborted) {
+      fatal = error;
+      batch.abort(error);
+    }
+  };
 
   const run = async (route: string): Promise<void> => {
     const url = new URL(route, baseUrl).toString();
     const requestUrl = url.replace(/\?$/, '');
     let attempts = 0;
+    let recorded = false;
     // 跨迭代追踪：5xx 重试时记下最后一个 HTTP 状态，便于 catch 路径报告
     // （如 attempt 1 = 503，attempt 2 抛网络错误时 results 里 status 还能反映 503）
     let lastStatus = 0;
 
     while (attempts <= maxRetries) {
+      batch.signal.throwIfAborted();
       attempts++;
       try {
-        const { response, text } = await fetchWithTimeout(handler, requestUrl, requestTimeoutMs);
+        const { response, text } = await fetchWithTimeout(
+          handler,
+          requestUrl,
+          requestTimeoutMs,
+          batch.signal
+        );
         const contentType = response.headers.get('content-type') || '';
 
         if (!response.ok) {
@@ -381,6 +416,7 @@ export async function spiderSsgRoutes(params: {
               error: `HTTP ${response.status}`,
               attempts,
             });
+            recorded = true;
             failed++;
             logger.warn(`[SSG] ✗ ${route} → HTTP ${response.status} (attempts=${attempts})`);
             if (!continueOnError) {
@@ -389,7 +425,7 @@ export async function spiderSsgRoutes(params: {
             return;
           }
           // 5xx + 还能重试 → 继续 while 循环
-          await sleep(computeBackoffDelay(retryBaseDelayMs, attempts));
+          await sleep(computeBackoffDelay(retryBaseDelayMs, attempts), batch.signal);
           continue;
         }
 
@@ -404,6 +440,7 @@ export async function spiderSsgRoutes(params: {
             error: `unsupported content-type: ${contentType}`,
             attempts,
           });
+          recorded = true;
           failed++;
           logger.warn(`[SSG] ✗ ${route} → 非 HTML 响应 (${contentType}, attempts=${attempts})`);
           if (!continueOnError) {
@@ -421,7 +458,9 @@ export async function spiderSsgRoutes(params: {
         if (!absOut.startsWith(absDir + path.sep) && absOut !== absDir) {
           throw new Error(`SSG 输出路径越界，拒绝写盘：${absOut}`);
         }
+        batch.signal.throwIfAborted();
         await fs.mkdir(path.dirname(outFile), { recursive: true });
+        batch.signal.throwIfAborted();
         await fs.writeFile(outFile, text, 'utf-8');
 
         results.push({
@@ -439,8 +478,13 @@ export async function spiderSsgRoutes(params: {
         );
         return;
       } catch (err) {
+        if (batch.signal.aborted) return;
+        if (recorded) {
+          stop(err);
+          return;
+        }
         if (isRetryableError(err) && attempts <= maxRetries) {
-          await sleep(computeBackoffDelay(retryBaseDelayMs, attempts));
+          await sleep(computeBackoffDelay(retryBaseDelayMs, attempts), batch.signal);
           continue;
         }
         // 非可重试 / 重试已耗尽
@@ -457,7 +501,7 @@ export async function spiderSsgRoutes(params: {
         failed++;
         logger.error(`[SSG] ✗ ${route} (attempts=${attempts})`, err);
         if (!continueOnError) {
-          throw err;
+          stop(err);
         }
         return;
       }
@@ -467,16 +511,23 @@ export async function spiderSsgRoutes(params: {
     // 此处保留是为了让 TS 看到 `run` 一定 return（无显式 return 路径）。
   };
 
-  for (const route of uniqueRoutes) {
-    const task = run(route).finally(() => {
-      active.delete(task);
-    });
-    active.add(task);
-    if (active.size >= concurrency) {
-      await Promise.race(active);
+  try {
+    for (const route of uniqueRoutes) {
+      if (batch.signal.aborted) break;
+      const task = run(route)
+        .catch(stop)
+        .finally(() => {
+          active.delete(task);
+        });
+      active.add(task);
+      if (active.size >= concurrency) await Promise.race(active);
     }
+  } finally {
+    // Only our bounded wrappers are joined; uncooperative handler promises remain
+    // observed by fetchWithTimeout and can never reach the publication path.
+    await Promise.allSettled(active);
   }
-  await Promise.all(active);
+  if (batch.signal.aborted) throw fatal;
 
   const total = uniqueRoutes.length;
   const failureRate = total > 0 ? failed / total : 0;
