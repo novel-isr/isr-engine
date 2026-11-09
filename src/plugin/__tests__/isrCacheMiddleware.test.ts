@@ -1061,3 +1061,156 @@ it('resolves incoming bus path aliases before invalidating canonical HTML and RS
     await teardown(fx);
   }
 });
+
+describe('request lifetime during cache admission', () => {
+  it('does not create an orphan leader after a disconnected L2 reader resumes', async () => {
+    const memory = createMemoryCacheStore();
+    let release!: () => void;
+    let entered!: () => void;
+    const reading = new Promise<void>(resolve => {
+      entered = resolve;
+    });
+    const gate = new Promise<void>(resolve => {
+      release = resolve;
+    });
+    let reads = 0;
+    const fx = await startFixture({
+      store: {
+        ...memory,
+        getAsync: async key => {
+          if (++reads === 1) {
+            entered();
+            await gate;
+          }
+          return memory.get(key);
+        },
+      },
+    });
+    let renders = 0;
+    fx.renderImpl.current = (_req, res) => {
+      renders++;
+      if (res.destroyed) return; // production bridge skips disconnected requests
+      res.setHeader('content-type', 'text/html');
+      res.end('live');
+    };
+    try {
+      let closed!: () => void;
+      const disconnected = new Promise<void>(resolve => {
+        closed = resolve;
+      });
+      fx.server.once('request', (_req, res) => res.once('close', closed));
+      const client = http.get(fx.baseUrl + '/disconnect');
+      client.on('error', () => {});
+      await reading;
+      client.destroy();
+      await disconnected;
+      release();
+      await new Promise(resolve => setTimeout(resolve, 20));
+      expect(renders).toBe(0);
+      expect(fx.handler.getCacheInspection().inflightCount).toBe(0);
+      const next = httpGet(fx.baseUrl + '/disconnect');
+      const result = await Promise.race([
+        next,
+        new Promise<never>((_, reject) =>
+          setTimeout(() => reject(new Error('orphan singleflight blocked next request')), 300)
+        ),
+      ]);
+      expect(result.body).toBe('live');
+      expect(renders).toBe(1);
+    } finally {
+      release();
+      await teardown(fx);
+    }
+  });
+});
+
+it('releases a coherent leader immediately when it disconnects during beginRender', async () => {
+  const memory = createMemoryCacheStore();
+  let release!: () => void;
+  let entered!: () => void;
+  const reading = new Promise<void>(r => {
+    entered = r;
+  });
+  const gate = new Promise<void>(r => {
+    release = r;
+  });
+  let admissions = 0;
+  const fx = await startFixture({
+    store: {
+      ...memory,
+      coherence: {
+        beginRender: async () => {
+          if (++admissions === 1) {
+            entered();
+            await gate;
+          }
+          return { incarnation: 'test', revision: '0' };
+        },
+        commit: async (key, entry) => {
+          memory.set(key, entry);
+          return true;
+        },
+      },
+    },
+  });
+  let renders = 0;
+  fx.renderImpl.current = (_req, res) => {
+    renders++;
+    res.setHeader('content-type', 'text/html');
+    res.end('live');
+  };
+  try {
+    let closed!: () => void;
+    const disconnected = new Promise<void>(r => {
+      closed = r;
+    });
+    fx.server.once('request', (_req, res) => res.once('close', closed));
+    const client = http.get(fx.baseUrl + '/coherent');
+    client.on('error', () => {});
+    await reading;
+    expect(fx.handler.getCacheInspection().inflightCount).toBe(1);
+    client.destroy();
+    await disconnected;
+    expect(fx.handler.getCacheInspection().inflightCount).toBe(0);
+    expect((await httpGet(fx.baseUrl + '/coherent')).body).toBe('live');
+    release();
+    await new Promise(r => setTimeout(r, 20));
+    expect(renders).toBe(1);
+    expect(fx.handler.getCacheInspection().inflightCount).toBe(0);
+  } finally {
+    release();
+    await teardown(fx);
+  }
+});
+
+it('does not turn a disconnected singleflight follower into a new leader', async () => {
+  const fx = await startFixture();
+  let leaderResponse!: ServerResponse;
+  let renders = 0;
+  fx.renderImpl.current = (_req, res) => {
+    renders++;
+    leaderResponse = res;
+  };
+  try {
+    const leader = httpGet(fx.baseUrl + '/follower');
+    await waitFor(() => renders === 1);
+    let closed!: () => void;
+    const disconnected = new Promise<void>(r => {
+      closed = r;
+    });
+    fx.server.once('request', (_req, res) => res.once('close', closed));
+    const follower = http.get(fx.baseUrl + '/follower');
+    follower.on('error', () => {});
+    await new Promise(r => setTimeout(r, 20));
+    follower.destroy();
+    await disconnected;
+    leaderResponse.statusCode = 503; // no cache entry: follower would become a leader
+    leaderResponse.end('uncached');
+    await leader;
+    await new Promise(r => setTimeout(r, 20));
+    expect(renders).toBe(1);
+    expect(fx.handler.getCacheInspection().inflightCount).toBe(0);
+  } finally {
+    await teardown(fx);
+  }
+});

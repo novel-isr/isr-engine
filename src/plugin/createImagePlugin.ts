@@ -71,25 +71,27 @@ export function createImagePlugin(
   options: ImagePluginOptions = {},
   dependencies: ImageProcessingDependencies = {}
 ): Plugin {
-  let publicDir: string | undefined = path.resolve(process.cwd(), 'public');
-  let devServer: ViteDevServer | undefined;
-  const handler = createImageHandler(
-    options,
-    () => publicDir,
-    dependencies,
-    () => devServer
-  );
   return {
     name: 'novel-isr:image-optimization',
-    configResolved(c) {
-      publicDir = c.publicDir || undefined;
-    },
     configureServer(server) {
-      devServer = server;
-      server.middlewares.use(handler);
+      // Development resolves source assets under Vite's filesystem policy.
+      server.middlewares.use(
+        createImageHandler(
+          options,
+          () => server.config.publicDir || undefined,
+          dependencies,
+          () => server
+        )
+      );
     },
     configurePreviewServer(server) {
-      server.middlewares.use(handler);
+      // Match Vite preview's static root, including multi-environment client builds.
+      // Built public files and hashed imports both live here; source files are unnecessary.
+      const clientDir = path.resolve(
+        server.config.root,
+        server.config.environments?.client?.build.outDir ?? server.config.build.outDir
+      );
+      server.middlewares.use(createImageHandler(options, () => clientDir, dependencies));
     },
   };
 }

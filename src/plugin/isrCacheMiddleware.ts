@@ -408,6 +408,8 @@ export interface IsrCacheInspectionSnapshot {
   size: number;
   /** L1 容量上限 */
   max: number;
+  /** Active origin single-flight owners (diagnostic snapshot). */
+  inflightCount?: number;
   entries: IsrCacheInspectionEntry[];
   invalidations: IsrCacheInspectionInvalidation[];
   /**
@@ -643,6 +645,7 @@ export function createIsrCacheHandler(
     return {
       now,
       backend: cache.backend,
+      inflightCount: inflightRegens.size,
       size: cache.size,
       max: cache.max,
       entries,
@@ -786,6 +789,20 @@ async function handleRequest(
   next: Connect.NextFunction,
   ctx: HandleContext
 ): Promise<void> {
+  // Observe cancellation before the first asynchronous cache operation. A response
+  // can close while L2, a seed, or a single-flight leader is still pending.
+  let closed = false;
+  const cleanupLifetime = (): void => {
+    res.removeListener('close', markClosed);
+  };
+  const markClosed = (): void => {
+    closed = true;
+    res.removeListener('finish', cleanupLifetime);
+  };
+  res.once('close', markClosed);
+  res.once('finish', cleanupLifetime);
+  const isActive = (): boolean => !closed && !req.aborted && !res.destroyed && !res.writableEnded;
+  if (!isActive()) return;
   const url = req.url || '/';
   const method = req.method || 'GET';
 
@@ -869,7 +886,7 @@ async function handleRequest(
     req.headers['x-isr-internal-token'] === ctx.internalToken;
   if (isBgRevalidate) {
     setHeaderOnce(res, 'X-Cache-Status', 'REVALIDATING');
-    await runMissPath(req, res, next, ctx, resolved, cacheKey, /* swrBgKey */ cacheKey);
+    await runMissPath(req, res, next, ctx, resolved, cacheKey, /* swrBgKey */ cacheKey, isActive);
     return;
   }
 
@@ -884,6 +901,7 @@ async function handleRequest(
       logger.warn(`ISR cache L2 read 失败 ${cacheKey}: ${(err as Error).message}`);
     }
   }
+  if (!isActive()) return;
   if (
     !entry &&
     ctx.state.invalidationGeneration === 0 &&
@@ -937,6 +955,7 @@ async function handleRequest(
     }
     try {
       await ctx.seeded.get(cacheKey);
+      if (!isActive()) return;
       entry = ctx.cache.getAsync
         ? await raceWithTimeout(ctx.cache.getAsync(cacheKey), ctx.l2ReadTimeoutMs)
         : ctx.cache.get(cacheKey);
@@ -945,6 +964,7 @@ async function handleRequest(
       logger.warn('SSG build seed unavailable; rendering origin', error);
     }
   }
+  if (!isActive()) return;
   const now = Date.now();
 
   // HIT
@@ -977,6 +997,7 @@ async function handleRequest(
   // 首请求注册 inflight，后续 follower 等其完成后重读 cache HIT 回放。
   // 等待超时（singleflightWaitMs）则 follower 退化为各自走 MISS（fail-open，
   // 避免首请求异常时所有 follower 永久卡死）。
+  let ownedSlot: { promise: Promise<void>; resolve: () => void } | undefined;
   if (ctx.singleflightWaitMs > 0) {
     const existing = ctx.inflightRegens.get(cacheKey);
     if (existing) {
@@ -985,6 +1006,7 @@ async function handleRequest(
       } catch {
         /* leader 异常退出由 finally release 处理；follower 直接重读 cache */
       }
+      if (!isActive()) return;
       let recheck = ctx.cache.get(cacheKey);
       if (!recheck && ctx.cache.getAsync) {
         try {
@@ -995,6 +1017,7 @@ async function handleRequest(
           /* L2 读失败按 miss 处理 */
         }
       }
+      if (!isActive()) return;
       const nowAfter = Date.now();
       if (recheck && nowAfter < recheck.expiresAt) {
         replayCachedEntry(ctx, res, recheck, cacheKey, 'HIT');
@@ -1018,10 +1041,11 @@ async function handleRequest(
     const promise = new Promise<void>(resolve => {
       resolveFn = resolve;
     });
-    ctx.inflightRegens.set(cacheKey, { promise, resolve: resolveFn });
+    ownedSlot = { promise, resolve: resolveFn };
+    ctx.inflightRegens.set(cacheKey, ownedSlot);
   }
 
-  await runMissPath(req, res, next, ctx, resolved, cacheKey, null);
+  await runMissPath(req, res, next, ctx, resolved, cacheKey, null, isActive, ownedSlot);
 }
 
 /**
@@ -1034,22 +1058,15 @@ async function runMissPath(
   ctx: HandleContext,
   resolved: ResolvedRouteRule,
   cacheKey: string,
-  bgRevalidateKey: string | null
+  bgRevalidateKey: string | null,
+  isActive: () => boolean,
+  ownedSlot?: { promise: Promise<void>; resolve: () => void }
 ): Promise<void> {
   if (!res.getHeader('X-Cache-Status')) {
     res.setHeader('X-Cache-Status', 'MISS');
   }
   const ttl = resolved.ttlSeconds;
   const swr = resolved.swrSeconds;
-  let renderLease: CacheRenderLease | undefined;
-  if (ctx.cache.coherence) {
-    try {
-      renderLease = await raceWithTimeout(ctx.cache.coherence.beginRender(), ctx.l2ReadTimeoutMs);
-    } catch (error) {
-      logger.warn('Response cache render admission unavailable; rendering without cache', error);
-    }
-  }
-  if (ctx.cache.coherence && !renderLease) res.setHeader('X-Cache-Status', 'BYPASS');
   let admission: Promise<unknown> | undefined;
 
   // Single-flight 释放：无论入缓存成功/失败/响应中断，本次 leader 渲染结束后
@@ -1059,27 +1076,42 @@ async function runMissPath(
   // 关键：仅当本次是 normal MISS leader（bgRevalidateKey === null）时才释放——
   // bg 重验证路径不持有 inflight，若误释放会清掉一个并发 MISS leader 注册的 slot，
   // 导致 follower 提前唤醒读到过时缓存。
-  const slot = bgRevalidateKey === null ? ctx.inflightRegens.get(cacheKey) : undefined;
+  const slot = bgRevalidateKey === null ? ownedSlot : undefined;
   if (slot) {
     // 用闭包绑定首次注册的 slot 引用，避免后续错释放
     let released = false;
     const releaseSingleflight = (): void => {
       if (released) return;
       released = true;
+      res.removeListener('close', onClose);
+      res.removeListener('finish', onFinish);
       // 仅在 map 里仍是同一 slot 时才删除（防御并发清理 / handler.clear）
       if (ctx.inflightRegens.get(cacheKey) === slot) {
         ctx.inflightRegens.delete(cacheKey);
       }
       slot.resolve();
     };
-    res.once('close', () => {
+    const onClose = (): void => {
       if (!res.writableFinished) releaseSingleflight();
-    });
-    res.once('finish', () => {
+    };
+    const onFinish = (): void => {
       if (admission) void admission.finally(releaseSingleflight).catch(() => undefined);
       else releaseSingleflight();
-    });
+    };
+    res.once('close', onClose);
+    res.once('finish', onFinish);
   }
+
+  let renderLease: CacheRenderLease | undefined;
+  if (ctx.cache.coherence) {
+    try {
+      renderLease = await raceWithTimeout(ctx.cache.coherence.beginRender(), ctx.l2ReadTimeoutMs);
+    } catch (error) {
+      logger.warn('Response cache render admission unavailable; rendering without cache', error);
+    }
+  }
+  if (!isActive()) return;
+  if (ctx.cache.coherence && !renderLease) res.setHeader('X-Cache-Status', 'BYPASS');
 
   const renderGeneration = ctx.state.invalidationGeneration;
   runWithTagStore(() => {

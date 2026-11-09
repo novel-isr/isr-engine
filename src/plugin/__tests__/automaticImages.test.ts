@@ -39,6 +39,7 @@ describe('automatic image endpoint', () => {
       await configure(resolved);
       let middleware!: (req: IncomingMessage, res: ServerResponse, next: () => void) => void;
       const server = {
+        config: resolved,
         middlewares: {
           use(handler: typeof middleware) {
             middleware = handler;

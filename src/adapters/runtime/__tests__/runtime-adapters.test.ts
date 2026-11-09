@@ -7,6 +7,7 @@
  *   - Vercel 请求头覆盖遵循平台完整请求头序列化协议
  */
 import { describe, it, expect, vi } from 'vitest';
+import { getEdgeContext } from '../../../runtime/edge-context';
 import { toCloudflareWorker, toVercelEdge, toVercelMiddleware } from '../index';
 
 const okHandler = {
@@ -92,6 +93,93 @@ describe('toCloudflareWorker', () => {
       reader?.releaseLock();
       await request.body?.cancel();
     }
+  });
+
+  it('isolates concurrent requests across async hooks and handler microtasks', async () => {
+    const calls: string[] = [];
+    const worker = toCloudflareWorker(
+      {
+        fetch: async (request, suppliedContext) => {
+          const before = getEdgeContext<{ name: string }>(request)!;
+          expect(suppliedContext).toBe(before);
+          await Promise.resolve();
+          await Promise.resolve();
+          expect(getEdgeContext(request)).toBe(before);
+          before.waitUntil(Promise.resolve());
+          return new Response(before.env.name);
+        },
+      },
+      {
+        beforeFetch: async request => {
+          const context = getEdgeContext(request);
+          await Promise.resolve();
+          expect(getEdgeContext(request)).toBe(context);
+        },
+      }
+    );
+    const makeContext = (name: string) => ({
+      name,
+      waitUntil(this: { name: string }, _promise: Promise<unknown>) {
+        calls.push(this.name);
+      },
+      passThroughOnException() {},
+    });
+    const results = await Promise.all(
+      ['A', 'B'].map(name =>
+        worker.fetch(new Request(`https://x.com/${name}`), { name }, makeContext(name))
+      )
+    );
+    expect(await Promise.all(results.map(response => response.text()))).toEqual(['A', 'B']);
+    expect(calls).toEqual(['A', 'B']);
+  });
+
+  it('retains context for streams and background work after returning the response', async () => {
+    let release!: () => void;
+    const gate = new Promise<void>(resolve => {
+      release = resolve;
+    });
+    const tasks: Promise<unknown>[] = [];
+    const request = new Request('https://x.com/');
+    const worker = toCloudflareWorker({
+      fetch: async incoming => {
+        getEdgeContext(incoming)!.waitUntil(
+          gate.then(() => {
+            expect(getEdgeContext(incoming)!.env.secret).toBe('binding');
+          })
+        );
+        return new Response(
+          new ReadableStream({
+            async start(controller) {
+              await gate;
+              const context = getEdgeContext(incoming)!;
+              context.waitUntil(Promise.resolve());
+              controller.enqueue(new TextEncoder().encode('stream complete'));
+              controller.close();
+            },
+          })
+        );
+      },
+    });
+    const response = await worker.fetch(
+      request,
+      { secret: 'binding' },
+      {
+        waitUntil: promise => {
+          tasks.push(promise);
+        },
+        passThroughOnException() {},
+      }
+    );
+    expect(getEdgeContext(request.clone())).toBeUndefined();
+    expect(getEdgeContext(new Request(request))).toBeUndefined();
+    expect(JSON.stringify(request)).not.toContain('binding');
+    expect(
+      Object.getOwnPropertySymbols(request).some(symbol => String(symbol).includes('edge-context'))
+    ).toBe(false);
+    release();
+    expect(await response.text()).toBe('stream complete');
+    await Promise.all(tasks);
+    expect(tasks).toHaveLength(2);
   });
 
   it('beforeFetch 钩子被调用', async () => {

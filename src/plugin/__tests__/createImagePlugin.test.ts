@@ -39,12 +39,14 @@ interface Result {
 }
 function handler(options = {}, production = false, dependencies = {}) {
   const plugin = createImagePlugin(options, dependencies) as unknown as {
-    configResolved(config: { root: string; publicDir: string }): void;
-    configureServer(server: { middlewares: { use(fn: Middleware): void } }): void;
+    configureServer(server: {
+      config: { publicDir: string };
+      middlewares: { use(fn: Middleware): void };
+    }): void;
   };
-  plugin.configResolved({ root, publicDir: path.join(root, 'public') });
   let middleware: Middleware;
   plugin.configureServer({
+    config: { publicDir: path.join(root, 'public') },
     middlewares: {
       use(fn: Middleware) {
         middleware = fn;

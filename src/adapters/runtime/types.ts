@@ -1,3 +1,5 @@
+import type { EdgeContext } from '../../runtime/edge-context';
+
 /**
  * Edge runtime 适配器统一契约
  *
@@ -13,7 +15,7 @@
  * Engine 不重写 server 协议；adapter 只做平台 glue。
  */
 export interface FetchHandler {
-  fetch(request: Request, ...rest: unknown[]): Promise<Response>;
+  fetch(request: Request, context?: EdgeContext, ...rest: unknown[]): Promise<Response>;
 }
 
 /** Cloudflare Workers 的 ExecutionContext 形状（仅用我们关心的字段，避免依赖 @cloudflare/workers-types）*/

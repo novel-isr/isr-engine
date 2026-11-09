@@ -57,3 +57,5 @@ export {
   type PageSeoContext,
   type PageSeoExport,
 } from './routes';
+
+export { getEdgeContext, type EdgeContext } from './edge-context';

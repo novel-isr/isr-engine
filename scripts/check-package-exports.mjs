@@ -5,6 +5,7 @@ import path from 'node:path';
 import { createRequire } from 'node:module';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import ts from 'typescript';
+import { build } from 'esbuild';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const temporary = await fs.mkdtemp(path.join(os.tmpdir(), 'isr-package-check-'));
@@ -42,6 +43,39 @@ try {
   if (tests.length) throw new Error(`Test files included in npm pack: ${tests.join(', ')}`);
 
   const require = createRequire(path.join(root, 'package.json'));
+  // Separate graphs mirror the shipped bundled adapter and source runtime entry.
+  const edgeRuntime = path.join(temporary, 'edge-runtime.mjs');
+  const edgeAdapter = path.join(temporary, 'edge-adapter.mjs');
+  for (const [entry, outfile] of [
+    ['src/runtime/edge-context.ts', edgeRuntime],
+    ['dist/adapters/runtime/index.js', edgeAdapter],
+  ]) {
+    await build({
+      entryPoints: [path.join(root, entry)],
+      outfile,
+      bundle: true,
+      platform: 'browser',
+      format: 'esm',
+      logLevel: 'silent',
+    });
+  }
+  const { getEdgeContext } = await import(pathToFileURL(edgeRuntime).href);
+  const { toCloudflareWorker } = await import(pathToFileURL(edgeAdapter).href);
+  const request = new Request('https://package.test/');
+  const env = { binding: 'package-consumer' };
+  const worker = toCloudflareWorker({
+    fetch(incoming, context) {
+      if (getEdgeContext(incoming) !== context || context.env !== env)
+        throw new Error('Edge context lost across shipped adapter/runtime graphs');
+      return new Response('ok');
+    },
+  });
+  const response = await worker.fetch(request, env, {
+    waitUntil() {},
+    passThroughOnException() {},
+  });
+  if (response.status !== 200 || getEdgeContext(request)?.env !== env)
+    throw new Error('Public Edge context unavailable after handler response');
   for (const [subpath, functions] of [
     ['.', ['createCoherentCacheStore']],
     [
@@ -73,6 +107,11 @@ try {
     import { createAutoServerHooks, composeAutoServerHooks, resolveSentryDsnFromEnv,
       type AutoServerCtx, type AutoServerHooks } from '@novel-isr/engine/auto-observability';
     import { createCoherentCacheStore, type ResponseCacheBackend } from '@novel-isr/engine';
+    import { getEdgeContext, type EdgeContext } from '@novel-isr/engine/runtime';
+    const edge: EdgeContext<{ token: string }> | undefined =
+      getEdgeContext<{ token: string }>(new Request('https://consumer.test'));
+    // @ts-expect-error context lookup requires an explicit Request
+    getEdgeContext();
     const factory: () => Promise<AutoServerHooks> = createAutoServerHooks;
     const ctx: AutoServerCtx = { traceId: 'trace', startedAt: 1 };
     const hooks: AutoServerHooks = composeAutoServerHooks([]);
@@ -81,7 +120,7 @@ try {
     const store = createCoherentCacheStore({ backend });
     // @ts-expect-error timestamps are numeric in the public contract
     const invalid: AutoServerCtx = { traceId: 'trace', startedAt: 'yesterday' };
-    void [factory, ctx, hooks, dsn, store, invalid];
+    void [factory, ctx, hooks, dsn, store, invalid, edge];
   `
   );
   const program = ts.createProgram([consumer], {

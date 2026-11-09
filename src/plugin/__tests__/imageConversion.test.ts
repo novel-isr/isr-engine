@@ -19,12 +19,14 @@ describe('installed image optimizer', () => {
       );
       type Middleware = ReturnType<typeof createImageMiddleware>;
       const plugin = createImagePlugin() as unknown as {
-        configResolved(config: { root: string; publicDir: string }): void;
-        configureServer(server: { middlewares: { use(handler: Middleware): void } }): void;
+        configureServer(server: {
+          config: { publicDir: string };
+          middlewares: { use(handler: Middleware): void };
+        }): void;
       };
-      plugin.configResolved({ root, publicDir: path.join(root, 'public') });
       let middleware!: Middleware;
       plugin.configureServer({
+        config: { publicDir: path.join(root, 'public') },
         middlewares: {
           use(handler: Middleware) {
             middleware = handler;

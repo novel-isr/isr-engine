@@ -655,3 +655,39 @@ it('applies the page deadline to a real HTTP response body and closes the socket
     await fs.rm(outDir, { recursive: true, force: true });
   }
 });
+
+describe('SSG artifact identity preflight', () => {
+  it.each([
+    ['/foo', '/foo/'],
+    ...(process.platform === 'win32'
+      ? [
+          ['/Foo', '/foo'],
+          ['/foo.', '/foo'],
+        ]
+      : []),
+  ])('rejects colliding routes %s and %s before rendering or writing', async (a, b) => {
+    const outDir = await tmpdir();
+    const handler = { fetch: vi.fn(async () => htmlResponse('page')) };
+    try {
+      await expect(spiderSsgRoutes({ handler, routes: ['/valid', a, b], outDir })).rejects.toThrow(
+        /collision.*index.html/i
+      );
+      expect(handler.fetch).not.toHaveBeenCalled();
+      expect(await fs.readdir(outDir)).toEqual([]);
+    } finally {
+      await fs.rm(outDir, { recursive: true, force: true });
+    }
+  });
+  it('deduplicates exact identities while retaining distinct artifacts', async () => {
+    const outDir = await tmpdir();
+    const handler = { fetch: vi.fn(async () => htmlResponse('page')) };
+    try {
+      const result = await spiderSsgRoutes({ handler, routes: ['/foo', '/foo', '/bar'], outDir });
+      expect(result.total).toBe(2);
+      expect(result.successful).toBe(2);
+      expect(handler.fetch).toHaveBeenCalledTimes(2);
+    } finally {
+      await fs.rm(outDir, { recursive: true, force: true });
+    }
+  });
+});

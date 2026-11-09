@@ -29,6 +29,23 @@ const logger = Logger.getInstance();
 let serverContext: ServerContext | null = null;
 let productionRuntime: ProductionRuntime | undefined;
 let starting: Promise<ServerContext> | undefined;
+let stopping: Promise<void> | undefined;
+type Cleanup = () => void | Promise<void>;
+const developmentCleanups: Cleanup[] = [];
+
+async function closeDevelopmentResources(): Promise<void> {
+  const owned = developmentCleanups.splice(0).reverse();
+  const results = await Promise.allSettled(owned.map(close => Promise.resolve().then(close)));
+  const failures = results.filter(
+    (result): result is PromiseRejectedResult => result.status === 'rejected'
+  );
+  if (failures.length) {
+    throw new AggregateError(
+      failures.map(result => result.reason),
+      'Development cleanup failed'
+    );
+  }
+}
 
 /** Retain the optional public ServerContext manifest for programmatic consumers. */
 function loadProdManifest(): Record<string, unknown> | null {
@@ -77,6 +94,7 @@ async function initServerContext(config?: ISRConfig): Promise<ServerContext> {
 
   // 根据环境初始化
   serverContext = await initDevContext(requestHandler);
+  developmentCleanups.push(closeViteDevServer);
 
   // 仅应用前置中间件（安全 / 压缩 / Body 解析）
   // Vite / 静态资源中间件将在 setupRoutes 之后挂载，确保 ops 路由能先于 Vite 匹配
@@ -116,8 +134,20 @@ async function initServerContext(config?: ISRConfig): Promise<ServerContext> {
       config?.runtime?.experiments ?? {},
       baseOrigin
     );
-    if (manifestLoader) await manifestLoader.init();
+    if (manifestLoader) {
+      developmentCleanups.push(() => manifestLoader.destroy());
+      await manifestLoader.init();
+    }
     const exposureQueue = resolveExposureQueue(config?.runtime?.experimentTracking, baseOrigin);
+    if (exposureQueue) {
+      developmentCleanups.push(async () => {
+        try {
+          await exposureQueue.flush();
+        } finally {
+          exposureQueue.destroy();
+        }
+      });
+    }
 
     serverContext.requestHandler.use(
       createABVariantMiddleware({
@@ -148,6 +178,7 @@ export function startAppServer(
   config: ISRConfig,
   setupRoutes: RouteSetupFn
 ): Promise<ServerContext> {
+  if (stopping) return stopping.then(() => startAppServer(config, setupRoutes));
   if (starting) return starting;
   if (serverContext?.httpServer) return Promise.resolve(serverContext);
   starting = startAppServerInternal(config, setupRoutes).finally(() => {
@@ -157,6 +188,29 @@ export function startAppServer(
 }
 
 async function startAppServerInternal(
+  config: ISRConfig,
+  setupRoutes: RouteSetupFn
+): Promise<ServerContext> {
+  try {
+    return await createAndListenAppServer(config, setupRoutes);
+  } catch (error) {
+    if (serverContext?.isDev || developmentCleanups.length) {
+      const context = serverContext;
+      serverContext = null;
+      const rollback = await Promise.allSettled([
+        context?.httpServer ? closeServer(context.httpServer) : Promise.resolve(),
+        closeDevelopmentResources(),
+      ]);
+      for (const result of rollback) {
+        if (result.status === 'rejected')
+          logger.warn('Development startup cleanup failed', result.reason);
+      }
+    }
+    throw error;
+  }
+}
+
+async function createAndListenAppServer(
   config: ISRConfig,
   setupRoutes: RouteSetupFn
 ): Promise<ServerContext> {
@@ -217,7 +271,15 @@ async function startAppServerInternal(
 /**
  * 关闭服务器
  */
-export async function shutdownServer(): Promise<void> {
+export function shutdownServer(): Promise<void> {
+  if (stopping) return stopping;
+  stopping = stopAppServer().finally(() => {
+    stopping = undefined;
+  });
+  return stopping;
+}
+
+async function stopAppServer(): Promise<void> {
   await starting?.catch(() => undefined);
   if (!serverContext) {
     return;
@@ -229,7 +291,7 @@ export async function shutdownServer(): Promise<void> {
   productionRuntime = undefined;
   const results = await Promise.allSettled([
     context.httpServer ? closeServer(context.httpServer) : Promise.resolve(),
-    context.isDev ? closeViteDevServer() : Promise.resolve(),
+    context.isDev ? closeDevelopmentResources() : Promise.resolve(),
     runtime?.close(),
   ]);
   const errors = results.filter(

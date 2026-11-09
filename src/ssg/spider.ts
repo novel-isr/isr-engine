@@ -271,6 +271,35 @@ export async function spiderSsgRoutes(params: {
     } = {},
   } = params;
 
+  // Artifact identity is stricter than URL identity: distinct explicit URLs must
+  // never race to publish one file. Windows also ignores case and trailing dots;
+  // preserve distinct case-sensitive identities on other platforms.
+  const uniqueRoutes = [...new Set(routes)];
+  const artifacts = new Map<string, string>();
+  for (const route of uniqueRoutes) {
+    let relative: string;
+    try {
+      relative = routeToFilePath(route);
+    } catch {
+      continue;
+    } // Invalid routes retain the existing per-route failure policy.
+    const normalized = path.normalize(relative);
+    const identity =
+      process.platform === 'win32'
+        ? normalized
+            .split(path.sep)
+            .map(part => part.replace(/[. ]+$/, '').toLowerCase())
+            .join(path.sep)
+        : normalized;
+    const previous = artifacts.get(identity);
+    if (previous !== undefined) {
+      throw new Error(
+        `SSG artifact collision: ${JSON.stringify(previous)} and ${JSON.stringify(route)} map to ${relative}`
+      );
+    }
+    artifacts.set(identity, route);
+  }
+
   const results: SpiderResult['routes'] = [];
   let successful = 0;
   let failed = 0;
@@ -390,7 +419,7 @@ export async function spiderSsgRoutes(params: {
     // 此处保留是为了让 TS 看到 `run` 一定 return（无显式 return 路径）。
   };
 
-  for (const route of routes) {
+  for (const route of uniqueRoutes) {
     const task = run(route).finally(() => {
       active.delete(task);
     });
@@ -401,7 +430,7 @@ export async function spiderSsgRoutes(params: {
   }
   await Promise.all(active);
 
-  const total = routes.length;
+  const total = uniqueRoutes.length;
   const failureRate = total > 0 ? failed / total : 0;
   const result: SpiderResult = {
     successful,
