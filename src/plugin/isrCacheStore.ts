@@ -22,6 +22,8 @@ export interface IsrCachedEntry {
   expiresAt: number;
   hardExpiresAt: number;
   tags: string[];
+  /** Internal path index; never mixed with business tags. */
+  pathTag?: string;
 }
 
 /**
@@ -50,6 +52,8 @@ export interface IsrCacheStore {
   set(key: string, entry: IsrCachedEntry): void;
   /** 同步删除 L1 + 异步删除 L2（如有）；返回是否命中 L1 */
   delete(key: string): boolean;
+  /** Await durable invalidation, including entries evicted from L1. */
+  invalidateByTag?(tag: string): Promise<void>;
   /** 清空（同步 L1 + 异步 L2）*/
   clear(): void;
   /** L1 中遍历 —— 用于 tag 失效与内部测试/诊断 */
@@ -69,8 +73,14 @@ export interface IsrCacheStore {
 
 // ─── 默认实现：单层 LRU（行为与改造前一致） ───
 
-export function createMemoryCacheStore(opts: { max?: number } = {}): IsrCacheStore {
-  const lru = new LRUCache<string, IsrCachedEntry>({ max: opts.max ?? 1000 });
+export function createMemoryCacheStore(
+  opts: { max?: number; maxBytes?: number } = {}
+): IsrCacheStore {
+  const lru = new LRUCache<string, IsrCachedEntry>({
+    max: opts.max ?? 1000,
+    maxSize: opts.maxBytes ?? 64 * 1024 * 1024,
+    sizeCalculation: e => e.body.byteLength + 1024,
+  });
   return {
     backend: 'memory',
     get: k => lru.get(k),
@@ -79,6 +89,11 @@ export function createMemoryCacheStore(opts: { max?: number } = {}): IsrCacheSto
       lru.set(k, v);
     },
     delete: k => lru.delete(k),
+    async invalidateByTag(tag) {
+      for (const [key, entry] of Array.from(lru.entries())) {
+        if (entry.tags.includes(tag) || entry.pathTag === tag) lru.delete(key);
+      }
+    },
     clear: () => lru.clear(),
     entries: () => lru.entries(),
     keys: () => lru.keys(),
@@ -102,6 +117,7 @@ export function createMemoryCacheStore(opts: { max?: number } = {}): IsrCacheSto
 
 export interface HybridCacheStoreOptions {
   max?: number;
+  maxBytes?: number;
   /** 已经初始化好的 Redis 适配器（用户自己 new 出来传入；engine 不强依赖 ioredis） */
   redis: ICacheAdapter;
   /** Redis 读写失败的回调（默认 console.warn）*/
@@ -121,6 +137,7 @@ interface SerializedEntry {
   expiresAt: number;
   hardExpiresAt: number;
   tags: string[];
+  pathTag?: string;
 }
 
 function serialize(e: IsrCachedEntry): SerializedEntry {
@@ -141,12 +158,34 @@ function deserialize(value: SerializedEntry | undefined): IsrCachedEntry | undef
     expiresAt: value.expiresAt,
     hardExpiresAt: value.hardExpiresAt,
     tags: Array.isArray(value.tags) ? value.tags : [],
+    pathTag: value.pathTag,
   };
 }
 
 export function createHybridCacheStore(opts: HybridCacheStoreOptions): IsrCacheStore {
-  const lru = new LRUCache<string, IsrCachedEntry>({ max: opts.max ?? 1000 });
+  const lru = new LRUCache<string, IsrCachedEntry>({
+    max: opts.max ?? 1000,
+    maxSize: opts.maxBytes ?? 64 * 1024 * 1024,
+    sizeCalculation: e => e.body.byteLength + 1024,
+  });
   const pendingReads = new Map<string, Promise<IsrCachedEntry | undefined>>();
+  const pendingWrites = new Map<string, Promise<unknown>>();
+  let generation = 0;
+  let invalidationBarrier: Promise<void> = Promise.resolve();
+  let invalidationsPending = 0;
+  let destroyed = false;
+  function enqueue(key: string, operation: () => Promise<unknown>): Promise<unknown> {
+    const task = (pendingWrites.get(key) ?? Promise.resolve())
+      .catch(() => undefined)
+      .then(operation);
+    pendingWrites.set(key, task);
+    void task
+      .finally(() => {
+        if (pendingWrites.get(key) === task) pendingWrites.delete(key);
+      })
+      .catch(() => undefined);
+    return task;
+  }
   const onErr =
     opts.onRedisError ??
     ((err, op, key) => {
@@ -159,14 +198,17 @@ export function createHybridCacheStore(opts: HybridCacheStoreOptions): IsrCacheS
   function writeThrough(key: string, entry: IsrCachedEntry): void {
     const ttl =
       opts.redisTtlSeconds ?? Math.max(1, Math.ceil((entry.hardExpiresAt - Date.now()) / 1000));
-    void opts.redis
-      .set(rkey(key), serialize(entry), { ttl, tags: entry.tags })
-      .catch(err => onErr(err, 'set', key));
+    void enqueue(key, () =>
+      opts.redis.set(rkey(key), serialize(entry), {
+        ttl,
+        tags: [...entry.tags, ...(entry.pathTag ? [entry.pathTag] : [])],
+      })
+    ).catch(err => onErr(err, 'set', key));
   }
 
   return {
     backend: 'hybrid',
-    get: k => lru.get(k),
+    get: k => (invalidationsPending ? undefined : lru.get(k)),
     async inspectL2(limit: number) {
       // adapter.inspect 已经做了 keyPrefix 边界保护 + SCAN 非阻塞 + 总量上限。
       // 这里再 strip 上层 prefix（'isr:resp:'）让 inventory 端点看到的 key 与 L1 同形态对齐。
@@ -178,6 +220,15 @@ export function createHybridCacheStore(opts: HybridCacheStoreOptions): IsrCacheS
       }));
     },
     getAsync: async k => {
+      // A generation fence only protects reads already in flight. New reads
+      // must also wait until queued deletes and durable invalidations finish.
+      while (invalidationsPending || pendingWrites.has(k)) {
+        const barrier = invalidationBarrier;
+        const write = pendingWrites.get(k);
+        await barrier;
+        if (write) await write.catch(() => undefined);
+      }
+      if (destroyed) return undefined;
       const l1 = lru.get(k);
       if (l1) {
         return l1;
@@ -188,16 +239,18 @@ export function createHybridCacheStore(opts: HybridCacheStoreOptions): IsrCacheS
         return pending;
       }
 
+      const readGeneration = generation;
       const readPromise = opts.redis
         .get<SerializedEntry>(rkey(k))
         .then(serialized => {
+          if (destroyed || readGeneration !== generation) return lru.get(k);
           const entry = deserialize(serialized);
           if (!entry) {
             return undefined;
           }
 
           if (Date.now() >= entry.hardExpiresAt) {
-            void opts.redis.delete(rkey(k)).catch(err => onErr(err, 'delete', k));
+            void enqueue(k, () => opts.redis.delete(rkey(k))).catch(err => onErr(err, 'delete', k));
             return undefined;
           }
 
@@ -209,26 +262,68 @@ export function createHybridCacheStore(opts: HybridCacheStoreOptions): IsrCacheS
           return undefined;
         })
         .finally(() => {
-          pendingReads.delete(k);
+          if (pendingReads.get(k) === readPromise) pendingReads.delete(k);
         });
 
       pendingReads.set(k, readPromise);
       return readPromise;
     },
     set: (k, v) => {
+      generation++;
       lru.set(k, v);
       writeThrough(k, v);
     },
     delete: k => {
+      generation++;
       pendingReads.delete(k);
       const hit = lru.delete(k);
-      void opts.redis.delete(rkey(k)).catch(err => onErr(err, 'delete', k));
+      void enqueue(k, () => opts.redis.delete(rkey(k))).catch(err => onErr(err, 'delete', k));
       return hit;
     },
+    invalidateByTag(tag) {
+      generation++;
+      pendingReads.clear();
+      invalidationsPending++;
+      const evictMatching = () => {
+        for (const [key, entry] of Array.from(lru.entries())) {
+          if (entry.tags.includes(tag) || entry.pathTag === tag) lru.delete(key);
+        }
+      };
+      evictMatching();
+      const task = invalidationBarrier
+        .then(async () => {
+          // A failed earlier write must not prevent deletion of existing data.
+          await Promise.allSettled(Array.from(pendingWrites.values()));
+          await opts.redis.invalidateByTag(tag);
+        })
+        .finally(() => {
+          generation++;
+          pendingReads.clear();
+          evictMatching();
+          invalidationsPending--;
+        });
+      // Keep the queue usable after an individual failed invalidation while
+      // returning that failure to its caller.
+      invalidationBarrier = task.catch(() => undefined);
+      return task;
+    },
     clear: () => {
+      generation++;
       pendingReads.clear();
       lru.clear();
-      void opts.redis.clear().catch(err => onErr(err, 'clear'));
+      invalidationsPending++;
+      const task = invalidationBarrier
+        .then(async () => {
+          await Promise.allSettled(Array.from(pendingWrites.values()));
+          await opts.redis.clear();
+        })
+        .finally(() => {
+          generation++;
+          pendingReads.clear();
+          lru.clear();
+          invalidationsPending--;
+        });
+      invalidationBarrier = task.catch(err => onErr(err, 'clear'));
     },
     entries: () => lru.entries(),
     keys: () => lru.keys(),
@@ -239,7 +334,11 @@ export function createHybridCacheStore(opts: HybridCacheStoreOptions): IsrCacheS
       return lru.max;
     },
     async destroy() {
+      destroyed = true;
+      generation++;
       pendingReads.clear();
+      await invalidationBarrier;
+      await Promise.allSettled(Array.from(pendingWrites.values()));
       lru.clear();
       await opts.redis.destroy();
     },

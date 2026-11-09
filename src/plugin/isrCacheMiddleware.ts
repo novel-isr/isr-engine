@@ -34,6 +34,8 @@
  */
 
 import http from 'node:http';
+import { randomBytes } from 'node:crypto';
+import { matchRoutePattern } from '../engine/RenderMode';
 import { LRUCache } from 'lru-cache';
 import { createMemoryCacheStore, type IsrCacheStore, type IsrCachedEntry } from './isrCacheStore';
 import {
@@ -55,7 +57,7 @@ import { stripRscClientReferenceCacheSuffix } from './devAssetRequestMiddleware'
 import { createAutoCacheStore } from '@/cache/createAutoCacheStore';
 import { RedisInvalidationBus } from '@/cache/RedisInvalidationBus';
 import { hasRuntimeRedisConnection, resolveRuntimeRedisConfig } from '@/config/resolveRuntimeRedis';
-import { readCookie } from '@/utils/cookie';
+import { readCookie, parseCookieHeader } from '@/utils/cookie';
 import { ANON_COOKIE_NAME } from '@/context/createServerRequestContext';
 import { getRequestContext } from '@/context/RequestContext';
 import { fnv1a32Base36 } from '@/utils/hash';
@@ -203,7 +205,7 @@ export interface IsrCacheMiddlewareOptions {
  * Engine 内部 cache key 格式版本。仅 engine 自身在 isrCachedEntry 序列化结构变化时 bump。
  * 用户层 namespace 用 cacheNamespace / ISR_CACHE_NAMESPACE 控制（独立维度）。
  */
-const ENGINE_CACHE_KEY_VERSION = 'e1';
+const ENGINE_CACHE_KEY_VERSION = 'e2';
 
 export type IsrInvalidationTarget =
   | { kind: 'path'; value: string }
@@ -268,11 +270,11 @@ function matchRouteRule(path: string, rules: RoutingRules): ResolvedRouteRule {
   }
 
   const globPatterns = Object.keys(routes)
-    .filter(p => p.includes('*'))
+    .filter(p => p.includes('*') || p.includes(':'))
     .sort((a, b) => b.length - a.length);
 
   for (const pattern of globPatterns) {
-    if (matchGlob(pattern, path)) {
+    if (pattern.includes(':') ? matchRoutePattern(path, pattern) : matchGlob(pattern, path)) {
       return parseRouteRule(routes[pattern], defaultTtlSeconds);
     }
   }
@@ -425,7 +427,8 @@ export function createIsrCacheHandler(
   const l2ReadTimeoutMs = options.l2ReadTimeoutMs ?? 100;
   const bgTimeoutMs = options.backgroundRevalidateTimeoutMs ?? 30_000;
   const hasExperiments =
-    !!config?.runtime?.experiments && Object.keys(config.runtime.experiments).length > 0;
+    (!!config?.runtime?.experiments && Object.keys(config.runtime.experiments).length > 0) ||
+    !!config?.runtime?.experimentManifest?.endpoint;
   const variantIsolation = options.variantIsolation ?? hasExperiments;
   const variantCookieName = options.variantCookieName ?? 'ab';
   const hostIsolation = options.hostIsolation ?? config?.runtime?.hostIsolation ?? false;
@@ -437,6 +440,8 @@ export function createIsrCacheHandler(
 
   /** 后台重验证正在进行的 key 集合 —— 防止并发 STALE 请求重复触发多次 bg 拉取 */
   const revalidating = new Set<string>();
+  const state = { invalidationGeneration: 0 };
+  const internalToken = randomBytes(24).toString('hex');
   const singleflightWaitMs = options.singleflightWaitMs ?? 5_000;
   const maxCachedBodyBytes = options.maxCachedBodyBytes ?? 5 * 1024 * 1024;
   const prefetchOnHit = options.prefetchOnHit;
@@ -471,6 +476,7 @@ export function createIsrCacheHandler(
     // 不论清了多少条，都更新 invalidationLog —— inventory 端点能回答
     // “这个 target 上次被 revalidate 是什么时候”，即便本进程内没有匹配条目
     // （比如刚启动 / 或 entry 已经被 LRU 淘汰）。
+    state.invalidationGeneration++;
     invalidationLog.set(`${target.kind}:${target.value}`, Date.now());
 
     if (target.kind === 'path') {
@@ -479,6 +485,9 @@ export function createIsrCacheHandler(
         `${cacheKeyPrefix}GET:${normalized}`,
         `${cacheKeyPrefix}GET:${normalized}${RSC_URL_POSTFIX}`,
         `${cacheKeyPrefix}GET:${normalized}/${RSC_URL_POSTFIX}`,
+        `${cacheKeyPrefix}HEAD:${normalized}`,
+        `${cacheKeyPrefix}HEAD:${normalized}${RSC_URL_POSTFIX}`,
+        `${cacheKeyPrefix}HEAD:${normalized}/${RSC_URL_POSTFIX}`,
       ];
       let cleared = 0;
       for (const key of Array.from(cache.keys())) {
@@ -488,6 +497,7 @@ export function createIsrCacheHandler(
           if (cache.delete(key)) cleared++;
         }
       }
+      await cache.invalidateByTag?.(`__isr_path:${cacheKeyPrefix}${stripRscSuffix(normalized)}`);
       logger.info(`🔁 ISR cache invalidate path=${normalized} → 清除 ${cleared} 条`);
     } else {
       let cleared = 0;
@@ -497,6 +507,7 @@ export function createIsrCacheHandler(
           cleared++;
         }
       }
+      await cache.invalidateByTag?.(target.value);
       logger.info(
         `🔁 ISR cache invalidate tag=${target.value} → 精准清除 ${cleared} 条（按 tag 匹配）`
       );
@@ -532,6 +543,8 @@ export function createIsrCacheHandler(
       prefetchCooldown,
       bgRevalidateFailures,
       development: options.development ?? false,
+      state,
+      internalToken,
     }).catch(err => {
       logger.warn('ISR cache handler 异常，回退到下游处理:', err);
       if (!res.headersSent) {
@@ -710,6 +723,8 @@ interface HandleContext {
   /** bg revalidate 失败 cache key → 失败时间戳；STALE 路径计算 X-Cache-Stale-Reason 用 */
   bgRevalidateFailures: LRUCache<string, number>;
   development: boolean;
+  state: { invalidationGeneration: number };
+  internalToken: string;
 }
 
 /**
@@ -768,12 +783,18 @@ async function handleRequest(
     return Promise.resolve();
   }
 
+  if (hasPrivateRequest(req, ctx.variantCookieName)) {
+    setHeaderOnce(res, 'X-Cache-Status', 'BYPASS');
+    next();
+    return;
+  }
+
   const logicalPath = stripRscSuffix(stripQuery(url));
   let resolved = matchRouteRule(logicalPath, ctx.rules);
 
   // 运行时模式覆盖：?mode=isr|ssr|ssg
   // 用于开发 / 调试时临时观察不同模式的效果，不需要改 ssr.config
-  const overrideMode = parseModeOverride(url);
+  const overrideMode = ctx.development ? parseModeOverride(url) : undefined;
   if (overrideMode) {
     resolved = { ...resolved, mode: overrideMode };
     setHeaderOnce(res, 'X-Mode-Source', 'query-override');
@@ -792,7 +813,9 @@ async function handleRequest(
   setHeaderOnce(res, 'X-Cache-Key', cacheKey);
 
   // 后台重验证请求：忽略所有缓存状态，强制 MISS 并重新入库
-  const isBgRevalidate = String(req.headers[BG_REVALIDATE_HEADER] || '') === '1';
+  const isBgRevalidate =
+    String(req.headers[BG_REVALIDATE_HEADER] || '') === '1' &&
+    req.headers['x-isr-internal-token'] === ctx.internalToken;
   if (isBgRevalidate) {
     setHeaderOnce(res, 'X-Cache-Status', 'REVALIDATING');
     runMissPath(req, res, next, ctx, resolved, cacheKey, /* swrBgKey */ cacheKey);
@@ -924,9 +947,14 @@ function runMissPath(
     res.once('finish', releaseSingleflight);
   }
 
+  const renderGeneration = ctx.state.invalidationGeneration;
   runWithTagStore(() => {
     captureAndStore(res, ctx.maxCachedBodyBytes, cacheKey, captured => {
-      if (captured.overflow) return;
+      if (captured.overflow || renderGeneration !== ctx.state.invalidationGeneration) return;
+      if (hasPrivateResponse(captured.headers)) return;
+      const requestContext = getRequestContext();
+      if (requestContext?.userId || requestContext?.sessionToken || requestContext?.sessionUser)
+        return;
       if (captured.statusCode !== 200) return;
       const ct = String(captured.headers['content-type'] || '');
       if (!ct.includes('text/html') && !ct.includes('text/x-component')) return;
@@ -981,6 +1009,7 @@ function runMissPath(
         expiresAt: now + ttl * 1000,
         hardExpiresAt: now + (ttl + swr) * 1000,
         tags,
+        pathTag: `__isr_path:${ctx.cacheKeyPrefix}${stripRscSuffix(stripQuery(_req.url || '/'))}`,
       });
       logger.debug(
         `💾 ISR cache store ${cacheKey} (mode=${resolved.mode}, ttl=${ttl}s, swr=${swr}s, size=${captured.body.length}B, tags=[${tags.join(',')}])`
@@ -1015,13 +1044,9 @@ function triggerBackgroundRevalidation(
   }
   ctx.revalidating.add(cacheKey);
 
-  const host = req.headers.host || 'localhost';
   const path = req.url || '/';
-  const [hostname, portStr] = host.split(':');
-  const port = portStr
-    ? Number(portStr)
-    : // 读取当前 socket 监听端口（兜底）
-      (req.socket && (req.socket as unknown as { localPort?: number }).localPort) || 80;
+  const hostname = req.socket.localAddress || '127.0.0.1';
+  const port = req.socket.localPort || 80;
 
   let released = false;
   /**
@@ -1053,10 +1078,10 @@ function triggerBackgroundRevalidation(
           hostname: hostname || 'localhost',
           port,
           path,
-          method: 'GET',
+          method: req.method === 'HEAD' ? 'HEAD' : 'GET',
           headers: {
+            ...refreshHeaders(req, ctx),
             [BG_REVALIDATE_HEADER]: '1',
-            accept: 'text/html',
           },
           timeout: ctx.bgTimeoutMs,
         },
@@ -1112,11 +1137,8 @@ function triggerPrefetch(
 ): void {
   const prefetchOnHit = ctx.prefetchOnHit;
   if (!prefetchOnHit) return;
-  const host = req.headers.host || 'localhost';
-  const [hostname, portStr] = host.split(':');
-  const port = portStr
-    ? Number(portStr)
-    : (req.socket && (req.socket as unknown as { localPort?: number }).localPort) || 80;
+  const hostname = req.socket.localAddress || '127.0.0.1';
+  const port = req.socket.localPort || 80;
 
   setImmediate(async () => {
     let targets: string[] = [];
@@ -1143,8 +1165,8 @@ function triggerPrefetch(
             path: target,
             method: 'GET',
             headers: {
+              ...refreshHeaders(req, ctx),
               [PREFETCH_HEADER]: '1',
-              accept: 'text/html',
             },
             timeout: 15_000,
           },
@@ -1192,6 +1214,19 @@ function replayEntry(
   staleReason?: StaleReason
 ): void {
   res.statusCode = entry.statusCode;
+  const freshPolicy = String(res.getHeader('content-security-policy') || '');
+  const cachedPolicy = String(entry.headers['content-security-policy'] || '');
+  const freshNonce = freshPolicy.match(/'nonce-([^']+)'/)?.[1];
+  const oldNonce = cachedPolicy.match(/'nonce-([^']+)'/)?.[1];
+  const refreshNonce = !!(freshNonce && oldNonce && entry.contentType.includes('text/html'));
+  const body = refreshNonce
+    ? Buffer.from(
+        entry.body
+          .toString('utf8')
+          .replaceAll(`nonce="${oldNonce}"`, `nonce="${freshNonce}"`)
+          .replaceAll(`nonce='${oldNonce}'`, `nonce='${freshNonce}'`)
+      )
+    : entry.body;
   for (const [name, value] of Object.entries(entry.headers)) {
     const lower = name.toLowerCase();
     if (
@@ -1199,7 +1234,8 @@ function replayEntry(
       lower === 'x-cache-key' ||
       lower === 'x-cache-age' ||
       lower === 'x-cache-stale-reason' ||
-      lower === 'content-length'
+      lower === 'content-length' ||
+      (lower === 'content-security-policy' && refreshNonce)
     ) {
       continue;
     }
@@ -1215,7 +1251,7 @@ function replayEntry(
   if (status === 'STALE' && staleReason) {
     res.setHeader('X-Cache-Stale-Reason', staleReason);
   }
-  res.end(entry.body);
+  res.end(body);
 }
 
 /** 根据当前 ctx 状态推导 STALE 原因。同步、纯函数 —— 调一次就有答案。*/
@@ -1535,4 +1571,35 @@ function raceWithTimeout<T>(
       }
     );
   });
+}
+
+function hasPrivateRequest(req: IncomingMessage, variantCookieName: string): boolean {
+  if (req.headers.authorization || req.headers.range) return true;
+  if (/no-store/i.test(String(req.headers['cache-control'] || ''))) return true;
+  const cookies = parseCookieHeader(String(req.headers.cookie || ''));
+  return Object.keys(cookies).some(name => name !== ANON_COOKIE_NAME && name !== variantCookieName);
+}
+
+function hasPrivateResponse(headers: Record<string, string | number | string[]>): boolean {
+  const control = String(headers['cache-control'] || '').toLowerCase();
+  if (/(?:^|,)\s*(?:private|no-store|no-cache)(?:\s*(?:=|,|$))/.test(control)) return true;
+  if (/(?:^|,)\s*(?:s-maxage|max-age)\s*=\s*"?0"?(?:\s*(?:,|$))/.test(control)) return true;
+  const vary = String(headers.vary || '')
+    .toLowerCase()
+    .split(',')
+    .map(v => v.trim())
+    .filter(Boolean);
+  return vary.some(name => name !== 'accept-encoding');
+}
+
+function refreshHeaders(req: IncomingMessage, ctx: HandleContext): Record<string, string> {
+  const headers: Record<string, string> = {
+    host: req.headers.host || 'localhost',
+    'x-isr-internal-token': ctx.internalToken,
+  };
+  for (const name of ['cookie', 'accept', 'accept-language', 'x-forwarded-proto']) {
+    const value = req.headers[name];
+    if (typeof value === 'string') headers[name] = value;
+  }
+  return headers;
 }

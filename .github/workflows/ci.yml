@@ -56,6 +56,17 @@ jobs:
     name: Unit + Integration Tests
     runs-on: ubuntu-latest
     timeout-minutes: 10
+    services:
+      redis:
+        image: redis:7-alpine
+        ports: ['6379:6379']
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 10
+    env:
+      ISR_TEST_REDIS_URL: redis://127.0.0.1:6379
 
     steps:
       - uses: actions/checkout@v4
@@ -74,3 +85,34 @@ jobs:
 
       - name: Run tests
         run: pnpm run test
+
+  browser:
+    name: Production Browser Regressions
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v5
+        with:
+          run_install: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: '.nvmrc'
+          cache: pnpm
+      - name: Install workspace dependencies
+        run: pnpm install --frozen-lockfile
+      - name: Install Chromium
+        run: pnpm exec playwright install --with-deps chromium
+      - name: Test development navigation and styles
+        run: pnpm run test:browser
+      - name: Test built production server
+        run: pnpm run test:browser:production
+      - name: Upload browser diagnostics
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: production-browser-report
+          path: |
+            playwright-report/
+            test-results/
+          retention-days: 7

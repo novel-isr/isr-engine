@@ -1,6 +1,6 @@
 {
   "name": "@novel-isr/engine",
-  "version": "2.6.9",
+  "version": "2.6.10",
   "description": "ISR/SSG/Fallback rendering orchestration on Vite + React 19 RSC.",
   "license": "UNLICENSED",
   "repository": {
@@ -94,6 +94,7 @@
     "type-check": "tsc --noEmit",
     "test": "vitest run",
     "pretest:browser": "pnpm run build",
+    "test:browser:production": "pnpm run build && playwright test --config playwright.production.config.ts",
     "test:browser": "playwright test e2e/dev-css-lifecycle/dev-css-lifecycle.spec.ts",
     "bench": "node bench/runner.mjs",
     "check": "pnpm run type-check && pnpm run lint && pnpm run test",

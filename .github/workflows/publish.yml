@@ -30,6 +30,18 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
 
+    services:
+      redis:
+        image: redis:7-alpine
+        ports: ['6379:6379']
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 10
+    env:
+      ISR_TEST_REDIS_URL: redis://127.0.0.1:6379
+
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -48,7 +60,9 @@ jobs:
 
       - name: Bump version (if workflow_dispatch)
         if: github.event_name == 'workflow_dispatch' && inputs.version != ''
-        run: npm version ${{ inputs.version }} --no-git-tag-version
+        env:
+          RELEASE_VERSION: ${{ inputs.version }}
+        run: npm version "$RELEASE_VERSION" --no-git-tag-version
 
       - name: Verify tag matches package.json (if tag push)
         if: github.event_name == 'push'
@@ -62,6 +76,9 @@ jobs:
 
       - name: Install
         run: pnpm install --frozen-lockfile
+
+      - name: Type, lint and regression checks
+        run: pnpm run check
 
       - name: Build
         run: pnpm run build

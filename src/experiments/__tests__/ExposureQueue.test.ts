@@ -185,3 +185,39 @@ describe('resolveExposureQueue', () => {
     q?.destroy();
   });
 });
+
+it('shutdown flush waits for in-flight delivery and drains all pending batches', async () => {
+  let release!: () => void;
+  const delivered: number[] = [];
+  const queue = createExposureQueue({
+    endpoint: 'https://example.test',
+    batchSize: 1,
+    fetcher: async (_url, init) => {
+      delivered.push(JSON.parse(String(init?.body)).events.length);
+      if (delivered.length === 1)
+        await new Promise<void>(resolve => {
+          release = resolve;
+        });
+      return new Response(null);
+    },
+  });
+  queue.push(makeEvent());
+  queue.push(makeEvent());
+  let settled = false;
+  const flushing = queue.flush().then(() => {
+    settled = true;
+  });
+  await new Promise<void>(resolve => setImmediate(resolve));
+  expect(settled).toBe(false);
+  release();
+  await flushing;
+  expect(delivered).toEqual([1, 1]);
+  queue.destroy();
+});
+
+it('destroy unregisters process lifecycle hooks', () => {
+  const before = process.listenerCount('SIGTERM');
+  const queue = createExposureQueue({ endpoint: 'https://example.test' });
+  queue.destroy();
+  expect(process.listenerCount('SIGTERM')).toBe(before);
+});

@@ -30,6 +30,12 @@ import { createRoot, hydrateRoot } from 'react-dom/client';
 import { rscStream } from 'rsc-html-stream/client';
 
 import { GlobalErrorBoundary } from './error-boundary';
+import {
+  createPrefetcher,
+  isRscNavigation,
+  shouldPrefetch as canPrefetch,
+  type PrefetchConnection,
+} from './client-navigation-policy';
 import { HydrationShell } from './hydration-shell';
 import { createRscRenderRequest, type RscRenderRequestOptions } from './request';
 import { DevStyleCommitBoundary } from './dev-style-commit-boundary.client';
@@ -453,7 +459,13 @@ async function main(hooks: ClientEntryHooks): Promise<void> {
     React.useEffect(() => {
       const onNavigation = import.meta.env.DEV
         ? () => observeDevNavigationFailure(fetchRscPayload())
-        : fetchRscPayload;
+        : () => {
+            const requestedUrl = window.location.href;
+            void fetchRscPayload().catch(error => {
+              console.error('RSC navigation failed; falling back to document navigation', error);
+              if (window.location.href === requestedUrl) window.location.assign(requestedUrl);
+            });
+          };
       return listenNavigation(onNavigation, hooks.onNavigate, observability, hookContext);
     }, []);
     return renderPayloadRoot(payloadState);
@@ -563,7 +575,12 @@ function listenNavigation(
   observability?: BrowserObservabilityHandle | null,
   hookContext: ClientEntryHookContext = createHookContext(null)
 ): () => void {
+  let previousUrl = window.location.href;
   const fire = () => {
+    const nextUrl = window.location.href;
+    const needsPayload = isRscNavigation(nextUrl, previousUrl);
+    previousUrl = nextUrl;
+    if (!needsPayload) return;
     onNavigation();
     const url = new URL(window.location.href);
     try {
@@ -585,14 +602,16 @@ function listenNavigation(
   const oldPushState = window.history.pushState;
   window.history.pushState = function (...args) {
     const res = oldPushState.apply(this, args);
-    if (!isInternalNavigationHistoryMutation()) fire();
+    if (isInternalNavigationHistoryMutation()) previousUrl = window.location.href;
+    else fire();
     return res;
   };
 
   const oldReplaceState = window.history.replaceState;
   window.history.replaceState = function (...args) {
     const res = oldReplaceState.apply(this, args);
-    if (!isInternalNavigationHistoryMutation()) fire();
+    if (isInternalNavigationHistoryMutation()) previousUrl = window.location.href;
+    else fire();
     return res;
   };
 
@@ -601,7 +620,8 @@ function listenNavigation(
       link.href &&
       (!link.target || link.target === '_self') &&
       link.origin === location.origin &&
-      !link.hasAttribute('download')
+      !link.hasAttribute('download') &&
+      isRscNavigation(link.href, location.href)
     );
   }
 
@@ -633,41 +653,45 @@ function listenNavigation(
   // 大量真实 RSC 请求，进而挤占用户交互和应用层限流配额。
   const maxViewportPrefetches = 12;
   let viewportPrefetches = 0;
-  const prefetched = new Set<string>();
+  const fetchPrefetch = createPrefetcher(url => fetch(url, { priority: 'low' } as RequestInit));
 
-  function prefetch(href: string, reason: 'intent' | 'viewport' = 'intent'): void {
-    if (reason === 'viewport' && viewportPrefetches >= maxViewportPrefetches) return;
-    if (prefetched.has(href)) return;
-    if (reason === 'viewport') viewportPrefetches += 1;
-    prefetched.add(href);
-    try {
-      const url = new URL(href);
-      url.pathname = url.pathname + '_.rsc';
-      // 用 prefetch 优先级，不阻塞主流程；浏览器自动 dedupe + LRU
-      void fetch(url.toString(), { priority: 'low' } as RequestInit);
-    } catch {
-      /* invalid URL ignored */
-    }
+  function shouldPrefetch(link: HTMLAnchorElement, reason: 'intent' | 'viewport'): boolean {
+    const connection = (navigator as Navigator & { connection?: PrefetchConnection }).connection;
+    return (
+      isInternalLink(link) &&
+      canPrefetch(link.href, location.href, link.dataset.prefetch, reason, connection)
+    );
   }
 
-  function onPointerEnter(e: PointerEvent) {
+  function prefetch(link: HTMLAnchorElement, reason: 'intent' | 'viewport'): void {
+    if (!shouldPrefetch(link, reason)) return;
+    if (reason === 'viewport') {
+      if (viewportPrefetches >= maxViewportPrefetches) return;
+      viewportPrefetches += 1;
+    }
+    void fetchPrefetch(link.href);
+  }
+
+  function onPointerEnter(e: Event) {
     const target = e.target;
     if (!(target instanceof Element)) return;
     const link = target.closest('a');
-    if (link && link instanceof HTMLAnchorElement && isInternalLink(link)) {
-      prefetch(link.href);
+    if (link && link instanceof HTMLAnchorElement) {
+      prefetch(link, 'intent');
     }
   }
   document.addEventListener('pointerenter', onPointerEnter, { capture: true });
+  document.addEventListener('focusin', onPointerEnter);
 
   // viewport 内可见时预取 —— 用 IntersectionObserver 监视所有内部链接
   let observer: IntersectionObserver | null = null;
+  let mutationObserver: MutationObserver | null = null;
   if (typeof IntersectionObserver !== 'undefined') {
     observer = new IntersectionObserver(
       entries => {
         for (const entry of entries) {
           if (entry.isIntersecting && entry.target instanceof HTMLAnchorElement) {
-            if (isInternalLink(entry.target)) prefetch(entry.target.href, 'viewport');
+            prefetch(entry.target, 'viewport');
             observer!.unobserve(entry.target);
           }
         }
@@ -676,25 +700,29 @@ function listenNavigation(
     );
     // 初始扫描 + MutationObserver 跟踪后续 DOM 变化
     const scan = (root: ParentNode) => {
+      if (root instanceof HTMLAnchorElement && shouldPrefetch(root, 'viewport'))
+        observer!.observe(root);
       root.querySelectorAll('a').forEach(a => {
-        if (a instanceof HTMLAnchorElement && isInternalLink(a)) observer!.observe(a);
+        if (a instanceof HTMLAnchorElement && shouldPrefetch(a, 'viewport')) observer!.observe(a);
       });
     };
     scan(document);
-    const mo = new MutationObserver(records => {
+    mutationObserver = new MutationObserver(records => {
       for (const r of records) {
         r.addedNodes.forEach(n => {
           if (n instanceof Element) scan(n);
         });
       }
     });
-    mo.observe(document.body, { childList: true, subtree: true });
+    mutationObserver.observe(document.body, { childList: true, subtree: true });
   }
 
   return () => {
     document.removeEventListener('click', onClick);
     document.removeEventListener('pointerenter', onPointerEnter, { capture: true });
+    document.removeEventListener('focusin', onPointerEnter);
     observer?.disconnect();
+    mutationObserver?.disconnect();
     window.removeEventListener('popstate', fire);
     window.history.pushState = oldPushState;
     window.history.replaceState = oldReplaceState;

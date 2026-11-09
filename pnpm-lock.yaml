@@ -192,6 +192,40 @@ importers:
         specifier: 8.0.14
         version: 8.0.14(@types/node@22.19.19)(esbuild@0.28.0)(sass-embedded@1.99.0)(sass@1.99.0)(terser@5.48.0)
 
+  e2e/production:
+    dependencies:
+      '@novel-isr/engine':
+        specifier: workspace:*
+        version: link:../..
+      react:
+        specifier: 19.3.0-canary-bd6ea412-20260824
+        version: 19.3.0-canary-bd6ea412-20260824
+      react-dom:
+        specifier: 19.3.0-canary-bd6ea412-20260824
+        version: 19.3.0-canary-bd6ea412-20260824(react@19.3.0-canary-bd6ea412-20260824)
+      react-server-dom-webpack:
+        specifier: 19.3.0-canary-bd6ea412-20260824
+        version: 19.3.0-canary-bd6ea412-20260824(react-dom@19.3.0-canary-bd6ea412-20260824(react@19.3.0-canary-bd6ea412-20260824))(react@19.3.0-canary-bd6ea412-20260824)(webpack@5.106.2(esbuild@0.28.0))
+      rsc-html-stream:
+        specifier: ^0.0.7
+        version: 0.0.7
+    devDependencies:
+      '@types/react':
+        specifier: ^19.2.15
+        version: 19.2.15
+      '@types/react-dom':
+        specifier: ^19.0.0
+        version: 19.2.3(@types/react@19.2.15)
+      sass-embedded:
+        specifier: ^1.79.4
+        version: 1.99.0
+      typescript:
+        specifier: ^5.6.2
+        version: 5.9.3
+      vite:
+        specifier: 8.0.14
+        version: 8.0.14(@types/node@22.19.19)(esbuild@0.28.0)(sass-embedded@1.99.0)(sass@1.99.0)(terser@5.48.0)
+
 packages:
 
   '@asamuzakjp/css-color@5.1.11':

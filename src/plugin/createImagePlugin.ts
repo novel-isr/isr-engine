@@ -33,7 +33,7 @@ export interface ImagePluginOptions {
 }
 
 interface SharpModule {
-  default: (input: Buffer | string) => SharpInstance;
+  default: (input: Buffer | string, options?: { limitInputPixels: number }) => SharpInstance;
 }
 interface SharpInstance {
   resize(opts: { width?: number; height?: number; withoutEnlargement?: boolean }): SharpInstance;
@@ -66,85 +66,8 @@ interface CachedImage {
 }
 
 export function createImagePlugin(options: ImagePluginOptions = {}): Plugin {
-  const endpoint = options.path ?? '/_/img';
-  const allow = new Set(options.remoteAllowlist ?? []);
-  const cache = new LRUCache<string, CachedImage>({ max: options.cacheMax ?? 500 });
-  const defaultQ = Math.max(1, Math.min(100, options.defaultQuality ?? 75));
-  const maxW = options.maxWidth ?? 4096;
-  let publicDir = '';
-
-  const handler = async (
-    req: IncomingMessage,
-    res: ServerResponse,
-    next: Connect.NextFunction
-  ): Promise<void> => {
-    const url = req.url ?? '';
-    if (!url.startsWith(endpoint)) return next();
-
-    const sharp = await loadSharp();
-    if (!sharp) {
-      res.statusCode = 501;
-      res.setHeader('content-type', 'text/plain');
-      res.end('sharp not installed');
-      return;
-    }
-
-    const u = new URL(url, 'http://x');
-    const src = u.searchParams.get('src');
-    if (!src) {
-      res.statusCode = 400;
-      res.end('missing ?src=');
-      return;
-    }
-    const w = clamp(parseInt(u.searchParams.get('w') ?? '0', 10), 1, maxW) || undefined;
-    const q = clamp(parseInt(u.searchParams.get('q') ?? String(defaultQ), 10), 1, 100);
-    const fmt = (u.searchParams.get('fmt') ?? '').toLowerCase();
-    const fmtSafe = SUPPORTED_FORMATS.has(fmt) ? fmt : pickAuto(req.headers['accept']);
-
-    const cacheKey = `${src}|w=${w ?? 'orig'}|q=${q}|fmt=${fmtSafe}`;
-
-    const cached = cache.get(cacheKey);
-    if (cached && req.headers['if-none-match'] === cached.etag) {
-      res.statusCode = 304;
-      res.setHeader('etag', cached.etag);
-      res.end();
-      return;
-    }
-    if (cached) {
-      sendImage(res, cached);
-      return;
-    }
-
-    let input: Buffer | null = null;
-    try {
-      input = await loadSource(src, allow, publicDir);
-    } catch (err) {
-      res.statusCode = 400;
-      res.end(`source load failed: ${(err as Error).message}`);
-      return;
-    }
-    if (!input || input.byteLength > MAX_INPUT_BYTES) {
-      res.statusCode = 413;
-      res.end('source too large');
-      return;
-    }
-
-    try {
-      let pipe = sharp.default(input);
-      if (w) pipe = pipe.resize({ width: w, withoutEnlargement: true });
-      pipe = pipe.toFormat(fmtSafe === 'jpg' ? 'jpeg' : fmtSafe, { quality: q });
-      const out = await pipe.toBuffer();
-      const ct = `image/${fmtSafe === 'jpg' ? 'jpeg' : fmtSafe}`;
-      const etag = `"${createHash('sha1').update(out).digest('hex').slice(0, 16)}"`;
-      const entry: CachedImage = { body: out, contentType: ct, etag };
-      cache.set(cacheKey, entry);
-      sendImage(res, entry);
-    } catch (err) {
-      res.statusCode = 500;
-      res.end(`transform failed: ${(err as Error).message}`);
-    }
-  };
-
+  let publicDir = path.resolve(process.cwd(), 'public');
+  const handler = createImageHandler(options, () => publicDir);
   return {
     name: 'novel-isr:image-optimization',
     configResolved(c) {
@@ -159,81 +82,98 @@ export function createImagePlugin(options: ImagePluginOptions = {}): Plugin {
   };
 }
 
-/** 暴露 connect-style 中间件给生产 server.use() —— 路径不匹配时调 next() 放行 */
+/** Connect middleware shared by development, preview and production. */
 export function createImageMiddleware(
   options: ImagePluginOptions = {}
 ): (req: IncomingMessage, res: ServerResponse, next: Connect.NextFunction) => void {
   const publicDir = path.resolve(process.cwd(), 'public');
-  return createImageHandler({ ...options, publicDir });
+  return createImageHandler(options, () => publicDir);
 }
 
-function createImageHandler(
-  opts: ImagePluginOptions & { publicDir: string }
-): (req: IncomingMessage, res: ServerResponse, next: Connect.NextFunction) => void {
+class ImageError extends Error {
+  constructor(
+    readonly status: number,
+    message: string
+  ) {
+    super(message);
+  }
+}
+
+function createImageHandler(opts: ImagePluginOptions, getPublicDir: () => string) {
   const endpoint = opts.path ?? '/_/img';
   const allow = new Set(opts.remoteAllowlist ?? []);
-  const cache = new LRUCache<string, CachedImage>({ max: opts.cacheMax ?? 500 });
-  const defaultQ = Math.max(1, Math.min(100, opts.defaultQuality ?? 75));
-  const maxW = opts.maxWidth ?? 4096;
+  const cache = new LRUCache<string, CachedImage>({
+    max: Math.max(1, opts.cacheMax ?? 500),
+    maxSize: 64 * 1024 * 1024,
+    sizeCalculation: entry => entry.body.byteLength,
+    ttl: 60_000,
+  });
+  const defaultQ = clamp(opts.defaultQuality ?? 75, 1, 100) || 75;
+  const maxW = clamp(opts.maxWidth ?? 4096, 1, 8192) || 4096;
+  let active = 0;
 
   return function imageMiddleware(
     req: IncomingMessage,
     res: ServerResponse,
     next: Connect.NextFunction
   ): void {
-    const url = req.url ?? '';
-    if (!url.startsWith(endpoint)) {
+    let u: URL;
+    try {
+      u = new URL(req.url ?? '', 'http://x');
+    } catch {
       next();
       return;
     }
-    void handle();
-    return;
+    if (u.pathname !== endpoint) {
+      next();
+      return;
+    }
+    void handle(u).catch((error: unknown) => {
+      if (res.destroyed || res.writableEnded) return;
+      res.statusCode = error instanceof ImageError ? error.status : 500;
+      res.setHeader('content-type', 'text/plain; charset=utf-8');
+      res.end(error instanceof ImageError ? error.message : 'image processing failed');
+    });
 
-    async function handle(): Promise<void> {
-      const sharp = await loadSharp();
-      if (!sharp) {
-        res.statusCode = 501;
-        res.end('sharp not installed');
-        return;
-      }
-      const u = new URL(url, 'http://x');
-      const src = u.searchParams.get('src');
-      if (!src) {
-        res.statusCode = 400;
-        res.end('missing ?src=');
-        return;
-      }
-      const w = clamp(parseInt(u.searchParams.get('w') ?? '0', 10), 1, maxW) || undefined;
-      const q = clamp(parseInt(u.searchParams.get('q') ?? String(defaultQ), 10), 1, 100);
-      const fmt = (u.searchParams.get('fmt') ?? '').toLowerCase();
-      const fmtSafe = SUPPORTED_FORMATS.has(fmt) ? fmt : pickAuto(req.headers['accept']);
-      const cacheKey = `${src}|w=${w ?? 'orig'}|q=${q}|fmt=${fmtSafe}`;
-      const cached = cache.get(cacheKey);
-      if (cached && req.headers['if-none-match'] === cached.etag) {
-        res.statusCode = 304;
-        res.setHeader('etag', cached.etag);
-        res.end();
-        return;
-      }
+    async function handle(url: URL): Promise<void> {
+      const src = url.searchParams.get('src');
+      if (!src) throw new ImageError(400, 'missing ?src=');
+      if (req.method && req.method !== 'GET' && req.method !== 'HEAD')
+        throw new ImageError(405, 'method not allowed');
+      const wParam = url.searchParams.get('w');
+      const w = wParam === null ? undefined : clamp(parseInt(wParam, 10), 1, maxW) || undefined;
+      const q =
+        clamp(parseInt(url.searchParams.get('q') ?? String(defaultQ), 10), 1, 100) || defaultQ;
+      const fmt = (url.searchParams.get('fmt') ?? '').toLowerCase();
+      const format = SUPPORTED_FORMATS.has(fmt) ? fmt : pickAuto(req.headers.accept);
+      const key = JSON.stringify([src, w, q, format]);
+      const cached = cache.get(key);
       if (cached) {
-        sendImage(res, cached);
+        sendImage(req, res, cached);
         return;
       }
-      const input = await loadSource(src, allow, opts.publicDir);
-      if (!input || input.byteLength > MAX_INPUT_BYTES) {
-        res.statusCode = 413;
-        res.end('source too large');
-        return;
+      if (active >= 4) throw new ImageError(503, 'image processing busy');
+      active++;
+      try {
+        const sharp = await loadSharp();
+        if (!sharp) throw new ImageError(501, 'sharp not installed');
+        const input = await loadSource(src, allow, getPublicDir());
+        let pipe = sharp.default(input, { limitInputPixels: 40_000_000 });
+        if (w) pipe = pipe.resize({ width: w, withoutEnlargement: true });
+        const out = await pipe
+          .toFormat(format === 'jpg' ? 'jpeg' : format, { quality: q })
+          .toBuffer();
+        if (out.byteLength > MAX_INPUT_BYTES) throw new ImageError(413, 'output too large');
+        const entry = {
+          body: out,
+          contentType: `image/${format === 'jpg' ? 'jpeg' : format}`,
+          etag: `"${createHash('sha1').update(out).digest('hex').slice(0, 16)}"`,
+        };
+        cache.set(key, entry);
+        sendImage(req, res, entry);
+      } finally {
+        active--;
       }
-      let pipe = sharp.default(input);
-      if (w) pipe = pipe.resize({ width: w, withoutEnlargement: true });
-      pipe = pipe.toFormat(fmtSafe === 'jpg' ? 'jpeg' : fmtSafe, { quality: q });
-      const out = await pipe.toBuffer();
-      const ct = `image/${fmtSafe === 'jpg' ? 'jpeg' : fmtSafe}`;
-      const etag = `"${createHash('sha1').update(out).digest('hex').slice(0, 16)}"`;
-      const entry: CachedImage = { body: out, contentType: ct, etag };
-      cache.set(cacheKey, entry);
-      sendImage(res, entry);
     }
   };
 }
@@ -250,36 +190,113 @@ function pickAuto(accept?: string | string[]): string {
   return 'jpeg';
 }
 
-function sendImage(res: ServerResponse, entry: CachedImage): void {
+function sendImage(req: IncomingMessage, res: ServerResponse, entry: CachedImage): void {
+  res.setHeader('vary', 'Accept');
+  res.setHeader('cache-control', 'public, max-age=60, must-revalidate');
+  res.setHeader('etag', entry.etag);
+  if (req.headers['if-none-match'] === entry.etag) {
+    res.statusCode = 304;
+    res.end();
+    return;
+  }
   res.statusCode = 200;
   res.setHeader('content-type', entry.contentType);
-  res.setHeader('cache-control', 'public, max-age=31536000, immutable');
-  res.setHeader('etag', entry.etag);
   res.setHeader('content-length', entry.body.byteLength);
-  res.end(entry.body);
+  res.end(req.method === 'HEAD' ? undefined : entry.body);
 }
 
-async function loadSource(
-  src: string,
-  allow: Set<string>,
-  publicDir: string
-): Promise<Buffer | null> {
-  if (/^https?:\/\//i.test(src)) {
-    const u = new URL(src);
-    if (!allow.has(u.host)) {
-      throw new Error(`origin not in allowlist: ${u.host}`);
+function inside(root: string, file: string): boolean {
+  const relative = path.relative(root, file);
+  return relative !== '..' && !relative.startsWith(`..${path.sep}`) && !path.isAbsolute(relative);
+}
+
+async function loadSource(src: string, allow: Set<string>, publicDir: string): Promise<Buffer> {
+  if (/^[a-z][a-z\d+.-]*:/i.test(src) || src.startsWith('//')) {
+    let url: URL;
+    try {
+      url = new URL(src);
+    } catch {
+      throw new ImageError(400, 'invalid source URL');
     }
-    const r = await fetch(src);
-    if (!r.ok) throw new Error(`fetch ${r.status}`);
-    return Buffer.from(await r.arrayBuffer());
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 10_000);
+    try {
+      for (let redirects = 0; redirects <= 5; redirects++) {
+        if (
+          !['http:', 'https:'].includes(url.protocol) ||
+          !allow.has(url.host) ||
+          url.username ||
+          url.password
+        ) {
+          throw new ImageError(400, 'source origin not allowed');
+        }
+        const response = await fetch(url, { redirect: 'manual', signal: controller.signal });
+        if ([301, 302, 303, 307, 308].includes(response.status)) {
+          await response.body?.cancel();
+          const location = response.headers.get('location');
+          if (!location || redirects === 5) throw new ImageError(400, 'invalid source redirect');
+          url = new URL(location, url);
+          continue;
+        }
+        if (!response.ok || !response.body) {
+          await response.body?.cancel();
+          throw new ImageError(400, 'source fetch failed');
+        }
+        if (Number(response.headers.get('content-length')) > MAX_INPUT_BYTES) {
+          await response.body.cancel();
+          throw new ImageError(413, 'source too large');
+        }
+        const reader = response.body.getReader();
+        const chunks: Buffer[] = [];
+        let size = 0;
+        try {
+          while (true) {
+            const { done, value } = await reader.read();
+            if (done) break;
+            size += value.byteLength;
+            if (size > MAX_INPUT_BYTES) throw new ImageError(413, 'source too large');
+            chunks.push(Buffer.from(value));
+          }
+          return Buffer.concat(chunks, size);
+        } finally {
+          await reader.cancel();
+        }
+      }
+      throw new ImageError(400, 'too many source redirects');
+    } catch (error) {
+      if (error instanceof ImageError) throw error;
+      throw new ImageError(controller.signal.aborted ? 504 : 400, 'source fetch failed');
+    } finally {
+      clearTimeout(timer);
+    }
   }
-  // 相对路径 / 绝对路径：限制到 publicDir 之内（防目录穿越）
-  const cleaned = src.startsWith('/') ? src.slice(1) : src;
-  const resolved = path.resolve(publicDir, cleaned);
-  if (!resolved.startsWith(publicDir)) throw new Error('path traversal blocked');
   try {
-    return await fs.readFile(resolved);
-  } catch {
-    return null;
+    const root = await fs.realpath(publicDir);
+    const resolved = path.resolve(root, src.startsWith('/') ? src.slice(1) : src);
+    if (!inside(root, resolved)) throw new ImageError(400, 'path traversal blocked');
+    const real = await fs.realpath(resolved);
+    if (!inside(root, real)) throw new ImageError(400, 'path traversal blocked');
+    const file = await fs.open(real, 'r');
+    try {
+      const stat = await file.stat();
+      if (!stat.isFile()) throw new ImageError(400, 'invalid source file');
+      if (stat.size > MAX_INPUT_BYTES) throw new ImageError(413, 'source too large');
+      // Bound the read even if a file grows after stat().
+      const buffer = Buffer.alloc(Math.min(stat.size + 1, MAX_INPUT_BYTES + 1));
+      let size = 0;
+      while (size < buffer.length) {
+        const { bytesRead } = await file.read(buffer, size, buffer.length - size, null);
+        if (!bytesRead) break;
+        size += bytesRead;
+      }
+      if (size > MAX_INPUT_BYTES || size > stat.size)
+        throw new ImageError(413, 'source changed during read');
+      return buffer.subarray(0, size);
+    } finally {
+      await file.close();
+    }
+  } catch (error) {
+    if (error instanceof ImageError) throw error;
+    throw new ImageError(404, 'source not found');
   }
 }

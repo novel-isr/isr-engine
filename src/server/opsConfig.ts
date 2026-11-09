@@ -162,7 +162,7 @@ function readOpsToken(
 }
 
 export function createOpsAuthMiddleware(
-  endpoint: 'metrics' | 'inventory',
+  endpoint: 'health' | 'metrics' | 'inventory',
   resolved: ResolvedOpsConfig
 ): RequestHandler {
   const policy = resolved[endpoint];

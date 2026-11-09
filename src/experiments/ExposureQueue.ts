@@ -101,7 +101,15 @@ export function createExposureQueue(options: ExposureQueueOptions) {
     state.flushTimer.unref?.();
   }
 
-  async function flushNow(): Promise<void> {
+  const inFlight = new Set<Promise<void>>();
+  function flushNow(): Promise<void> {
+    const delivery = sendBatch();
+    inFlight.add(delivery);
+    void delivery.finally(() => inFlight.delete(delivery));
+    return delivery;
+  }
+
+  async function sendBatch(): Promise<void> {
     if (state.events.length === 0) return;
     const batch = state.events.splice(0, batchSize);
 
@@ -166,12 +174,18 @@ export function createExposureQueue(options: ExposureQueueOptions) {
 
     /** 立即 flush 当前批次（测试 / 优雅退出用） */
     async flush(): Promise<void> {
-      await flushNow();
+      do {
+        await flushNow();
+        await Promise.all([...inFlight]);
+      } while (state.events.length > 0 || inFlight.size > 0);
     },
 
     /** 销毁队列（清定时器、丢残留）；engine 关闭时调 */
     destroy(): void {
       state.destroyed = true;
+      process.removeListener('SIGTERM', shutdownHook);
+      process.removeListener('SIGINT', shutdownHook);
+      process.removeListener('beforeExit', shutdownHook);
       if (state.flushTimer) {
         clearTimeout(state.flushTimer);
         state.flushTimer = null;

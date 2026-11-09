@@ -11,9 +11,12 @@
  */
 
 import fs from 'node:fs/promises';
+import { readFileSync } from 'node:fs';
+import { createHash } from 'node:crypto';
 import path from 'node:path';
 import express, { type Express } from 'express';
 import { Readable } from 'node:stream';
+import pkg from '../../package.json';
 
 import { loadConfig } from '../config/loadConfig';
 import { logger } from '@/logger';
@@ -166,7 +169,7 @@ export async function startProductionServer(options: StartOptions): Promise<void
 
   const app: Express = express();
   app.disable('x-powered-by');
-  app.use(express.json({ limit: '1mb' })); // 防 JSON 炸弹
+  app.use(createProductionJsonMiddleware()); // 防 JSON 炸弹
   const opsConfig = resolveOpsConfig(config, 'production');
   for (const warning of opsConfig.warnings) {
     logger.warn(`[Ops] ${warning}`);
@@ -227,13 +230,18 @@ export async function startProductionServer(options: StartOptions): Promise<void
   // 曝光上报：experimentTracking.endpoint 配上 → engine 异步 fire-and-forget POST
   const hasStaticExps = runtime?.experiments && Object.keys(runtime.experiments).length > 0;
   const hasManifest = !!runtime?.experimentManifest?.endpoint;
+  let manifestLoader:
+    | import('@/experiments/ManifestLoader').ManifestLoaderInstance
+    | null
+    | undefined;
+  let exposureQueue: import('@/experiments/ExposureQueue').ExposureQueueInstance | null | undefined;
   if (hasStaticExps || hasManifest) {
     const baseOrigin = runtime?.services?.api;
     const { createABVariantMiddleware } = await import('@/middlewares/ABVariantMiddleware');
     const { resolveManifestLoader } = await import('@/experiments/ManifestLoader');
     const { resolveExposureQueue } = await import('@/experiments/ExposureQueue');
 
-    const manifestLoader = resolveManifestLoader(
+    manifestLoader = resolveManifestLoader(
       runtime?.experimentManifest,
       runtime?.experiments ?? {},
       baseOrigin
@@ -242,7 +250,7 @@ export async function startProductionServer(options: StartOptions): Promise<void
       await manifestLoader.init();
     }
 
-    const exposureQueue = resolveExposureQueue(runtime?.experimentTracking, baseOrigin);
+    exposureQueue = resolveExposureQueue(runtime?.experimentTracking, baseOrigin);
 
     app.use(
       createABVariantMiddleware({
@@ -262,10 +270,10 @@ export async function startProductionServer(options: StartOptions): Promise<void
 
   // ops 路由：先于 ISR 缓存 + 静态 + 动态 handler
   if (opsConfig.health.enabled) {
-    app.get('/health', (_req, res) => {
+    app.get('/health', createOpsAuthMiddleware('health', opsConfig), (_req, res) => {
       res.json({
         status: 'healthy',
-        version: '2.0.0',
+        version: pkg.version,
         mode: 'plugin-rsc-production',
         timestamp: new Date().toISOString(),
       });
@@ -274,18 +282,7 @@ export async function startProductionServer(options: StartOptions): Promise<void
 
   // SSG 路由直发：URL `/foo` 内部映射到 `/foo/index.html`（不做 301 重定向）
   // —— 让 spider 预生成的 dist/client/<path>/index.html 真正被使用，跳过 ISR 缓存
-  app.use((req, _res, next) => {
-    if (req.method !== 'GET' && req.method !== 'HEAD') return next();
-    if (req.url.includes('.')) return next(); // 已带扩展名（图片/css/js），交给 static
-    if (req.url.endsWith('/')) return next(); // 已是目录形式，express.static 会处理
-    const indexPath = path.join(clientDir, req.url, 'index.html');
-    fs.access(indexPath)
-      .then(() => {
-        req.url = req.url + '/'; // 加上斜杠，express.static 自动找 index.html
-        next();
-      })
-      .catch(() => next());
-  });
+  app.use(createSsgRewriteMiddleware(clientDir));
 
   // 客户端静态资源（必须在 ISR cache 之前 —— SSG 文件由 OS 文件系统直发，
   // 不需要也不应该走内存 LRU 缓存，避免 stream pipe 与 res.write 拦截不兼容导致空 body）
@@ -302,6 +299,13 @@ export async function startProductionServer(options: StartOptions): Promise<void
         } else if (filePath.endsWith('.html')) {
           res.setHeader('Cache-Control', 'public, max-age=3600');
           res.setHeader('X-Served-By', 'ssg-static');
+          res.setHeader(
+            'Content-Security-Policy',
+            staticHtmlCsp(
+              readFileSync(filePath, 'utf8'),
+              String(res.getHeader('Content-Security-Policy') ?? "default-src 'self'")
+            )
+          );
         } else if (/\.(jpe?g|png|webp|avif|gif|svg|ico|woff2?)$/i.test(filePath)) {
           // 图片 / 字体 / 图标：1 周 + 允许 stale 重验证（Lighthouse "efficient cache lifetimes"）
           // 不可命名 hash 但内容稳定（如 public/covers/ public/favicon），比默认 1h 更合理
@@ -454,13 +458,27 @@ export async function startProductionServer(options: StartOptions): Promise<void
     }, 3000);
     forceExit.unref();
 
+    let exitCode = 0;
     try {
       await closeServer(result.server);
     } catch (err) {
-      logger.error('[CLI]', '关闭时发生异常', err);
+      exitCode = 1;
+      logger.error('[CLI]', '关闭 HTTP 服务器时发生异常', err);
+    }
+    manifestLoader?.destroy();
+    const cleanups = await Promise.allSettled([
+      Promise.resolve().then(() => cache.destroy()),
+      Promise.resolve().then(() => exposureQueue?.flush()),
+    ]);
+    exposureQueue?.destroy();
+    for (const cleanup of cleanups) {
+      if (cleanup.status === 'rejected') {
+        exitCode = 1;
+        logger.error('[CLI]', '清理生产资源时发生异常', cleanup.reason);
+      }
     }
     clearTimeout(forceExit);
-    process.exit(0);
+    process.exit(exitCode);
   };
   process.on('SIGINT', () => void handleShutdown('SIGINT'));
   process.on('SIGTERM', () => void handleShutdown('SIGTERM'));
@@ -468,6 +486,17 @@ export async function startProductionServer(options: StartOptions): Promise<void
 
 // ─── Node req ↔ Web Request/Response 适配 ───
 // 导出以便单测覆盖（纯函数 + 协议适配）
+
+const rawRequestBodies = new WeakMap<object, Buffer>();
+
+export function createProductionJsonMiddleware(): express.RequestHandler {
+  return express.json({
+    limit: '1mb',
+    verify: (req, _res, body) => {
+      rawRequestBodies.set(req, Buffer.from(body));
+    },
+  });
+}
 
 export function nodeToWebRequest(req: express.Request): Request {
   const host = String(req.headers.host || 'localhost');
@@ -487,7 +516,7 @@ export function nodeToWebRequest(req: express.Request): Request {
   const method = req.method || 'GET';
   const init: RequestInit & { duplex?: 'half' } = { method, headers };
   if (method !== 'GET' && method !== 'HEAD') {
-    init.body = Readable.toWeb(req) as unknown as BodyInit;
+    init.body = (rawRequestBodies.get(req) ?? Readable.toWeb(req)) as unknown as BodyInit;
     init.duplex = 'half';
   }
   return new Request(url, init);
@@ -496,9 +525,18 @@ export function nodeToWebRequest(req: express.Request): Request {
 export async function pipeWebResponse(response: Response, res: express.Response): Promise<void> {
   res.status(response.status);
   response.headers.forEach((v, k) => {
-    if (k.toLowerCase() === 'content-length') return;
+    if (k.toLowerCase() === 'content-length' || k.toLowerCase() === 'set-cookie') return;
     res.setHeader(k, v);
   });
+
+  const cookies = response.headers.getSetCookie();
+  if (cookies.length) {
+    const existing = res.getHeader?.('set-cookie');
+    res.setHeader('set-cookie', [
+      ...(existing == null ? [] : Array.isArray(existing) ? existing : [String(existing)]),
+      ...cookies,
+    ]);
+  }
 
   if (!response.body) {
     res.end();
@@ -509,8 +547,72 @@ export async function pipeWebResponse(response: Response, res: express.Response)
     response.body as unknown as import('node:stream/web').ReadableStream
   );
   await new Promise<void>((resolve, reject) => {
-    nodeReadable.on('end', resolve);
-    nodeReadable.on('error', reject);
-    nodeReadable.pipe(res);
+    const cleanup = () => {
+      res.removeListener?.('close', onClose);
+      res.removeListener?.('error', onError);
+    };
+    const onClose = () => {
+      nodeReadable.destroy(); // fromWeb forwards destruction to reader.cancel().
+      cleanup();
+      resolve();
+    };
+    const onError = (error: Error) => {
+      nodeReadable.destroy();
+      cleanup();
+      reject(error);
+    };
+    res.once('close', onClose);
+    res.once('error', onError);
+    nodeReadable.once('end', () => {
+      cleanup();
+      resolve();
+    });
+    nodeReadable.once('error', error => {
+      cleanup();
+      if (res.headersSent) res.destroy?.(error);
+      reject(error);
+    });
+    if (res.destroyed) onClose();
+    else nodeReadable.pipe(res);
   });
+}
+
+/** Static files have build-time bytes: authorize their scripts with content hashes. */
+export function staticHtmlCsp(html: string, policy: string): string {
+  const hashes = new Set<string>();
+  for (const match of html.matchAll(
+    /<script\b(?:[^>"']|"[^"]*"|'[^']*')*>([\s\S]*?)<\/script\s*>/gi
+  )) {
+    hashes.add(
+      `'sha256-${createHash('sha256').update(match[1].replace(/\r\n?/g, '\n')).digest('base64')}'`
+    );
+  }
+  const scriptPolicy = `script-src 'self' ${[...hashes].join(' ')}`.trim();
+  const directives = policy
+    .split(';')
+    .filter(directive => !/^\s*script-src(?:-elem)?\s/i.test(directive));
+  return [...directives, scriptPolicy].join(';');
+}
+
+export function createSsgRewriteMiddleware(clientDir: string): express.RequestHandler {
+  return (req, _res, next) => {
+    if (req.method !== 'GET' && req.method !== 'HEAD') return next();
+    const queryIndex = req.url.indexOf('?');
+    const pathname = queryIndex < 0 ? req.url : req.url.slice(0, queryIndex);
+    if (pathname.includes('.') || pathname.endsWith('/')) return next();
+    let decoded: string;
+    try {
+      decoded = decodeURIComponent(pathname);
+    } catch {
+      return next();
+    }
+    const indexPath = path.resolve(clientDir, `.${decoded}`, 'index.html');
+    if (!indexPath.startsWith(path.resolve(clientDir) + path.sep)) return next();
+    fs.access(indexPath)
+      .then(() => {
+        req.url = pathname + '/' + (queryIndex < 0 ? '' : req.url.slice(queryIndex));
+        next();
+      })
+      .catch(() => next());
+  };
 }
