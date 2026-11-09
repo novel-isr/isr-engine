@@ -73,5 +73,5 @@ it('keeps tsconfig project glob resolution and directory exclusions working', ()
       ...options,
       filePath: path.join(root, 'packages/ignored/index.ts'),
     })
-  ).toThrow(/that TSConfig does not include this file/);
+  ).toThrow(/packages[/\\]ignored[/\\]index\.ts/);
 });
