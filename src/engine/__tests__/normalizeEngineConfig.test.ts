@@ -75,6 +75,28 @@ it.each([null, {}, 'not-an-array', 42, undefined])(
   }
 );
 
+it.each([Infinity, NaN, 0, -1, Number.MAX_VALUE])(
+  'rejects invalid route TTL %s during normalization',
+  ttl => {
+    expect(() =>
+      normalizeEngineConfig(
+        base({ routes: { '/page': { mode: 'isr', ttl, staleWhileRevalidate: 0 } } })
+      )
+    ).toThrow(/ttl|window/i);
+  }
+);
+
+it.each([Infinity, NaN, -1, Number.MAX_VALUE])(
+  'rejects invalid route stale window %s during normalization',
+  staleWhileRevalidate => {
+    expect(() =>
+      normalizeEngineConfig(
+        base({ routes: { '/page': { mode: 'isr', ttl: 1, staleWhileRevalidate } } })
+      )
+    ).toThrow(/staleWhileRevalidate|window/i);
+  }
+);
+
 function base(extra: DeepPartial<ISRConfig> = {}): ISRConfig {
   return {
     ...defaults,

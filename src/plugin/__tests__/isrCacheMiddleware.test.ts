@@ -1214,3 +1214,40 @@ it('does not turn a disconnected singleflight follower into a new leader', async
     await teardown(fx);
   }
 });
+
+describe('public render mode and cache route contract', () => {
+  it.each([
+    ['*', '/posts/*', '/posts/a'],
+    ['/posts/*', '/posts/:id', '/posts/a'],
+    ['/:extremelyLongParameter/:anotherLongParameter', '/posts/*', '/posts/a'],
+    ['/posts/*', '/posts/:id/*', '/posts/a/detail'],
+    ['/posts/*', '/posts/*/detail', '/posts/a/detail'],
+  ])('shares specificity for %s and %s', async (broad, specific, path) => {
+    const { resolveRenderMode } = await import('../../engine/RenderMode');
+    for (const entries of [
+      [
+        [broad, 'ssr'],
+        [specific, 'isr'],
+      ],
+      [
+        [specific, 'isr'],
+        [broad, 'ssr'],
+      ],
+    ] as const) {
+      const routes = Object.fromEntries(entries);
+      const fx = await startFixture({}, { renderMode: 'ssg', routes });
+      try {
+        const expectedMode = resolveRenderMode(path, 'ssg', routes);
+        expect(expectedMode).toBe('isr');
+        for (const expectedCache of ['MISS', 'HIT']) {
+          const response = await fetch(fx.baseUrl + path);
+          await response.text();
+          expect(response.headers.get('x-resolved-mode')).toBe(expectedMode);
+          expect(response.headers.get('x-cache-status')).toBe(expectedCache);
+        }
+      } finally {
+        await teardown(fx);
+      }
+    }
+  });
+});

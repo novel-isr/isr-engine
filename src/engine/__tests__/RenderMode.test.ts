@@ -1,3 +1,6 @@
+import { Worker } from 'node:worker_threads';
+import { fileURLToPath } from 'node:url';
+import { buildSync } from 'esbuild';
 /**
  * RenderMode —— 路由模式解析 + 通配符 / 动态路由 / fallback chain
  *
@@ -138,5 +141,100 @@ describe('getRouteFallbackChain 集成', () => {
 
   it('路由未命中 → 用 globalMode 的链', () => {
     expect(getRouteFallbackChain('/nothing', 'ssr')).toEqual(['server', 'csr-shell']);
+  });
+});
+
+describe('shared route selection contract', () => {
+  const cases: [string, string, string][] = [
+    ['/posts/a', '*', '/posts/*'],
+    ['/posts/a', '/posts/*', '/posts/:id'],
+    ['/posts/a', '/:extremelyLongParameter/:anotherLongParameter', '/posts/*'],
+    ['/posts/a/detail', '/posts/*', '/posts/:id/*'],
+    ['/posts/a/detail', '/posts/*', '/posts/*/detail'],
+    ['/posts/a', '/posts/:id', '/posts/a'],
+  ];
+  it.each(cases)('%s selects %s < %s regardless of declaration order', (path, broad, specific) => {
+    for (const entries of [
+      [
+        [broad, 'ssr'],
+        [specific, 'isr'],
+      ],
+      [
+        [specific, 'isr'],
+        [broad, 'ssr'],
+      ],
+    ]) {
+      expect(resolveRenderMode(path, 'ssg', Object.fromEntries(entries))).toBe('isr');
+    }
+  });
+  it('uses declaration order only for equal semantic specificity', () => {
+    expect(
+      resolveRenderMode('/posts/a', 'ssg', { '/posts/:x': 'ssr', '/posts/:veryLongName': 'isr' })
+    ).toBe('ssr');
+  });
+  it.each([
+    ['/posts/a/detail', '/posts/:id/*', true],
+    ['/posts//detail', '/posts/:id/*', false],
+    ['/posts/a/detail', '/posts/*/detail', true],
+    ['/file/a.json', '/file/*.json', true],
+    ['/file/aXjson', '/file/*.json', false],
+    ['/a+b/x', '/a+b/*', true],
+    ['/ab/x', '/a+b/*', false],
+    ['/posts/', '/posts/:id', false],
+    ['/posts/', '/posts/*', true],
+    ['/posts/a/', '/posts/:id', false],
+  ])('matches %s against %s = %s', (path, pattern, expected) => {
+    expect(matchRoutePattern(path, pattern)).toBe(expected);
+  });
+});
+
+describe('bounded route matching', () => {
+  it('finishes adversarial wildcard failures without blocking the caller', async () => {
+    const { outputFiles } = buildSync({
+      entryPoints: [fileURLToPath(new URL('../RenderMode.ts', import.meta.url))],
+      bundle: true,
+      platform: 'node',
+      format: 'cjs',
+      write: false,
+      logLevel: 'error',
+    });
+    const worker = new Worker(
+      outputFiles[0].text +
+        `
+      const { parentPort } = require('node:worker_threads');
+      const path = '/' + 'a'.repeat(80);
+      const pattern = '/' + '*a'.repeat(14) + 'b';
+      parentPort.postMessage([
+        module.exports.matchRoutePattern(path, pattern),
+        module.exports.resolveRenderMode(path, 'ssr', { [pattern]: 'isr' }),
+      ]);
+    `,
+      { eval: true }
+    );
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    try {
+      const result = await new Promise((resolve, reject) => {
+        worker.once('message', resolve);
+        worker.once('error', reject);
+        timer = setTimeout(() => reject(new Error('wildcard matching exceeded 500ms')), 500);
+      });
+      expect(result).toEqual([false, 'ssr']);
+    } finally {
+      clearTimeout(timer);
+      // Worker termination remains effective when matching never yields its thread.
+      await worker.terminate();
+    }
+  });
+  it.each([
+    ['/文/😀', '/文/*', true],
+    ['/文/😀', '/文/😀', true],
+    ['/文/😀', '/文/😃', false],
+    ['/a%2Fb/item', '/:encoded/item', true],
+    ['/a%2Fb/item', '/a%2Fb/*', true],
+    ['/a/b/item', '/a%2Fb/*', false],
+    ['/posts/a', '/posts/:id*', true],
+    ['/posts/', '/posts/:id*', false],
+  ])('preserves literal and parameter semantics: %s / %s', (path, pattern, expected) => {
+    expect(matchRoutePattern(path, pattern)).toBe(expected);
   });
 });

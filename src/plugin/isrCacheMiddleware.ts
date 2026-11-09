@@ -37,7 +37,8 @@ import type { CacheRenderLease } from '../cache/ResponseCacheBackend';
 
 import http from 'node:http';
 import { randomBytes } from 'node:crypto';
-import { matchRoutePattern } from '../engine/RenderMode';
+import { selectRouteRule } from '../engine/RenderMode';
+import { assertCacheDuration, resolveCacheDurations } from '../utils/cacheDuration';
 import { LRUCache } from 'lru-cache';
 import { createMemoryCacheStore, type IsrCacheStore, type IsrCachedEntry } from './isrCacheStore';
 import {
@@ -246,8 +247,14 @@ function extractRoutingRules(
   const routes = (cfg.routes as Record<string, RouteRule> | undefined) || {};
 
   const revalidate = cfg.revalidate;
-  const defaultTtlSeconds =
-    typeof revalidate === 'number' && revalidate > 0 ? revalidate : fallbackTtl;
+  assertCacheDuration(fallbackTtl, 'defaultTtlSeconds');
+  const defaultTtlSeconds = revalidate === undefined ? fallbackTtl : revalidate;
+  assertCacheDuration(defaultTtlSeconds, 'revalidate');
+  resolveCacheDurations(defaultTtlSeconds);
+  for (const [pattern, rule] of Object.entries(routes)) {
+    if (typeof rule !== 'string')
+      resolveCacheDurations(defaultTtlSeconds, rule, `routes.${pattern}`);
+  }
 
   return { globalMode, routes, defaultTtlSeconds };
 }
@@ -258,39 +265,18 @@ function extractRoutingRules(
  */
 function parseRouteRule(value: RouteRule, defaultTtl: number): ResolvedRouteRule {
   if (typeof value === 'string') {
-    const ttl = defaultTtl;
-    return { mode: value, ttlSeconds: ttl, swrSeconds: ttl };
+    return { mode: value, ...resolveCacheDurations(defaultTtl) };
   }
-  const ttl = typeof value.ttl === 'number' && value.ttl > 0 ? value.ttl : defaultTtl;
-  const swr =
-    typeof value.staleWhileRevalidate === 'number' && value.staleWhileRevalidate >= 0
-      ? value.staleWhileRevalidate
-      : ttl;
-  return { mode: value.mode, ttlSeconds: ttl, swrSeconds: swr };
+  return { mode: value.mode, ...resolveCacheDurations(defaultTtl, value) };
 }
 
 /**
- * 按路径匹配路由规则 —— 精确 > 最长 glob > 全局默认
+ * 按路径匹配路由规则 —— 与公开渲染模式共用匹配与优先级 > 全局默认
  */
 function matchRouteRule(path: string, rules: RoutingRules): ResolvedRouteRule {
   const { routes, defaultTtlSeconds, globalMode } = rules;
 
-  if (routes[path] !== undefined) {
-    return parseRouteRule(routes[path], defaultTtlSeconds);
-  }
-
-  const globPatterns = Object.keys(routes)
-    .filter(p => p.includes('*') || p.includes(':'))
-    .sort((a, b) => b.length - a.length);
-
-  for (const pattern of globPatterns) {
-    if (pattern.includes(':') ? matchRoutePattern(path, pattern) : matchGlob(pattern, path)) {
-      return parseRouteRule(routes[pattern], defaultTtlSeconds);
-    }
-  }
-
-  // 回退到全局模式，使用默认 TTL/SWR
-  return parseRouteRule(globalMode, defaultTtlSeconds);
+  return parseRouteRule(selectRouteRule(path, routes) ?? globalMode, defaultTtlSeconds);
 }
 
 function hasRedisRuntime(config: Partial<ISRConfig> | undefined): boolean {
@@ -301,6 +287,10 @@ function withRuntimeCacheOptions(
   config: Partial<ISRConfig> | undefined,
   options: IsrCacheMiddlewareOptions
 ): IsrCacheMiddlewareOptions {
+  extractRoutingRules(
+    config,
+    options.defaultTtlSeconds === undefined ? 3600 : options.defaultTtlSeconds
+  );
   if (options.store) return options;
 
   const redis = resolveRuntimeRedisConfig(config?.runtime?.redis);
@@ -329,11 +319,6 @@ function withRuntimeCacheOptions(
           })
         : undefined),
   };
-}
-
-function matchGlob(pattern: string, path: string): boolean {
-  const escaped = pattern.replace(/[.+?^${}()|[\]\\]/g, '\\$&').replace(/\*/g, '.*');
-  return new RegExp(`^${escaped}$`).test(path);
 }
 
 /**
@@ -426,11 +411,10 @@ export function createIsrCacheHandler(
   config: Partial<ISRConfig> | undefined,
   options: IsrCacheMiddlewareOptions = {}
 ): IsrCacheHandler {
+  const fallbackTtl = options.defaultTtlSeconds === undefined ? 3600 : options.defaultTtlSeconds;
+  const rules: RoutingRules = extractRoutingRules(config, fallbackTtl);
   const cache: IsrCacheStore =
     options.store ?? createMemoryCacheStore({ max: options.max ?? 1000 });
-
-  const fallbackTtl = options.defaultTtlSeconds ?? 3600;
-  const rules: RoutingRules = extractRoutingRules(config, fallbackTtl);
   const l2ReadTimeoutMs = options.l2ReadTimeoutMs ?? 100;
   const bgTimeoutMs = options.backgroundRevalidateTimeoutMs ?? 30_000;
   const hasExperiments =
@@ -679,76 +663,95 @@ export function createIsrCacheMiddleware(
 
   let mounted = false;
   let handler: IsrCacheHandler | null = null;
+  let mounting: Promise<void> | undefined;
+  let closing: Promise<void> | undefined;
 
   return {
     name: 'isr-cache-middleware',
-    async closeBundle() {
-      const active = handler;
-      handler = null;
-      mounted = false;
-      await active?.destroy();
+    closeBundle() {
+      if (closing) return closing;
+      closing = (async () => {
+        await mounting?.catch(() => undefined);
+        const active = handler;
+        handler = null;
+        mounted = false;
+        await active?.destroy();
+      })().finally(() => {
+        closing = undefined;
+      });
+      return closing;
     },
     handleHotUpdate() {
       handler?.clear();
     },
     async configureServer(server) {
+      if (closing) await closing;
       if (mounted) return;
-      mounted = true;
-
-      let resolvedConfig: Partial<ISRConfig> | undefined = explicitConfig;
-      if (!hasExplicit) {
-        try {
+      if (mounting) return mounting;
+      mounting = (async () => {
+        let resolvedConfig: Partial<ISRConfig> | undefined = explicitConfig;
+        if (!hasExplicit) {
           resolvedConfig = await loadConfig({ cwd: server.config.root });
-          const rules = extractRoutingRules(resolvedConfig, options.defaultTtlSeconds ?? 3600);
+          const rules = extractRoutingRules(
+            resolvedConfig,
+            options.defaultTtlSeconds === undefined ? 3600 : options.defaultTtlSeconds
+          );
           logger.info(
             `📋 ISR cache: 自动加载 ssr.config.ts 成功（mode=${rules.globalMode}, overrides=${Object.keys(rules.routes).length}）`
           );
-        } catch (err) {
-          logger.warn('ISR cache: ssr.config.ts 加载失败，将按默认 ISR 模式缓存所有路由', err);
         }
-      }
 
-      handler = createIsrCacheHandler(
-        resolvedConfig,
-        withRuntimeCacheOptions(resolvedConfig, { ...options, development: true })
-      );
-      const opsConfig = resolveOpsConfig(resolvedConfig, 'development');
-
-      // dev-only ops endpoints：供 dev inspector / bench 拉取缓存统计和 Prometheus 指标。
-      server.middlewares.use((req, res, next) => {
-        const activeHandler = handler;
-        if (!activeHandler) {
-          next();
-          return;
-        }
-        // Prometheus exposition：scrape 端点
-        if (opsConfig.metrics.enabled && req.url === '/metrics' && req.method === 'GET') {
-          createOpsAuthMiddleware('metrics', opsConfig)(req as never, res as never, () => {
-            import('@/metrics/PromMetrics')
-              .then(async ({ promRegistry }) => {
-                const body = await promRegistry.metrics();
-                res.setHeader('content-type', promRegistry.contentType);
-                res.end(body);
-              })
-              .catch(err => {
-                res.statusCode = 500;
-                res.end(`metrics error: ${String(err)}`);
+        const opsConfig = resolveOpsConfig(resolvedConfig, 'development');
+        const nextHandler = createIsrCacheHandler(
+          resolvedConfig,
+          withRuntimeCacheOptions(resolvedConfig, { ...options, development: true })
+        );
+        try {
+          // Prepare every dependency before a single middleware mount becomes visible.
+          const inspector = opsConfig.inventory.enabled
+            ? (await import('./createCacheInspectorMiddleware')).createCacheInspectorMiddleware(
+                nextHandler,
+                opsConfig
+              )
+            : undefined;
+          handler = nextHandler;
+          server.middlewares.use((req, res, next) => {
+            if (handler !== nextHandler) return next();
+            if (opsConfig.metrics.enabled && req.url === '/metrics' && req.method === 'GET') {
+              createOpsAuthMiddleware('metrics', opsConfig)(req as never, res as never, () => {
+                import('@/metrics/PromMetrics')
+                  .then(async ({ promRegistry }) => {
+                    const body = await promRegistry.metrics();
+                    res.setHeader('content-type', promRegistry.contentType);
+                    res.end(body);
+                  })
+                  .catch(err => {
+                    res.statusCode = 500;
+                    res.end(`metrics error: ${String(err)}`);
+                  });
               });
+              return;
+            }
+            if (inspector) {
+              inspector(req, res, error => {
+                if (error) next(error);
+                else nextHandler(req, res, next);
+              });
+            } else nextHandler(req, res, next);
           });
-          return;
+          mounted = true;
+          if (inspector) logger.info('🔍 ISR cache inventory 已启用：GET /__isr/cache/inventory');
+        } catch (error) {
+          if (handler === nextHandler) handler = null;
+          await nextHandler
+            .destroy()
+            .catch(cleanupError => logger.warn('ISR cache setup cleanup failed', cleanupError));
+          throw error;
         }
-        next();
+      })().finally(() => {
+        mounting = undefined;
       });
-
-      // Inventory 端点 —— 必须在 isr cache handler 之前挂，让请求先被 inventory 截获。
-      // dev 默认 enabled=true（DEV_DEFAULTS），开箱即用排错；生产由用户显式开启。
-      if (opsConfig.inventory.enabled) {
-        const { createCacheInspectorMiddleware } = await import('./createCacheInspectorMiddleware');
-        server.middlewares.use(createCacheInspectorMiddleware(handler, opsConfig));
-        logger.info('🔍 ISR cache inventory 已启用：GET /__isr/cache/inventory');
-      }
-
-      server.middlewares.use(handler);
+      return mounting;
     },
   };
 }

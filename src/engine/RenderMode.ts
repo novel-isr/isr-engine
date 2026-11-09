@@ -35,43 +35,115 @@ export function resolveRenderMode(
 ): RenderModeType {
   if (!overrides) return globalMode;
 
-  // 1. 精确匹配
-  if (overrides[url] !== undefined) {
-    return ruleToMode(overrides[url]);
-  }
+  const rule = selectRouteRule(url, overrides);
+  return rule === undefined ? globalMode : ruleToMode(rule);
+}
 
-  // 2. 通配符/动态路由匹配
-  for (const [pattern, rule] of Object.entries(overrides)) {
-    if (matchRoutePattern(url, pattern)) {
-      return ruleToMode(rule);
+type RouteToken = { kind: 'literal'; value: string } | { kind: 'glob' } | { kind: 'parameter' };
+
+/**
+ * One grammar for public mode resolution and cache policy selection:
+ * `*` spans zero or more characters (including slashes), while a segment
+ * beginning with `:name` consumes one nonempty segment. Literal code points are
+ * compared directly; paths retain their encoding and trailing-slash distinctions.
+ */
+function compileRoutePattern(pattern: string): { tokens: RouteToken[]; specificity: number[] } {
+  let literalCount = 0;
+  let parameterCount = 0;
+  let globCount = 0;
+  const tokens: RouteToken[] = [];
+  const segments = pattern.split('/');
+  for (const [index, segment] of segments.entries()) {
+    if (index > 0) {
+      tokens.push({ kind: 'literal', value: '/' });
+      literalCount++;
+    }
+    let remaining = segment;
+    if (segment.startsWith(':') && segment.length > 1 && segment[1] !== '*') {
+      const globIndex = segment.indexOf('*');
+      parameterCount++;
+      tokens.push({ kind: 'parameter' });
+      remaining = globIndex < 0 ? '' : segment.slice(globIndex);
+    }
+    for (const character of remaining) {
+      if (character === '*') {
+        globCount++;
+        tokens.push({ kind: 'glob' });
+      } else {
+        literalCount++;
+        tokens.push({ kind: 'literal', value: character });
+      }
     }
   }
-
-  return globalMode;
+  return { tokens, specificity: [literalCount, -globCount, parameterCount] };
 }
 
 /**
- * 匹配路由模式 —— 支持精确匹配、通配符 *、动态路由 :id
+ * Dynamic programming bounds matching to O(tokens × path code points) time and
+ * O(path code points) memory. In particular, repeated globs never backtrack over
+ * exponentially many partitions when a final literal fails to match.
  */
+function matchesRouteTokens(url: string, tokens: RouteToken[]): boolean {
+  const characters = Array.from(url);
+  let previous = new Uint8Array(characters.length + 1);
+  let current = new Uint8Array(characters.length + 1);
+  previous[0] = 1;
+  for (const token of tokens) {
+    current.fill(0);
+    if (token.kind === 'glob') current[0] = previous[0];
+    for (let index = 1; index <= characters.length; index++) {
+      if (token.kind === 'glob') {
+        current[index] = previous[index] || current[index - 1];
+      } else if (token.kind === 'parameter') {
+        current[index] =
+          characters[index - 1] !== '/' ? previous[index - 1] || current[index - 1] : 0;
+      } else {
+        current[index] = characters[index - 1] === token.value ? previous[index - 1] : 0;
+      }
+    }
+    [previous, current] = [current, previous];
+  }
+  return previous[characters.length] === 1;
+}
+
+/** Match exact, dynamic, interior glob and combined dynamic/glob patterns. */
 export function matchRoutePattern(url: string, pattern: string): boolean {
-  if (pattern === '*') return true;
-  if (pattern === url) return true;
+  if (url === pattern) return true;
+  if (!pattern.includes('*') && !pattern.split('/').some(segment => segment.startsWith(':')))
+    return false;
+  return matchesRouteTokens(url, compileRoutePattern(pattern).tokens);
+}
 
-  if (pattern.endsWith('/*')) {
-    const prefix = pattern.slice(0, -1);
-    return url.startsWith(prefix);
+/**
+ * Exact paths win. Otherwise prefer more literal characters, fewer unrestricted
+ * globs, then more constrained parameters. Parameter names never affect ranking.
+ * Equal specificity keeps declaration order; both consumers select the whole rule
+ * so mode, TTL and SWR cannot come from different matching algorithms.
+ */
+export function selectRouteRule(
+  url: string,
+  routes: Record<string, RouteRule>
+): RouteRule | undefined {
+  if (Object.prototype.hasOwnProperty.call(routes, url) && routes[url] !== undefined)
+    return routes[url];
+  let selected: RouteRule | undefined;
+  let best: number[] | undefined;
+  for (const [pattern, rule] of Object.entries(routes)) {
+    // Exact declarations were already checked; avoid DP work for every other literal route.
+    if (!pattern.includes('*') && !pattern.split('/').some(segment => segment.startsWith(':')))
+      continue;
+    const { tokens, specificity } = compileRoutePattern(pattern);
+    if (!matchesRouteTokens(url, tokens)) continue;
+    const bestSpecificity = best;
+    const difference = bestSpecificity
+      ? specificity.findIndex((value, index) => value !== bestSpecificity[index])
+      : -1;
+    if (!best || (difference >= 0 && specificity[difference] > best[difference])) {
+      selected = rule;
+      best = specificity;
+    }
   }
-
-  if (pattern.includes(':')) {
-    const patternParts = pattern.split('/');
-    const urlParts = url.split('/');
-    if (patternParts.length !== urlParts.length) return false;
-    return patternParts.every((part, index) => {
-      return part.startsWith(':') || part === urlParts[index];
-    });
-  }
-
-  return false;
+  return selected;
 }
 
 /**

@@ -1,6 +1,7 @@
 import { resolveImageOptions } from './resolveImageOptions';
 import type { ISRConfig } from '@/types';
 import { assertDistinctHtmlRouteIdentities } from '../utils/htmlPathname';
+import { resolveCacheDurations } from '../utils/cacheDuration';
 
 /**
  * Engine-owned config normalization.
@@ -21,13 +22,11 @@ export function normalizeEngineConfig(config: ISRConfig): ISRConfig {
   if (!isRenderMode(config.renderMode)) {
     throw new Error("ssr.config.ts 必须显式声明 renderMode: 'isr' | 'ssr' | 'ssg'");
   }
-  if (!Number.isFinite(config.revalidate) || config.revalidate <= 0) {
-    throw new Error('ssr.config.ts 必须显式声明正数 revalidate（秒）');
-  }
+  resolveCacheDurations(config.revalidate);
   if (!isRecord(config.routes)) {
     throw new Error('ssr.config.ts 必须显式声明 routes 对象');
   }
-  validateRoutes(config.routes);
+  validateRoutes(config.routes, config.revalidate);
   assertDistinctHtmlRouteIdentities(Object.keys(config.routes), { allowPatterns: true });
   if (!isRecord(config.runtime)) {
     throw new Error('ssr.config.ts 必须显式声明 runtime 对象');
@@ -74,7 +73,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
-function validateRoutes(routes: Record<string, unknown>): void {
+function validateRoutes(routes: Record<string, unknown>, defaultTtl: number): void {
   for (const [pattern, rule] of Object.entries(routes)) {
     if (typeof rule === 'string') {
       if (!isRenderMode(rule)) {
@@ -89,6 +88,7 @@ function validateRoutes(routes: Record<string, unknown>): void {
     if (!isRenderMode(rule.mode)) {
       throw new Error(`ssr.config.ts routes.${pattern}.mode 必须是 'isr' | 'ssr' | 'ssg'`);
     }
+    resolveCacheDurations(defaultTtl, rule, `routes.${pattern}`);
   }
 }
 
