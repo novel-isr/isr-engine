@@ -44,7 +44,11 @@ describe('development RSC stylesheet identity', () => {
         hmr: false,
         fs: { allow: [root, process.cwd()] },
       },
-      plugins: createIsrPlugin({ root, isrCache: { enabled: false } }),
+      plugins: createIsrPlugin({
+        root,
+        config: { renderMode: 'ssr' },
+        isrCache: { enabled: false },
+      }),
     });
     viteServers.push(server);
 
@@ -154,7 +158,7 @@ describe('development RSC stylesheet identity', () => {
             );
           },
         },
-        ...createIsrPlugin({ root, isrCache: { enabled: false } }),
+        ...createIsrPlugin({ root, config: { renderMode: 'ssr' }, isrCache: { enabled: false } }),
       ],
     });
     viteServers.push(server);

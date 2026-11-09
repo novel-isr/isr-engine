@@ -6,7 +6,6 @@ settings:
 
 overrides:
   fast-uri: 3.1.9
-  minimatch@10.2.5>brace-expansion: 5.0.12
   qs: 6.17.1
   proxy-addr: 2.0.8
 
@@ -1061,6 +1060,10 @@ packages:
     resolution: {integrity: sha512-0KI/607xoxSToH7GjN1FfSbLoU0+btTicjsQSWQlh/hZykN8KpmMf7uYwPW3R+akZ6R/w18ZlXSHBYXiYUPO3g==}
     engines: {node: '>= 0.10'}
 
+  ipaddr.js@2.5.0:
+    resolution: {integrity: sha512-aq+t5NAc+cS6rZQQVWC2x98CPqGtKKTMDd4Gaodv0wShnItdKg/51djkGJ1hqH+Oy0ivDftCbSLCQob8zso01w==}
+    engines: {node: '>= 10'}
+
   is-extglob@2.1.1:
     resolution: {integrity: sha512-SbKbANkN603Vi4jEZv49LeVJMn4yGwsbzZworEoyEiutsN3nJYdbO36zfhGJ6QEDpOZIFkDtnq5JRxmvl3jsoQ==}
     engines: {node: '>=0.10.0'}
@@ -1895,8 +1898,7 @@ snapshots:
   '@esbuild/win32-x64@0.28.2':
     optional: true
 
-  '@img/colour@1.1.0':
-    optional: true
+  '@img/colour@1.1.0': {}
 
   '@img/sharp-darwin-arm64@0.35.5':
     optionalDependencies:
@@ -2044,6 +2046,7 @@ snapshots:
       esbuild: 0.28.2
       express: 5.3.0
       helmet: 7.2.0
+      ipaddr.js: 2.5.0
       lru-cache: 10.4.3
       ora: 8.2.0
       parse5: 8.1.1
@@ -2052,12 +2055,12 @@ snapshots:
       react-dom: 19.3.0-canary-bd6ea412-20260824(react@19.3.0-canary-bd6ea412-20260824)
       react-server-dom-webpack: 19.3.0-canary-bd6ea412-20260824(react-dom@19.3.0-canary-bd6ea412-20260824(react@19.3.0-canary-bd6ea412-20260824))(react@19.3.0-canary-bd6ea412-20260824)(webpack@5.106.2(esbuild@0.28.2))
       rsc-html-stream: 0.0.7
+      sharp: 0.35.5(@types/node@22.20.5)
       sitemap: 8.0.3
       typescript: 5.9.3
       vite: 8.1.6(@types/node@22.20.5)(esbuild@0.28.2)(sass-embedded@1.108.1)(sass@1.108.1)(terser@5.51.2)
     optionalDependencies:
       ioredis: 5.10.1
-      sharp: 0.35.5(@types/node@22.20.5)
     transitivePeerDependencies:
       - '@types/node'
       - supports-color
@@ -2687,6 +2690,8 @@ snapshots:
 
   ipaddr.js@1.9.1: {}
 
+  ipaddr.js@2.5.0: {}
+
   is-extglob@2.1.1:
     optional: true
 
@@ -3089,8 +3094,7 @@ snapshots:
     optionalDependencies:
       webpack: 5.106.2(esbuild@0.28.2)
 
-  semver@7.8.6:
-    optional: true
+  semver@7.8.6: {}
 
   send@1.2.1:
     dependencies:
@@ -3151,7 +3155,6 @@ snapshots:
       '@img/sharp-win32-ia32': 0.35.5
       '@img/sharp-win32-x64': 0.35.5
       '@types/node': 22.20.5
-    optional: true
 
   side-channel-list@1.0.1:
     dependencies:

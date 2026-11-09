@@ -303,12 +303,9 @@ export async function createProductionRuntime(
 
     options.setupRoutes?.(app);
 
-    // SSG 路由直发：URL `/foo` 内部映射到 `/foo/index.html`（不做 301 重定向）
-    // —— 让 spider 预生成的 dist/client/<path>/index.html 真正被使用，跳过 ISR 缓存
-    app.use(createStaticHtmlMiddleware(clientDir, staticCspIndex));
+    // Immutable SSG HTML seeds the response cache below; it must not bypass invalidation.
 
-    // 客户端静态资源（必须在 ISR cache 之前 —— SSG 文件由 OS 文件系统直发，
-    // 不需要也不应该走内存 LRU 缓存，避免 stream pipe 与 res.write 拦截不兼容导致空 body）
+    // 客户端资源先于响应缓存；HTML 由下面的清单索引和 SSG 缓存管理。
     app.use(createStaticAssetMiddleware(clientDir));
 
     // /assets/* 404 guard —— 走到这里说明 express.static 没找到文件（fallthrough）。
@@ -319,9 +316,10 @@ export async function createProductionRuntime(
       res.status(404).set('Cache-Control', 'no-store').end();
     });
 
-    // 图片优化端点（/_/img）—— sharp 是 optionalDependency，未装时端点返回 501
+    // 图片优化端点（/_/img）—— 与开发环境共享显式远程来源策略
     const { createImageMiddleware } = await import('@/plugin/createImagePlugin');
-    app.use(createImageMiddleware({ remoteAllowlist: [] }));
+    const { resolveImageOptions } = await import('@/config/resolveImageOptions');
+    app.use(createImageMiddleware(resolveImageOptions(config.runtime.images), {}, clientDir));
 
     // ISR 缓存：只读取 ssr.config.ts runtime.redis；环境变量需由业务配置显式注入。
     const { createAutoCacheStore } = await import('@/cache/createAutoCacheStore');
@@ -330,27 +328,81 @@ export async function createProductionRuntime(
       await import('@/config/resolveRuntimeRedis');
     const redisCfg = resolveRuntimeRedisConfig(runtime?.redis);
     const hasRedisConfig = hasRuntimeRedisConnection(runtime?.redis);
-    const cache = createIsrCacheHandler(config, {
-      buildId: process.env.APP_VERSION ?? staticCspIndex.buildId,
-      store: createAutoCacheStore({
-        responseNamespace: `production:${process.env.ISR_CACHE_NAMESPACE ?? 'default'}`,
-        redisUrl: redisCfg?.url,
-        redisHost: redisCfg?.host,
-        redisPort: redisCfg?.port,
-        redisPassword: redisCfg?.password,
-        redisKeyPrefix: redisCfg?.keyPrefix,
-      }),
-      invalidationBus: hasRedisConfig
-        ? new RedisInvalidationBus({
-            url: redisCfg?.url,
-            host: redisCfg?.host,
-            port: redisCfg?.port,
-            password: redisCfg?.password,
-            keyPrefix: redisCfg?.keyPrefix,
-            channel: redisCfg?.invalidationChannel,
-          })
-        : undefined,
-    });
+    const ssgRoutes =
+      staticCspIndex.ssgRoutes ?? (Array.isArray(config.ssg?.routes) ? config.ssg.routes : []);
+    const cacheRoutes = { ...config.routes };
+    for (const route of ssgRoutes) {
+      const rule = cacheRoutes[route];
+      cacheRoutes[route] = typeof rule === 'object' ? { ...rule, mode: 'ssg' } : 'ssg';
+    }
+    const cache = createIsrCacheHandler(
+      { ...config, routes: cacheRoutes },
+      {
+        buildId: process.env.APP_VERSION ?? staticCspIndex.buildId,
+        staticSeedInfo: pathname => {
+          const relative = pathname.slice(1);
+          const htmlPath =
+            relative.endsWith('/') || !relative
+              ? relative + 'index.html'
+              : relative + '/index.html';
+          const generatedAt = staticCspIndex.generatedAt?.get(htmlPath);
+          return generatedAt === undefined || generatedAt > Date.now()
+            ? undefined
+            : { generatedAt };
+        },
+        staticSeed: async (pathname, policy) => {
+          const relative = pathname.slice(1);
+          if (
+            relative.includes('\\') ||
+            relative.split('/').some(part => part === '..' || part === '.')
+          )
+            return;
+          const htmlPath =
+            relative.endsWith('/') || !relative
+              ? relative + 'index.html'
+              : relative + '/index.html';
+          const hashes = staticCspIndex.scriptHashes.get(htmlPath);
+          if (!hashes) return;
+          const absolute = path.join(clientDir, htmlPath);
+          const body = await fs.readFile(absolute);
+          const generatedAt = staticCspIndex.generatedAt?.get(htmlPath);
+          if (generatedAt === undefined) return;
+          return {
+            body,
+            statusCode: 200,
+            contentType: 'text/html; charset=utf-8',
+            headers: {
+              'content-type': 'text/html; charset=utf-8',
+              'content-security-policy': applyStaticScriptPolicy(policy, hashes),
+              'cache-control': 'no-cache',
+              'x-served-by': 'ssg-static',
+            },
+            storedAt: generatedAt,
+            expiresAt: 0,
+            hardExpiresAt: 0,
+            tags: [],
+          };
+        },
+        store: createAutoCacheStore({
+          responseNamespace: `production:${process.env.ISR_CACHE_NAMESPACE ?? 'default'}`,
+          redisUrl: redisCfg?.url,
+          redisHost: redisCfg?.host,
+          redisPort: redisCfg?.port,
+          redisPassword: redisCfg?.password,
+          redisKeyPrefix: redisCfg?.keyPrefix,
+        }),
+        invalidationBus: hasRedisConfig
+          ? new RedisInvalidationBus({
+              url: redisCfg?.url,
+              host: redisCfg?.host,
+              port: redisCfg?.port,
+              password: redisCfg?.password,
+              keyPrefix: redisCfg?.keyPrefix,
+              channel: redisCfg?.invalidationChannel,
+            })
+          : undefined,
+      }
+    );
     cleanups.push(() => cache.destroy());
     // Inventory 端点必须在 ISR cache 之前挂 —— 路径已在 isBypassPath 内不会被缓存,
     // 但提前挂可以避开 cache handler 的 res.once('finish') metric 记录这次 admin 请求。
@@ -362,6 +414,12 @@ export async function createProductionRuntime(
     }
 
     app.use(cache);
+    const staticHtml = createStaticHtmlMiddleware(clientDir, staticCspIndex);
+    app.use((req, res, next) => {
+      // Runtime SSG misses must reach the renderer; other indexed documents remain static.
+      if (res.getHeader('X-Resolved-Mode') === 'ssg') return next();
+      staticHtml(req, res, next);
+    });
 
     // Prometheus 抓取端点（prom-client 文本格式）
     const { promRegistry } = await import('@/metrics/PromMetrics');

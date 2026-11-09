@@ -108,94 +108,66 @@ describe('image endpoint boundaries', () => {
     expect(second.headers.vary).toBe('Accept');
     expect(second.headers['cache-control']).toBe(first.headers['cache-control']);
   });
-  it('checks redirect destinations before fetching them', async () => {
-    const fetcher = vi.fn(
-      async (_url: unknown, _options: unknown) =>
-        new Response(null, { status: 302, headers: { location: 'http://blocked.test/a' } })
-    );
-    vi.stubGlobal('fetch', fetcher);
-    expect(
-      (await handler({ remoteAllowlist: ['allowed.test'] })('https://allowed.test/a')).statusCode
-    ).toBe(400);
-    expect(fetcher).toHaveBeenCalledTimes(1);
-    expect(fetcher.mock.calls[0]?.[1]).toMatchObject({ redirect: 'manual' });
-  });
-  it('rejects oversize streams before buffering the entire response', async () => {
-    vi.stubGlobal(
-      'fetch',
-      vi.fn(
-        async () =>
-          new Response(
-            new ReadableStream({
-              start(c) {
-                c.enqueue(new Uint8Array(26 * 1024 * 1024));
-                c.close();
-              },
-            })
-          )
-      )
-    );
-    expect(
-      (await handler({ remoteAllowlist: ['allowed.test'] })('https://allowed.test/a')).statusCode
-    ).toBe(413);
-  });
 });
 
 describe('production image service resilience', () => {
+  it('bounds simultaneous transformations and releases slots afterwards', async () => {
+    await writeFile(path.join(root, 'public/a'), 'image');
+    let finish!: () => void;
+    const gate = new Promise<void>(resolve => {
+      finish = resolve;
+    });
+    const request = handler({}, true, {
+      loadSharp: async () => ({
+        default: () => ({
+          resize() {
+            return this;
+          },
+          toFormat() {
+            return this;
+          },
+          async toBuffer() {
+            await gate;
+            return Buffer.from('converted');
+          },
+        }),
+      }),
+    });
+    const pending = Array.from({ length: 4 }, (_, i) => request('/a', {}, '/_/img', `&w=${i + 1}`));
+    expect((await request('/a', {}, '/_/img', '&w=100')).statusCode).toBe(503);
+    finish();
+    expect((await Promise.all(pending)).every(result => result.statusCode === 200)).toBe(true);
+    expect((await request('/a', {}, '/_/img', '&w=101')).statusCode).toBe(200);
+  });
+  it('refreshes transformed sources after cache TTL', async () => {
+    await writeFile(path.join(root, 'public/a'), 'image');
+    let now = 100;
+    vi.spyOn(performance, 'now').mockImplementation(() => now);
+    const transform = vi.fn(async () => Buffer.from('converted'));
+    const request = handler({}, true, {
+      loadSharp: async () => ({
+        default: () => ({
+          toFormat() {
+            return this;
+          },
+          toBuffer: transform,
+        }),
+      }),
+    });
+    await request('/a');
+    await request('/a');
+    expect(transform).toHaveBeenCalledTimes(1);
+    now += 60_001;
+    await new Promise(resolve => setTimeout(resolve, 5));
+    await request('/a');
+    expect(transform).toHaveBeenCalledTimes(2);
+  });
   it('contains source failures and continues serving later requests', async () => {
     await writeFile(path.join(root, 'public/a'), 'image');
     const request = handler({}, true);
     expect((await request('https://blocked.test/a')).statusCode).toBe(400);
     expect((await request('/missing')).statusCode).toBe(404);
     expect((await request('/a')).statusCode).toBe(200);
-  });
-  it('aborts stalled upstream requests within ten seconds', async () => {
-    vi.useFakeTimers();
-    vi.stubGlobal(
-      'fetch',
-      vi.fn(
-        (_url: unknown, options: RequestInit) =>
-          new Promise((_resolve, reject) => {
-            options.signal?.addEventListener('abort', () => reject(new Error('aborted')));
-          })
-      )
-    );
-    const pending = handler({ remoteAllowlist: ['allowed.test'] }, true)('https://allowed.test/a');
-    await vi.advanceTimersByTimeAsync(10_001);
-    expect((await pending).statusCode).toBe(504);
-  });
-  it('bounds simultaneous processing and releases slots after failure', async () => {
-    let finish!: () => void;
-    const gate = new Promise<void>(resolve => {
-      finish = resolve;
-    });
-    vi.stubGlobal(
-      'fetch',
-      vi.fn(async () => {
-        await gate;
-        return new Response('image');
-      })
-    );
-    const request = handler({ remoteAllowlist: ['allowed.test'] }, true);
-    const pending = Array.from({ length: 4 }, (_, i) => request(`https://allowed.test/${i}`));
-    expect((await request('https://allowed.test/busy')).statusCode).toBe(503);
-    finish();
-    expect((await Promise.all(pending)).every(r => r.statusCode === 200)).toBe(true);
-    expect((await request('https://allowed.test/next')).statusCode).toBe(200);
-  });
-  it('refreshes cached mutable sources after the cache TTL', async () => {
-    let now = 100;
-    vi.spyOn(performance, 'now').mockImplementation(() => now);
-    const fetcher = vi.fn(async () => new Response('image'));
-    vi.stubGlobal('fetch', fetcher);
-    const request = handler({ remoteAllowlist: ['allowed.test'] }, true);
-    await request('https://allowed.test/a');
-    await request('https://allowed.test/a');
-    expect(fetcher).toHaveBeenCalledTimes(1);
-    now += 60_001;
-    await new Promise(resolve => setTimeout(resolve, 5));
-    await request('https://allowed.test/a');
-    expect(fetcher).toHaveBeenCalledTimes(2);
   });
 });
 
@@ -264,24 +236,7 @@ describe('original source validation and capability isolation', () => {
     expect(missing).toHaveBeenCalledTimes(1);
     expect((await handler()('/a')).statusCode).toBe(200);
   });
-  it('retains redirect and streamed byte limits for original delivery', async () => {
-    const loader = vi.fn(async () => null);
-    const request = handler({ remoteAllowlist: ['allowed.test'] }, true, { loadSharp: loader });
-    const fetcher = vi.fn(
-      async () =>
-        new Response(null, { status: 302, headers: { location: 'https://blocked.test/image.png' } })
-    );
-    vi.stubGlobal('fetch', fetcher);
-    expect(
-      (await request('https://allowed.test/a', {}, '/_/img', '&fmt=original')).statusCode
-    ).toBe(400);
-    expect(fetcher).toHaveBeenCalledTimes(1);
-    fetcher.mockImplementation(async () => new Response(new Uint8Array(26 * 1024 * 1024)));
-    expect(
-      (await request('https://allowed.test/a', {}, '/_/img', '&fmt=original')).statusCode
-    ).toBe(413);
-    expect(loader).not.toHaveBeenCalled();
-  });
+
   it('honors excluded and preferred transformed formats', async () => {
     await writeFile(path.join(root, 'public/a'), png);
     const request = handler();

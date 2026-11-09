@@ -145,3 +145,41 @@ it.each([
     expect(after.buildId).not.toBe(before.buildId);
   }
 );
+
+it('binds build generation timestamps to the manifest and ignores deployment copy mtimes', async () => {
+  const dir = await fixture();
+  const html = path.join(dir, 'client/static/index.html');
+  const old = new Date(Date.now() - 60_000);
+  await fs.utimes(html, old, old);
+  const manifest = await generateStaticCspManifest(dir);
+  const generatedAt = manifest.files[0].generatedAt;
+  await fs.utimes(html, new Date(), new Date());
+  expect((await loadStaticCspManifest(dir)).generatedAt?.get('static/index.html')).toBe(
+    generatedAt
+  );
+  manifest.files[0].generatedAt! += 1000;
+  await fs.writeFile(path.join(dir, STATIC_CSP_MANIFEST), JSON.stringify(manifest));
+  await expect(loadStaticCspManifest(dir)).rejects.toThrow(/integrity/i);
+});
+
+it('validates schema 2 builds without making deployment timestamps eligible for seeding', async () => {
+  const dir = await fixture();
+  const manifest = await generateStaticCspManifest(dir);
+  const payload = {
+    schemaVersion: 2,
+    deploymentFiles: manifest.deploymentFiles,
+    files: manifest.files.map(({ path, sha256, scriptHashes }) => ({ path, sha256, scriptHashes })),
+  };
+  await fs.writeFile(
+    path.join(dir, STATIC_CSP_MANIFEST),
+    JSON.stringify({
+      ...payload,
+      buildId: createHash('sha256').update(JSON.stringify(payload)).digest('hex'),
+    })
+  );
+  const index = await loadStaticCspManifest(dir);
+  expect(index.legacy).toBe(false);
+  expect(index.generatedAt?.size).toBe(0);
+  expect(index.ssgRoutes).toBeUndefined();
+  expect(index.scriptHashes.get('static/index.html')).toEqual([hash('hello()')]);
+});

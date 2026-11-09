@@ -22,26 +22,26 @@ import { generateStaticCspManifest } from '../security/staticCspManifest';
 export function createSsgPostBuildPlugin(explicitConfig: ISRConfig | undefined): Plugin {
   let root = process.cwd();
 
-  async function runSsg(): Promise<void> {
+  async function runSsg(): Promise<string[]> {
     let userConfig: ISRConfig | undefined = explicitConfig;
     if (!userConfig || Object.keys(userConfig).length === 0) {
       try {
         userConfig = (await loadConfig({ cwd: root })) as ISRConfig;
       } catch (err) {
         logger.warn('[SSG] ssr.config.ts 加载失败，跳过 SSG 预生成', err);
-        return;
+        return [];
       }
     }
-    if (!userConfig) return;
+    if (!userConfig) return [];
 
     const ssgRoutes = await extractSsgRoutes(userConfig);
-    if (ssgRoutes.length === 0) return;
+    if (ssgRoutes.length === 0) return [];
 
     const rscDistEntry = path.resolve(root, 'dist/rsc/index.js');
     const clientDir = path.resolve(root, 'dist/client');
     if (!existsSync(rscDistEntry)) {
       logger.warn('[SSG] 未找到 dist/rsc/index.js，跳过 SSG 预生成');
-      return;
+      return [];
     }
 
     logger.info(`[SSG] 预生成 ${ssgRoutes.length} 个路由（${ssgRoutes.join(', ')}）...`);
@@ -76,6 +76,7 @@ export function createSsgPostBuildPlugin(explicitConfig: ISRConfig | undefined):
       `[SSG] 预生成完成: ${result.successful} 成功, ${result.failed} 失败, 共 ${result.total}` +
         ` (失败率 ${(result.failureRate * 100).toFixed(1)}%)`
     );
+    return ssgRoutes;
   }
 
   /**
@@ -146,9 +147,9 @@ export function createSsgPostBuildPlugin(explicitConfig: ISRConfig | undefined):
     buildApp: {
       order: 'post',
       async handler() {
-        await runSsg();
+        const ssgRoutes = await runSsg();
         await generateSpaShell();
-        await generateStaticCspManifest(path.resolve(root, 'dist'));
+        await generateStaticCspManifest(path.resolve(root, 'dist'), { ssgRoutes });
       },
     },
   };

@@ -5,22 +5,26 @@ import path from 'node:path';
 import { parse, type DefaultTreeAdapterMap } from 'parse5';
 
 export const STATIC_CSP_MANIFEST = 'static-csp-manifest.json';
-const SCHEMA_VERSION = 2;
+const SCHEMA_VERSION = 3;
 
 interface StaticCspFile {
   path: string;
   sha256: string;
   scriptHashes: string[];
+  generatedAt?: number;
 }
 export interface StaticCspManifest {
   schemaVersion: number;
+  ssgRoutes?: string[];
   buildId: string;
   deploymentFiles: Array<{ path: string; sha256: string }>;
   files: StaticCspFile[];
 }
 export interface StaticCspIndex {
   legacy: boolean;
+  ssgRoutes?: readonly string[];
   buildId: string;
+  generatedAt?: ReadonlyMap<string, number>;
   scriptHashes: ReadonlyMap<string, readonly string[]>;
 }
 const sha256 = (bytes: string | Buffer): string => createHash('sha256').update(bytes).digest('hex');
@@ -64,6 +68,7 @@ async function readHtmlFiles(clientDir: string, parseScripts = false): Promise<S
           path: path.relative(clientDir, absolute).split(path.sep).join('/'),
           sha256: sha256(bytes),
           scriptHashes: parseScripts ? collectInlineScriptHashes(bytes.toString('utf8')) : [],
+          ...(parseScripts ? { generatedAt: Math.floor((await fs.stat(absolute)).mtimeMs) } : {}),
         });
       }
     }
@@ -134,6 +139,7 @@ async function readDeploymentFiles(
 function manifestPayload(manifest: Omit<StaticCspManifest, 'buildId'>): string {
   return JSON.stringify({
     schemaVersion: manifest.schemaVersion,
+    ...(manifest.schemaVersion >= 3 ? { ssgRoutes: manifest.ssgRoutes } : {}),
     deploymentFiles: manifest.deploymentFiles.map(file => ({
       path: file.path,
       sha256: file.sha256,
@@ -142,21 +148,35 @@ function manifestPayload(manifest: Omit<StaticCspManifest, 'buildId'>): string {
       path: file.path,
       sha256: file.sha256,
       scriptHashes: file.scriptHashes,
+      ...(manifest.schemaVersion < 3 || file.generatedAt === undefined
+        ? {}
+        : { generatedAt: file.generatedAt }),
     })),
   });
 }
 
-async function createManifest(distDir: string): Promise<StaticCspManifest> {
+async function createManifest(
+  distDir: string,
+  ssgRoutes: readonly string[] = []
+): Promise<StaticCspManifest> {
   await fs.access(path.join(distDir, 'rsc/index.js'));
   const deploymentFiles = await readDeploymentFiles(distDir);
   const files = await readHtmlFiles(path.join(distDir, 'client'), true);
-  const payload = { schemaVersion: SCHEMA_VERSION, deploymentFiles, files };
+  const payload = {
+    schemaVersion: SCHEMA_VERSION,
+    ssgRoutes: [...new Set(ssgRoutes)].sort(),
+    deploymentFiles,
+    files,
+  };
   return { ...payload, buildId: sha256(manifestPayload(payload)) };
 }
 
 /** Called only after every build environment, SSG output and SPA shell are complete. */
-export async function generateStaticCspManifest(distDir: string): Promise<StaticCspManifest> {
-  const manifest = await createManifest(distDir);
+export async function generateStaticCspManifest(
+  distDir: string,
+  options: { ssgRoutes?: readonly string[] } = {}
+): Promise<StaticCspManifest> {
+  const manifest = await createManifest(distDir, options.ssgRoutes);
   const destination = path.join(distDir, STATIC_CSP_MANIFEST);
   const temporary = `${destination}.${process.pid}.tmp`;
   try {
@@ -171,8 +191,21 @@ export async function generateStaticCspManifest(distDir: string): Promise<Static
 function validateManifest(value: unknown): asserts value is StaticCspManifest {
   if (!value || typeof value !== 'object') throw new Error('Invalid static CSP manifest');
   const manifest = value as Partial<StaticCspManifest>;
-  if (manifest.schemaVersion !== SCHEMA_VERSION)
+  if (manifest.schemaVersion !== SCHEMA_VERSION && manifest.schemaVersion !== 2)
     throw new Error('Unsupported static CSP manifest schema');
+  if (
+    manifest.schemaVersion >= 3 &&
+    (!Array.isArray(manifest.ssgRoutes) ||
+      manifest.ssgRoutes.some(
+        (route, index) =>
+          typeof route !== 'string' ||
+          !route.startsWith('/') ||
+          route.includes('?') ||
+          route.includes('#') ||
+          (index > 0 && route <= manifest.ssgRoutes![index - 1])
+      ))
+  )
+    throw new Error('Invalid static CSP manifest SSG routes');
   const digest = /^[a-f0-9]{64}$/;
   if (
     !Array.isArray(manifest.deploymentFiles) ||
@@ -210,6 +243,8 @@ function validateManifest(value: unknown): asserts value is StaticCspManifest {
       !file.path.toLowerCase().endsWith('.html') ||
       typeof file.sha256 !== 'string' ||
       !digest.test(file.sha256) ||
+      (manifest.schemaVersion === 3 &&
+        (!Number.isSafeInteger(file.generatedAt) || file.generatedAt! < 0)) ||
       !Array.isArray(file.scriptHashes) ||
       !file.scriptHashes.every(
         hash => typeof hash === 'string' && /^'sha256-[A-Za-z0-9+/]{43}='$/.test(hash)
@@ -261,7 +296,18 @@ export async function loadStaticCspManifest(
 function indexManifest(manifest: StaticCspManifest, legacy: boolean): StaticCspIndex {
   return {
     legacy,
+    ssgRoutes:
+      legacy || manifest.schemaVersion < 3
+        ? undefined
+        : Object.freeze([...(manifest.ssgRoutes ?? [])]),
     buildId: manifest.buildId,
+    generatedAt: new Map(
+      legacy || manifest.schemaVersion < 3
+        ? []
+        : manifest.files.flatMap(file =>
+            file.generatedAt === undefined ? [] : [[file.path, file.generatedAt] as const]
+          )
+    ),
     scriptHashes: new Map(
       manifest.files.map(file => [file.path, Object.freeze([...file.scriptHashes])])
     ),

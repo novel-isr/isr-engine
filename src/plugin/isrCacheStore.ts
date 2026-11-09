@@ -26,6 +26,8 @@ export interface IsrCachedEntry {
   tags: string[];
   /** Internal path index; never mixed with business tags. */
   pathTag?: string;
+  /** Immutable build window; runtime admission fences later snapshot seeding until it closes. */
+  staticSeedUntil?: number;
   nonceTemplate?: CspNonceTemplate;
 }
 
@@ -50,6 +52,7 @@ export interface IsrCacheStore {
   /** Explicit admission contract for distributed response caches. */
   readonly coherence?: {
     beginRender(): Promise<CacheRenderLease>;
+    seed?(key: string, entry: IsrCachedEntry, lease: CacheRenderLease): Promise<boolean>;
     commit(key: string, entry: IsrCachedEntry, lease: CacheRenderLease): Promise<boolean>;
   };
   /** Local-only pub/sub hint; must not advance the durable revision again. */

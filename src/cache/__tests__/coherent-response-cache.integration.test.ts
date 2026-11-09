@@ -95,6 +95,79 @@ describe.skipIf(!url)('coherent response protocol against real Redis', () => {
     return { adapter, backend, store };
   }
 
+  it('seeds a build snapshot at most once across eviction, restart and invalidation', async () => {
+    const first = pod();
+    const second = pod();
+    const seed = entry('build');
+    const lease = await first.store.coherence.beginRender();
+    expect(await first.store.coherence.seed!('build:GET:/page', seed, lease)).toBe(true);
+    expect((await second.store.getAsync!('build:GET:/page'))?.body.toString()).toBe('build');
+    // Simulate remote value eviction without deleting the durable control marker.
+    const keys = await namespaceKeys();
+    const valueKey = keys.find(key => key.includes(':entry:'))!;
+    expect(valueKey).toBeDefined();
+    await client.del(valueKey);
+    const restarted = pod();
+    expect(
+      await restarted.store.coherence.seed!(
+        'build:GET:/page',
+        seed,
+        await restarted.store.coherence.beginRender()
+      )
+    ).toBe(false);
+    expect(await restarted.store.getAsync!('build:GET:/page')).toBeUndefined();
+    await second.store.invalidateByTag!('posts');
+    expect(
+      await restarted.store.coherence.seed!(
+        'build:GET:/other',
+        seed,
+        await restarted.store.coherence.beginRender()
+      )
+    ).toBe(false);
+  });
+
+  it('never seeds an evicted runtime generation during the original build window', async () => {
+    const first = pod();
+    const second = pod();
+    const lease = await first.backend.capture();
+    const runtime = entry('runtime');
+    runtime.staticSeedUntil = Date.now() + 120_000;
+    expect(await first.store.coherence.commit('build:GET:/page', runtime, lease)).toBe(true);
+    const valueKey = (await namespaceKeys()).find(key => key.includes(':entry:'))!;
+    await client.del(valueKey);
+    expect(
+      await second.store.coherence.seed!(
+        'build:GET:/page',
+        entry('build'),
+        await second.backend.capture()
+      )
+    ).toBe(false);
+  });
+
+  it('disables immutable seeding after clear and metadata repair', async () => {
+    const first = pod();
+    await first.backend.clear();
+    expect(
+      await first.store.coherence.seed!(
+        'build:GET:/page',
+        entry('build'),
+        await first.store.coherence.beginRender()
+      )
+    ).toBe(false);
+    const second = pod('repair');
+    await second.backend.capture();
+    for (const key of await namespaceKeys()) {
+      if (key.endsWith(':invalidated') || key.endsWith(':expiry')) await client.del(key);
+    }
+    expect(
+      await second.store.coherence.seed!(
+        'build:GET:/page',
+        entry('build'),
+        await second.store.coherence.beginRender()
+      )
+    ).toBe(false);
+  });
+
   it('rejects a pre-invalidation render from another pod without Pub/Sub', async () => {
     const first = pod();
     const second = pod();

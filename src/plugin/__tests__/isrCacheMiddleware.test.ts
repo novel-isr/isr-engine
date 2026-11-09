@@ -931,3 +931,88 @@ describe('isrCacheMiddleware —— Host 隔离（多域名共享进程）', () 
     }
   });
 });
+
+it('seeds immutable SSG once, regenerates into the shared cache and obeys configured TTL', async () => {
+  const fx = await startFixture(
+    {
+      staticSeed: async () => ({
+        body: Buffer.from('<html>build</html>'),
+        statusCode: 200,
+        contentType: 'text/html',
+        headers: { 'content-type': 'text/html' },
+        storedAt: Date.now(),
+        expiresAt: 0,
+        hardExpiresAt: 0,
+        tags: [],
+      }),
+    },
+    { renderMode: 'ssg', revalidate: 0.02 }
+  );
+  let renders = 0;
+  fx.renderImpl.current = (_req, res) => {
+    renders++;
+    res.setHeader('content-type', 'text/html');
+    res.end(`<html>runtime-${renders}</html>`);
+  };
+  try {
+    const cold = await httpGet(fx.baseUrl);
+    expect(cold.body).toBe('<html>build</html>');
+    expect(cold.cacheStatus).toBe('HIT');
+    await new Promise(resolve => setTimeout(resolve, 25));
+    expect((await httpGet(fx.baseUrl)).cacheStatus).toBe('STALE');
+    await waitFor(() => renders === 1);
+    expect((await httpGet(fx.baseUrl)).body).toBe('<html>runtime-1</html>');
+    await revalidatePath('/');
+    expect((await httpGet(fx.baseUrl)).body).toBe('<html>runtime-2</html>');
+  } finally {
+    await teardown(fx);
+  }
+});
+
+it('never reseeds an evicted successful SSG generation', async () => {
+  const store = createMemoryCacheStore({ max: 1 });
+  const fx = await startFixture(
+    {
+      store,
+      staticSeed: async () => ({
+        body: Buffer.from('<html>build</html>'),
+        statusCode: 200,
+        contentType: 'text/html',
+        headers: { 'content-type': 'text/html' },
+        storedAt: Date.now(),
+        expiresAt: 0,
+        hardExpiresAt: 0,
+        tags: [],
+      }),
+    },
+    { renderMode: 'ssg', revalidate: 60 }
+  );
+  try {
+    expect((await httpGet(`${fx.baseUrl}/one`)).body).toBe('<html>build</html>');
+    await revalidatePath('/one');
+    fx.renderImpl.current = (_req, res) => {
+      res.setHeader('content-type', 'text/html');
+      res.end('<html>new</html>');
+    };
+    expect((await httpGet(`${fx.baseUrl}/one`)).body).toBe('<html>new</html>');
+    await httpGet(`${fx.baseUrl}/two`);
+    expect((await httpGet(`${fx.baseUrl}/one`)).body).toBe('<html>new</html>');
+  } finally {
+    await teardown(fx);
+  }
+});
+
+it('fails open when the immutable seed source hangs or rejects', async () => {
+  for (const staticSeed of [
+    () => new Promise<IsrCachedEntry | undefined>(() => {}),
+    () => Promise.reject(new Error('build unavailable')),
+  ]) {
+    const fx = await startFixture({ staticSeed, l2ReadTimeoutMs: 10 }, { renderMode: 'ssg' });
+    try {
+      expect((await httpGet(`${fx.baseUrl}/page`)).body).toBe('<html>default</html>');
+      expect((await httpGet(`${fx.baseUrl}/page`)).cacheStatus).toBe('HIT');
+    } finally {
+      await teardown(fx);
+    }
+  }
+});

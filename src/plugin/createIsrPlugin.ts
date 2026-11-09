@@ -30,6 +30,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import type { PluginOption, Plugin } from 'vite';
 import vitePluginRsc from '@vitejs/plugin-rsc';
 
+import { createAutomaticImagePlugin } from './createAutomaticImagePlugin';
 import { createDevAssetRequestMiddleware } from './devAssetRequestMiddleware';
 import { createDevCssLifecyclePluginPhases } from './createDevCssHandoffPlugin';
 import { createIsrCacheMiddleware } from './isrCacheMiddleware';
@@ -562,6 +563,7 @@ export function createIsrPlugin(options: CreateIsrPluginOptions = {}): PluginOpt
   const plugins: PluginOption[] = [
     createEngineDefaultEntriesPlugin(root, userConfig),
     createAppAliasPlugin(root),
+    createAutomaticImagePlugin(root, userConfig),
     createDevAssetRequestMiddleware(root),
     ...devCssLifecycle.beforeRsc,
     createBrowserShimPlugin(),

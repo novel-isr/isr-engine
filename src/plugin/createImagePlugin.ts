@@ -4,7 +4,7 @@
  * 工业模式（对标 next/image / @vercel/og 的图片处理路径）：
  *   - 端点 `/_/img?src=&w=&q=&fmt=`：sharp 按需 resize/compress/格式转换
  *   - LRU 缓存 transformed buffer + ETag —— 二次命中走 304/缓存
- *   - sharp 是 optionalDependency：缺失时转换返回 501；fmt=original 可显式读取安全栅格原图
+ *   - sharp 是必需依赖：提供 resize / 格式转换；fmt=original 显式读取安全栅格原图
  *   - <Image> 组件（src/runtime/Image.tsx）输出 srcset，浏览器选最佳分辨率
  *
  * 安全：
@@ -12,6 +12,8 @@
  *   - max 输出 8192px / 输入 25MB（防 zip-bomb / OOM）
  */
 import path from 'node:path';
+import { resolveImageOptions } from '../config/resolveImageOptions';
+import { fetchRemoteImage, ImageSourceError } from './remoteImageSource';
 import { promises as fs } from 'node:fs';
 import { createHash } from 'node:crypto';
 import type { Plugin } from 'vite';
@@ -87,20 +89,13 @@ export function createImagePlugin(
 /** Connect middleware shared by development, preview and production. */
 export function createImageMiddleware(
   options: ImagePluginOptions = {},
-  dependencies: ImageProcessingDependencies = {}
+  dependencies: ImageProcessingDependencies = {},
+  publicDir = path.resolve(process.cwd(), 'public')
 ): (req: IncomingMessage, res: ServerResponse, next: Connect.NextFunction) => void {
-  const publicDir = path.resolve(process.cwd(), 'public');
   return createImageHandler(options, () => publicDir, dependencies);
 }
 
-class ImageError extends Error {
-  constructor(
-    readonly status: number,
-    message: string
-  ) {
-    super(message);
-  }
-}
+const ImageError = ImageSourceError;
 
 function createImageHandler(
   opts: ImagePluginOptions,
@@ -109,7 +104,9 @@ function createImageHandler(
 ) {
   let sharpCapability: Promise<SharpModule | null> | undefined;
   const endpoint = opts.path ?? '/_/img';
-  const allow = new Set(opts.remoteAllowlist ?? []);
+  const allow = new Set(
+    resolveImageOptions({ remoteAllowlist: opts.remoteAllowlist }).remoteAllowlist
+  );
   const cache = new LRUCache<string, CachedImage>({
     max: Math.max(1, opts.cacheMax ?? 500),
     maxSize: 64 * 1024 * 1024,
@@ -182,11 +179,7 @@ function createImageHandler(
           contentType = originalContentType(out);
         } else {
           const sharp = await (sharpCapability ??= (dependencies.loadSharp ?? loadSharp)());
-          if (!sharp)
-            throw new ImageError(
-              501,
-              'sharp not installed; use fmt=original without transformations'
-            );
+          if (!sharp) throw new ImageError(501, 'image optimizer unavailable');
           const input = await loadSource(src, allow, getPublicDir());
           let pipe = sharp.default(input, { limitInputPixels: 40_000_000 });
           if (w) pipe = pipe.resize({ width: w, withoutEnlargement: true });
@@ -340,57 +333,7 @@ async function loadSource(src: string, allow: Set<string>, publicDir: string): P
     } catch {
       throw new ImageError(400, 'invalid source URL');
     }
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), 10_000);
-    try {
-      for (let redirects = 0; redirects <= 5; redirects++) {
-        if (
-          !['http:', 'https:'].includes(url.protocol) ||
-          !allow.has(url.host) ||
-          url.username ||
-          url.password
-        ) {
-          throw new ImageError(400, 'source origin not allowed');
-        }
-        const response = await fetch(url, { redirect: 'manual', signal: controller.signal });
-        if ([301, 302, 303, 307, 308].includes(response.status)) {
-          await response.body?.cancel();
-          const location = response.headers.get('location');
-          if (!location || redirects === 5) throw new ImageError(400, 'invalid source redirect');
-          url = new URL(location, url);
-          continue;
-        }
-        if (!response.ok || !response.body) {
-          await response.body?.cancel();
-          throw new ImageError(400, 'source fetch failed');
-        }
-        if (Number(response.headers.get('content-length')) > MAX_INPUT_BYTES) {
-          await response.body.cancel();
-          throw new ImageError(413, 'source too large');
-        }
-        const reader = response.body.getReader();
-        const chunks: Buffer[] = [];
-        let size = 0;
-        try {
-          while (true) {
-            const { done, value } = await reader.read();
-            if (done) break;
-            size += value.byteLength;
-            if (size > MAX_INPUT_BYTES) throw new ImageError(413, 'source too large');
-            chunks.push(Buffer.from(value));
-          }
-          return Buffer.concat(chunks, size);
-        } finally {
-          await reader.cancel();
-        }
-      }
-      throw new ImageError(400, 'too many source redirects');
-    } catch (error) {
-      if (error instanceof ImageError) throw error;
-      throw new ImageError(controller.signal.aborted ? 504 : 400, 'source fetch failed');
-    } finally {
-      clearTimeout(timer);
-    }
+    return fetchRemoteImage(url.href, allow, MAX_INPUT_BYTES);
   }
   try {
     const root = await fs.realpath(publicDir);

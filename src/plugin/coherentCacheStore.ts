@@ -61,17 +61,25 @@ export function createCoherentCacheStore({
       if (snapshot.value.tags.includes(tag) || snapshot.value.pathTag === tag) local.delete(key);
     }
   }
-  async function commitValue(key: string, entry: IsrCachedEntry, lease: CacheRenderLease) {
+  async function commitValue(
+    key: string,
+    entry: IsrCachedEntry,
+    lease: CacheRenderLease,
+    seed = false
+  ) {
     if (destroyed) return false;
     const value: SerializedEntry = { ...entry, body: entry.body.toString('base64') };
     const ttl = Math.floor(entry.hardExpiresAt - Date.now());
     if (ttl <= 0) return false;
-    const stored = await backend.commit(
+    const admission = seed ? backend.seed?.bind(backend) : backend.commit.bind(backend);
+    if (!admission) return false;
+    const stored = await admission(
       key,
       value,
       lease,
       [...entry.tags, ...(entry.pathTag ? [entry.pathTag] : [])],
-      ttl
+      ttl,
+      entry.staticSeedUntil
     );
     // Do not publish an unvalidated local value after the remote CAS. A different
     // pod may already have invalidated or replaced it before this await resumes.
@@ -93,6 +101,7 @@ export function createCoherentCacheStore({
         return track(backend.capture());
       },
       commit,
+      seed: (key, entry, lease) => track(commitValue(key, entry, lease, true)),
     },
     get: () => undefined,
     async getAsync(key) {

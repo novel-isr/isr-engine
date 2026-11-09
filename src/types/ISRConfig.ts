@@ -8,7 +8,7 @@
  *
  *   isr  ── 运行时入缓存 + TTL；过期后 SWR 回放旧 + 后台重渲
  *   ssr  ── 不入缓存；每次请求都跑 RSC + SSR 管线
- *   ssg  ── 构建期 spider 预生成磁盘 HTML；运行时 express.static 直发
+ *   ssg  ── 构建期预生成 HTML；运行时按 TTL / revalidate 更新共享响应缓存，构建文件保持不可变
  *
  * **csr 不在用户级**——因为"绕过 RSC 跑纯客户端"在 plugin-rsc 模型下不是一个
  * 选择性的渲染策略，而是 server 跑不动时的**降级兜底**。详见下方 InternalStrategyType。
@@ -299,6 +299,8 @@ export interface RuntimeTelemetryConfig {
  *   - 请求期业务逻辑仍放 entry.server.tsx hooks
  */
 export interface RuntimeConfig {
+  /** 图片优化允许的精确远程 host[:port]，默认禁止远程源；私网始终禁止。 */
+  images?: { remoteAllowlist?: string[] };
   /** 站点公网 base URL，用于 SEO canonical / sitemap / robots */
   site: string | undefined;
   /**
@@ -349,7 +351,7 @@ export interface RuntimeConfig {
 }
 
 export const RenderModes = {
-  SSG: 'ssg' as const, // 构建期预生成磁盘文件
+  SSG: 'ssg' as const, // 构建期预生成，运行时按 TTL / revalidate 重生
   ISR: 'isr' as const, // 运行时缓存 + TTL + SWR
   SSR: 'ssr' as const, // 不缓存，每次实时跑管线
 } as const;

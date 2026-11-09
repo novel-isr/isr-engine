@@ -8,6 +8,7 @@ export default {
     '/static': 'ssg',
     '/article': 'ssr',
     '/cached': 'isr',
+    '/regenerated': { mode: 'ssg', ttl: 1, staleWhileRevalidate: 30 },
   },
   runtime: {
     site: 'http://127.0.0.1:43138',
@@ -28,7 +29,7 @@ export default {
     telemetry: false,
   },
   ssg: {
-    routes: ['/static'],
+    routes: ['/static', '/regenerated'],
     concurrent: 1,
     requestTimeoutMs: 30_000,
     maxRetries: 1,

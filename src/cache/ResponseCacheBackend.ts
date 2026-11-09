@@ -20,6 +20,14 @@ export interface ResponseCacheBackend {
     value: unknown,
     lease: CacheRenderLease,
     tags: string[],
+    ttlMs: number,
+    staticSeedUntil?: number
+  ): Promise<boolean>;
+  seed?(
+    key: string,
+    value: unknown,
+    lease: CacheRenderLease,
+    tags: string[],
     ttlMs: number
   ): Promise<boolean>;
   invalidateTag(tag: string): Promise<void>;

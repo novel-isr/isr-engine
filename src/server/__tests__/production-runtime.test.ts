@@ -4,6 +4,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { startAppServer, shutdownServer } from '../manager';
 import { normalizeEngineConfig } from '@/config/normalizeEngineConfig';
+import { generateStaticCspManifest } from '@/security/staticCspManifest';
 
 let root: string;
 afterEach(async () => {
@@ -27,13 +28,23 @@ it('programmatic production serves the built Fetch handler, preserves actions an
     path.join(root, 'dist/rsc/index.js'),
     `export default { fetch: async request => new Response(request.method === 'POST' ? await request.text() : '<html><body>production fixture</body></html>', { headers: { 'content-type': 'text/html' } }) };`
   );
+  await fs.mkdir(path.join(root, 'dist/client/prebuilt'));
+  await fs.writeFile(
+    path.join(root, 'dist/client/prebuilt/index.html'),
+    '<html><body>immutable build route</body></html>'
+  );
+  await generateStaticCspManifest(path.join(root, 'dist'), { ssgRoutes: ['/prebuilt'] });
   vi.spyOn(process, 'cwd').mockReturnValue(root);
   vi.stubEnv('NODE_ENV', 'production');
   const config = normalizeEngineConfig({
     renderMode: 'isr',
     revalidate: 3600,
     routes: {},
-    ssg: {},
+    ssg: {
+      routes: async () => {
+        throw new Error('build-only CMS discovery must never run at startup');
+      },
+    },
     server: { port: 0, host: '127.0.0.1' },
     runtime: {
       site: 'https://example.com',
@@ -53,6 +64,9 @@ it('programmatic production serves the built Fetch handler, preserves actions an
   expect(same).toBe(ctx);
   expect(ctx.manifest).toEqual({ entry: { file: 'assets/main.js' } });
   expect(await (await fetch(`${ctx.url}/custom`)).text()).toBe('custom route');
+  const prebuilt = await fetch(`${ctx.url}/prebuilt`);
+  expect(prebuilt.headers.get('x-served-by')).toBe('ssg-static');
+  expect(await prebuilt.text()).toContain('immutable build route');
   const response = await fetch(ctx.url!);
   expect(response.status).toBe(200);
   expect(await response.text()).toContain('production fixture');

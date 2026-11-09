@@ -39,6 +39,7 @@ if not incarnation then
   if kind(KEYS[1]) ~= 'none' then error('response cache control is corrupt') end
   incarnation = ARGV[1]
   revision = '0'
+  if kind(KEYS[2]) ~= 'none' or kind(KEYS[3]) ~= 'none' then redis.call('HSET', KEYS[1], 'seedDisabled', '1') end
   initialize(incarnation)
 elseif not revision or not string.match(revision, '^%d+$') then
   error('response cache revision is corrupt')
@@ -48,6 +49,7 @@ elseif redis.call('HGET', KEYS[2], '__incarnation') ~= incarnation
   -- incarnation: missing tombstones must never make old responses valid again.
   incarnation = ARGV[1]
   revision = '0'
+  redis.call('HSET', KEYS[1], 'seedDisabled', '1')
   initialize(incarnation)
 end
 local function older(a, b)
@@ -84,12 +86,29 @@ const COMMIT =
   PRELUDE +
   `
 if ARGV[2] ~= incarnation or ARGV[3] ~= revision then return 0 end
+if ARGV[9] == 'seed' or tonumber(ARGV[10]) then
+  local scan = redis.call('HSCAN', KEYS[1], redis.call('HGET', KEYS[1], 'seedCursor') or '0', 'MATCH', 'seed:*', 'COUNT', 128)
+  redis.call('HSET', KEYS[1], 'seedCursor', scan[1])
+  for i=1,#scan[2],2 do
+    if tonumber(scan[2][i+1]) <= now then redis.call('HDEL', KEYS[1], scan[2][i]) end
+  end
+end
+if ARGV[9] == 'seed' and (revision ~= '0' or redis.call('HEXISTS', KEYS[1], 'seedDisabled') == 1 or redis.call('HEXISTS', KEYS[1], 'seed:' .. ARGV[8]) == 1) then return 0 end
 local ttl = tonumber(ARGV[4])
 if not ttl or ttl < 1 or ttl > ${MAX_RESPONSE_TTL_MS} then error('response cache TTL out of range') end
+if ARGV[9] == 'seed' and redis.call('EXISTS', KEYS[4]) == 1 then
+  redis.call('HSET', KEYS[1], 'seed:' .. ARGV[8], tostring(now + ttl))
+  return 0
+end
 local tags = cjson.decode(ARGV[5])
 if #tags > ${MAX_TAGS + 1} then error('response cache tag budget exceeded') end
 redis.call('HSET', KEYS[4], 'incarnation', incarnation, 'revision', revision, 'expiresAt', now+ttl, 'tags', ARGV[5], 'version', ARGV[7], 'value', ARGV[6], 'key', ARGV[8])
 redis.call('PEXPIRE', KEYS[4], ttl)
+if ARGV[9] == 'seed' then redis.call('HSET', KEYS[1], 'seed:' .. ARGV[8], tostring(now + ttl))
+elseif tonumber(ARGV[10]) and tonumber(ARGV[10]) > now then
+  local previous = tonumber(redis.call('HGET', KEYS[1], 'seed:' .. ARGV[8])) or 0
+  redis.call('HSET', KEYS[1], 'seed:' .. ARGV[8], tostring(math.max(previous, tonumber(ARGV[10]))))
+end
 return 1
 `;
 const INVALIDATE =
@@ -113,6 +132,7 @@ return {incarnation, revision}
 const CLEAR =
   PRELUDE +
   `
+redis.call('HSET', KEYS[1], 'seedDisabled', '1')
 initialize(ARGV[2])
 return 1
 `;
@@ -175,7 +195,9 @@ export class RedisResponseCacheBackend implements ResponseCacheBackend {
     value: unknown,
     lease: CacheRenderLease,
     tags: string[],
-    ttlMs: number
+    ttlMs: number,
+    staticSeedUntil?: number,
+    admission: 'render' | 'seed' = 'render'
   ): Promise<boolean> {
     if (!Number.isSafeInteger(ttlMs) || ttlMs < 1 || ttlMs > this.maxTtlMs)
       throw new RangeError('response cache TTL must be within 1ms and 30 days');
@@ -195,8 +217,14 @@ export class RedisResponseCacheBackend implements ResponseCacheBackend {
         serialized,
         randomUUID(),
         key,
+        admission,
+        staticSeedUntil === undefined ? '' : String(staticSeedUntil),
       ])) === 1
     );
+  }
+
+  seed(key: string, value: unknown, lease: CacheRenderLease, tags: string[], ttlMs: number) {
+    return this.commit(key, value, lease, tags, ttlMs, undefined, 'seed');
   }
 
   async invalidateTag(tag: string): Promise<void> {

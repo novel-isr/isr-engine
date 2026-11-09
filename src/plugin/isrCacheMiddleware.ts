@@ -103,6 +103,10 @@ export interface IsrCacheMiddlewareOptions {
   development?: boolean;
   /** Production artifact identity; defaults to explicit APP_VERSION or dev for custom/dev hosts. */
   buildId?: string;
+  /** Manifest-bound immutable build timestamps; absent means runtime origin rendering. */
+  staticSeedInfo?: (pathname: string) => { generatedAt: number } | undefined;
+  /** Immutable build seed, consulted once per canonical SSG cache key; never a fallback. */
+  staticSeed?: (pathname: string, policy: string) => Promise<CachedEntry | undefined>;
   /** 缓存最大条目数，默认 1000 */
   max?: number;
   /** 默认 TTL（秒），若未显式配置 revalidate 时兜底 */
@@ -330,12 +334,6 @@ function matchGlob(pattern: string, path: string): boolean {
   return new RegExp(`^${escaped}$`).test(path);
 }
 
-/** SSG 路由 TTL 拉长（默认 ×24），避免 SSG 被频繁重生 */
-function applyModeTtlMultiplier(mode: RenderModeType, ttlSeconds: number): number {
-  if (mode === 'ssg') return ttlSeconds * 24;
-  return ttlSeconds;
-}
-
 /**
  * 框架无关的 ISR 缓存 handler —— connect-style 中间件
  *
@@ -446,6 +444,7 @@ export function createIsrCacheHandler(
   /** 后台重验证正在进行的 key 集合 —— 防止并发 STALE 请求重复触发多次 bg 拉取 */
   const revalidating = new Set<string>();
   const state = { invalidationGeneration: 0 };
+  const seeded = new Map<string, Promise<void>>();
   const internalToken = randomBytes(24).toString('hex');
   const singleflightWaitMs = options.singleflightWaitMs ?? 5_000;
   const maxCachedBodyBytes = options.maxCachedBodyBytes ?? 5 * 1024 * 1024;
@@ -483,6 +482,12 @@ export function createIsrCacheHandler(
     // （比如刚启动 / 或 entry 已经被 LRU 淘汰）。
     if (durable || !cache.coherence) state.invalidationGeneration++;
     invalidationLog.set(`${target.kind}:${target.value}`, Date.now());
+
+    const seedTag = `__isr_path:${cacheNamespace}:__static_seed`;
+    if (options.staticSeed) {
+      if (!durable && cache.evictByTag) cache.evictByTag(seedTag);
+      else if (cache.invalidateByTag) await cache.invalidateByTag(seedTag);
+    }
 
     const tag =
       target.kind === 'path'
@@ -565,6 +570,9 @@ export function createIsrCacheHandler(
       state,
       internalToken,
       pathTagPrefix: `__isr_path:${cacheNamespace}:`,
+      staticSeed: options.staticSeed,
+      staticSeedInfo: options.staticSeedInfo,
+      seeded,
     }).catch(err => {
       logger.warn('ISR cache handler 异常，回退到下游处理:', err);
       if (!res.headersSent) {
@@ -587,6 +595,8 @@ export function createIsrCacheHandler(
     prefetchCooldown.clear();
   };
   handler.destroy = async () => {
+    state.invalidationGeneration++;
+    seeded.clear();
     unregisterInvalidator();
     unsubscribeBus?.();
     await options.invalidationBus?.destroy?.();
@@ -756,6 +766,9 @@ interface HandleContext {
   state: { invalidationGeneration: number };
   internalToken: string;
   pathTagPrefix: string;
+  staticSeed?: IsrCacheMiddlewareOptions['staticSeed'];
+  staticSeedInfo?: IsrCacheMiddlewareOptions['staticSeedInfo'];
+  seeded: Map<string, Promise<void>>;
 }
 
 /**
@@ -833,6 +846,7 @@ async function handleRequest(
     setHeaderOnce(res, 'X-Mode-Source', 'config');
   }
   setHeaderOnce(res, 'X-Resolved-Mode', resolved.mode);
+  if (resolved.mode === 'ssg') setHeaderOnce(res, 'X-Served-By', 'ssg-runtime');
 
   if (!isCacheableMode(resolved.mode)) {
     setHeaderOnce(res, 'X-Cache-Status', 'BYPASS');
@@ -862,6 +876,67 @@ async function handleRequest(
       });
     } catch (err) {
       logger.warn(`ISR cache L2 read 失败 ${cacheKey}: ${(err as Error).message}`);
+    }
+  }
+  if (
+    !entry &&
+    ctx.state.invalidationGeneration === 0 &&
+    resolved.mode === 'ssg' &&
+    ctx.staticSeed &&
+    (!ctx.staticSeedInfo || ctx.staticSeedInfo(logicalPath)) &&
+    !url.includes('?') &&
+    !url.endsWith(RSC_URL_POSTFIX) &&
+    !ctx.variantIsolation &&
+    !ctx.hostIsolation
+  ) {
+    if (!ctx.seeded.has(cacheKey)) {
+      const seedTask = (async () => {
+        const generation = ctx.state.invalidationGeneration;
+        const seed = await raceWithTimeout(
+          ctx.staticSeed!(
+            logicalPath,
+            String(res.getHeader('content-security-policy') || "default-src 'self'")
+          ),
+          ctx.l2ReadTimeoutMs
+        );
+        if (!seed) {
+          ctx.seeded.delete(cacheKey);
+          return;
+        }
+        const lease = ctx.cache.coherence
+          ? await raceWithTimeout(ctx.cache.coherence.beginRender(), ctx.l2ReadTimeoutMs)
+          : undefined;
+        if (generation !== 0 || (lease && lease.revision !== '0')) return;
+        if (generation !== ctx.state.invalidationGeneration) return;
+        const ttl = resolved.ttlSeconds * 1000;
+        const seededEntry = {
+          ...seed,
+          tags: [...seed.tags, `${ctx.pathTagPrefix}__static_seed`],
+          expiresAt: seed.storedAt + ttl,
+          hardExpiresAt: seed.storedAt + ttl + resolved.swrSeconds * 1000,
+          pathTag: `${ctx.pathTagPrefix}${logicalPath}`,
+        };
+        if (Date.now() >= seededEntry.hardExpiresAt) return;
+        if (ctx.cache.coherence) {
+          if (lease && ctx.cache.coherence.seed)
+            await raceWithTimeout(
+              ctx.cache.coherence.seed(cacheKey, seededEntry, lease),
+              ctx.l2ReadTimeoutMs
+            );
+        } else {
+          ctx.cache.set(cacheKey, seededEntry);
+        }
+      })();
+      ctx.seeded.set(cacheKey, seedTask);
+    }
+    try {
+      await ctx.seeded.get(cacheKey);
+      entry = ctx.cache.getAsync
+        ? await raceWithTimeout(ctx.cache.getAsync(cacheKey), ctx.l2ReadTimeoutMs)
+        : ctx.cache.get(cacheKey);
+    } catch (error) {
+      ctx.seeded.delete(cacheKey);
+      logger.warn('SSG build seed unavailable; rendering origin', error);
     }
   }
   const now = Date.now();
@@ -958,7 +1033,7 @@ async function runMissPath(
   if (!res.getHeader('X-Cache-Status')) {
     res.setHeader('X-Cache-Status', 'MISS');
   }
-  const ttl = applyModeTtlMultiplier(resolved.mode, resolved.ttlSeconds);
+  const ttl = resolved.ttlSeconds;
   const swr = resolved.swrSeconds;
   let renderLease: CacheRenderLease | undefined;
   if (ctx.cache.coherence) {
@@ -1063,6 +1138,13 @@ async function runMissPath(
         hardExpiresAt: now + (ttl + swr) * 1000,
         tags,
         pathTag: `${ctx.pathTagPrefix}${stripRscSuffix(stripQuery(_req.url || '/'))}`,
+        staticSeedUntil:
+          resolved.mode === 'ssg' && !(_req.url || '').includes('?')
+            ? (() => {
+                const info = ctx.staticSeedInfo?.(stripRscSuffix(stripQuery(_req.url || '/')));
+                return info ? info.generatedAt + (ttl + swr) * 1000 : undefined;
+              })()
+            : undefined,
         nonceTemplate: ct.includes('text/html')
           ? compileCspNonceTemplate(
               String(captured.headers['content-security-policy'] || ''),

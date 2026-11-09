@@ -12,9 +12,8 @@ test.afterEach(() => expect(browserErrors).toEqual([]));
 
 test('SSG with a query hydrates under its CSP and supports RSC navigation', async ({ page }) => {
   const response = await page.goto('/static?search=a.b');
-  expect(response?.headers()['x-served-by']).toBe('ssg-static');
-  expect(response?.headers()['content-security-policy']).toContain("'sha256-");
-  expect(response?.headers()['content-security-policy']).not.toContain('strict-dynamic');
+  expect(response?.headers()['x-served-by']).toBe('ssg-runtime');
+  expect(response?.headers()['content-security-policy']).toContain("'nonce-");
   await page.getByRole('button', { name: 'Count 0' }).click();
   await expect(page.getByRole('button', { name: 'Count 1' })).toBeVisible();
   const navigation = page.waitForResponse(
@@ -127,9 +126,13 @@ test('custom HTML executes under parser-derived CSP and the manifest stays outsi
     buildId: string;
     files: Array<{ path: string; scriptHashes: string[] }>;
   };
-  expect(manifest.schemaVersion).toBe(2);
+  expect(manifest.schemaVersion).toBe(3);
   expect(manifest.buildId).toMatch(/^[a-f0-9]{64}$/);
-  expect(manifest.files.map(file => file.path)).toEqual(['parser.html', 'static/index.html']);
+  expect(manifest.files.map(file => file.path)).toEqual([
+    'parser.html',
+    'regenerated/index.html',
+    'static/index.html',
+  ]);
   const parserEntry = manifest.files.find(file => file.path === 'parser.html');
   expect(parserEntry?.scriptHashes).toHaveLength(1);
   const response = await page.goto('/parser.html?mode=custom');
@@ -250,7 +253,7 @@ test('published programmatic app renders, hydrates, invalidates ISR and shuts do
       );
     });
     const response = await page.goto(`${url}/static?search=a.b`);
-    expect(response?.headers()['x-served-by']).toBe('ssg-static');
+    expect(response?.headers()['x-served-by']).toBe('ssg-runtime');
     await page.getByRole('button', { name: 'Count 0' }).click();
     await expect(page.getByRole('button', { name: 'Count 1' })).toBeVisible();
     await page.locator('[data-nav="route"]').click();
@@ -290,5 +293,41 @@ test('published programmatic app renders, hydrates, invalidates ISR and shuts do
     await expect(fetch(`${url}/health`)).rejects.toThrow();
   } finally {
     if (child.exitCode === null && child.signalCode === null) child.kill('SIGKILL');
+  }
+});
+
+test('SSG regenerates changed source after TTL with coherent hydration and CSP', async ({
+  page,
+  request,
+}) => {
+  const fs = await import('node:fs/promises');
+  const source = new URL('./ssg-source.txt', import.meta.url);
+  const manifest = new URL('./dist/static-csp-manifest.json', import.meta.url);
+  const immutable = await fs.readFile(manifest, 'utf8');
+  try {
+    await fs.writeFile(source, 'runtime-source-one');
+    await page.goto('/regenerated');
+    await expect
+      .poll(async () => {
+        const response = await request.get('/regenerated');
+        return response.text();
+      })
+      .toContain('runtime-source-one');
+    await fs.writeFile(source, 'runtime-source-two');
+    await expect
+      .poll(async () => {
+        const response = await request.get('/regenerated');
+        return response.text();
+      })
+      .toContain('runtime-source-two');
+    const response = await page.goto('/regenerated');
+    expect(response?.headers()['x-served-by']).toBe('ssg-runtime');
+    expect(response?.headers()['content-security-policy']).toContain("'nonce-");
+    await expect(page.locator('[data-ssg-source]')).toHaveText('runtime-source-two');
+    await page.getByRole('button', { name: 'Count 0' }).click();
+    await expect(page.getByRole('button', { name: 'Count 1' })).toBeVisible();
+    expect(await fs.readFile(manifest, 'utf8')).toBe(immutable);
+  } finally {
+    await fs.rm(source, { force: true });
   }
 });

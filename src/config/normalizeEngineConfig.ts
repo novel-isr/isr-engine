@@ -1,3 +1,4 @@
+import { resolveImageOptions } from './resolveImageOptions';
 import type { ISRConfig } from '@/types';
 
 /**
@@ -29,6 +30,7 @@ export function normalizeEngineConfig(config: ISRConfig): ISRConfig {
   if (!isRecord(config.runtime)) {
     throw new Error('ssr.config.ts 必须显式声明 runtime 对象');
   }
+  resolveImageOptions(config.runtime.images);
   requireOwnProperties(
     config.runtime,
     ['site', 'services', 'redis', 'experiments', 'i18n', 'seo', 'telemetry'],
