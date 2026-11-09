@@ -40,11 +40,11 @@ export interface RedisCacheConfig {
   keyPrefix: string;
   /** 默认 TTL (秒) */
   defaultTTL: number;
-  /** 连接超时 (ms) */
+  /** 单次 TCP 连接超时及首次可用性等待上限 (ms)；后台恢复不受此截止时间终止 */
   connectTimeout: number;
   /** 命令超时 (ms) */
   commandTimeout: number;
-  /** 最大重试次数 */
+  /** 单命令重试预算（ioredis maxRetriesPerRequest），不限制后台重连次数 */
   maxRetries: number;
   /** 是否启用降级到内存 */
   enableFallback: boolean;
@@ -157,6 +157,7 @@ export class RedisCacheAdapter implements ICacheAdapter {
   private healthCheckTimer: ReturnType<typeof setInterval> | null = null;
   private destroyed = false;
   private connectionPromise: Promise<void> | null = null;
+  private settleStartup: (() => void) | null = null;
 
   constructor(config: Partial<RedisCacheConfig> = {}) {
     const merged: RedisCacheConfig = { ...DEFAULT_CONFIG, ...config };
@@ -170,7 +171,23 @@ export class RedisCacheAdapter implements ICacheAdapter {
 
     // 异步初始化连接（不阻塞构造函数）；公开方法会在首次调用时等待这次初始化完成，
     // 避免连接尚未建立就误走 fallback 或对 null redis client 发命令。
-    this.connectionPromise = this.initConnection();
+    const initialization = this.initConnection();
+    this.connectionPromise = new Promise<void>(resolve => {
+      const finish = () => {
+        clearTimeout(timer);
+        if (this.settleStartup === finish) this.settleStartup = null;
+        resolve();
+      };
+      const timer = setTimeout(
+        () => {
+          if (!this.destroyed && !this.connected) this.enableFallbackMode();
+          finish();
+        },
+        Math.max(1, this.config.connectTimeout)
+      );
+      this.settleStartup = finish;
+      void initialization.then(finish, finish);
+    });
   }
 
   /** A durable response protocol owns this adapter's connection lifecycle. */
@@ -178,7 +195,13 @@ export class RedisCacheAdapter implements ICacheAdapter {
     return new RedisResponseCacheBackend(
       async () => {
         await this.waitForInitialConnection();
-        if (this.destroyed || !this.redis || !this.connected || this.usingFallback) {
+        if (
+          this.destroyed ||
+          !this.redis ||
+          this.redis.status !== 'ready' ||
+          !this.connected ||
+          this.usingFallback
+        ) {
           throw new Error('Redis is unavailable for coherent response caching');
         }
         return this.redis;
@@ -204,6 +227,7 @@ export class RedisCacheAdapter implements ICacheAdapter {
     try {
       // 动态导入 ioredis，避免硬依赖
       const Redis = await this.loadRedisModule();
+      if (this.destroyed) return;
       if (!Redis) {
         this.logger.warn('⚠️ ioredis 模块不可用，降级到内存缓存');
         this.enableFallbackMode();
@@ -226,12 +250,8 @@ export class RedisCacheAdapter implements ICacheAdapter {
         commandTimeout: this.config.commandTimeout,
         maxRetriesPerRequest: this.config.maxRetries,
         retryStrategy: (times: number) => {
-          if (times > this.config.maxRetries) {
-            this.logger.warn(`⚠️ Redis 连接重试 ${times} 次失败，降级到内存缓存`);
-            this.enableFallbackMode();
-            return null; // 停止重试
-          }
-          return Math.min(times * this.config.retryDelay, 10000);
+          if (this.destroyed) return null;
+          return Math.min(times * Math.max(1, this.config.retryDelay), 10000);
         },
         lazyConnect: true,
       };
@@ -244,7 +264,7 @@ export class RedisCacheAdapter implements ICacheAdapter {
       }
 
       // 事件监听
-      this.redis.on('connect', () => {
+      this.redis.on('ready', () => {
         if (this.destroyed) return;
         this.connected = true;
         this.usingFallback = false;
@@ -252,6 +272,7 @@ export class RedisCacheAdapter implements ICacheAdapter {
 
         // 如果之前降级过，迁移热数据回 Redis
         this.migrateFromFallback();
+        this.startHealthCheck();
       });
 
       this.redis.on('error', err => {
@@ -277,12 +298,12 @@ export class RedisCacheAdapter implements ICacheAdapter {
 
       // 尝试连接
       await this.redis.connect();
-
-      // 启动健康检查
-      this.startHealthCheck();
+      if (this.destroyed) return;
     } catch (error) {
-      this.logger.warn(`⚠️ Redis 连接失败: ${(error as Error).message}，降级到内存缓存`);
-      this.enableFallbackMode();
+      if (!this.destroyed) {
+        this.logger.warn(`⚠️ Redis 连接失败: ${(error as Error).message}，降级到内存缓存`);
+        this.enableFallbackMode();
+      }
     } finally {
       this.connecting = false;
       this.connectionPromise = null;
@@ -337,11 +358,11 @@ export class RedisCacheAdapter implements ICacheAdapter {
     if (this.healthCheckTimer) return;
 
     this.healthCheckTimer = setInterval(async () => {
-      if (!this.redis || this.destroyed) return;
+      if (!this.redis || this.destroyed || this.redis.status !== 'ready') return;
 
       try {
         await this.redis.ping();
-        if (!this.connected) {
+        if (!this.destroyed && this.redis?.status === 'ready' && !this.connected) {
           this.connected = true;
           this.usingFallback = false;
           this.logger.info('✅ Redis 健康检查通过，恢复 Redis 缓存');
@@ -695,6 +716,8 @@ export class RedisCacheAdapter implements ICacheAdapter {
 
   async destroy(): Promise<void> {
     this.destroyed = true;
+    this.settleStartup?.();
+    this.connected = false;
 
     if (this.healthCheckTimer) {
       clearInterval(this.healthCheckTimer);
@@ -702,12 +725,24 @@ export class RedisCacheAdapter implements ICacheAdapter {
     }
 
     if (this.redis) {
-      try {
-        await this.redis.quit();
-      } catch {
-        // 静默处理
-      }
+      const client = this.redis;
       this.redis = null;
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      try {
+        if (client.status === 'ready') {
+          await Promise.race([
+            client.quit(),
+            new Promise<void>(resolve => {
+              timer = setTimeout(resolve, Math.max(1, this.config.commandTimeout));
+            }),
+          ]);
+        }
+      } catch {
+        // Shutdown still terminates the official reconnect lifecycle below.
+      } finally {
+        if (timer) clearTimeout(timer);
+        client.disconnect();
+      }
     }
 
     if (this.fallback) {
