@@ -10,7 +10,11 @@
     "sourceMap": false,
     "composite": false,
     "incremental": false,
-    "skipLibCheck": true
+    "skipLibCheck": true,
+    "paths": {
+      "@/*": ["./src/*"],
+      "@novel-isr/engine/adapters/observability": ["./src/adapters/observability/index.ts"]
+    }
   },
   "include": ["src/**/*.ts", "src/**/*.tsx"],
   "exclude": [
@@ -22,7 +26,6 @@
     "src/defaults/entry.server.tsx",
     "src/defaults/entry.server.ssr.tsx",
     "src/defaults/entry.tsx",
-    "src/defaults/auto-observability.ts",
     "src/defaults/types.d.ts",
     "src/defaults/runtime/defineClientEntry.tsx",
     "src/defaults/runtime/defineServerEntry.tsx",

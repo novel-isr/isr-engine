@@ -91,40 +91,43 @@ async function serve(app: ReturnType<typeof express>, check: (url: string) => Pr
   }
 }
 
-it('rewrites an SSG URL using only its pathname and keeps its query', async () => {
-  const { createSsgRewriteMiddleware } = await import('../start');
+it('serves SSG query URLs from the validated index and refuses unindexed HTML', async () => {
+  const { createStaticHtmlMiddleware } = await import('../start');
+  const { generateStaticCspManifest, loadStaticCspManifest } =
+    await import('../../security/staticCspManifest');
   const fs = await import('node:fs/promises');
   const dir = await fs.mkdtemp('/tmp/isr-ssg-');
   try {
-    await fs.mkdir(`${dir}/page`);
-    await fs.writeFile(`${dir}/page/index.html`, '<html>static</html>');
+    await fs.mkdir(`${dir}/client/page`, { recursive: true });
+    await fs.mkdir(`${dir}/rsc`);
+    await fs.writeFile(`${dir}/rsc/index.js`, 'export default {}');
+    await fs.writeFile(
+      `${dir}/client/page/index.html`,
+      '<html><script>window.active=true</script>static</html>'
+    );
+    await generateStaticCspManifest(dir);
+    const index = await loadStaticCspManifest(dir);
+    await fs.writeFile(`${dir}/client/late.html`, '<script>unindexed()</script>');
+    await fs.mkdir(`${dir}/client/rogue`);
+    await fs.writeFile(`${dir}/client/rogue/index.html`, '<script>unindexed()</script>');
     const app = express();
-    app.use(createSsgRewriteMiddleware(dir));
-    app.use(express.static(dir, { redirect: false }));
+    app.use(createStaticHtmlMiddleware(`${dir}/client`, index));
+    app.use(express.static(`${dir}/client`, { redirect: false, index: false }));
     app.use((_req, res) => res.status(404).end());
     await serve(app, async url => {
-      const response = await fetch(`${url}/page?search=a.b`);
-      expect(response.status).toBe(200);
-      expect(await response.text()).toBe('<html>static</html>');
+      for (const route of ['/page?search=a.b', '/page/', '/page/index.html']) {
+        const response = await fetch(url + route);
+        expect(response.status).toBe(200);
+        expect(response.headers.get('content-security-policy')).toContain("'sha256-");
+        expect(response.headers.get('content-security-policy')).not.toContain('unsafe-inline');
+        expect(await response.text()).toContain('window.active=true');
+      }
+      expect((await fetch(url + '/late.html')).status).toBe(503);
+      expect((await fetch(url + '/rogue/')).status).toBe(404);
     });
   } finally {
     await fs.rm(dir, { recursive: true, force: true });
   }
-});
-
-it('uses exact inline script hashes for static HTML without per-request nonce trust', async () => {
-  const { staticHtmlCsp } = await import('../start');
-  const { createHash } = await import('node:crypto');
-  const script = 'self.__rsc.push("payload");';
-  const policy = staticHtmlCsp(
-    `<script nonce="build">${script}</script><script type="module" src="/assets/app.js"></script>`,
-    "default-src 'self';script-src 'nonce-request' 'strict-dynamic' 'unsafe-inline';connect-src 'self' https://api.example"
-  );
-  expect(policy).toContain(
-    `script-src 'self' 'sha256-${createHash('sha256').update(script).digest('base64')}'`
-  );
-  expect(policy).not.toMatch(/nonce-|strict-dynamic|unsafe-inline/);
-  expect(policy).toContain("connect-src 'self' https://api.example");
 });
 
 it('protects private health with the configured ops token', async () => {

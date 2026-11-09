@@ -1,3 +1,5 @@
+import { RedisResponseCacheBackend } from './RedisResponseCacheBackend';
+import type { ResponseCacheBackend } from './ResponseCacheBackend';
 /**
  * Redis 缓存适配器
  * 基于 ioredis 的分布式缓存实现，支持优雅降级
@@ -169,6 +171,21 @@ export class RedisCacheAdapter implements ICacheAdapter {
     // 异步初始化连接（不阻塞构造函数）；公开方法会在首次调用时等待这次初始化完成，
     // 避免连接尚未建立就误走 fallback 或对 null redis client 发命令。
     this.connectionPromise = this.initConnection();
+  }
+
+  /** A durable response protocol owns this adapter's connection lifecycle. */
+  createResponseCacheBackend(namespace = 'isr:responses'): ResponseCacheBackend {
+    return new RedisResponseCacheBackend(
+      async () => {
+        await this.waitForInitialConnection();
+        if (this.destroyed || !this.redis || !this.connected || this.usingFallback) {
+          throw new Error('Redis is unavailable for coherent response caching');
+        }
+        return this.redis;
+      },
+      namespace,
+      () => this.destroy()
+    );
   }
 
   private async waitForInitialConnection(): Promise<void> {

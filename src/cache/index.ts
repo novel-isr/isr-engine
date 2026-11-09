@@ -2,8 +2,8 @@
  * 缓存子系统导出
  *
  * 提供可切换的缓存后端（memory / redis），供 ISREngine 的持久化场景使用。
- * 当前 ISR 请求级缓存由 `plugin/isrCacheMiddleware.ts` 的 in-process LRU 承担；
- * 本模块为用户代码和未来的多层缓存（如 SSG 元数据持久化）保留扩展位。
+ * ISR 响应缓存通过显式的 ResponseCacheBackend 原子协议校验 revision；
+ * 通用 ICacheAdapter 保留独立的应用数据缓存及降级策略。
  */
 
 export { CacheManager } from './CacheManager';
@@ -15,3 +15,9 @@ export { RedisCacheAdapter } from './RedisCacheAdapter';
 export type { RedisCacheConfig } from './RedisCacheAdapter';
 export { RedisInvalidationBus } from './RedisInvalidationBus';
 export type { RedisInvalidationBusConfig } from './RedisInvalidationBus';
+
+export type {
+  CacheRenderLease,
+  ResponseCacheBackend,
+  ResponseCacheSnapshot,
+} from './ResponseCacheBackend';

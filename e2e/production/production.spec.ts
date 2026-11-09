@@ -73,6 +73,10 @@ test('production CLI exits successfully after SIGTERM', async () => {
     ],
     {
       cwd: fileURLToPath(new URL('.', import.meta.url)),
+      env: {
+        ...process.env,
+        ISR_CACHE_NAMESPACE: `${process.env.ISR_CACHE_NAMESPACE ?? 'production-browser'}:signal:${port}`,
+      },
       stdio: 'pipe',
     }
   );
@@ -96,9 +100,115 @@ test('production CLI exits successfully after SIGTERM', async () => {
         }
       })
       .toBe(200);
+    if (process.env.PLAYWRIGHT_REDIS_URL) {
+      const cached = await fetch(`http://127.0.0.1:${port}/cached`);
+      await cached.text();
+      const hit = await fetch(`http://127.0.0.1:${port}/cached`);
+      await hit.text();
+      expect(hit.headers.get('x-cache-status')).toBe('HIT');
+      expect(output).toContain('ISR cache backend: Redis revision-validated response protocol');
+    }
     child.kill('SIGTERM');
     expect(await exited, output).toEqual({ code: 0, signal: null });
   } finally {
     if (child.exitCode === null && child.signalCode === null) child.kill('SIGKILL');
+  }
+});
+
+test('custom HTML executes under parser-derived CSP and the manifest stays outside static hosting', async ({
+  page,
+  request,
+}) => {
+  const { readFile } = await import('node:fs/promises');
+  const manifest = JSON.parse(
+    await readFile(new URL('./dist/static-csp-manifest.json', import.meta.url), 'utf8')
+  ) as {
+    schemaVersion: number;
+    buildId: string;
+    files: Array<{ path: string; scriptHashes: string[] }>;
+  };
+  expect(manifest.schemaVersion).toBe(2);
+  expect(manifest.buildId).toMatch(/^[a-f0-9]{64}$/);
+  expect(manifest.files.map(file => file.path)).toEqual(['parser.html', 'static/index.html']);
+  const parserEntry = manifest.files.find(file => file.path === 'parser.html');
+  expect(parserEntry?.scriptHashes).toHaveLength(1);
+  const response = await page.goto('/parser.html?mode=custom');
+  expect(response?.headers()['content-security-policy']).toContain(parserEntry!.scriptHashes[0]);
+  await page.getByRole('button', { name: 'Count 0' }).click();
+  await expect(page.getByRole('button', { name: 'Count 1' })).toBeVisible();
+  expect(
+    await page.evaluate(() =>
+      ['commentExecuted', 'attributeExecuted', 'templateExecuted'].some(key =>
+        Reflect.get(window, key)
+      )
+    )
+  ).toBe(false);
+  const hidden = await request.get('/static-csp-manifest.json');
+  expect(hidden.headers()['content-type'] ?? '').not.toContain('application/json');
+});
+
+test('production startup rejects a corrupt manifest before loading application code', async () => {
+  const { spawn } = await import('node:child_process');
+  const { fileURLToPath } = await import('node:url');
+  const fs = await import('node:fs/promises');
+  const root = await fs.mkdtemp('/tmp/isr-csp-startup-');
+  try {
+    await fs.mkdir(`${root}/dist/client`, { recursive: true });
+    await fs.mkdir(`${root}/dist/rsc`);
+    await fs.writeFile(`${root}/dist/rsc/index.js`, 'throw new Error("Application must not load")');
+    await fs.writeFile(`${root}/dist/static-csp-manifest.json`, '{"schemaVersion":999}');
+    const child = spawn(
+      process.execPath,
+      [fileURLToPath(new URL('../../dist/cli/cli.js', import.meta.url)), 'start'],
+      { cwd: root, stdio: 'pipe' }
+    );
+    let output = '';
+    child.stdout.on('data', chunk => {
+      output += String(chunk);
+    });
+    child.stderr.on('data', chunk => {
+      output += String(chunk);
+    });
+    try {
+      const result = await new Promise<{ code: number | null; signal: string | null }>(resolve =>
+        child.once('exit', (code, signal) => resolve({ code, signal }))
+      );
+      expect(result).toEqual({ code: 1, signal: null });
+      expect(output).toContain('Unsupported static CSP manifest schema');
+      expect(output).not.toContain('Application must not load');
+    } finally {
+      if (child.exitCode === null && child.signalCode === null) child.kill('SIGKILL');
+    }
+  } finally {
+    await fs.rm(root, { recursive: true, force: true });
+  }
+});
+
+test('cached ISR HTML refreshes every script attribute and JavaScript nonce reference on HIT', async ({
+  page,
+}) => {
+  const seen: string[] = [];
+  for (let attempt = 0; attempt < 3; attempt++) {
+    const response = attempt === 0 ? await page.goto('/cached') : await page.reload();
+    expect(response?.headers()['x-cache-status']).toBe(attempt === 0 ? 'MISS' : 'HIT');
+    const nonce = response?.headers()['content-security-policy'].match(/'nonce-([^']+)'/)?.[1];
+    expect(nonce).toMatch(/^[a-f0-9]{32}$/);
+    expect(seen).not.toContain(nonce);
+    const scripts = await page
+      .locator('script')
+      .evaluateAll(elements =>
+        elements.map(script => ({ nonce: script.nonce, text: script.textContent ?? '' }))
+      );
+    expect(scripts.length).toBeGreaterThan(0);
+    expect(scripts.every(script => script.nonce === nonce)).toBe(true);
+    expect(scripts.some(script => script.text.includes(`window.__nonceReference="${nonce}"`))).toBe(
+      true
+    );
+    expect(await page.evaluate(() => Reflect.get(window, '__nonceReference'))).toBe(nonce);
+    const html = await response!.text();
+    for (const previous of seen) expect(html).not.toContain(previous);
+    await page.getByRole('button', { name: 'Count 0' }).click();
+    await expect(page.getByRole('button', { name: 'Count 1' })).toBeVisible();
+    seen.push(nonce!);
   }
 });

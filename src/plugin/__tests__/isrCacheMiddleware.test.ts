@@ -594,7 +594,7 @@ describe('isrCacheMiddleware —— bg revalidate 安全超时', () => {
         // 路径是 /stale-test，无 query，method=GET，namespace 默认 'default'，
         // buildVersion 来自 process.env.APP_VERSION，测试环境无注入 → 'dev'
         const bv = process.env.APP_VERSION ?? 'dev';
-        store.set(`e2:default:${bv}:GET:/stale-test`, stale);
+        store.set(`e3:default:${bv}:GET:/stale-test`, stale);
 
         const r = await httpGet(`${fx2.baseUrl}/stale-test`);
         expect(r.cacheStatus).toBe('STALE');
@@ -654,7 +654,7 @@ describe('isrCacheMiddleware —— X-Cache-Stale-Reason', () => {
       tags: [],
     };
     const bv = process.env.APP_VERSION ?? 'dev';
-    const key = `e2:default:${bv}:GET:/reason-test`;
+    const key = `e3:default:${bv}:GET:/reason-test`;
     store.set(key, stale);
     return { fx, store, key, renderCalls };
   }

@@ -2,14 +2,11 @@
  * createAutoCacheStore —— 按显式 Redis 配置选择 cache backend
  *
  * 决策：
- *   - runtime.redis.url/host 已设 → HybridCacheStore（L1 LRU + L2 Redis 写穿）
+ *   - runtime.redis.url/host 已设 → revision-validated response cache（Redis 原子协议 + 本机字节缓存）
  *   - 未显式配置 Redis          → MemoryCacheStore（单层 LRU，行为不变）
  */
-import {
-  createMemoryCacheStore,
-  createHybridCacheStore,
-  type IsrCacheStore,
-} from '../plugin/isrCacheStore';
+import { createMemoryCacheStore, type IsrCacheStore } from '../plugin/isrCacheStore';
+import { createCoherentCacheStore } from '../plugin/coherentCacheStore';
 import { RedisCacheAdapter } from './RedisCacheAdapter';
 import { Logger } from '../logger/Logger';
 import { resolveRuntimeRedisConfig } from '@/config/resolveRuntimeRedis';
@@ -19,6 +16,8 @@ const logger = Logger.getInstance();
 export interface AutoCacheStoreOptions {
   /** L1 LRU 容量，默认 1000 */
   max?: number;
+  /** Explicit environment/application scope for coherent response state. */
+  responseNamespace?: string;
   /** Redis 连接 URL；通常来自 ssr.config.ts runtime.redis.url */
   redisUrl?: string;
   /** Redis host；通常来自 ssr.config.ts runtime.redis.host */
@@ -55,16 +54,11 @@ export function createAutoCacheStore(opts: AutoCacheStoreOptions = {}): IsrCache
     port: redisConfig?.port ?? 6379,
     password: redisConfig?.password,
     keyPrefix: redisConfig?.keyPrefix ?? 'isr:',
-    enableFallback: true, // Redis 挂了仍保有内存兜底
+    enableFallback: false, // Coherent admission must never claim a local write is durable.
   });
-  logger.info(
-    `🗂️  ISR cache backend: hybrid (L1 LRU + L2 Redis ${url ?? `${host}:${redisConfig?.port ?? 6379}`})`
-  );
-  return createHybridCacheStore({
-    redis,
+  logger.info('🗂️  ISR cache backend: Redis revision-validated response protocol');
+  return createCoherentCacheStore({
+    backend: redis.createResponseCacheBackend(opts.responseNamespace ?? 'isr:responses:v1'),
     max,
-    onRedisError: (err, op, key) => {
-      logger.warn(`Redis ${op} 失败 [${key ?? '-'}]:`, err);
-    },
   });
 }

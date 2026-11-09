@@ -17,6 +17,7 @@ import type { ISRConfig } from '../types';
 import { logger } from '../logger';
 import { spiderSsgRoutes, extractSsgRoutes, type FetchHandler } from '@/ssg/spider';
 import { loadConfig } from '../config/loadConfig';
+import { generateStaticCspManifest } from '../security/staticCspManifest';
 
 export function createSsgPostBuildPlugin(explicitConfig: ISRConfig | undefined): Plugin {
   let root = process.cwd();
@@ -147,6 +148,7 @@ export function createSsgPostBuildPlugin(explicitConfig: ISRConfig | undefined):
       async handler() {
         await runSsg();
         await generateSpaShell();
+        await generateStaticCspManifest(path.resolve(root, 'dist'));
       },
     },
   };

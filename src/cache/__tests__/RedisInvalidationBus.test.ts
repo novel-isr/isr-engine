@@ -10,6 +10,7 @@
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import IoRedisMock from 'ioredis-mock';
+import { randomUUID } from 'node:crypto';
 
 vi.mock('ioredis', () => ({ default: IoRedisMock, __esModule: true }));
 
@@ -246,5 +247,201 @@ describe('RedisInvalidationBus —— 消息丢失补偿 (Sorted Set replay)', (
     expect(hw2).toBe(hw1); // 水位未回退
 
     await bus.destroy();
+  });
+});
+
+describe('RedisInvalidationBus response protocol and publish failures', () => {
+  const buses: RedisInvalidationBus[] = [];
+  let keyPrefix: string;
+  beforeEach(() => {
+    keyPrefix = `protocol:${randomUUID()}:`;
+  });
+  type Internals = {
+    initPromise: Promise<void>;
+    publisher: import('ioredis').default;
+    subscriber: import('ioredis').default;
+    handleMessage(raw: string): Promise<void>;
+  };
+  const internal = (bus: RedisInvalidationBus) => bus as unknown as Internals;
+  async function connected(options: ConstructorParameters<typeof RedisInvalidationBus>[0] = {}) {
+    const bus = new RedisInvalidationBus({ host: 'localhost', keyPrefix, ...options });
+    buses.push(bus);
+    await internal(bus).initPromise;
+    return bus;
+  }
+  afterEach(async () => {
+    await Promise.all(buses.splice(0).map(bus => bus.destroy()));
+  });
+
+  it('decodes legacy, response-v1 and unknown protocol messages safely', async () => {
+    const bus = await connected();
+    const received: IsrInvalidationTarget[] = [];
+    bus.subscribe(target => {
+      received.push(target);
+    });
+    for (const protocol of [undefined, 'response-v1', 'future-protocol']) {
+      await internal(bus).handleMessage(
+        JSON.stringify({
+          origin: 'remote',
+          target: { kind: 'tag', value: 'posts', protocol },
+          sentAt: Date.now(),
+        })
+      );
+    }
+    expect(received).toEqual([
+      { kind: 'tag', value: 'posts' },
+      { kind: 'tag', value: 'posts', protocol: 'response-v1' },
+      { kind: 'tag', value: 'posts' },
+    ]);
+  });
+
+  it('propagates response-v1 through publish and normalizes unknown protocols to legacy', async () => {
+    const first = await connected();
+    const second = await connected();
+    const received: IsrInvalidationTarget[] = [];
+    second.subscribe(target => {
+      received.push(target);
+    });
+    await first.publish({
+      kind: 'path',
+      value: '/page',
+      protocol: 'response-v1',
+    } as IsrInvalidationTarget);
+    await first.publish({
+      kind: 'path',
+      value: '/page',
+      protocol: 'future-protocol',
+    } as unknown as IsrInvalidationTarget);
+    await vi.waitFor(() =>
+      expect(received).toEqual(
+        expect.arrayContaining([
+          { kind: 'path', value: '/page', protocol: 'response-v1' },
+          { kind: 'path', value: '/page' },
+        ])
+      )
+    );
+    expect(
+      received.every(target => !('protocol' in target) || target.protocol === 'response-v1')
+    ).toBe(true);
+    const direct = new IoRedisMock();
+    try {
+      const payloads = await direct.zrangebyscore(`${keyPrefix}invalidate:log`, '-inf', '+inf');
+      expect(payloads.map((payload: string) => JSON.parse(payload).target)).toEqual([
+        { kind: 'path', value: '/page', protocol: 'response-v1' },
+        { kind: 'path', value: '/page' },
+      ]);
+    } finally {
+      await direct.quit();
+    }
+  });
+
+  it('rejects publication when initialization cannot configure Redis', async () => {
+    const bus = new RedisInvalidationBus();
+    buses.push(bus);
+    await expect(bus.publish({ kind: 'tag', value: 'posts' })).rejects.toThrow();
+  });
+
+  it('rejects publication after shutdown or a connection error', async () => {
+    const closed = await connected();
+    await closed.destroy();
+    await expect(closed.publish({ kind: 'tag', value: 'posts' })).rejects.toThrow();
+    const interrupted = await connected();
+    internal(interrupted).publisher.emit('error', new Error('connection interrupted'));
+    await expect(interrupted.publish({ kind: 'tag', value: 'posts' })).rejects.toThrow();
+  });
+
+  it('recovers only after both disconnected clients are ready and SUBSCRIBE is confirmed', async () => {
+    const bus = await connected();
+    const { publisher, subscriber } = internal(bus);
+    let confirm!: (count: number) => void;
+    const subscribed = new Promise<number>(resolve => {
+      confirm = resolve;
+    });
+    const subscribe = vi.spyOn(subscriber, 'subscribe').mockImplementationOnce(() => subscribed);
+    publisher.emit('error', new Error('publisher disconnected'));
+    subscriber.emit('error', new Error('subscriber disconnected'));
+    await expect(bus.publish({ kind: 'tag', value: 'posts' })).rejects.toThrow();
+    publisher.emit('ready');
+    await expect(bus.publish({ kind: 'tag', value: 'posts' })).rejects.toThrow();
+    expect(subscribe).not.toHaveBeenCalled();
+    subscriber.emit('ready');
+    subscriber.emit('ready');
+    publisher.emit('ready');
+    await vi.waitFor(() => expect(subscribe).toHaveBeenCalledTimes(1));
+    await expect(bus.publish({ kind: 'tag', value: 'posts' })).rejects.toThrow();
+    confirm(1);
+    await vi.waitFor(async () => {
+      await expect(bus.publish({ kind: 'tag', value: 'posts' })).resolves.toBeUndefined();
+    });
+  });
+
+  it('does not restore readiness from an obsolete SUBSCRIBE completion', async () => {
+    const bus = await connected();
+    const { publisher, subscriber } = internal(bus);
+    let confirm!: (count: number) => void;
+    const subscribed = new Promise<number>(resolve => {
+      confirm = resolve;
+    });
+    vi.spyOn(subscriber, 'subscribe').mockImplementationOnce(() => subscribed);
+    publisher.emit('close');
+    subscriber.emit('close');
+    publisher.emit('ready');
+    subscriber.emit('ready');
+    await Promise.resolve();
+    subscriber.emit('close');
+    confirm(1);
+    await Promise.resolve();
+    await expect(bus.publish({ kind: 'tag', value: 'posts' })).rejects.toThrow();
+    subscriber.emit('ready');
+    await vi.waitFor(async () => {
+      await expect(bus.publish({ kind: 'tag', value: 'posts' })).resolves.toBeUndefined();
+    });
+  });
+
+  it('remains unavailable after failed resubscription and retries on the next ready event', async () => {
+    const bus = await connected();
+    const { publisher, subscriber } = internal(bus);
+    const subscribe = vi
+      .spyOn(subscriber, 'subscribe')
+      .mockRejectedValueOnce(new Error('SUBSCRIBE failed'));
+    publisher.emit('error', new Error('publisher disconnected'));
+    subscriber.emit('error', new Error('subscriber disconnected'));
+    publisher.emit('ready');
+    subscriber.emit('ready');
+    await vi.waitFor(() => expect(subscribe).toHaveBeenCalledTimes(1));
+    await expect(bus.publish({ kind: 'tag', value: 'posts' })).rejects.toThrow();
+    subscriber.emit('ready');
+    await vi.waitFor(async () => {
+      await expect(bus.publish({ kind: 'tag', value: 'posts' })).resolves.toBeUndefined();
+    });
+  });
+
+  it.each([0, 1, 2, 3])('rejects a pipeline failure in command %i', async index => {
+    const bus = await connected();
+    const publisher = internal(bus).publisher;
+    const pipeline = publisher.pipeline();
+    const results: Array<[Error | null, unknown]> = Array.from({ length: 4 }, () => [null, 1]);
+    results[index] = [new Error('command failed'), null];
+    vi.spyOn(pipeline, 'exec').mockResolvedValueOnce(results);
+    vi.spyOn(publisher, 'pipeline').mockReturnValueOnce(pipeline);
+    await expect(bus.publish({ kind: 'tag', value: 'posts' })).rejects.toThrow('command failed');
+  });
+
+  it.each([{ results: null }, { results: [] }])(
+    'rejects an empty pipeline result: $results',
+    async ({ results }) => {
+      const bus = await connected();
+      const publisher = internal(bus).publisher;
+      const pipeline = publisher.pipeline();
+      vi.spyOn(pipeline, 'exec').mockResolvedValueOnce(results);
+      vi.spyOn(publisher, 'pipeline').mockReturnValueOnce(pipeline);
+      await expect(bus.publish({ kind: 'tag', value: 'posts' })).rejects.toThrow();
+    }
+  );
+
+  it('propagates direct PUBLISH command failures when replay is disabled', async () => {
+    const bus = await connected({ replayWindowMs: 0 });
+    vi.spyOn(internal(bus).publisher, 'publish').mockRejectedValueOnce(new Error('disconnected'));
+    await expect(bus.publish({ kind: 'tag', value: 'posts' })).rejects.toThrow('disconnected');
   });
 });

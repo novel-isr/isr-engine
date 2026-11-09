@@ -33,6 +33,21 @@ interface InvalidationMessage {
 type RedisClient = import('ioredis').default;
 type RedisCtor = new (...args: unknown[]) => RedisClient;
 
+function normalizeTarget(target: unknown): IsrInvalidationTarget | null {
+  if (!target || typeof target !== 'object') return null;
+  const candidate = target as { kind?: unknown; value?: unknown; protocol?: unknown };
+  if (
+    (candidate.kind !== 'path' && candidate.kind !== 'tag') ||
+    typeof candidate.value !== 'string'
+  )
+    return null;
+  return {
+    kind: candidate.kind,
+    value: candidate.value,
+    ...(candidate.protocol === 'response-v1' ? { protocol: 'response-v1' as const } : {}),
+  };
+}
+
 export class RedisInvalidationBus implements IsrInvalidationBus {
   private readonly logger = Logger.getInstance();
   private readonly origin = randomUUID();
@@ -45,6 +60,10 @@ export class RedisInvalidationBus implements IsrInvalidationBus {
   private publisher: RedisClient | null = null;
   private subscriber: RedisClient | null = null;
   private ready = false;
+  private publisherReady = false;
+  private subscriberReady = false;
+  private connectionGeneration = 0;
+  private subscriptionTask: { generation: number; promise: Promise<void> } | null = null;
   private destroyed = false;
   private initPromise: Promise<void>;
   /** 本实例已处理到的消息 sentAt 时间戳，用于 (re)subscribe 后 ZRANGEBYSCORE 补消息 */
@@ -73,15 +92,18 @@ export class RedisInvalidationBus implements IsrInvalidationBus {
   }
 
   async publish(target: IsrInvalidationTarget): Promise<void> {
+    const normalized = normalizeTarget(target);
+    if (!normalized) throw new TypeError('Invalid Redis invalidation target');
     await this.initPromise;
     if (!this.ready || !this.publisher || this.destroyed) {
-      this.logger.warn(`Redis invalidation publish skipped (${target.kind}:${target.value})`);
-      return;
+      throw new Error(
+        `Redis invalidation bus is unavailable or closed (${normalized.kind}:${normalized.value})`
+      );
     }
 
     const message: InvalidationMessage = {
       origin: this.origin,
-      target,
+      target: normalized,
       sentAt: Date.now(),
     };
     const payload = JSON.stringify(message);
@@ -96,7 +118,17 @@ export class RedisInvalidationBus implements IsrInvalidationBus {
       // 给日志 key 加一个 TTL，超过窗口 2 倍就完全清掉（兜底，避免无流量实例留下孤儿 key）
       pipeline.pexpire(this.logKey, this.replayWindowMs * 2);
       pipeline.publish(this.channel, payload);
-      await pipeline.exec();
+      const results = await pipeline.exec();
+      if (!results || results.length !== 4) {
+        throw new Error('Redis invalidation publish returned an incomplete pipeline result');
+      }
+      const errors = results.flatMap(([error]) => (error ? [error] : []));
+      if (errors.length) {
+        throw new AggregateError(
+          errors,
+          `Redis invalidation publish failed: ${errors.map(error => error.message).join('; ')}`
+        );
+      }
     } else {
       await this.publisher.publish(this.channel, payload);
     }
@@ -111,6 +143,10 @@ export class RedisInvalidationBus implements IsrInvalidationBus {
 
   async destroy(): Promise<void> {
     this.destroyed = true;
+    this.connectionGeneration++;
+    this.ready = false;
+    this.publisherReady = false;
+    this.subscriberReady = false;
     this.listeners.clear();
     await Promise.allSettled([this.publisher?.quit(), this.subscriber?.quit()]);
     this.publisher = null;
@@ -138,30 +174,79 @@ export class RedisInvalidationBus implements IsrInvalidationBus {
       this.subscriber.on('message', (_channel, raw) => {
         void this.handleMessage(raw);
       });
-      this.subscriber.on('error', err => {
+      const unavailable = (side: 'publisher' | 'subscriber') => {
         this.ready = false;
-        this.logger.warn(`Redis invalidation subscriber error: ${err.message}`);
-      });
-      this.publisher.on('error', err => {
-        this.ready = false;
-        this.logger.warn(`Redis invalidation publisher error: ${err.message}`);
-      });
-      // 重连后 ioredis 自动重放 SUBSCRIBE，但期间 pub 出去的消息已丢失 →
-      // 进入 ready 态时主动 ZRANGEBYSCORE 拉补 replayWindowMs 内错过的消息
-      this.subscriber.on('ready', () => {
-        void this.replayMissed();
-      });
+        this.connectionGeneration++;
+        if (side === 'publisher') this.publisherReady = false;
+        else this.subscriberReady = false;
+      };
+      for (const side of ['publisher', 'subscriber'] as const) {
+        const client = side === 'publisher' ? this.publisher : this.subscriber;
+        client.on('error', error => {
+          unavailable(side);
+          this.logger.warn(`Redis invalidation ${side} error: ${error.message}`);
+        });
+        client.on('close', () => unavailable(side));
+        client.on('end', () => unavailable(side));
+        client.on('ready', () => {
+          if (this.destroyed) return;
+          if (side === 'publisher') this.publisherReady = true;
+          else this.subscriberReady = true;
+          // Preserve the existing reconnect replay trigger. Publishing resumes
+          // only after both connections and a fresh SUBSCRIBE acknowledgment.
+          if (side === 'subscriber') void this.replayMissed();
+          void this.restoreReadiness().catch(error => {
+            this.logger.warn(`Redis invalidation resubscribe failed: ${(error as Error).message}`);
+          });
+        });
+      }
 
+      const initialGeneration = this.connectionGeneration;
       await Promise.all([this.publisher.connect(), this.subscriber.connect()]);
-      await this.subscriber.subscribe(this.channel);
-      this.ready = true;
-      this.logger.info(`Redis invalidation bus subscribed: ${this.channel}`);
+      // connect() resolves at readiness. Some compatible clients dispatch their
+      // ready event later; do not overwrite an intervening disconnect signal.
+      if (!this.destroyed && initialGeneration === this.connectionGeneration) {
+        this.publisherReady = true;
+        this.subscriberReady = true;
+      }
+      await this.restoreReadiness();
       // 首次连接也触发一次 replay（捕获进程启动前极短窗口内其他 pod 发来的失效）
       await this.replayMissed();
     } catch (err) {
       this.ready = false;
       this.logger.warn(`Redis invalidation bus disabled: ${(err as Error).message}`);
     }
+  }
+
+  private async restoreReadiness(): Promise<void> {
+    if (
+      this.destroyed ||
+      this.ready ||
+      !this.publisherReady ||
+      !this.subscriberReady ||
+      !this.subscriber
+    )
+      return;
+    const generation = this.connectionGeneration;
+    if (this.subscriptionTask?.generation === generation) return this.subscriptionTask.promise;
+    const task = this.subscriber.subscribe(this.channel).then(() => {
+      if (
+        this.destroyed ||
+        generation !== this.connectionGeneration ||
+        !this.publisherReady ||
+        !this.subscriberReady
+      )
+        return;
+      this.ready = true;
+      this.logger.info(`Redis invalidation bus subscribed: ${this.channel}`);
+    });
+    this.subscriptionTask = { generation, promise: task };
+    void task
+      .finally(() => {
+        if (this.subscriptionTask?.promise === task) this.subscriptionTask = null;
+      })
+      .catch(() => undefined);
+    await task;
   }
 
   /**
@@ -234,17 +319,11 @@ export class RedisInvalidationBus implements IsrInvalidationBus {
   private parseMessage(raw: string): InvalidationMessage | null {
     try {
       const parsed = JSON.parse(raw) as Partial<InvalidationMessage>;
-      if (
-        typeof parsed.origin !== 'string' ||
-        !parsed.target ||
-        (parsed.target.kind !== 'path' && parsed.target.kind !== 'tag') ||
-        typeof parsed.target.value !== 'string'
-      ) {
-        return null;
-      }
+      const target = normalizeTarget(parsed.target);
+      if (typeof parsed.origin !== 'string' || !target) return null;
       return {
         origin: parsed.origin,
-        target: parsed.target,
+        target,
         sentAt: typeof parsed.sentAt === 'number' ? parsed.sentAt : Date.now(),
       };
     } catch {

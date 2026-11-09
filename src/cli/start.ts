@@ -11,8 +11,6 @@
  */
 
 import fs from 'node:fs/promises';
-import { readFileSync } from 'node:fs';
-import { createHash } from 'node:crypto';
 import path from 'node:path';
 import express, { type Express } from 'express';
 import { Readable } from 'node:stream';
@@ -25,6 +23,11 @@ import { createIsrCacheHandler } from '@/plugin/isrCacheMiddleware';
 import { startServer, closeServer } from '@/server/httpServer';
 import { resolveOpsConfig, createOpsAuthMiddleware } from '@/server/opsConfig';
 import type { RuntimeConfig } from '@/types';
+import {
+  loadStaticCspManifest,
+  applyStaticScriptPolicy,
+  type StaticCspIndex,
+} from '@/security/staticCspManifest';
 
 interface StartOptions {
   port?: string;
@@ -137,6 +140,14 @@ export async function startProductionServer(options: StartOptions): Promise<void
     logger.error('[CLI]', '请先运行: pnpm build');
     process.exit(1);
   }
+
+  // Build trees are immutable while serving. Validate all static policies before opening the port.
+  const staticCspIndex = await loadStaticCspManifest(path.dirname(clientDir), {
+    onLegacyBuild: () =>
+      logger.warn(
+        '[CSP] 构建缺少 static-csp-manifest.json；已在启动期生成兼容索引，请重新构建以生成清单'
+      ),
+  });
 
   const config = await loadConfig();
   config.server = config.server || { port: DEFAULT_PORT };
@@ -282,13 +293,13 @@ export async function startProductionServer(options: StartOptions): Promise<void
 
   // SSG 路由直发：URL `/foo` 内部映射到 `/foo/index.html`（不做 301 重定向）
   // —— 让 spider 预生成的 dist/client/<path>/index.html 真正被使用，跳过 ISR 缓存
-  app.use(createSsgRewriteMiddleware(clientDir));
+  app.use(createStaticHtmlMiddleware(clientDir, staticCspIndex));
 
   // 客户端静态资源（必须在 ISR cache 之前 —— SSG 文件由 OS 文件系统直发，
   // 不需要也不应该走内存 LRU 缓存，避免 stream pipe 与 res.write 拦截不兼容导致空 body）
   app.use(
     express.static(clientDir, {
-      index: 'index.html',
+      index: false,
       redirect: false,
       maxAge: '1h',
       fallthrough: true,
@@ -296,16 +307,6 @@ export async function startProductionServer(options: StartOptions): Promise<void
         if (filePath.includes(`${path.sep}assets${path.sep}`)) {
           // hash 命名的 build 产物：1 年 immutable
           res.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
-        } else if (filePath.endsWith('.html')) {
-          res.setHeader('Cache-Control', 'public, max-age=3600');
-          res.setHeader('X-Served-By', 'ssg-static');
-          res.setHeader(
-            'Content-Security-Policy',
-            staticHtmlCsp(
-              readFileSync(filePath, 'utf8'),
-              String(res.getHeader('Content-Security-Policy') ?? "default-src 'self'")
-            )
-          );
         } else if (/\.(jpe?g|png|webp|avif|gif|svg|ico|woff2?)$/i.test(filePath)) {
           // 图片 / 字体 / 图标：1 周 + 允许 stale 重验证（Lighthouse "efficient cache lifetimes"）
           // 不可命名 hash 但内容稳定（如 public/covers/ public/favicon），比默认 1h 更合理
@@ -335,7 +336,9 @@ export async function startProductionServer(options: StartOptions): Promise<void
   const redisCfg = resolveRuntimeRedisConfig(runtime?.redis);
   const hasRedisConfig = hasRuntimeRedisConnection(runtime?.redis);
   const cache = createIsrCacheHandler(config, {
+    buildId: process.env.APP_VERSION ?? staticCspIndex.buildId,
     store: createAutoCacheStore({
+      responseNamespace: `production:${process.env.ISR_CACHE_NAMESPACE ?? 'default'}`,
       redisUrl: redisCfg?.url,
       redisHost: redisCfg?.host,
       redisPort: redisCfg?.port,
@@ -577,42 +580,54 @@ export async function pipeWebResponse(response: Response, res: express.Response)
   });
 }
 
-/** Static files have build-time bytes: authorize their scripts with content hashes. */
-export function staticHtmlCsp(html: string, policy: string): string {
-  const hashes = new Set<string>();
-  for (const match of html.matchAll(
-    /<script\b(?:[^>"']|"[^"]*"|'[^']*')*>([\s\S]*?)<\/script\s*>/gi
-  )) {
-    hashes.add(
-      `'sha256-${createHash('sha256').update(match[1].replace(/\r\n?/g, '\n')).digest('base64')}'`
-    );
-  }
-  const scriptPolicy = `script-src 'self' ${[...hashes].join(' ')}`.trim();
-  const directives = policy
-    .split(';')
-    .filter(directive => !/^\s*script-src(?:-elem)?\s/i.test(directive));
-  return [...directives, scriptPolicy].join(';');
-}
-
-export function createSsgRewriteMiddleware(clientDir: string): express.RequestHandler {
-  return (req, _res, next) => {
+/** Static HTML can only be served from the build index validated before startup. */
+export function createStaticHtmlMiddleware(
+  clientDir: string,
+  index: StaticCspIndex
+): express.RequestHandler {
+  return (req, res, next) => {
     if (req.method !== 'GET' && req.method !== 'HEAD') return next();
-    const queryIndex = req.url.indexOf('?');
-    const pathname = queryIndex < 0 ? req.url : req.url.slice(0, queryIndex);
-    if (pathname.includes('.') || pathname.endsWith('/')) return next();
-    let decoded: string;
+    let pathname: string;
     try {
-      decoded = decodeURIComponent(pathname);
+      pathname = decodeURIComponent(req.path);
     } catch {
-      return next();
+      res.status(400).end();
+      return;
     }
-    const indexPath = path.resolve(clientDir, `.${decoded}`, 'index.html');
-    if (!indexPath.startsWith(path.resolve(clientDir) + path.sep)) return next();
-    fs.access(indexPath)
-      .then(() => {
-        req.url = pathname + '/' + (queryIndex < 0 ? '' : req.url.slice(queryIndex));
-        next();
-      })
-      .catch(() => next());
+    if (
+      pathname.includes('\\') ||
+      pathname.includes('\0') ||
+      pathname.split('/').some(segment => segment === '..' || segment === '.')
+    ) {
+      res.status(400).end();
+      return;
+    }
+    const relative = pathname.slice(1);
+    const htmlPath =
+      relative.endsWith('/') || !relative
+        ? relative + 'index.html'
+        : relative.toLowerCase().endsWith('.html')
+          ? relative
+          : relative + '/index.html';
+    const hashes = index.scriptHashes.get(htmlPath);
+    if (!hashes) {
+      // Never let express.static serve newly added or otherwise unindexed HTML.
+      if (relative.toLowerCase().endsWith('.html'))
+        res.status(503).set('Cache-Control', 'no-store').end();
+      else next();
+      return;
+    }
+    res.setHeader(
+      'Content-Security-Policy',
+      applyStaticScriptPolicy(
+        String(res.getHeader('Content-Security-Policy') ?? "default-src 'self'"),
+        hashes
+      )
+    );
+    res.setHeader('Cache-Control', 'public, max-age=3600');
+    res.setHeader('X-Served-By', 'ssg-static');
+    res.sendFile(htmlPath, { root: clientDir, maxAge: '1h', dotfiles: 'ignore' }, error => {
+      if (error) next(error);
+    });
   };
 }

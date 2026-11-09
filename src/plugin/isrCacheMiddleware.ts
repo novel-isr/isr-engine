@@ -1,3 +1,5 @@
+import { compileCspNonceTemplate, instantiateCspNonceTemplate } from '../security/cspNonceTemplate';
+import type { CacheRenderLease } from '../cache/ResponseCacheBackend';
 /**
  * ISR 缓存中间件插件 —— engine 的差异化核心能力
  *
@@ -99,6 +101,8 @@ interface RoutingRules {
 export interface IsrCacheMiddlewareOptions {
   /** @internal Enables development-only transport semantics for the Vite middleware. */
   development?: boolean;
+  /** Production artifact identity; defaults to explicit APP_VERSION or dev for custom/dev hosts. */
+  buildId?: string;
   /** 缓存最大条目数，默认 1000 */
   max?: number;
   /** 默认 TTL（秒），若未显式配置 revalidate 时兜底 */
@@ -205,11 +209,11 @@ export interface IsrCacheMiddlewareOptions {
  * Engine 内部 cache key 格式版本。仅 engine 自身在 isrCachedEntry 序列化结构变化时 bump。
  * 用户层 namespace 用 cacheNamespace / ISR_CACHE_NAMESPACE 控制（独立维度）。
  */
-const ENGINE_CACHE_KEY_VERSION = 'e2';
+const ENGINE_CACHE_KEY_VERSION = 'e3';
 
 export type IsrInvalidationTarget =
-  | { kind: 'path'; value: string }
-  | { kind: 'tag'; value: string };
+  | { kind: 'path'; value: string; protocol?: 'response-v1' }
+  | { kind: 'tag'; value: string; protocol?: 'response-v1' };
 
 export interface IsrInvalidationBus {
   publish(target: IsrInvalidationTarget): Promise<void> | void;
@@ -299,6 +303,7 @@ function withRuntimeCacheOptions(
     ...options,
     store: createAutoCacheStore({
       max: options.max,
+      responseNamespace: `${options.development ? 'development' : 'production'}:${options.cacheNamespace ?? process.env.ISR_CACHE_NAMESPACE ?? 'default'}`,
       redisUrl: redis?.url,
       redisHost: redis?.host,
       redisPort: redis?.port,
@@ -435,7 +440,7 @@ export function createIsrCacheHandler(
   const cacheNamespace = options.cacheNamespace ?? process.env.ISR_CACHE_NAMESPACE ?? 'default';
   // build version 嵌入 cache key：每次 deploy 后 APP_VERSION 不同 → 旧 cache 自然失效（永远 miss）→ 新 build 走 fresh render
   // CI 注入 APP_VERSION=<git sha>；本地开发不注入 → fallback 'dev'，所有 key 共享 'dev' 前缀（开发体验不受影响）
-  const buildVersion = process.env.APP_VERSION ?? 'dev';
+  const buildVersion = options.buildId ?? process.env.APP_VERSION ?? 'dev';
   const cacheKeyPrefix = `${ENGINE_CACHE_KEY_VERSION}:${cacheNamespace}:${buildVersion}:`;
 
   /** 后台重验证正在进行的 key 集合 —— 防止并发 STALE 请求重复触发多次 bg 拉取 */
@@ -472,13 +477,27 @@ export function createIsrCacheHandler(
    */
   const invalidationLog = new LRUCache<string, number>({ max: INVALIDATION_LOG_MAX });
 
-  const invalidateLocal = async (target: IsrInvalidationTarget): Promise<void> => {
+  const invalidateLocal = async (target: IsrInvalidationTarget, durable = true): Promise<void> => {
     // 不论清了多少条，都更新 invalidationLog —— inventory 端点能回答
     // “这个 target 上次被 revalidate 是什么时候”，即便本进程内没有匹配条目
     // （比如刚启动 / 或 entry 已经被 LRU 淘汰）。
-    state.invalidationGeneration++;
+    if (durable || !cache.coherence) state.invalidationGeneration++;
     invalidationLog.set(`${target.kind}:${target.value}`, Date.now());
 
+    const tag =
+      target.kind === 'path'
+        ? `__isr_path:${cacheNamespace}:${stripRscSuffix(normalizePath(target.value))}`
+        : target.value;
+    if (!durable && cache.evictByTag) {
+      cache.evictByTag(tag);
+      return;
+    }
+    if (cache.invalidateByTag) {
+      await cache.invalidateByTag(tag);
+      return;
+    }
+    // Custom legacy stores without the explicit invalidation contract retain
+    // their local enumeration semantics; built-in stores use the contract above.
     if (target.kind === 'path') {
       const normalized = normalizePath(target.value);
       const keys = [
@@ -497,7 +516,6 @@ export function createIsrCacheHandler(
           if (cache.delete(key)) cleared++;
         }
       }
-      await cache.invalidateByTag?.(`__isr_path:${cacheKeyPrefix}${stripRscSuffix(normalized)}`);
       logger.info(`🔁 ISR cache invalidate path=${normalized} → 清除 ${cleared} 条`);
     } else {
       let cleared = 0;
@@ -507,7 +525,6 @@ export function createIsrCacheHandler(
           cleared++;
         }
       }
-      await cache.invalidateByTag?.(target.value);
       logger.info(
         `🔁 ISR cache invalidate tag=${target.value} → 精准清除 ${cleared} 条（按 tag 匹配）`
       );
@@ -517,11 +534,13 @@ export function createIsrCacheHandler(
   // 注册 invalidator —— Server Action 调用 revalidatePath/Tag 时触发
   const unregisterInvalidator = registerInvalidator(async target => {
     await invalidateLocal(target);
-    await options.invalidationBus?.publish(target);
+    await options.invalidationBus?.publish(
+      cache.coherence ? { ...target, protocol: 'response-v1' } : target
+    );
   });
 
   const unsubscribeBus = options.invalidationBus?.subscribe(async target => {
-    await invalidateLocal(target);
+    await invalidateLocal(target, target.protocol !== 'response-v1');
   });
 
   const handler = ((req: IncomingMessage, res: ServerResponse, next: Connect.NextFunction) => {
@@ -545,6 +564,7 @@ export function createIsrCacheHandler(
       development: options.development ?? false,
       state,
       internalToken,
+      pathTagPrefix: `__isr_path:${cacheNamespace}:`,
     }).catch(err => {
       logger.warn('ISR cache handler 异常，回退到下游处理:', err);
       if (!res.headersSent) {
@@ -555,6 +575,7 @@ export function createIsrCacheHandler(
   }) as IsrCacheHandler;
 
   handler.clear = () => {
+    state.invalidationGeneration++;
     // 释放所有等待 follower（让它们退出等待，自己重走 MISS）
     for (const slot of inflightRegens.values()) slot.resolve();
     inflightRegens.clear();
@@ -642,6 +663,15 @@ export function createIsrCacheMiddleware(
 
   return {
     name: 'isr-cache-middleware',
+    async closeBundle() {
+      const active = handler;
+      handler = null;
+      mounted = false;
+      await active?.destroy();
+    },
+    handleHotUpdate() {
+      handler?.clear();
+    },
     async configureServer(server) {
       if (mounted) return;
       mounted = true;
@@ -725,6 +755,7 @@ interface HandleContext {
   development: boolean;
   state: { invalidationGeneration: number };
   internalToken: string;
+  pathTagPrefix: string;
 }
 
 /**
@@ -818,7 +849,7 @@ async function handleRequest(
     req.headers['x-isr-internal-token'] === ctx.internalToken;
   if (isBgRevalidate) {
     setHeaderOnce(res, 'X-Cache-Status', 'REVALIDATING');
-    runMissPath(req, res, next, ctx, resolved, cacheKey, /* swrBgKey */ cacheKey);
+    await runMissPath(req, res, next, ctx, resolved, cacheKey, /* swrBgKey */ cacheKey);
     return;
   }
 
@@ -837,7 +868,7 @@ async function handleRequest(
 
   // HIT
   if (entry && now < entry.expiresAt) {
-    replayEntry(res, entry, cacheKey, 'HIT');
+    replayCachedEntry(ctx, res, entry, cacheKey, 'HIT');
     // 异步预热相关路径（不阻塞 client 响应）。仅普通 HIT 触发，预热请求自身命中 HIT 不再二次预热。
     const isPrefetchRequest = String(req.headers[PREFETCH_HEADER] || '') === '1';
     if (!isPrefetchRequest && ctx.prefetchOnHit) {
@@ -851,13 +882,13 @@ async function handleRequest(
     // reason 必须在 trigger 之前算 —— trigger 会把当前 key 加进 revalidating Set,
     // 那样本次请求自己看自己就成了 swr-bg-pending，语义反了。
     const reason = deriveStaleReason(cacheKey, ctx, now);
-    replayEntry(res, entry, cacheKey, 'STALE', reason);
+    replayCachedEntry(ctx, res, entry, cacheKey, 'STALE', reason);
     triggerBackgroundRevalidation(req, cacheKey, ctx);
     return;
   }
 
   // 硬过期：剔除并走 MISS
-  if (entry) {
+  if (entry && !ctx.cache.coherence) {
     ctx.cache.delete(cacheKey);
   }
 
@@ -885,11 +916,18 @@ async function handleRequest(
       }
       const nowAfter = Date.now();
       if (recheck && nowAfter < recheck.expiresAt) {
-        replayEntry(res, recheck, cacheKey, 'HIT');
+        replayCachedEntry(ctx, res, recheck, cacheKey, 'HIT');
         return;
       }
       if (recheck && nowAfter < recheck.hardExpiresAt) {
-        replayEntry(res, recheck, cacheKey, 'STALE', deriveStaleReason(cacheKey, ctx, nowAfter));
+        replayCachedEntry(
+          ctx,
+          res,
+          recheck,
+          cacheKey,
+          'STALE',
+          deriveStaleReason(cacheKey, ctx, nowAfter)
+        );
         return;
       }
       // 等不到 / 还是没有：fail-open，自己走 MISS
@@ -902,13 +940,13 @@ async function handleRequest(
     ctx.inflightRegens.set(cacheKey, { promise, resolve: resolveFn });
   }
 
-  runMissPath(req, res, next, ctx, resolved, cacheKey, null);
+  await runMissPath(req, res, next, ctx, resolved, cacheKey, null);
 }
 
 /**
  * MISS 路径：放行到下游渲染 + 捕获字节入缓存
  */
-function runMissPath(
+async function runMissPath(
   _req: IncomingMessage,
   res: ServerResponse,
   next: Connect.NextFunction,
@@ -916,12 +954,22 @@ function runMissPath(
   resolved: ResolvedRouteRule,
   cacheKey: string,
   bgRevalidateKey: string | null
-): void {
+): Promise<void> {
   if (!res.getHeader('X-Cache-Status')) {
     res.setHeader('X-Cache-Status', 'MISS');
   }
   const ttl = applyModeTtlMultiplier(resolved.mode, resolved.ttlSeconds);
   const swr = resolved.swrSeconds;
+  let renderLease: CacheRenderLease | undefined;
+  if (ctx.cache.coherence) {
+    try {
+      renderLease = await raceWithTimeout(ctx.cache.coherence.beginRender(), ctx.l2ReadTimeoutMs);
+    } catch (error) {
+      logger.warn('Response cache render admission unavailable; rendering without cache', error);
+    }
+  }
+  if (ctx.cache.coherence && !renderLease) res.setHeader('X-Cache-Status', 'BYPASS');
+  let admission: Promise<unknown> | undefined;
 
   // Single-flight 释放：无论入缓存成功/失败/响应中断，本次 leader 渲染结束后
   // 必须释放 inflight 锁，否则 follower 永远等不到 promise resolve。
@@ -943,8 +991,13 @@ function runMissPath(
       }
       slot.resolve();
     };
-    res.once('close', releaseSingleflight);
-    res.once('finish', releaseSingleflight);
+    res.once('close', () => {
+      if (!res.writableFinished) releaseSingleflight();
+    });
+    res.once('finish', () => {
+      if (admission) void admission.finally(releaseSingleflight).catch(() => undefined);
+      else releaseSingleflight();
+    });
   }
 
   const renderGeneration = ctx.state.invalidationGeneration;
@@ -1000,7 +1053,7 @@ function runMissPath(
 
       const tags = collectTags();
       const now = Date.now();
-      ctx.cache.set(cacheKey, {
+      const cached: CachedEntry = {
         body: captured.body,
         statusCode: captured.statusCode,
         headers: captured.headers,
@@ -1009,11 +1062,30 @@ function runMissPath(
         expiresAt: now + ttl * 1000,
         hardExpiresAt: now + (ttl + swr) * 1000,
         tags,
-        pathTag: `__isr_path:${ctx.cacheKeyPrefix}${stripRscSuffix(stripQuery(_req.url || '/'))}`,
-      });
-      logger.debug(
-        `💾 ISR cache store ${cacheKey} (mode=${resolved.mode}, ttl=${ttl}s, swr=${swr}s, size=${captured.body.length}B, tags=[${tags.join(',')}])`
-      );
+        pathTag: `${ctx.pathTagPrefix}${stripRscSuffix(stripQuery(_req.url || '/'))}`,
+        nonceTemplate: ct.includes('text/html')
+          ? compileCspNonceTemplate(
+              String(captured.headers['content-security-policy'] || ''),
+              captured.body
+            )
+          : undefined,
+      };
+      const recordAdmission = (stored: boolean) =>
+        logger.debug(
+          `ISR cache admission ${stored ? 'stored' : 'superseded'} ${cacheKey} (mode=${resolved.mode}, ttl=${ttl}s, swr=${swr}s, size=${captured.body.length}B)`
+        );
+      if (ctx.cache.coherence) {
+        if (!renderLease) return;
+        admission = ctx.cache.coherence
+          .commit(cacheKey, cached, renderLease)
+          .then(recordAdmission)
+          .catch(error => {
+            logger.warn(`Response cache admission failed for ${cacheKey}`, error);
+          });
+      } else {
+        ctx.cache.set(cacheKey, cached);
+        recordAdmission(true);
+      }
 
       // 本次是后台重验证：标记 in-flight 结束
       if (bgRevalidateKey) {
@@ -1206,6 +1278,22 @@ function triggerPrefetch(
  * 出参写到 X-Cache-Stale-Reason，让 SRE 在 Grafana / 浏览器 devtools 一眼区分
  * “正常 SWR 流量” 和 “上游持续故障，用户在持续看旧数据”。
  */
+function replayCachedEntry(
+  ctx: HandleContext,
+  res: ServerResponse,
+  entry: CachedEntry,
+  cacheKey: string,
+  status: 'HIT' | 'STALE',
+  staleReason?: StaleReason
+): void {
+  try {
+    replayEntry(res, entry, cacheKey, status, staleReason);
+  } catch (error) {
+    ctx.cache.delete(cacheKey);
+    throw error;
+  }
+}
+
 function replayEntry(
   res: ServerResponse,
   entry: CachedEntry,
@@ -1219,14 +1307,18 @@ function replayEntry(
   const freshNonce = freshPolicy.match(/'nonce-([^']+)'/)?.[1];
   const oldNonce = cachedPolicy.match(/'nonce-([^']+)'/)?.[1];
   const refreshNonce = !!(freshNonce && oldNonce && entry.contentType.includes('text/html'));
-  const body = refreshNonce
-    ? Buffer.from(
-        entry.body
-          .toString('utf8')
-          .replaceAll(`nonce="${oldNonce}"`, `nonce="${freshNonce}"`)
-          .replaceAll(`nonce='${oldNonce}'`, `nonce='${freshNonce}'`)
-      )
-    : entry.body;
+  if (refreshNonce && oldNonce) {
+    if (entry.nonceTemplate && entry.nonceTemplate.nonce !== oldNonce) {
+      throw new Error('Cached nonce template does not match its security policy');
+    }
+    if (!entry.nonceTemplate && entry.body.includes(Buffer.from(oldNonce, 'ascii'))) {
+      throw new Error('Nonce-bound cached response is missing its template metadata');
+    }
+  }
+  const body =
+    refreshNonce && freshNonce && entry.nonceTemplate
+      ? instantiateCspNonceTemplate(entry.body, entry.nonceTemplate, freshNonce)
+      : entry.body;
   for (const [name, value] of Object.entries(entry.headers)) {
     const lower = name.toLowerCase();
     if (

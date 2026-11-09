@@ -7,11 +7,21 @@ export default {
     '/': 'ssr',
     '/static': 'ssg',
     '/article': 'ssr',
+    '/cached': 'isr',
   },
   runtime: {
     site: 'http://127.0.0.1:43138',
     services: { api: undefined, telemetry: undefined },
-    redis: undefined,
+    redis: process.env.PLAYWRIGHT_REDIS_URL
+      ? {
+          url: process.env.PLAYWRIGHT_REDIS_URL,
+          host: undefined,
+          port: undefined,
+          password: undefined,
+          keyPrefix: 'e2e-production:',
+          invalidationChannel: undefined,
+        }
+      : undefined,
     experiments: {},
     i18n: undefined,
     seo: undefined,

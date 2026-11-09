@@ -1,5 +1,6 @@
 import { defineConfig } from '@playwright/test';
 import { existsSync } from 'node:fs';
+import { randomUUID } from 'node:crypto';
 
 const port = Number(process.env.PLAYWRIGHT_PRODUCTION_PORT ?? 43138);
 const baseURL = `http://127.0.0.1:${port}`;
@@ -23,6 +24,9 @@ export default defineConfig({
     screenshot: 'only-on-failure',
   },
   webServer: {
+    env: {
+      ISR_CACHE_NAMESPACE: process.env.ISR_CACHE_NAMESPACE ?? `production-browser-${randomUUID()}`,
+    },
     command: `pnpm --dir e2e/production exec vite build && pnpm --dir e2e/production exec node ../../dist/cli/cli.js start --host 127.0.0.1 --port ${port}`,
     url: baseURL,
     reuseExistingServer: false,

@@ -9,7 +9,6 @@
  *   - isr-engine（本包）：ISR 缓存（内存 LRU + SWR）/ 按路由 TTL / revalidatePath|Tag /
  *     cacheTag / SSG 爬虫 / Fallback Chain 决策 / 路由发现 / 指标 / 中间件 / CLI
  *
- * @version 2.0.0
  */
 
 // ========== 应用入口 ==========
@@ -60,6 +59,13 @@ export {
   type IsrCachedEntry,
   type HybridCacheStoreOptions,
 } from './plugin/isrCacheStore';
+
+export { createCoherentCacheStore } from './plugin/coherentCacheStore';
+export type {
+  CacheRenderLease,
+  ResponseCacheBackend,
+  ResponseCacheSnapshot,
+} from './cache/ResponseCacheBackend';
 
 // ========== prom-client 指标 ==========
 export {

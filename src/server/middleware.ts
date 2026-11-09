@@ -27,7 +27,7 @@ export const CSP_NONCE_HEADER = 'x-csp-nonce';
  */
 export function createCspNonceMiddleware(): RequestHandler {
   return (req, res, next) => {
-    const nonce = randomBytes(16).toString('base64');
+    const nonce = randomBytes(16).toString('hex');
     (res.locals as Record<string, unknown>)[CSP_NONCE_LOCAL] = nonce;
     // 透传到下游 RSC handler。Express 不让你直接改 req.headers 类型但运行时可以 set
     (req.headers as Record<string, string>)[CSP_NONCE_HEADER] = nonce;

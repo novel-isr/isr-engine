@@ -1,3 +1,5 @@
+import type { CspNonceTemplate } from '../security/cspNonceTemplate';
+import type { CacheRenderLease } from '../cache/ResponseCacheBackend';
 /**
  * IsrCacheStore —— ISR HTTP 响应缓存的存储抽象（同步读 + 异步写穿）
  *
@@ -24,6 +26,7 @@ export interface IsrCachedEntry {
   tags: string[];
   /** Internal path index; never mixed with business tags. */
   pathTag?: string;
+  nonceTemplate?: CspNonceTemplate;
 }
 
 /**
@@ -44,6 +47,13 @@ export interface IsrL2InspectionItem {
 
 export interface IsrCacheStore {
   readonly backend: 'memory' | 'hybrid';
+  /** Explicit admission contract for distributed response caches. */
+  readonly coherence?: {
+    beginRender(): Promise<CacheRenderLease>;
+    commit(key: string, entry: IsrCachedEntry, lease: CacheRenderLease): Promise<boolean>;
+  };
+  /** Local-only pub/sub hint; must not advance the durable revision again. */
+  evictByTag?(tag: string): void;
   /** 同步读 —— 必须 O(1)，不可阻塞 */
   get(key: string): IsrCachedEntry | undefined;
   /** 异步读 —— L2/远端回源时使用；默认实现可直接包装同步 get */
@@ -138,6 +148,7 @@ interface SerializedEntry {
   hardExpiresAt: number;
   tags: string[];
   pathTag?: string;
+  nonceTemplate?: CspNonceTemplate;
 }
 
 function serialize(e: IsrCachedEntry): SerializedEntry {
@@ -159,6 +170,7 @@ function deserialize(value: SerializedEntry | undefined): IsrCachedEntry | undef
     hardExpiresAt: value.hardExpiresAt,
     tags: Array.isArray(value.tags) ? value.tags : [],
     pathTag: value.pathTag,
+    nonceTemplate: value.nonceTemplate,
   };
 }
 

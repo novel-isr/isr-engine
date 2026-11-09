@@ -309,3 +309,91 @@ it('cached HTML receives a fresh matching CSP nonce on every replay', async () =
     await new Promise<void>(r => server.close(() => r()));
   }
 });
+
+it('separates artifact builds without requiring an APP_VERSION environment variable', async () => {
+  const { createMemoryCacheStore } = await import('../plugin/isrCacheStore');
+  const store = createMemoryCacheStore();
+  const first = await fixture(
+    (_req, res) => {
+      res.setHeader('content-type', 'text/html');
+      res.end('build-a');
+    },
+    { store, ...{ buildId: 'artifact-a' } }
+  );
+  const second = await fixture(
+    (_req, res) => {
+      res.setHeader('content-type', 'text/html');
+      res.end('build-b');
+    },
+    { store, ...{ buildId: 'artifact-b' } }
+  );
+  try {
+    await (await fetch(first.url + '/page')).text();
+    expect(await (await fetch(second.url + '/page')).text()).toBe('build-b');
+  } finally {
+    await first.close();
+    await second.close();
+  }
+});
+
+it('clearing a handler fences renders that started before the clear', async () => {
+  let release!: () => void;
+  let started!: () => void;
+  const pending = new Promise<void>(resolve => {
+    release = resolve;
+  });
+  const ready = new Promise<void>(resolve => {
+    started = resolve;
+  });
+  let renders = 0;
+  const f = await fixture(async (_req, res) => {
+    const count = ++renders;
+    if (count === 1) {
+      started();
+      await pending;
+    }
+    res.setHeader('content-type', 'text/html');
+    res.end(String(count));
+  });
+  try {
+    const first = fetch(f.url + '/page');
+    await ready;
+    f.handler.clear();
+    release();
+    await (await first).text();
+    expect(await (await fetch(f.url + '/page')).text()).toBe('2');
+  } finally {
+    release();
+    await f.close();
+  }
+});
+
+it('rejects a nonce-bearing cached representation when its template metadata is missing', async () => {
+  const { createMemoryCacheStore } = await import('../plugin/isrCacheStore');
+  const store = createMemoryCacheStore();
+  let count = 0;
+  const handler = createIsrCacheHandler({ renderMode: 'isr', revalidate: 60 }, { store });
+  const server = http.createServer((req, res) => {
+    const nonce = `nonce${++count}`;
+    res.setHeader('content-security-policy', `script-src 'nonce-${nonce}'`);
+    handler(req, res, () => {
+      res.setHeader('content-type', 'text/html');
+      res.end(`<script nonce="${nonce}">window.currentNonce="${nonce}"</script>`);
+    });
+  });
+  await new Promise<void>(r => server.listen(0, '127.0.0.1', r));
+  const url = `http://127.0.0.1:${(server.address() as AddressInfo).port}/page`;
+  try {
+    await (await fetch(url)).text();
+    const cached = [...store.entries()][0][1];
+    delete cached.nonceTemplate;
+    const next = await fetch(url);
+    const body = await next.text();
+    expect(body).toContain('nonce2');
+    expect(body).not.toContain('nonce1');
+  } finally {
+    await handler.destroy();
+    server.closeAllConnections();
+    await new Promise<void>(r => server.close(() => r()));
+  }
+});

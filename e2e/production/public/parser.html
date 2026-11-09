@@ -1,0 +1,23 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Static parser fixture</title>
+  </head>
+  <body>
+    <!-- <script>window.commentExecuted = true</script> -->
+    <div title="<script>window.attributeExecuted = true</script>">Parser edge cases</div>
+    <template
+      ><script>
+        window.templateExecuted = true;
+      </script></template
+    >
+    <button id="counter">Count 0</button>
+    <script data-label=">">
+      let count = 0;
+      document.getElementById('counter').addEventListener('click', event => {
+        event.target.textContent = `Count ${++count}`;
+      });
+    </script>
+  </body>
+</html>
