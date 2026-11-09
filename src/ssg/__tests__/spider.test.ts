@@ -691,3 +691,113 @@ describe('SSG artifact identity preflight', () => {
     }
   });
 });
+
+it('uses the destination filesystem case sensitivity before rendering artifacts', async () => {
+  const parent = await tmpdir();
+  const outDir = path.join(parent, 'not-created-yet', 'nested');
+  const probe = path.join(parent, 'CaseProbe');
+  await fs.writeFile(probe, 'probe', { flag: 'wx' });
+  let caseSensitive = false;
+  try {
+    await fs.writeFile(path.join(parent, 'caseprobe'), 'other', { flag: 'wx' });
+    caseSensitive = true;
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error;
+  }
+  await fs.rm(probe);
+  if (caseSensitive) await fs.rm(path.join(parent, 'caseprobe'));
+  const handler = {
+    fetch: vi.fn(async (request: Request) => htmlResponse(new URL(request.url).pathname)),
+  };
+  try {
+    const build = spiderSsgRoutes({ handler, routes: ['/Foo', '/foo'], outDir });
+    if (caseSensitive) {
+      expect((await build).successful).toBe(2);
+      expect(await fs.readFile(path.join(outDir, 'Foo/index.html'), 'utf8')).toBe('/Foo');
+      expect(await fs.readFile(path.join(outDir, 'foo/index.html'), 'utf8')).toBe('/foo');
+    } else {
+      await expect(build).rejects.toThrow(/collision.*index.html/i);
+      expect(handler.fetch).not.toHaveBeenCalled();
+      await expect(fs.access(outDir)).rejects.toMatchObject({ code: 'ENOENT' });
+      expect(await fs.readdir(parent)).toEqual([]);
+    }
+  } finally {
+    await fs.rm(parent, { recursive: true, force: true });
+  }
+});
+
+it('does not create or inspect the destination for an empty route list', async () => {
+  const parent = await tmpdir();
+  const outDir = path.join(parent, 'absent');
+  const handler = { fetch: vi.fn(async () => htmlResponse('unused')) };
+  try {
+    expect((await spiderSsgRoutes({ handler, routes: [], outDir })).total).toBe(0);
+    expect(handler.fetch).not.toHaveBeenCalled();
+    expect(await fs.readdir(parent)).toEqual([]);
+  } finally {
+    await fs.rm(parent, { recursive: true, force: true });
+  }
+});
+
+it.each([true, false])(
+  'honors destination probe sensitivity %s independently of the OS',
+  async sensitive => {
+    const outDir = await tmpdir();
+    const originalStat = fs.stat;
+    const stat = vi.spyOn(fs, 'stat').mockImplementation(async (...args) => {
+      const filename = String(args[0]);
+      if (path.basename(filename) === 'caseprobe' && filename.includes('.isr-case-probe-')) {
+        if (sensitive) throw Object.assign(new Error('absent'), { code: 'ENOENT' });
+        return originalStat(path.join(path.dirname(filename), 'CaseProbe'));
+      }
+      return originalStat(...args);
+    });
+    const handler = { fetch: vi.fn(async () => htmlResponse('missing', 404)) };
+    try {
+      const build = spiderSsgRoutes({
+        handler,
+        routes: ['/Foo', '/foo'],
+        outDir,
+        options: { failBuildThreshold: 1 },
+      });
+      if (sensitive) {
+        expect((await build).failed).toBe(2);
+        expect(handler.fetch).toHaveBeenCalledTimes(2);
+      } else {
+        await expect(build).rejects.toThrow(/case-insensitive destination/);
+        expect(handler.fetch).not.toHaveBeenCalled();
+      }
+      expect(await fs.readdir(outDir)).toEqual([]);
+      expect(
+        stat.mock.calls.some(([filename]) =>
+          String(filename).startsWith(path.join(outDir, '.isr-case-probe-'))
+        )
+      ).toBe(true);
+    } finally {
+      stat.mockRestore();
+      await fs.rm(outDir, { recursive: true, force: true });
+    }
+  }
+);
+
+it('removes the destination probe when sensitivity detection fails', async () => {
+  const outDir = await tmpdir();
+  const originalStat = fs.stat;
+  const stat = vi.spyOn(fs, 'stat').mockImplementation(async (...args) => {
+    if (String(args[0]).includes('.isr-case-probe-')) {
+      throw Object.assign(new Error('probe I/O failure'), { code: 'EIO' });
+    }
+    return originalStat(...args);
+  });
+  const handler = { fetch: vi.fn(async () => htmlResponse('unused')) };
+  try {
+    await expect(spiderSsgRoutes({ handler, routes: ['/Foo', '/foo'], outDir })).rejects.toThrow(
+      'probe I/O failure'
+    );
+    expect(handler.fetch).not.toHaveBeenCalled();
+    expect(await fs.readdir(outDir)).toEqual([]);
+  } finally {
+    stat.mockRestore();
+    await fs.rm(outDir, { recursive: true, force: true });
+  }
+});

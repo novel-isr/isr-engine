@@ -247,6 +247,40 @@ async function fetchWithTimeout(
   }
 }
 
+/** Probe the destination volume, without creating the output directory itself. */
+async function destinationIsCaseSensitive(outDir: string): Promise<boolean> {
+  let directory = path.resolve(outDir);
+  for (;;) {
+    try {
+      if (!(await fs.stat(directory)).isDirectory()) {
+        throw new Error(`SSG output ancestor is not a directory: ${directory}`);
+      }
+      break;
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+      const parent = path.dirname(directory);
+      if (parent === directory) throw error;
+      directory = parent;
+    }
+  }
+  // A new output directory inherits this existing ancestor's filesystem. An
+  // existing output directory may itself be a mount or have directory-specific
+  // case rules, so always start the search at the requested destination.
+  const probe = await fs.mkdtemp(path.join(directory, '.isr-case-probe-'));
+  try {
+    await fs.writeFile(path.join(probe, 'CaseProbe'), '', { flag: 'wx' });
+    try {
+      await fs.stat(path.join(probe, 'caseprobe'));
+      return false;
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+      return true;
+    }
+  } finally {
+    await fs.rm(probe, { recursive: true, force: true });
+  }
+}
+
 /**
  * 爬取一组 SSG 路由并写入静态 HTML
  */
@@ -272,10 +306,12 @@ export async function spiderSsgRoutes(params: {
   } = params;
 
   // Artifact identity is stricter than URL identity: distinct explicit URLs must
-  // never race to publish one file. Windows also ignores case and trailing dots;
-  // preserve distinct case-sensitive identities on other platforms.
+  // never race to publish one file. Case sensitivity belongs to the destination
+  // filesystem, not the host OS (macOS and Windows can both use either mode).
   const uniqueRoutes = [...new Set(routes)];
   const artifacts = new Map<string, string>();
+  const foldedArtifacts = new Map<string, { route: string; relative: string }>();
+  let caseSensitive: boolean | undefined;
   for (const route of uniqueRoutes) {
     let relative: string;
     try {
@@ -288,7 +324,7 @@ export async function spiderSsgRoutes(params: {
       process.platform === 'win32'
         ? normalized
             .split(path.sep)
-            .map(part => part.replace(/[. ]+$/, '').toLowerCase())
+            .map(part => part.replace(/[. ]+$/, ''))
             .join(path.sep)
         : normalized;
     const previous = artifacts.get(identity);
@@ -298,6 +334,18 @@ export async function spiderSsgRoutes(params: {
       );
     }
     artifacts.set(identity, route);
+    const folded = identity.toLowerCase();
+    const caseMatch = foldedArtifacts.get(folded);
+    if (caseMatch) {
+      caseSensitive ??= await destinationIsCaseSensitive(outDir);
+      if (!caseSensitive) {
+        throw new Error(
+          `SSG artifact collision: ${JSON.stringify(caseMatch.route)} and ${JSON.stringify(route)} map to ${caseMatch.relative} on a case-insensitive destination filesystem`
+        );
+      }
+    } else {
+      foldedArtifacts.set(folded, { route, relative });
+    }
   }
 
   const results: SpiderResult['routes'] = [];
