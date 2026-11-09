@@ -10,6 +10,7 @@
  *   - 跑 SSG 需要 dist/rsc/index.js 已就绪 —— plugin-rsc 保证 client 是最后一环
  */
 import path from 'node:path';
+import { pathToFileURL } from 'node:url';
 import { existsSync, promises as fs } from 'node:fs';
 import type { Plugin } from 'vite';
 
@@ -44,7 +45,9 @@ export function createSsgPostBuildPlugin(explicitConfig: ISRConfig | undefined):
     }
 
     logger.info(`[SSG] 预生成 ${ssgRoutes.length} 个路由（${ssgRoutes.join(', ')}）...`);
-    const handler = resolveFetchHandler(await import(/* @vite-ignore */ rscDistEntry));
+    const handler = resolveFetchHandler(
+      await import(/* @vite-ignore */ pathToFileURL(rscDistEntry).href)
+    );
 
     const ssgCfg = userConfig.ssg ?? {};
     const result = await spiderSsgRoutes({
@@ -83,7 +86,7 @@ export function createSsgPostBuildPlugin(explicitConfig: ISRConfig | undefined):
       return;
     }
 
-    const m = (await import(/* @vite-ignore */ ssrManifest)) as {
+    const m = (await import(/* @vite-ignore */ pathToFileURL(ssrManifest).href)) as {
       default: {
         bootstrapScriptContent?: string;
         clientReferenceDeps?: Record<string, { css?: string[] }>;

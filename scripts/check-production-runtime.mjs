@@ -5,9 +5,12 @@ import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 
 const cwd = process.cwd();
-const root = await fs.mkdtemp(path.join(os.tmpdir(), 'isr-native-runtime-'));
+const root = await fs.mkdtemp(path.join(os.tmpdir(), 'isr #native-runtime-'));
 process.env.NODE_ENV = 'production';
-const { createISRApp } = await import(pathToFileURL(path.join(cwd, 'dist/novel-isr.js')).href);
+const { createISRApp, Logger } = await import(
+  pathToFileURL(path.join(cwd, 'dist/novel-isr.js')).href
+);
+Logger.getInstance({ logFile: path.join(root, 'runtime.log') });
 let app;
 try {
   await fs.mkdir(path.join(root, 'dist/rsc'), { recursive: true });

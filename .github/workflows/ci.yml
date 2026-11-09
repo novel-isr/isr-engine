@@ -33,10 +33,12 @@ jobs:
       - name: Test filesystem and policy contracts
         run: pnpm exec vitest run src/ssg/__tests__/spider.test.ts src/ssg/__tests__/route-identity.test.ts src/engine/__tests__/RenderMode.test.ts src/plugin/__tests__/cacheConfiguration.test.ts src/plugin/__tests__/cacheDurationContract.test.ts
       - name: Build
+        id: windows-build
         run: pnpm build
       - name: Verify package and consumer types
         run: pnpm test:package
       - name: Verify native production runtime
+        if: ${{ !cancelled() && steps.windows-build.outcome == 'success' }}
         run: node scripts/check-production-runtime.mjs
 
   lint-and-format:

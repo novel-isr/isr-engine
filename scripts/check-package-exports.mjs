@@ -11,10 +11,18 @@ const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const temporary = await fs.mkdtemp(path.join(os.tmpdir(), 'isr-package-check-'));
 try {
   const pkg = JSON.parse(await fs.readFile(path.join(root, 'package.json'), 'utf8'));
+  // Windows npm is a .cmd launcher, which execFile cannot execute directly.
+  // Invoke the npm CLI bundled with Node without introducing a shell.
+  const npmCommand = process.platform === 'win32' ? process.execPath : 'npm';
+  const npmPrefix =
+    process.platform === 'win32'
+      ? [path.join(path.dirname(process.execPath), 'node_modules/npm/bin/npm-cli.js')]
+      : [];
   const [pack] = JSON.parse(
     execFileSync(
-      'npm',
+      npmCommand,
       [
+        ...npmPrefix,
         'pack',
         '--dry-run',
         '--json',
@@ -99,7 +107,11 @@ try {
   // an ambient declaration stub hiding a missing generated declaration.
   const scope = path.join(temporary, 'node_modules/@novel-isr');
   await fs.mkdir(scope, { recursive: true });
-  await fs.symlink(root, path.join(scope, 'engine'), 'dir');
+  await fs.symlink(
+    root,
+    path.join(scope, 'engine'),
+    process.platform === 'win32' ? 'junction' : 'dir'
+  );
   const consumer = path.join(temporary, 'consumer.ts');
   await fs.writeFile(
     consumer,

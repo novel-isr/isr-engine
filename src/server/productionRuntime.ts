@@ -2,6 +2,7 @@
 import fs from 'node:fs/promises';
 import { resolveFetchHandler } from '../utils/resolveFetchHandler';
 import path from 'node:path';
+import { pathToFileURL } from 'node:url';
 import express, { type Express } from 'express';
 import { Readable } from 'node:stream';
 import pkg from '../../package.json';
@@ -210,7 +211,7 @@ export async function createProductionRuntime(
     }
 
     const { fetch: rscHandler } = resolveFetchHandler(
-      await import(/* @vite-ignore */ rscDistEntry)
+      await import(/* @vite-ignore */ pathToFileURL(rscDistEntry).href)
     );
 
     const extraConnectSrc = Array.from(
