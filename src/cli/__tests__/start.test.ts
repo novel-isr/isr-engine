@@ -38,7 +38,7 @@ function runtime(telemetry: RuntimeConfig['telemetry']): RuntimeConfig {
 
 function sentryTelemetry(
   sentry: RuntimeTelemetrySentryIntegrationConfig
-): RuntimeConfig['telemetry'] {
+): Exclude<RuntimeConfig['telemetry'], false> {
   return {
     app: undefined,
     release: undefined,
@@ -93,6 +93,72 @@ describe('extractRoutesForSitemap —— 路由筛选', () => {
 });
 
 describe('applyTelemetryIntegrationEnv —— Sentry integration 显式开关', () => {
+  it('keeps production runtime mode independent from Sentry environment and clears stale integration state', () => {
+    const keys = [
+      'NODE_ENV',
+      'SENTRY_ENABLED',
+      'SENTRY_DSN',
+      'SENTRY_TRACES_SAMPLE_RATE',
+      'SENTRY_ENVIRONMENT',
+    ];
+    const previous = Object.fromEntries(keys.map(key => [key, process.env[key]]));
+    try {
+      process.env.NODE_ENV = 'production';
+      applyTelemetryIntegrationEnv(
+        runtime(
+          sentryTelemetry({
+            enabled: true,
+            dsn: undefined,
+            tracesSampleRate: undefined,
+            environment: 'staging',
+            release: undefined,
+          })
+        )
+      );
+      expect(process.env.NODE_ENV).toBe('production');
+      expect(process.env.SENTRY_ENVIRONMENT).toBe('staging');
+      applyTelemetryIntegrationEnv(
+        runtime(
+          sentryTelemetry({
+            enabled: true,
+            dsn: undefined,
+            tracesSampleRate: undefined,
+            environment: undefined,
+            release: undefined,
+          })
+        )
+      );
+      expect(process.env.SENTRY_ENVIRONMENT).toBeUndefined();
+      for (const telemetry of [
+        false as const,
+        sentryTelemetry({
+          enabled: false,
+          dsn: undefined,
+          tracesSampleRate: undefined,
+          environment: 'staging',
+          release: undefined,
+        }),
+        {
+          ...sentryTelemetry({
+            enabled: false,
+            dsn: undefined,
+            tracesSampleRate: undefined,
+            environment: undefined,
+            release: undefined,
+          }),
+          integrations: { sentry: undefined },
+        },
+      ]) {
+        process.env.SENTRY_ENVIRONMENT = 'stale';
+        applyTelemetryIntegrationEnv(runtime(telemetry));
+        expect(process.env.SENTRY_ENVIRONMENT).toBeUndefined();
+        expect(process.env.NODE_ENV).toBe('production');
+      }
+    } finally {
+      for (const key of keys) restoreEnv(key, previous[key]);
+    }
+  });
+
   it('只映射 enabled=true 的 Sentry 配置，dsn 只是凭证来源', () => {
     const previous = {
       SENTRY_ENABLED: process.env.SENTRY_ENABLED,

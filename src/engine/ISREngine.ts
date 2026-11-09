@@ -31,7 +31,6 @@ import { ISRRoutes } from '@/isr/ISRRoutes';
 
 import { SEOEngine, resolveSeoConfig, type ResolvedSeoConfig } from './seo';
 import { MiddlewareComposer, traceMiddleware, performanceMiddleware } from '../middlewares';
-import { registerInvalidator } from '@/rsc/revalidate';
 
 import type { Express } from 'express';
 
@@ -43,7 +42,6 @@ export default class ISREngine {
   private readonly seoEngine: SEOEngine;
 
   private serverContext?: ServerContext;
-  private unregisterInvalidator?: () => void;
 
   constructor(config: ISRConfig) {
     this.config = normalizeEngineConfig(config);
@@ -63,6 +61,11 @@ export default class ISREngine {
    * 初始化（不依赖 serverContext 的部分）
    */
   async initialize(): Promise<void> {
+    await this.initializeProject();
+    await this.seoEngine.initialize();
+  }
+
+  private async initializeProject(): Promise<void> {
     this.logger.info('🚀 初始化 ISR 引擎...');
 
     // 1. 开发环境清理缓存目录
@@ -77,32 +80,23 @@ export default class ISREngine {
       `✅ 自动发现 ${scanResult.routes.pages.length} 个页面路由, ${scanResult.routes.apis.length} 个 API 路由`
     );
 
-    // 3. SEO 引擎初始化
-    await this.seoEngine.initialize();
-
     this.logger.info('🎉 ISR 引擎初始化完成');
   }
 
   /**
-   * 启动服务器 + 注册 ops 路由 + 注册 revalidate invalidator
+   * 启动服务器；生产运维与缓存生命周期由共享运行时负责
    */
   async start(): Promise<ServerContext> {
-    await this.initialize();
+    if (isDev()) await this.initialize();
+    else await this.initializeProject();
 
     this.serverContext = await startAppServer(this.config, (requestHandler: Express) => {
+      if (!isDev()) return; // Production runtime owns authenticated operations routes.
       const routes = new ISRRoutes(this, this.logger, {
         renderMode: this.config.renderMode,
         routes: this.config.routes,
       });
       routes.setup(requestHandler);
-    });
-
-    // 注册 revalidate invalidator —— Server Actions 调用 revalidatePath/Tag 时触发本方法
-    // 目前 engine 只做日志 + CacheCleanup 兜底；真实的内存 LRU 失效由 createIsrCacheHandler 注册的 invalidator 完成
-    this.unregisterInvalidator = registerInvalidator(async target => {
-      this.logger.info(
-        `♻️ ISREngine received invalidate: ${target.kind}=${target.value}（disk/persistent tier no-op in plugin-rsc mode）`
-      );
     });
 
     return this.serverContext;
@@ -140,9 +134,11 @@ export default class ISREngine {
   async shutdown(): Promise<void> {
     this.logger.spin('关闭 ISR 引擎...');
 
-    this.unregisterInvalidator?.();
-
-    const results = await Promise.allSettled([shutdownServer(), this.seoEngine.shutdown()]);
+    const results = await Promise.allSettled([
+      shutdownServer(),
+      this.serverContext?.isDev === false ? Promise.resolve() : this.seoEngine.shutdown(),
+    ]);
+    this.serverContext = undefined;
     const failures = results.filter((r): r is PromiseRejectedResult => r.status === 'rejected');
 
     this.logger.stopSpinner('ISR 引擎已关闭');

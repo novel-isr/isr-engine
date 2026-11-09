@@ -4,8 +4,8 @@
  * ISREngine 唯一需要关心的服务器入口
  */
 
-import path from 'path';
-import fs from 'fs';
+import fs from 'node:fs';
+import path from 'node:path';
 import express, { type Express } from 'express';
 import type { ISRConfig } from '@/types';
 import { Logger } from '@/logger/Logger';
@@ -13,6 +13,7 @@ import { isDev } from '@/config/getStatus';
 import type { RouteSetupFn, ServerContext } from './types';
 import { createViteDevServer, closeViteDevServer } from './viteDevServer';
 import { applyBaseMiddlewaresWithOptions, mountViteOrStatic } from './middleware';
+import { createProductionRuntime, type ProductionRuntime } from './productionRuntime';
 import { startServer, closeServer } from './httpServer';
 import { requestContext } from '@/context/RequestContext';
 import { createServerRequestContext, applyAnonCookie } from '@/context/createServerRequestContext';
@@ -26,31 +27,24 @@ const logger = Logger.getInstance();
 
 /** 服务器上下文 */
 let serverContext: ServerContext | null = null;
+let productionRuntime: ProductionRuntime | undefined;
+let starting: Promise<ServerContext> | undefined;
 
-/**
- * 加载生产环境 Manifest
- */
+/** Retain the optional public ServerContext manifest for programmatic consumers. */
 function loadProdManifest(): Record<string, unknown> | null {
-  const manifestPaths = [
+  for (const relativePath of [
     'dist/.vite/manifest.json',
     'dist/client/.vite/manifest.json',
     'dist/manifest.json',
-  ];
-
-  for (const relativePath of manifestPaths) {
+  ]) {
     const absolutePath = path.resolve(process.cwd(), relativePath);
-    if (fs.existsSync(absolutePath)) {
-      try {
-        const content = fs.readFileSync(absolutePath, 'utf-8');
-        logger.info(`✅ 已加载 Manifest: ${relativePath}`);
-        return JSON.parse(content) as Record<string, unknown>;
-      } catch {
-        logger.warn(`Manifest 解析失败: ${relativePath}`);
-      }
+    if (!fs.existsSync(absolutePath)) continue;
+    try {
+      return JSON.parse(fs.readFileSync(absolutePath, 'utf8')) as Record<string, unknown>;
+    } catch {
+      logger.warn(`Manifest 解析失败: ${relativePath}`);
     }
   }
-
-  logger.warn('⚠️ 未找到 Manifest 文件，静态资源可能无法正确加载');
   return null;
 }
 
@@ -72,39 +66,6 @@ async function initDevContext(requestHandler: Express): Promise<ServerContext> {
 }
 
 /**
- * 初始化生产模式服务器上下文
- */
-async function initProdContext(requestHandler: Express): Promise<ServerContext> {
-  logger.info('🏭 初始化生产模式服务器...');
-
-  // 1. 加载构建 Manifest
-  const manifest = loadProdManifest();
-
-  // 2. 检查构建目录
-  const clientDir = path.resolve(process.cwd(), 'dist/client');
-  const serverDir = path.resolve(process.cwd(), 'dist/server');
-
-  if (!fs.existsSync(clientDir)) {
-    logger.warn(`⚠️ 客户端构建目录不存在: ${clientDir}`);
-    logger.warn('请先运行 build 命令');
-  }
-
-  if (!fs.existsSync(serverDir)) {
-    logger.warn(`⚠️ 服务端构建目录不存在: ${serverDir}`);
-  }
-
-  logger.info('✅ 生产环境准备就绪');
-
-  return {
-    manifest,
-    requestHandler,
-    httpServer: null,
-    viteDevMiddleware: null,
-    isDev: false,
-  };
-}
-
-/**
  * 初始化服务器上下文（内部使用）
  */
 async function initServerContext(config?: ISRConfig): Promise<ServerContext> {
@@ -115,9 +76,7 @@ async function initServerContext(config?: ISRConfig): Promise<ServerContext> {
   const requestHandler = express();
 
   // 根据环境初始化
-  serverContext = isDev()
-    ? await initDevContext(requestHandler)
-    : await initProdContext(requestHandler);
+  serverContext = await initDevContext(requestHandler);
 
   // 仅应用前置中间件（安全 / 压缩 / Body 解析）
   // Vite / 静态资源中间件将在 setupRoutes 之后挂载，确保 ops 路由能先于 Vite 匹配
@@ -185,10 +144,43 @@ async function initServerContext(config?: ISRConfig): Promise<ServerContext> {
  * 启动服务器
  * @returns 服务器上下文，包含 loadRenderFunction 等方法
  */
-export async function startAppServer(
+export function startAppServer(
   config: ISRConfig,
   setupRoutes: RouteSetupFn
 ): Promise<ServerContext> {
+  if (starting) return starting;
+  if (serverContext?.httpServer) return Promise.resolve(serverContext);
+  starting = startAppServerInternal(config, setupRoutes).finally(() => {
+    starting = undefined;
+  });
+  return starting;
+}
+
+async function startAppServerInternal(
+  config: ISRConfig,
+  setupRoutes: RouteSetupFn
+): Promise<ServerContext> {
+  if (!isDev()) {
+    if (serverContext) return serverContext;
+    const runtime = await createProductionRuntime(config, { setupRoutes });
+    try {
+      const result = await startServer(runtime.app, config.server);
+      productionRuntime = runtime;
+      serverContext = {
+        requestHandler: runtime.app,
+        viteDevMiddleware: null,
+        httpServer: result.server,
+        url: result.url,
+        isDev: false,
+        manifest: loadProdManifest(),
+      };
+      return serverContext;
+    } catch (error) {
+      await runtime.close();
+      throw error;
+    }
+  }
+
   // 1. 初始化上下文
   if (!serverContext) {
     await initServerContext(config);
@@ -226,22 +218,27 @@ export async function startAppServer(
  * 关闭服务器
  */
 export async function shutdownServer(): Promise<void> {
+  await starting?.catch(() => undefined);
   if (!serverContext) {
     return;
   }
 
-  // 关闭 HTTP 服务器
-  if (serverContext.httpServer) {
-    await closeServer(serverContext.httpServer);
-    logger.info('HTTP 服务器已关闭');
-  }
-
-  // 关闭 Vite 开发服务器
-  if (serverContext.isDev) {
-    await closeViteDevServer();
-    logger.info('Vite 开发中间件已关闭');
-  }
-
+  const context = serverContext;
+  const runtime = productionRuntime;
   serverContext = null;
+  productionRuntime = undefined;
+  const results = await Promise.allSettled([
+    context.httpServer ? closeServer(context.httpServer) : Promise.resolve(),
+    context.isDev ? closeViteDevServer() : Promise.resolve(),
+    runtime?.close(),
+  ]);
+  const errors = results.filter(
+    (result): result is PromiseRejectedResult => result.status === 'rejected'
+  );
+  if (errors.length)
+    throw new AggregateError(
+      errors.map(result => result.reason),
+      'Server shutdown failed'
+    );
   logger.success('✅ 服务器已完全关闭');
 }

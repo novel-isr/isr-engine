@@ -1,13 +1,14 @@
 /**
  * ISREngine 生命周期测试
  *
- * 范围：initialize → start（ops 路由可访问 + invalidator 注册）→ shutdown（释放 + 失败聚合）。
+ * 范围：initialize → start（ops 路由可访问）→ shutdown（释放 + 失败聚合）。
  * server 层（startAppServer / shutdownServer）替换为受控实现 —— 真 Express + 真 http.Server，
  * 但不拉起 Vite/plugin-rsc（那是 server/manager 自己职责域，有独立测试）。
  * cwd 指向临时目录，隔离 scanProject / CacheCleanup / generateSeo 的磁盘副作用。
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import express from 'express';
+import pkg from '../../../package.json';
 import http from 'node:http';
 import fs from 'node:fs';
 import os from 'node:os';
@@ -22,8 +23,6 @@ vi.mock('@/server', () => serverMock);
 
 import ISREngine from '../ISREngine';
 import { SEOEngine } from '../seo';
-import { revalidatePath } from '@/rsc/revalidate';
-import { Logger } from '../../logger/Logger';
 import type { ISRConfig } from '../../types';
 
 function baseConfig(): ISRConfig {
@@ -115,10 +114,7 @@ describe('ISREngine —— 生命周期', () => {
     await fs.promises.rm(workdir, { recursive: true, force: true });
   });
 
-  it('start() 后 /health 可访问；revalidatePath 派发到 engine invalidator；shutdown 后两者均释放', async () => {
-    const logger = Logger.getInstance();
-    const infoSpy = vi.spyOn(logger, 'info');
-
+  it('start() 后 /health 可访问；shutdown 后 listener 释放', async () => {
     const engine = new ISREngine(baseConfig());
     const ctx = await engine.start();
     expect(ctx.url).toBeTruthy();
@@ -127,31 +123,20 @@ describe('ISREngine —— 生命周期', () => {
     // ops 路由真实可访问（ISRRoutes.setup 在 startAppServer 回调里执行）
     const res = await fetch(`${ctx.url}/health`);
     expect(res.status).toBe(200);
-    const body = (await res.json()) as { status: string; defaultRenderMode: string };
+    const body = (await res.json()) as {
+      status: string;
+      defaultRenderMode: string;
+      version: string;
+    };
     expect(body.status).toBe('healthy');
+    expect(body.version).toBe(pkg.version);
     expect(body.defaultRenderMode).toBe('isr');
-
-    // start() 注册的 invalidator 能收到 revalidatePath 派发
-    infoSpy.mockClear();
-    await revalidatePath('/books');
-    const received = infoSpy.mock.calls.some(args =>
-      String(args[0]).includes('received invalidate: path=/books')
-    );
-    expect(received).toBe(true);
 
     await engine.shutdown();
     expect(serverMock.shutdownServer).toHaveBeenCalledTimes(1);
 
     // server 已关闭
     await expect(fetch(`${ctx.url}/health`)).rejects.toThrow();
-
-    // invalidator 已注销 —— 再派发不会到达 engine
-    infoSpy.mockClear();
-    await revalidatePath('/books');
-    const receivedAfter = infoSpy.mock.calls.some(args =>
-      String(args[0]).includes('received invalidate')
-    );
-    expect(receivedAfter).toBe(false);
   });
 
   it('shutdown() 子步骤失败 → 抛聚合错误，其余清理仍执行（allSettled 语义）', async () => {

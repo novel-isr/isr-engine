@@ -145,7 +145,7 @@ async function loadSentry(dsn: string): Promise<AutoServerHooks> {
     Sentry.init({
       dsn,
       tracesSampleRate: parseFloat(process.env.SENTRY_TRACES_SAMPLE_RATE ?? '0.1'),
-      environment: process.env.NODE_ENV ?? 'production',
+      environment: process.env.SENTRY_ENVIRONMENT ?? process.env.NODE_ENV ?? 'production',
     });
     const { createSentryServerHooks } = await loadObservability();
     logger.info(`🛰️  telemetry: Sentry auto-wired (DSN ${dsn.replace(/\/\/[^@]+@/, '//<key>@')})`);

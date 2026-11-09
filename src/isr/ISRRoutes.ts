@@ -11,6 +11,7 @@
 import type { Express, Request, Response } from 'express';
 import fs from 'node:fs';
 import path from 'node:path';
+import pkg from '../../package.json';
 
 import type { RenderModeType, RouteRule } from '@/types';
 import type ISREngine from '@/engine/ISREngine';
@@ -37,7 +38,7 @@ export class ISRRoutes {
     requestHandler.get('/health', (_req: Request, res: Response) => {
       res.json({
         status: 'healthy',
-        version: '2.0.0',
+        version: pkg.version,
         mode: 'plugin-rsc',
         defaultRenderMode: this.defaultMode,
         routes: Object.keys(this.routes).length,

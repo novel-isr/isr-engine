@@ -224,3 +224,61 @@ test('dynamic .html application routes render and hydrate without a static manif
   await page.getByRole('button', { name: 'Count 0' }).click();
   await expect(page.getByRole('button', { name: 'Count 1' })).toBeVisible();
 });
+
+test('published programmatic app renders, hydrates, invalidates ISR and shuts down naturally', async ({
+  page,
+  request,
+}) => {
+  const { fork } = await import('node:child_process');
+  const { fileURLToPath } = await import('node:url');
+  const child = fork(fileURLToPath(new URL('./programmatic-server.mjs', import.meta.url)), [], {
+    cwd: fileURLToPath(new URL('.', import.meta.url)),
+    env: { ...process.env, ISR_CACHE_NAMESPACE: `programmatic-${Date.now()}` },
+    stdio: ['ignore', 'pipe', 'pipe', 'ipc'],
+  });
+  let output = '';
+  child.stdout!.on('data', chunk => (output += String(chunk)));
+  child.stderr!.on('data', chunk => (output += String(chunk)));
+  const exited = new Promise<{ code: number | null; signal: string | null }>(resolve => {
+    child.once('exit', (code, signal) => resolve({ code, signal }));
+  });
+  try {
+    const url = await new Promise<string>((resolve, reject) => {
+      child.once('message', message => resolve((message as { ready: string }).ready));
+      child.once('exit', code =>
+        reject(new Error(`Programmatic startup exited ${code}: ${output}`))
+      );
+    });
+    const response = await page.goto(`${url}/static?search=a.b`);
+    expect(response?.headers()['x-served-by']).toBe('ssg-static');
+    await page.getByRole('button', { name: 'Count 0' }).click();
+    await expect(page.getByRole('button', { name: 'Count 1' })).toBeVisible();
+    await page.locator('[data-nav="route"]').click();
+    await expect(page.getByRole('heading', { name: 'Article' })).toBeVisible();
+    const first = await request.get(`${url}/cached`);
+    expect(first.headers()['x-cache-status']).toBe('MISS');
+    expect((await request.get(`${url}/cached`)).headers()['x-cache-status']).toBe('HIT');
+    const invalidated = new Promise<void>(resolve => child.once('message', () => resolve()));
+    child.send('invalidate');
+    await invalidated;
+    expect((await request.get(`${url}/cached`)).headers()['x-cache-status']).toBe('MISS');
+    expect((await request.get(`${url}/health`)).headers()['content-type']).toContain('text/html');
+    const restarted = new Promise<string>(resolve =>
+      child.once('message', message => resolve((message as { ready: string }).ready))
+    );
+    child.send('restart');
+    const restartedUrl = await restarted;
+    expect((await request.get(`${restartedUrl}/health`)).headers()['content-type']).toContain(
+      'text/html'
+    );
+    expect((await request.get(`${restartedUrl}/cached`)).headers()['x-cache-status']).toBe('MISS');
+    await page.goto(`${restartedUrl}/article`);
+    await page.getByRole('button', { name: 'Count 0' }).click();
+    await expect(page.getByRole('button', { name: 'Count 1' })).toBeVisible();
+    child.send('shutdown');
+    expect(await exited, output).toEqual({ code: 0, signal: null });
+    await expect(fetch(`${url}/health`)).rejects.toThrow();
+  } finally {
+    if (child.exitCode === null && child.signalCode === null) child.kill('SIGKILL');
+  }
+});
