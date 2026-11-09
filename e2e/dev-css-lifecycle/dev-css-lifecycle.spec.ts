@@ -23,7 +23,7 @@ interface OwnerEvent {
 interface Diagnostics {
   consoleErrors: string[];
   pageErrors: string[];
-  requestFailures: Array<{ url: string; error: string }>;
+  requestFailures: Array<{ url: string; error: string; navigationRequest: boolean }>;
   allowedFailurePatterns: RegExp[];
 }
 
@@ -287,12 +287,7 @@ for (const mode of ['hydrated', 'CSR shell'] as const) {
       });
     }
     const diagnostics = Reflect.get(page, '__devCssDiagnostics') as Diagnostics;
-    // StrictMode runs the CSR bootstrap effect twice; the second owns the request.
-    if (mode === 'CSR shell') diagnostics.allowedFailurePatterns.push(/\/_\.rsc$/);
-    diagnostics.allowedFailurePatterns.push(
-      /\/article_\.rsc\?abort=1/,
-      /Article\.module\.scss.*__novel_isr_style_generation=/
-    );
+    diagnostics.allowedFailurePatterns.push(/Article\.module\.scss.*__novel_isr_style_generation=/);
 
     const bootstrap = deferred();
     await page.route(/\/.*virtual:novel-isr\/client-entry(?:\?|$)/, async route => {
@@ -419,17 +414,26 @@ function createDiagnostics(page: Page): Diagnostics {
     diagnostics.requestFailures.push({
       url: request.url(),
       error: request.failure()?.errorText ?? 'unknown request failure',
+      navigationRequest:
+        request.method() === 'GET' &&
+        request.resourceType() === 'fetch' &&
+        new URL(request.url()).pathname.endsWith('_.rsc') &&
+        /^\d+$/.test(request.headers()['x-novel-isr-dev-style-generation'] ?? ''),
     });
   });
   return diagnostics;
 }
 
 function assertCleanDiagnostics(diagnostics: Diagnostics): void {
-  const unexpectedFailures = diagnostics.requestFailures.filter(
-    failure =>
+  const unexpectedFailures = diagnostics.requestFailures.filter(failure => {
+    // Route requests explicitly carry their navigation generation. Superseding one
+    // aborts its browser fetch; speculative requests and stylesheet failures stay visible.
+    if (failure.navigationRequest && failure.error === 'net::ERR_ABORTED') return false;
+    return (
       !diagnostics.allowedFailurePatterns.some(pattern => pattern.test(failure.url)) ||
       !/abort|cancel/i.test(failure.error)
-  );
+    );
+  });
   expect(diagnostics.consoleErrors, 'browser console errors').toEqual([]);
   expect(diagnostics.pageErrors, 'uncaught browser page errors').toEqual([]);
   expect(unexpectedFailures, 'unexpected browser network failures').toEqual([]);

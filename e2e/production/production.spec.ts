@@ -271,7 +271,17 @@ test('published programmatic app renders, hydrates, invalidates ISR and shuts do
     expect((await request.get(`${restartedUrl}/health`)).headers()['content-type']).toContain(
       'text/html'
     );
+    // Redis responses survive runtime shutdown; the in-process store is recreated.
+    expect((await request.get(`${restartedUrl}/cached`)).headers()['x-cache-status']).toBe(
+      process.env.PLAYWRIGHT_REDIS_URL ? 'HIT' : 'MISS'
+    );
+    const invalidatedAfterRestart = new Promise<void>(resolve =>
+      child.once('message', () => resolve())
+    );
+    child.send('invalidate');
+    await invalidatedAfterRestart;
     expect((await request.get(`${restartedUrl}/cached`)).headers()['x-cache-status']).toBe('MISS');
+    expect((await request.get(`${restartedUrl}/cached`)).headers()['x-cache-status']).toBe('HIT');
     await page.goto(`${restartedUrl}/article`);
     await page.getByRole('button', { name: 'Count 0' }).click();
     await expect(page.getByRole('button', { name: 'Count 1' })).toBeVisible();
