@@ -4,7 +4,7 @@
  * 工业模式（对标 next/image / @vercel/og 的图片处理路径）：
  *   - 端点 `/_/img?src=&w=&q=&fmt=`：sharp 按需 resize/compress/格式转换
  *   - LRU 缓存 transformed buffer + ETag —— 二次命中走 304/缓存
- *   - sharp 是 optionalDependency：用户没装就跳过 endpoint 注册（不报错）
+ *   - sharp 是 optionalDependency：缺失时转换返回 501；fmt=original 可显式读取安全栅格原图
  *   - <Image> 组件（src/runtime/Image.tsx）输出 srcset，浏览器选最佳分辨率
  *
  * 安全：
@@ -42,16 +42,15 @@ interface SharpInstance {
   metadata(): Promise<{ width?: number; height?: number; format?: string }>;
 }
 
-let sharpModule: SharpModule | null | undefined; // undefined = not tried; null = unavailable
+/** Instance-scoped capability injection, also useful for custom optimizer loading. */
+export interface ImageProcessingDependencies {
+  loadSharp?: () => Promise<SharpModule | null>;
+}
 
 async function loadSharp(): Promise<SharpModule | null> {
-  if (sharpModule !== undefined) return sharpModule;
   try {
-    sharpModule = (await import(/* @vite-ignore */ 'sharp' as string)) as unknown as SharpModule;
-    return sharpModule;
+    return (await import(/* @vite-ignore */ 'sharp' as string)) as unknown as SharpModule;
   } catch {
-    sharpModule = null;
-    console.warn('[image-plugin] sharp 未安装，跳过图片优化端点。要启用：pnpm add sharp');
     return null;
   }
 }
@@ -65,9 +64,12 @@ interface CachedImage {
   etag: string;
 }
 
-export function createImagePlugin(options: ImagePluginOptions = {}): Plugin {
+export function createImagePlugin(
+  options: ImagePluginOptions = {},
+  dependencies: ImageProcessingDependencies = {}
+): Plugin {
   let publicDir = path.resolve(process.cwd(), 'public');
-  const handler = createImageHandler(options, () => publicDir);
+  const handler = createImageHandler(options, () => publicDir, dependencies);
   return {
     name: 'novel-isr:image-optimization',
     configResolved(c) {
@@ -84,10 +86,11 @@ export function createImagePlugin(options: ImagePluginOptions = {}): Plugin {
 
 /** Connect middleware shared by development, preview and production. */
 export function createImageMiddleware(
-  options: ImagePluginOptions = {}
+  options: ImagePluginOptions = {},
+  dependencies: ImageProcessingDependencies = {}
 ): (req: IncomingMessage, res: ServerResponse, next: Connect.NextFunction) => void {
   const publicDir = path.resolve(process.cwd(), 'public');
-  return createImageHandler(options, () => publicDir);
+  return createImageHandler(options, () => publicDir, dependencies);
 }
 
 class ImageError extends Error {
@@ -99,7 +102,12 @@ class ImageError extends Error {
   }
 }
 
-function createImageHandler(opts: ImagePluginOptions, getPublicDir: () => string) {
+function createImageHandler(
+  opts: ImagePluginOptions,
+  getPublicDir: () => string,
+  dependencies: ImageProcessingDependencies
+) {
+  let sharpCapability: Promise<SharpModule | null> | undefined;
   const endpoint = opts.path ?? '/_/img';
   const allow = new Set(opts.remoteAllowlist ?? []);
   const cache = new LRUCache<string, CachedImage>({
@@ -132,7 +140,15 @@ function createImageHandler(opts: ImagePluginOptions, getPublicDir: () => string
       if (res.destroyed || res.writableEnded) return;
       res.statusCode = error instanceof ImageError ? error.status : 500;
       res.setHeader('content-type', 'text/plain; charset=utf-8');
-      res.end(error instanceof ImageError ? error.message : 'image processing failed');
+      res.setHeader('x-content-type-options', 'nosniff');
+      res.setHeader('cache-control', 'no-store');
+      res.end(
+        req.method === 'HEAD'
+          ? undefined
+          : error instanceof ImageError
+            ? error.message
+            : 'image processing failed'
+      );
     });
 
     async function handle(url: URL): Promise<void> {
@@ -145,7 +161,11 @@ function createImageHandler(opts: ImagePluginOptions, getPublicDir: () => string
       const q =
         clamp(parseInt(url.searchParams.get('q') ?? String(defaultQ), 10), 1, 100) || defaultQ;
       const fmt = (url.searchParams.get('fmt') ?? '').toLowerCase();
-      const format = SUPPORTED_FORMATS.has(fmt) ? fmt : pickAuto(req.headers.accept);
+      if (fmt && fmt !== 'original' && !SUPPORTED_FORMATS.has(fmt))
+        throw new ImageError(400, 'unsupported format');
+      if (fmt === 'original' && (wParam !== null || url.searchParams.has('q')))
+        throw new ImageError(400, 'original mode does not accept transformations');
+      const format = fmt || pickAuto(req.headers.accept);
       const key = JSON.stringify([src, w, q, format]);
       const cached = cache.get(key);
       if (cached) {
@@ -155,18 +175,28 @@ function createImageHandler(opts: ImagePluginOptions, getPublicDir: () => string
       if (active >= 4) throw new ImageError(503, 'image processing busy');
       active++;
       try {
-        const sharp = await loadSharp();
-        if (!sharp) throw new ImageError(501, 'sharp not installed');
-        const input = await loadSource(src, allow, getPublicDir());
-        let pipe = sharp.default(input, { limitInputPixels: 40_000_000 });
-        if (w) pipe = pipe.resize({ width: w, withoutEnlargement: true });
-        const out = await pipe
-          .toFormat(format === 'jpg' ? 'jpeg' : format, { quality: q })
-          .toBuffer();
+        let out: Buffer;
+        let contentType: string;
+        if (format === 'original') {
+          out = await loadSource(src, allow, getPublicDir());
+          contentType = originalContentType(out);
+        } else {
+          const sharp = await (sharpCapability ??= (dependencies.loadSharp ?? loadSharp)());
+          if (!sharp)
+            throw new ImageError(
+              501,
+              'sharp not installed; use fmt=original without transformations'
+            );
+          const input = await loadSource(src, allow, getPublicDir());
+          let pipe = sharp.default(input, { limitInputPixels: 40_000_000 });
+          if (w) pipe = pipe.resize({ width: w, withoutEnlargement: true });
+          out = await pipe.toFormat(format === 'jpg' ? 'jpeg' : format, { quality: q }).toBuffer();
+          contentType = `image/${format === 'jpg' ? 'jpeg' : format}`;
+        }
         if (out.byteLength > MAX_INPUT_BYTES) throw new ImageError(413, 'output too large');
         const entry = {
           body: out,
-          contentType: `image/${format === 'jpg' ? 'jpeg' : format}`,
+          contentType,
           etag: `"${createHash('sha1').update(out).digest('hex').slice(0, 16)}"`,
         };
         cache.set(key, entry);
@@ -183,15 +213,107 @@ function clamp(n: number, lo: number, hi: number): number {
   return Math.max(lo, Math.min(hi, n));
 }
 
+/** Media range specificity takes precedence over wildcard quality (RFC 9110). */
+function acceptQuality(contentType: string, accept?: string | string[]): number {
+  if (accept === undefined) return 1;
+  let specificity = -1;
+  let quality = 0;
+  for (const range of (Array.isArray(accept) ? accept.join(',') : accept).split(',')) {
+    const [type, ...parameters] = range.trim().toLowerCase().split(';');
+    const rank = type === contentType ? 2 : type === 'image/*' ? 1 : type === '*/*' ? 0 : -1;
+    if (rank < 0 || rank < specificity) continue;
+    const qParam = parameters.map(p => p.trim()).find(p => p.startsWith('q='));
+    const qText = qParam?.slice(2);
+    const q =
+      qText === undefined
+        ? 1
+        : /^(?:0(?:\.\d{0,3})?|1(?:\.0{0,3})?)$/.test(qText)
+          ? Number(qText)
+          : 0;
+    if (rank > specificity) quality = q;
+    else quality = Math.max(quality, q);
+    specificity = rank;
+  }
+  return quality;
+}
+
 function pickAuto(accept?: string | string[]): string {
-  const a = Array.isArray(accept) ? accept.join(',') : (accept ?? '');
-  if (a.includes('image/avif')) return 'avif';
-  if (a.includes('image/webp')) return 'webp';
-  return 'jpeg';
+  // JPEG remains the default for absent or equally preferred wildcard ranges.
+  const candidates = ['jpeg', 'webp', 'avif'];
+  let selected = '';
+  let best = 0;
+  for (const format of candidates) {
+    const quality = acceptQuality(`image/${format}`, accept);
+    if (quality > best) {
+      selected = format;
+      best = quality;
+    }
+  }
+  if (!selected) throw new ImageError(406, 'no acceptable image format');
+  return selected;
+}
+
+// Check chunk boundaries and the mandatory end marker without decoding compressed pixels.
+function completePng(input: Buffer): boolean {
+  let offset = 8;
+  let hasPixels = false;
+  while (offset + 12 <= input.length) {
+    const size = input.readUInt32BE(offset);
+    const type = input.toString('ascii', offset + 4, offset + 8);
+    const end = offset + 12 + size;
+    if (end > input.length) return false;
+    if (type === 'IDAT' && size > 0) hasPixels = true;
+    if (type === 'IEND') return size === 0 && end === input.length && hasPixels;
+    offset = end;
+  }
+  return false;
+}
+
+/** Only inert raster containers are served directly; never trust extensions or upstream MIME. */
+function originalContentType(input: Buffer): string {
+  if (
+    input.length >= 33 &&
+    input.subarray(0, 8).equals(Buffer.from([137, 80, 78, 71, 13, 10, 26, 10])) &&
+    input.readUInt32BE(8) === 13 &&
+    input.toString('ascii', 12, 16) === 'IHDR' &&
+    input.readUInt32BE(16) > 0 &&
+    input.readUInt32BE(20) > 0 &&
+    completePng(input)
+  )
+    return 'image/png';
+  if (
+    input.length >= 4 &&
+    input[0] === 0xff &&
+    input[1] === 0xd8 &&
+    input[2] === 0xff &&
+    input[input.length - 2] === 0xff &&
+    input[input.length - 1] === 0xd9
+  )
+    return 'image/jpeg';
+  if (
+    input.length >= 14 &&
+    ['GIF87a', 'GIF89a'].includes(input.toString('ascii', 0, 6)) &&
+    input.readUInt16LE(6) > 0 &&
+    input.readUInt16LE(8) > 0 &&
+    input[input.length - 1] === 0x3b
+  )
+    return 'image/gif';
+  if (
+    input.length >= 20 &&
+    input.toString('ascii', 0, 4) === 'RIFF' &&
+    input.readUInt32LE(4) === input.length - 8 &&
+    input.toString('ascii', 8, 12) === 'WEBP' &&
+    ['VP8 ', 'VP8L', 'VP8X'].includes(input.toString('ascii', 12, 16))
+  )
+    return 'image/webp';
+  throw new ImageError(415, 'unsupported original image type');
 }
 
 function sendImage(req: IncomingMessage, res: ServerResponse, entry: CachedImage): void {
   res.setHeader('vary', 'Accept');
+  res.setHeader('x-content-type-options', 'nosniff');
+  if (acceptQuality(entry.contentType, req.headers.accept) <= 0)
+    throw new ImageError(406, 'image type not acceptable');
   res.setHeader('cache-control', 'public, max-age=60, must-revalidate');
   res.setHeader('etag', entry.etag);
   if (req.headers['if-none-match'] === entry.etag) {

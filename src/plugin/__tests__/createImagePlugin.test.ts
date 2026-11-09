@@ -34,8 +34,8 @@ interface Result {
   body?: unknown;
   next?: boolean;
 }
-function handler(options = {}, production = false) {
-  const plugin = createImagePlugin(options) as unknown as {
+function handler(options = {}, production = false, dependencies = {}) {
+  const plugin = createImagePlugin(options, dependencies) as unknown as {
     configResolved(config: { root: string; publicDir: string }): void;
     configureServer(server: { middlewares: { use(fn: Middleware): void } }): void;
   };
@@ -50,9 +50,9 @@ function handler(options = {}, production = false) {
   });
   if (production) {
     vi.spyOn(process, 'cwd').mockReturnValue(root);
-    middleware = createImageMiddleware(options);
+    middleware = createImageMiddleware(options, dependencies);
   }
-  return (src: string, headers = {}, pathname = '/_/img') =>
+  return (src: string, headers = {}, pathname = '/_/img', query = '', method = 'GET') =>
     new Promise<Result>((resolve, reject) => {
       const result: Result = { statusCode: 200, headers: {} };
       const res = {
@@ -71,7 +71,11 @@ function handler(options = {}, production = false) {
       };
       Promise.resolve(
         middleware(
-          { url: `${pathname}?src=${encodeURIComponent(src)}`, headers } as IncomingMessage,
+          {
+            url: `${pathname}?src=${encodeURIComponent(src)}${query}`,
+            headers,
+            method,
+          } as IncomingMessage,
           res as unknown as ServerResponse,
           () => resolve({ next: true, statusCode: 0, headers: {} })
         )
@@ -192,5 +196,100 @@ describe('production image service resilience', () => {
     await new Promise(resolve => setTimeout(resolve, 5));
     await request('https://allowed.test/a');
     expect(fetcher).toHaveBeenCalledTimes(2);
+  });
+});
+
+const png = Buffer.from(
+  'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGP4z8DwHwAFAAH/iZk9HQAAAABJRU5ErkJggg==',
+  'base64'
+);
+describe('explicit original image capability', () => {
+  const absent = { loadSharp: async () => null };
+  it('serves bounded raster originals without an optimizer and preserves HEAD and conditional GET', async () => {
+    await writeFile(path.join(root, 'public/a'), png);
+    const request = handler({}, true, absent);
+    const first = await request('/a', {}, '/_/img', '&fmt=original');
+    expect(first.statusCode).toBe(200);
+    expect(first.body).toEqual(png);
+    expect(first.headers['content-type']).toBe('image/png');
+    expect(first.headers['x-content-type-options']).toBe('nosniff');
+    expect((await request('/a', {}, '/_/img', '&fmt=original', 'HEAD')).body).toBeUndefined();
+    expect(
+      (await request('/a', { 'if-none-match': first.headers.etag }, '/_/img', '&fmt=original'))
+        .statusCode
+    ).toBe(304);
+    expect((await request('/a')).statusCode).toBe(501);
+    expect((await request('/a', {}, '/_/img', '&fmt=original&w=10')).statusCode).toBe(400);
+    expect((await request('/a', {}, '/_/img', '&fmt=original&q=80')).statusCode).toBe(400);
+  });
+  it('honors Accept exclusions on cached originals and rejects active content', async () => {
+    await writeFile(path.join(root, 'public/a'), png);
+    await writeFile(path.join(root, 'public/svg'), '<svg xmlns="http://www.w3.org/2000/svg"/>');
+    const request = handler({}, false, absent);
+    expect((await request('/a', { accept: 'image/*' }, '/_/img', '&fmt=original')).statusCode).toBe(
+      200
+    );
+    expect(
+      (await request('/a', { accept: 'image/png;q=0, */*;q=1' }, '/_/img', '&fmt=original'))
+        .statusCode
+    ).toBe(406);
+    expect((await request('/svg', {}, '/_/img', '&fmt=original')).statusCode).toBe(415);
+    expect((await request('/a', {}, '/_/img', '&fmt=garbage')).statusCode).toBe(400);
+  });
+  it('keeps source security checks without sharp', async () => {
+    const request = handler({}, false, absent);
+    expect(
+      (await request('https://blocked.test/a', {}, '/_/img', '&fmt=original')).statusCode
+    ).toBe(400);
+    expect((await request('../secret', {}, '/_/img', '&fmt=original')).statusCode).toBe(400);
+  });
+});
+
+describe('original source validation and capability isolation', () => {
+  it('rejects truncated PNG and HTML even with misleading extensions', async () => {
+    const request = handler({}, false, { loadSharp: async () => null });
+    await writeFile(path.join(root, 'public/truncated.png'), png.subarray(0, 33));
+    await writeFile(path.join(root, 'public/fake.jpg'), '<html>active</html>');
+    expect((await request('/truncated.png', {}, '/_/img', '&fmt=original')).statusCode).toBe(415);
+    expect((await request('/fake.jpg', {}, '/_/img', '&fmt=original')).statusCode).toBe(415);
+  });
+  it('does not load an optimizer for originals or share absent capability across instances', async () => {
+    await writeFile(path.join(root, 'public/a'), png);
+    const missing = vi.fn(async () => null);
+    const absent = handler({}, false, { loadSharp: missing });
+    await absent('/a', {}, '/_/img', '&fmt=original');
+    expect(missing).not.toHaveBeenCalled();
+    expect((await absent('/a')).statusCode).toBe(501);
+    expect((await absent('/a')).statusCode).toBe(501);
+    expect(missing).toHaveBeenCalledTimes(1);
+    expect((await handler()('/a')).statusCode).toBe(200);
+  });
+  it('retains redirect and streamed byte limits for original delivery', async () => {
+    const loader = vi.fn(async () => null);
+    const request = handler({ remoteAllowlist: ['allowed.test'] }, true, { loadSharp: loader });
+    const fetcher = vi.fn(
+      async () =>
+        new Response(null, { status: 302, headers: { location: 'https://blocked.test/image.png' } })
+    );
+    vi.stubGlobal('fetch', fetcher);
+    expect(
+      (await request('https://allowed.test/a', {}, '/_/img', '&fmt=original')).statusCode
+    ).toBe(400);
+    expect(fetcher).toHaveBeenCalledTimes(1);
+    fetcher.mockImplementation(async () => new Response(new Uint8Array(26 * 1024 * 1024)));
+    expect(
+      (await request('https://allowed.test/a', {}, '/_/img', '&fmt=original')).statusCode
+    ).toBe(413);
+    expect(loader).not.toHaveBeenCalled();
+  });
+  it('honors excluded and preferred transformed formats', async () => {
+    await writeFile(path.join(root, 'public/a'), png);
+    const request = handler();
+    expect(
+      (await request('/a', { accept: 'image/avif;q=0,image/webp;q=0.8,image/jpeg;q=0.5' })).headers[
+        'content-type'
+      ]
+    ).toBe('image/webp');
+    expect((await request('/a', { accept: 'image/*;q=0' })).statusCode).toBe(406);
   });
 });

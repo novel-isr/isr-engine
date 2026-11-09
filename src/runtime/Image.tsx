@@ -33,6 +33,8 @@ export interface ImageProps {
   endpoint?: string;
   /** 质量 1-100；仅对内部 src 生效（外部 URL 无优化能力） */
   quality?: number;
+  /** 显式通过安全图片端点读取原图（无需 sharp）；不能与 quality / format 合用。 */
+  unoptimized?: boolean;
   /** 强制格式；仅对内部 src 生效 */
   format?: 'avif' | 'webp' | 'jpeg' | 'png';
   /** LCP 候选图设为 true：禁 lazy + fetchPriority=high + 自动 <link rel="preload"> */
@@ -70,6 +72,11 @@ export function Image(props: ImageProps): React.ReactElement {
     // passthrough：外部 URL 或 SVG，不走 sharp 端点也不发 srcset，仍享有
     // priority / preload / width/height（CLS 防护）等所有 priority 行为
     src = props.src;
+    srcSet = undefined;
+  } else if (props.unoptimized) {
+    if (props.quality !== undefined || props.format !== undefined)
+      throw new Error('Image unoptimized cannot be combined with quality or format');
+    src = `${endpoint}?${new URLSearchParams({ src: props.src, fmt: 'original' })}`;
     srcSet = undefined;
   } else {
     const buildUrl = (w: number) => {

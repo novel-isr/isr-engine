@@ -178,3 +178,20 @@ describe('<Image>', () => {
     expect(props.src).toBe('/logo.svg?v=2');
   });
 });
+
+it('uses the validated original endpoint explicitly without transformation parameters or srcset', () => {
+  const el = Image({ src: '/photo.png', alt: '', width: 100, unoptimized: true, priority: true });
+  const props = renderProps<ImgProps>(el);
+  expect(props.src).toBe('/_/img?src=%2Fphoto.png&fmt=original');
+  expect(props.srcSet).toBeUndefined();
+  expect(getPreloadLink(el)?.href).toBe(props.src);
+});
+
+it('rejects conflicting transformation props in original mode', () => {
+  expect(() =>
+    Image({ src: '/photo.png', alt: '', width: 100, unoptimized: true, quality: 80 })
+  ).toThrow('cannot be combined');
+  expect(() =>
+    Image({ src: '/photo.png', alt: '', width: 100, unoptimized: true, format: 'png' })
+  ).toThrow('cannot be combined');
+});
