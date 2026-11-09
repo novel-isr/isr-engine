@@ -92,7 +92,7 @@ async function serve(app: ReturnType<typeof express>, check: (url: string) => Pr
 }
 
 it('serves SSG query URLs from the validated index and refuses unindexed HTML', async () => {
-  const { createStaticHtmlMiddleware } = await import('../start');
+  const { createStaticHtmlMiddleware, createStaticAssetMiddleware } = await import('../start');
   const { generateStaticCspManifest, loadStaticCspManifest } =
     await import('../../security/staticCspManifest');
   const fs = await import('node:fs/promises');
@@ -108,12 +108,19 @@ it('serves SSG query URLs from the validated index and refuses unindexed HTML', 
     await generateStaticCspManifest(dir);
     const index = await loadStaticCspManifest(dir);
     await fs.writeFile(`${dir}/client/late.html`, '<script>unindexed()</script>');
+    await fs.writeFile(`${dir}/client/late.htm`, '<script>unindexed()</script>');
+    await fs.writeFile(`${dir}/client/late.HTML`, '<script>unindexed()</script>');
+    await fs.mkdir(`${dir}/client/assets`);
+    await fs.writeFile(`${dir}/client/assets/app.js`, 'window.assetLoaded=true');
     await fs.mkdir(`${dir}/client/rogue`);
     await fs.writeFile(`${dir}/client/rogue/index.html`, '<script>unindexed()</script>');
     const app = express();
     app.use(createStaticHtmlMiddleware(`${dir}/client`, index));
-    app.use(express.static(`${dir}/client`, { redirect: false, index: false }));
-    app.use((_req, res) => res.status(404).end());
+    app.use(createStaticAssetMiddleware(`${dir}/client`));
+    app.get('/articles/dynamic.html', (_req, res) =>
+      res.type('html').send('<html>dynamic SSR</html>')
+    );
+    app.use((_req, res) => res.status(404).send('business not found'));
     await serve(app, async url => {
       for (const route of ['/page?search=a.b', '/page/', '/page/index.html']) {
         const response = await fetch(url + route);
@@ -122,7 +129,25 @@ it('serves SSG query URLs from the validated index and refuses unindexed HTML', 
         expect(response.headers.get('content-security-policy')).not.toContain('unsafe-inline');
         expect(await response.text()).toContain('window.active=true');
       }
-      expect((await fetch(url + '/late.html')).status).toBe(503);
+      for (const route of [
+        '/late.html',
+        '/late.htm',
+        '/late.HTML',
+        '/late%2ehtml',
+        '/late.html?query=.js',
+        '/rogue/index.html',
+      ]) {
+        const response = await fetch(url + route);
+        expect(response.status).toBe(404);
+        expect(await response.text()).toBe('business not found');
+      }
+      const dynamic = await fetch(url + '/articles/dynamic.html');
+      expect(dynamic.status).toBe(200);
+      expect(await dynamic.text()).toContain('dynamic SSR');
+      const asset = await fetch(url + '/assets/app.js');
+      expect(asset.status).toBe(200);
+      expect(await asset.text()).toBe('window.assetLoaded=true');
+      expect(asset.headers.get('cache-control')).toContain('immutable');
       expect((await fetch(url + '/rogue/')).status).toBe(404);
     });
   } finally {
@@ -162,4 +187,58 @@ it('protects private health with the configured ops token', async () => {
       (await fetch(`${url}/health`, { headers: { authorization: 'Bearer secret' } })).status
     ).toBe(200);
   });
+});
+
+it('allows the application to render dynamic .html routes absent from the static manifest', async () => {
+  const { createStaticHtmlMiddleware } = await import('../start');
+  const app = express();
+  app.use(
+    createStaticHtmlMiddleware('/unused', {
+      legacy: false,
+      buildId: 'test',
+      scriptHashes: new Map(),
+    })
+  );
+  app.get('/articles/dynamic.html', (_req, res) => res.send('dynamic SSR'));
+  await serve(app, async url => {
+    const response = await fetch(url + '/articles/dynamic.html');
+    expect(response.status).toBe(200);
+    expect(await response.text()).toBe('dynamic SSR');
+  });
+});
+
+it('normalizes raw dot segments and encoded backslashes before deciding whether an asset is HTML', async () => {
+  const { createStaticAssetMiddleware } = await import('../start');
+  const { request } = await import('node:http');
+  const fs = await import('node:fs/promises');
+  const dir = await fs.mkdtemp('/tmp/isr-assets-');
+  try {
+    await fs.writeFile(`${dir}/late.html`, '<script>unindexed()</script>');
+    const app = express();
+    app.use(createStaticAssetMiddleware(dir));
+    app.use((_req, res) => res.status(404).send('business not found'));
+    await serve(app, async url => {
+      for (const rawPath of [
+        '/late.html/.',
+        '/late.html/%2e',
+        '/safe/%2e%2e%5clate.html',
+        '//late.html',
+      ]) {
+        const response = await new Promise<{ status: number; body: string }>((resolve, reject) => {
+          const req = request(url, { path: rawPath }, res => {
+            const chunks: Buffer[] = [];
+            res.on('data', chunk => chunks.push(Buffer.from(chunk)));
+            res.on('end', () =>
+              resolve({ status: res.statusCode!, body: Buffer.concat(chunks).toString() })
+            );
+          });
+          req.on('error', reject);
+          req.end();
+        });
+        expect(response).toEqual({ status: 404, body: 'business not found' });
+      }
+    });
+  } finally {
+    await fs.rm(dir, { recursive: true, force: true });
+  }
 });

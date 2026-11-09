@@ -297,24 +297,7 @@ export async function startProductionServer(options: StartOptions): Promise<void
 
   // 客户端静态资源（必须在 ISR cache 之前 —— SSG 文件由 OS 文件系统直发，
   // 不需要也不应该走内存 LRU 缓存，避免 stream pipe 与 res.write 拦截不兼容导致空 body）
-  app.use(
-    express.static(clientDir, {
-      index: false,
-      redirect: false,
-      maxAge: '1h',
-      fallthrough: true,
-      setHeaders: (res, filePath) => {
-        if (filePath.includes(`${path.sep}assets${path.sep}`)) {
-          // hash 命名的 build 产物：1 年 immutable
-          res.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
-        } else if (/\.(jpe?g|png|webp|avif|gif|svg|ico|woff2?)$/i.test(filePath)) {
-          // 图片 / 字体 / 图标：1 周 + 允许 stale 重验证（Lighthouse "efficient cache lifetimes"）
-          // 不可命名 hash 但内容稳定（如 public/covers/ public/favicon），比默认 1h 更合理
-          res.setHeader('Cache-Control', 'public, max-age=604800, stale-while-revalidate=86400');
-        }
-      },
-    })
-  );
+  app.use(createStaticAssetMiddleware(clientDir));
 
   // /assets/* 404 guard —— 走到这里说明 express.static 没找到文件（fallthrough）。
   // 资产路径绝不可走 SSR fallback：浏览器 strict MIME 检查会因拿到 text/html 拒绝
@@ -610,13 +593,7 @@ export function createStaticHtmlMiddleware(
           ? relative
           : relative + '/index.html';
     const hashes = index.scriptHashes.get(htmlPath);
-    if (!hashes) {
-      // Never let express.static serve newly added or otherwise unindexed HTML.
-      if (relative.toLowerCase().endsWith('.html'))
-        res.status(503).set('Cache-Control', 'no-store').end();
-      else next();
-      return;
-    }
+    if (!hashes) return next();
     res.setHeader(
       'Content-Security-Policy',
       applyStaticScriptPolicy(
@@ -629,5 +606,36 @@ export function createStaticHtmlMiddleware(
     res.sendFile(htmlPath, { root: clientDir, maxAge: '1h', dotfiles: 'ignore' }, error => {
       if (error) next(error);
     });
+  };
+}
+
+/** Asset serving must never discover HTML outside the validated build manifest. */
+export function createStaticAssetMiddleware(clientDir: string): express.RequestHandler {
+  const assets = express.static(clientDir, {
+    index: false,
+    redirect: false,
+    maxAge: '1h',
+    fallthrough: true,
+    setHeaders: (res, filePath) => {
+      if (filePath.includes(`${path.sep}assets${path.sep}`)) {
+        res.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
+      } else if (/\.(jpe?g|png|webp|avif|gif|svg|ico|woff2?)$/i.test(filePath)) {
+        res.setHeader('Cache-Control', 'public, max-age=604800, stale-while-revalidate=86400');
+      }
+    },
+  });
+  return (req, res, next) => {
+    let pathname: string;
+    try {
+      // Preserve origin-form leading slashes; //file.html is a path, never an authority.
+      pathname = path.posix.normalize(
+        decodeURIComponent(new URL(`http://localhost${req.path}`).pathname).replaceAll('\\', '/')
+      );
+    } catch {
+      res.status(400).end();
+      return;
+    }
+    if (['.html', '.htm'].includes(path.posix.extname(pathname).toLowerCase())) return next();
+    assets(req, res, next);
   };
 }

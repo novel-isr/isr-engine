@@ -212,3 +212,15 @@ test('cached ISR HTML refreshes every script attribute and JavaScript nonce refe
     seen.push(nonce!);
   }
 });
+
+test('dynamic .html application routes render and hydrate without a static manifest entry', async ({
+  page,
+}) => {
+  const response = await page.goto('/articles/dynamic.html');
+  expect(response?.status()).toBe(200);
+  expect(response?.headers()['x-served-by']).toBeUndefined();
+  expect(response?.headers()['content-security-policy']).toContain("'nonce-");
+  await expect(page.getByRole('heading', { name: 'Home' })).toBeVisible();
+  await page.getByRole('button', { name: 'Count 0' }).click();
+  await expect(page.getByRole('button', { name: 'Count 1' })).toBeVisible();
+});
