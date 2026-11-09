@@ -1,5 +1,6 @@
 /** Shared production application assembly. Listening and process signals belong to callers. */
 import fs from 'node:fs/promises';
+import { resolveFetchHandler } from '../utils/resolveFetchHandler';
 import path from 'node:path';
 import express, { type Express } from 'express';
 import { Readable } from 'node:stream';
@@ -9,7 +10,11 @@ import { logger } from '@/logger';
 import { routeToFilePath } from '@/ssg/spider';
 import { createIsrCacheHandler } from '@/plugin/isrCacheMiddleware';
 import { resolveOpsConfig, createOpsAuthMiddleware } from '@/server/opsConfig';
-import { assertDistinctHtmlRouteIdentities, decodeHtmlPathname } from '@/utils/htmlPathname';
+import {
+  assertDistinctHtmlRouteIdentities,
+  decodeHtmlPathname,
+  isHtmlRoutePattern,
+} from '@/utils/htmlPathname';
 import type { ISRConfig, RuntimeConfig } from '@/types';
 import type { RouteSetupFn } from './types';
 import {
@@ -101,12 +106,6 @@ export function applyTelemetryIntegrationEnv(runtime: RuntimeConfig | undefined)
   }
 }
 
-/** 带 fetch 方法的 Web 标准 RSC handler 签名 */
-interface RscHandlerModule {
-  default?: { fetch: (request: Request) => Promise<Response> };
-  fetch?: (request: Request) => Promise<Response>;
-}
-
 export interface ProductionRuntime {
   app: Express;
   close(): Promise<void>;
@@ -140,7 +139,12 @@ export async function createProductionRuntime(
     staticCspIndex.ssgRoutes ?? (Array.isArray(config.ssg?.routes) ? config.ssg.routes : []);
   const ssgFiles = new Map(ssgRoutes.map(route => [route, routeToFilePath(route)]));
   const ssgAliases = new Map<string, string>();
-  const routeNames = new Set([...ssgFiles.keys(), ...Object.keys(config.routes ?? {})]);
+  const configuredRoutes = Object.keys(config.routes ?? {});
+  assertDistinctHtmlRouteIdentities(configuredRoutes, { allowPatterns: true });
+  const routeNames = new Set([
+    ...ssgFiles.keys(),
+    ...configuredRoutes.filter(route => !isHtmlRoutePattern(route)),
+  ]);
   assertDistinctHtmlRouteIdentities(routeNames);
   const declaredIdentities = new Set([...routeNames].map(route => decodeHtmlPathname(route)));
   const explicitRoutes = new Map<string, string>();
@@ -205,11 +209,9 @@ export async function createProductionRuntime(
       logger.warn(`🛰️  Sentry integration 已启用但缺少 SENTRY_DSN，跳过 Sentry adapter`);
     }
 
-    const mod = (await import(/* @vite-ignore */ rscDistEntry)) as RscHandlerModule;
-    const rscHandler = mod.default?.fetch || mod.fetch;
-    if (!rscHandler) {
-      throw new Error('dist/rsc/index.js 未导出 { fetch } 或 default.fetch，无法启动生产服务器');
-    }
+    const { fetch: rscHandler } = resolveFetchHandler(
+      await import(/* @vite-ignore */ rscDistEntry)
+    );
 
     const extraConnectSrc = Array.from(
       new Set(

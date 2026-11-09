@@ -15,9 +15,11 @@ import type { Plugin } from 'vite';
 
 import type { ISRConfig } from '../types';
 import { logger } from '../logger';
-import { spiderSsgRoutes, extractSsgRoutes, type FetchHandler } from '@/ssg/spider';
+import { spiderSsgRoutes, extractSsgRoutes } from '@/ssg/spider';
 import { loadConfig } from '../config/loadConfig';
 import { generateStaticCspManifest } from '../security/staticCspManifest';
+import { resolveFetchHandler } from '../utils/resolveFetchHandler';
+import { assertDistinctHtmlRouteIdentities } from '../utils/htmlPathname';
 
 export function createSsgPostBuildPlugin(explicitConfig: ISRConfig | undefined): Plugin {
   let root = process.cwd();
@@ -25,16 +27,13 @@ export function createSsgPostBuildPlugin(explicitConfig: ISRConfig | undefined):
   async function runSsg(): Promise<string[]> {
     let userConfig: ISRConfig | undefined = explicitConfig;
     if (!userConfig || Object.keys(userConfig).length === 0) {
-      try {
-        userConfig = (await loadConfig({ cwd: root })) as ISRConfig;
-      } catch (err) {
-        logger.warn('[SSG] ssr.config.ts 加载失败，跳过 SSG 预生成', err);
-        return [];
-      }
+      userConfig = await loadConfig({ cwd: root });
     }
-    if (!userConfig) return [];
 
     const ssgRoutes = await extractSsgRoutes(userConfig);
+    assertDistinctHtmlRouteIdentities([...ssgRoutes, ...Object.keys(userConfig.routes ?? {})], {
+      allowPatterns: true,
+    });
     if (ssgRoutes.length === 0) return [];
 
     const rscDistEntry = path.resolve(root, 'dist/rsc/index.js');
@@ -45,15 +44,7 @@ export function createSsgPostBuildPlugin(explicitConfig: ISRConfig | undefined):
     }
 
     logger.info(`[SSG] 预生成 ${ssgRoutes.length} 个路由（${ssgRoutes.join(', ')}）...`);
-    const mod = (await import(/* @vite-ignore */ rscDistEntry)) as {
-      default?: FetchHandler;
-      fetch?: FetchHandler['fetch'];
-    };
-    const fetchFn = mod.default?.fetch || mod.fetch;
-    if (!fetchFn) {
-      throw new Error('dist/rsc/index.js 未导出 { fetch } 或 default.fetch');
-    }
-    const handler: FetchHandler = { fetch: fetchFn.bind(mod.default ?? mod) };
+    const handler = resolveFetchHandler(await import(/* @vite-ignore */ rscDistEntry));
 
     const ssgCfg = userConfig.ssg ?? {};
     const result = await spiderSsgRoutes({

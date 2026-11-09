@@ -1,5 +1,6 @@
 import { resolveImageOptions } from './resolveImageOptions';
 import type { ISRConfig } from '@/types';
+import { assertDistinctHtmlRouteIdentities } from '../utils/htmlPathname';
 
 /**
  * Engine-owned config normalization.
@@ -27,6 +28,7 @@ export function normalizeEngineConfig(config: ISRConfig): ISRConfig {
     throw new Error('ssr.config.ts 必须显式声明 routes 对象');
   }
   validateRoutes(config.routes);
+  assertDistinctHtmlRouteIdentities(Object.keys(config.routes), { allowPatterns: true });
   if (!isRecord(config.runtime)) {
     throw new Error('ssr.config.ts 必须显式声明 runtime 对象');
   }
@@ -53,6 +55,9 @@ export function normalizeEngineConfig(config: ISRConfig): ISRConfig {
   if (!isRecord(config.ssg)) {
     throw new Error('ssr.config.ts 必须显式声明 ssg 对象');
   }
+  if (!Array.isArray(config.ssg.routes) && typeof config.ssg.routes !== 'function')
+    throw new TypeError('ssr.config.ts ssg.routes must be an array or a route discovery function');
+  if (Array.isArray(config.ssg.routes)) assertDistinctHtmlRouteIdentities(config.ssg.routes);
 
   return {
     ...config,

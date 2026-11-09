@@ -33,41 +33,51 @@ describe('routeToFilePath', () => {
   it('"/books/1" → "books/1/index.html"', () => {
     expect(routeToFilePath('/books/1')).toBe('books/1/index.html');
   });
-  it('strips leading and trailing slashes', () => {
-    expect(routeToFilePath('//about//')).toBe('about/index.html');
+  it('preserves one trailing slash without repairing malformed paths', () => {
+    expect(routeToFilePath('/about/')).toBe('about/index.html');
+    expect(() => routeToFilePath('//about//')).toThrow(/Invalid HTML route/);
   });
 });
 
+it.each([null, false, undefined, '', {}])(
+  'rejects an explicitly invalid inline SSG source %s',
+  routes => {
+    return expect(
+      extractSsgRoutes({ ssg: { routes: routes as never }, routes: { '/fallback': 'ssg' } })
+    ).rejects.toThrow(/ssg.routes/);
+  }
+);
+
 describe('routeToFilePath —— 路径穿越防护（v2.1 安全加固）', () => {
   it('拒绝 `..` 段（Unix 路径穿越）', () => {
-    expect(() => routeToFilePath('/../etc/passwd')).toThrow(/非法路径段|非法字符/);
-    expect(() => routeToFilePath('/a/../b')).toThrow(/非法路径段/);
+    expect(() => routeToFilePath('/../etc/passwd')).toThrow(/Invalid HTML route/);
+    expect(() => routeToFilePath('/a/../b')).toThrow(/Invalid HTML route/);
     expect(() => routeToFilePath('/../../root')).toThrow();
   });
 
   it('拒绝 `.` 段（当前目录引用）', () => {
-    expect(() => routeToFilePath('/a/./b')).toThrow(/非法路径段/);
+    expect(() => routeToFilePath('/a/./b')).toThrow(/Invalid HTML route/);
   });
 
   it('拒绝空段（连续 `/` 产生）', () => {
-    expect(() => routeToFilePath('/a//b')).toThrow(/非法路径段/);
+    expect(() => routeToFilePath('/a//b')).toThrow(/Invalid HTML route/);
   });
 
   it('拒绝反斜杠（Windows 路径穿越）', () => {
-    expect(() => routeToFilePath('/a\\..\\b')).toThrow(/非法字符/);
+    expect(() => routeToFilePath('/a\\..\\b')).toThrow(/Invalid HTML route/);
   });
 
   it('拒绝绝对路径字符（`:` / 冒号盘符）', () => {
-    expect(() => routeToFilePath('/C:/Windows/System32')).toThrow(/非法字符/);
+    expect(() => routeToFilePath('/C:/Windows/System32')).toThrow(/Invalid HTML route/);
   });
 
   it('拒绝 NUL 字节（常见 bypass 伎俩）', () => {
-    expect(() => routeToFilePath('/a\0b')).toThrow(/非法字符/);
+    expect(() => routeToFilePath('/a\0b')).toThrow(/Invalid HTML route/);
   });
 
   it('拒绝空格与 Unicode 非 URL 字符', () => {
-    expect(() => routeToFilePath('/with space')).toThrow(/非法字符/);
-    expect(() => routeToFilePath('/中文')).toThrow(/非法字符/);
+    expect(() => routeToFilePath('/with space')).toThrow(/Invalid HTML route/);
+    expect(() => routeToFilePath('/中文')).toThrow(/Invalid HTML route/);
   });
 
   it('接受合法的百分号编码（URL unreserved + pct-encoded）', () => {
@@ -81,36 +91,24 @@ describe('routeToFilePath —— 路径穿越防护（v2.1 安全加固）', () 
   });
 });
 
-describe('spiderSsgRoutes —— 路径穿越路由不污染整批构建', () => {
-  it('恶意路由抛错走 failed 统计，不拖垮其他成功路由', async () => {
+describe('spiderSsgRoutes —— 配置错误在渲染前拒绝', () => {
+  it('拒绝非法路径，不执行任何渲染或写入', async () => {
     const outDir = await fs.mkdtemp(path.join(os.tmpdir(), 'spider-sec-'));
     try {
       const handler: FetchHandler = {
         fetch: vi.fn(async req => htmlResponse(`<html>${new URL(req.url).pathname}</html>`)),
       };
 
-      const result = await spiderSsgRoutes({
-        handler,
-        routes: ['/good', '/../evil'],
-        outDir,
-        options: {
-          maxRetries: 0,
-          continueOnError: true,
-          // 失败率 50%（1/2），设高阈值避免 fail-build
-          failBuildThreshold: 0.9,
-        },
-      });
-
-      expect(result.successful).toBe(1);
-      expect(result.failed).toBe(1);
-      const failed = result.routes.find(r => !r.ok);
-      expect(failed?.route).toBe('/../evil');
-      expect(failed?.error).toMatch(/非法路径段|非法字符/);
-
-      // good 仍然写盘成功
-      const successFile = path.join(outDir, 'good', 'index.html');
-      const content = await fs.readFile(successFile, 'utf8');
-      expect(content).toContain('/good');
+      await expect(
+        spiderSsgRoutes({
+          handler,
+          routes: ['/good', '/../evil'],
+          outDir,
+          options: { maxRetries: 0, continueOnError: true, failBuildThreshold: 0.9 },
+        })
+      ).rejects.toThrow(/Invalid HTML route/);
+      expect(handler.fetch).not.toHaveBeenCalled();
+      expect(await fs.readdir(outDir)).toEqual([]);
     } finally {
       await fs.rm(outDir, { recursive: true, force: true });
     }
@@ -548,7 +546,7 @@ describe('extractSsgRoutes —— SSG 路由来源优先级', () => {
 
   it('通配符路由不可预生成，回退提取时跳过', async () => {
     const routes = await extractSsgRoutes({
-      routes: { '/books/*': 'ssg', '/about': 'ssg' },
+      routes: { '/books/*': 'ssg', '/books/:id': 'ssg', '/about': 'ssg' },
     });
     expect(routes).toEqual(['/about']);
   });

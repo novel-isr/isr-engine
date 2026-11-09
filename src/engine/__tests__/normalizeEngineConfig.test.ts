@@ -54,6 +54,27 @@ const defaults: ISRConfig = {
   },
 };
 
+it.each(['/%GG', 'missing-slash', '//other.example/a'])(
+  'rejects invalid route declarations %s in both route configuration sources',
+  route => {
+    expect(() => normalizeEngineConfig(base({ routes: { [route]: 'isr' } }))).toThrow(
+      /invalid HTML route/i
+    );
+    expect(() => normalizeEngineConfig(base({ ssg: { routes: [route] } }))).toThrow(
+      /invalid HTML route/i
+    );
+  }
+);
+
+it.each([null, {}, 'not-an-array', 42, undefined])(
+  'rejects invalid SSG route source %s',
+  source => {
+    const config = base();
+    config.ssg.routes = source as never;
+    expect(() => normalizeEngineConfig(config)).toThrow(/ssg.routes/);
+  }
+);
+
 function base(extra: DeepPartial<ISRConfig> = {}): ISRConfig {
   return {
     ...defaults,

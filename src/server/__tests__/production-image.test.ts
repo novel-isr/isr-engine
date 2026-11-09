@@ -36,7 +36,7 @@ it('production image endpoint consumes the explicit runtime image allowlist', as
     renderMode: 'ssr',
     revalidate: 60,
     routes: {},
-    ssg: {},
+    ssg: { routes: [] },
     server: { port: 0, host: '127.0.0.1' },
     runtime: {
       site: 'https://example.com',

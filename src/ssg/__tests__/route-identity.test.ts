@@ -8,6 +8,28 @@ import { generateStaticCspManifest } from '@/security/staticCspManifest';
 import { createProductionRuntime, type ProductionRuntime } from '@/server/productionRuntime';
 import { normalizeEngineConfig } from '@/config/normalizeEngineConfig';
 
+it.each(['/%GG', 'missing-slash', '//other.example/a', '/a/%2e%2e/b', '/%00'])(
+  'rejects invalid route %s before rendering or publishing a manifest',
+  async route => {
+    await fixture();
+    const fetch = vi.fn(
+      async () => new Response('page', { headers: { 'content-type': 'text/html' } })
+    );
+    await expect(
+      spiderSsgRoutes({
+        handler: { fetch },
+        routes: [route],
+        outDir: path.join(root, 'dist/client'),
+      })
+    ).rejects.toThrow(/invalid HTML route/i);
+    expect(fetch).not.toHaveBeenCalled();
+    await expect(
+      generateStaticCspManifest(path.join(root, 'dist'), { ssgRoutes: [route] })
+    ).rejects.toThrow(/invalid HTML route/i);
+    await expect(fs.access(path.join(root, 'dist/static-csp-manifest.json'))).rejects.toThrow();
+  }
+);
+
 let root: string;
 let runtime: ProductionRuntime | undefined;
 afterEach(async () => {

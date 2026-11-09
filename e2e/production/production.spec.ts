@@ -1,4 +1,6 @@
 import { expect, test } from '@playwright/test';
+import express from 'express';
+import { createCspNonceMiddleware, createSecurityMiddleware } from '../../src/server/middleware';
 
 const browserErrors: string[] = [];
 test.beforeEach(async ({ page }) => {
@@ -9,6 +11,58 @@ test.beforeEach(async ({ page }) => {
   });
 });
 test.afterEach(() => expect(browserErrors).toEqual([]));
+
+test('data and Blob images load under both development and production image policies', async ({
+  page,
+}) => {
+  for (const isDev of [true, false]) {
+    const app = express();
+    app.use(createCspNonceMiddleware(), createSecurityMiddleware(isDev));
+    app.get('/favicon.ico', (_req, res) => {
+      res.status(204).end();
+    });
+    app.get('/', (_req, res) => {
+      res
+        .type('html')
+        .send('<!doctype html><html><head><title>Image policy</title></head><body></body></html>');
+    });
+    const server = app.listen(0, '127.0.0.1');
+    await new Promise<void>(resolve => server.once('listening', resolve));
+    try {
+      const address = server.address();
+      if (!address || typeof address === 'string') throw new Error('Missing HTTP port');
+      await page.goto(`http://127.0.0.1:${address.port}/`);
+      const loaded = await page.evaluate(async () => {
+        const base64 =
+          'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aP1kAAAAASUVORK5CYII=';
+        const bytes = Uint8Array.from(atob(base64), character => character.charCodeAt(0));
+        const blob = URL.createObjectURL(new Blob([bytes], { type: 'image/png' }));
+        try {
+          return await Promise.all(
+            [`data:image/png;base64,${base64}`, blob].map(
+              src =>
+                new Promise<boolean>(resolve => {
+                  const image = new Image();
+                  image.onload = () => resolve(true);
+                  image.onerror = () => resolve(false);
+                  image.src = src;
+                  document.body.append(image);
+                })
+            )
+          );
+        } finally {
+          URL.revokeObjectURL(blob);
+        }
+      });
+      expect(loaded).toEqual([true, true]);
+    } finally {
+      server.closeAllConnections();
+      await new Promise<void>((resolve, reject) =>
+        server.close(error => (error ? reject(error) : resolve()))
+      );
+    }
+  }
+});
 
 test('SSG with a query hydrates under its CSP and supports RSC navigation', async ({ page }) => {
   const response = await page.goto('/static?search=a.b');

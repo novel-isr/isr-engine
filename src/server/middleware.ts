@@ -35,6 +35,9 @@ export function createCspNonceMiddleware(): RequestHandler {
   };
 }
 
+/** Image supports local assets, inline data, Blob previews and HTTPS in every environment. */
+const IMAGE_CSP_SOURCES = ["'self'", 'data:', 'blob:', 'https:'];
+
 /**
  * 开发环境 CSP 配置
  */
@@ -42,7 +45,7 @@ const DEV_CSP = {
   defaultSrc: ["'self'"],
   styleSrc: ["'self'", "'unsafe-inline'", 'https:'],
   scriptSrc: ["'self'", "'unsafe-inline'", "'unsafe-eval'", 'https:', 'http:', 'ws:', 'wss:'],
-  imgSrc: ["'self'", 'data:', 'https:', 'http:'],
+  imgSrc: [...IMAGE_CSP_SOURCES, 'http:'],
   connectSrc: ["'self'", 'ws:', 'wss:', 'http:', 'https:'],
   fontSrc: ["'self'", 'https:', 'data:'],
   objectSrc: ["'none'"],
@@ -73,7 +76,7 @@ const DEV_CSP = {
 const PROD_CSP_BASE = {
   defaultSrc: ["'self'"],
   styleSrc: ["'self'", "'unsafe-inline'", 'https:'],
-  imgSrc: ["'self'", 'data:', 'blob:', 'https:'],
+  imgSrc: IMAGE_CSP_SOURCES,
   connectSrc: ["'self'"],
   fontSrc: ["'self'", 'https:', 'data:'],
   objectSrc: ["'none'"],

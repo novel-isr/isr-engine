@@ -32,7 +32,11 @@ import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { Logger } from '@/logger/Logger';
-import { assertDistinctHtmlRouteIdentities } from '@/utils/htmlPathname';
+import {
+  assertDistinctHtmlRouteIdentities,
+  htmlRouteIdentity,
+  isHtmlRoutePattern,
+} from '@/utils/htmlPathname';
 
 const logger = Logger.getInstance();
 
@@ -143,26 +147,12 @@ export class SsgBuildFailedError extends Error {
  * 安全：拒绝所有会逃逸 outDir 的恶意输入。只允许 URL 合法字符（字母/数字/`-`/`_`/`.`/`~`/
  * 百分号编码/`/`）。不合法字符、`..` 段、绝对路径、空段（`//`）一律抛错。
  *
- * 调用方（spiderSsgRoutes）在 catch 里把抛错当作"非可重试错误"记入 failed，
- * 避免单条恶意路由拖垮整批 build。
+ * 所有声明先通过共享路径契约校验；非法配置在渲染前终止构建。
  */
 export function routeToFilePath(route: string): string {
-  const trimmed = route.replace(/^\/+|\/+$/g, '');
+  htmlRouteIdentity(route);
+  const trimmed = route.replace(/^\/|\/$/g, '');
   if (!trimmed) return 'index.html';
-
-  // 1. 字符白名单 —— URL unreserved + pct-encoded + `/`
-  if (!/^[A-Za-z0-9\-._~%/]+$/.test(trimmed)) {
-    throw new Error(`SSG route 含非法字符，拒绝写盘：${route}`);
-  }
-
-  // 2. 段级检查：禁 `..`、`.`（容易构造跨父目录）、空段（`//` 产生）
-  const segments = trimmed.split('/');
-  for (const seg of segments) {
-    if (seg === '' || seg === '.' || seg === '..') {
-      throw new Error(`SSG route 含非法路径段（${seg || '空'}），拒绝写盘：${route}`);
-    }
-  }
-
   return `${trimmed}/index.html`;
 }
 
@@ -333,12 +323,7 @@ export async function spiderSsgRoutes(params: {
   const foldedArtifacts = new Map<string, { route: string; relative: string }>();
   let caseSensitive: boolean | undefined;
   for (const route of uniqueRoutes) {
-    let relative: string;
-    try {
-      relative = routeToFilePath(route);
-    } catch {
-      continue;
-    } // Invalid routes retain the existing per-route failure policy.
+    const relative = routeToFilePath(route);
     const normalized = path.normalize(relative);
     const identity =
       process.platform === 'win32'
@@ -449,7 +434,7 @@ export async function spiderSsgRoutes(params: {
           return;
         }
 
-        // 成功路径（路由若含非法字符/段，routeToFilePath 会抛错 —— 走 catch 记 failed）
+        // Declarations were validated before any rendering began.
         const rel = routeToFilePath(route);
         const outFile = path.join(outDir, rel);
         // 二道防线：解析后若逃出 outDir 直接拒绝（理论上 routeToFilePath 已挡，但 defense-in-depth）
@@ -569,17 +554,21 @@ export async function extractSsgRoutes(config: {
   routes?: Record<string, RouteEntry>;
 }): Promise<string[]> {
   const ssgConf = config.ssg?.routes;
-  if (ssgConf) {
+  if (config.ssg && Object.prototype.hasOwnProperty.call(config.ssg, 'routes')) {
     const value = typeof ssgConf === 'function' ? await ssgConf() : ssgConf;
+    if (!Array.isArray(value))
+      throw new TypeError('ssg.routes must resolve to an array of HTML paths');
+    assertDistinctHtmlRouteIdentities(value);
     return Array.from(value);
   }
 
   const source = config.routes ?? {};
   const ssgRoutes: string[] = [];
   for (const [pathValue, entry] of Object.entries(source)) {
-    if (entryMode(entry) === 'ssg' && !pathValue.includes('*')) {
+    if (entryMode(entry) === 'ssg' && !isHtmlRoutePattern(pathValue)) {
       ssgRoutes.push(pathValue);
     }
   }
+  assertDistinctHtmlRouteIdentities(ssgRoutes);
   return ssgRoutes;
 }
