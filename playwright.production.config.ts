@@ -23,7 +23,7 @@ export default defineConfig({
     screenshot: 'only-on-failure',
   },
   webServer: {
-    command: `pnpm --dir e2e/production exec vite build && pnpm --dir e2e/production exec novel-isr start --host 127.0.0.1 --port ${port}`,
+    command: `pnpm --dir e2e/production exec vite build && pnpm --dir e2e/production exec node ../../dist/cli/cli.js start --host 127.0.0.1 --port ${port}`,
     url: baseURL,
     reuseExistingServer: false,
     timeout: 180_000,

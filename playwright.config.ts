@@ -23,7 +23,7 @@ export default defineConfig({
     screenshot: 'only-on-failure',
   },
   webServer: {
-    command: `pnpm --dir e2e/dev-css-lifecycle exec novel-isr dev --no-open --host 127.0.0.1 --port ${port}`,
+    command: `pnpm --dir e2e/dev-css-lifecycle exec node ../../dist/cli/cli.js dev --no-open --host 127.0.0.1 --port ${port}`,
     url: baseURL,
     reuseExistingServer: false,
     timeout: 120_000,
