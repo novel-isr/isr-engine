@@ -86,6 +86,9 @@ jobs:
       - name: Verify package exports and consumer types
         run: pnpm run test:package
 
+      - name: Verify official Workers runtime
+        run: pnpm run test:workers
+
       - name: Publish
         run: npm publish
         env:

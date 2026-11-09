@@ -157,6 +157,14 @@ export default [
     },
   },
 
+  // Worker fixture uses browser APIs and its own checked public-entry project.
+  {
+    files: ['scripts/fixtures/**/*.ts'],
+    languageOptions: {
+      parserOptions: { project: './scripts/fixtures/tsconfig.json' },
+    },
+  },
+
   // JavaScript 文件配置 - Node.js 环境
   {
     files: ['**/*.js', '**/*.mjs'],

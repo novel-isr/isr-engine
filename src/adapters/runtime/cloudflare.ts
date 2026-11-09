@@ -15,19 +15,14 @@ import { createEdgeErrorResponse } from './errorResponse';
 import { bindEdgeContext, type EdgeContext } from '../../runtime/edge-context';
 
 /** Cloudflare 为 Workers 注入的边缘上下文 —— 暴露给 handler 用于调度后台任务 / 访问 binding */
-export type CloudflareEdgeContext<Env extends Record<string, unknown> = Record<string, unknown>> =
-  EdgeContext<Env>;
+export type CloudflareEdgeContext<Env extends object = Record<string, unknown>> = EdgeContext<Env>;
 
-export interface CloudflareAdapterOptions {
+export interface CloudflareAdapterOptions<Env extends object = Record<string, unknown>> {
   /**
    * 上下文绑定后的可选钩子，可在异步准备期间通过 getEdgeContext(req) 访问上下文。
    * 自定义钩子不影响默认的请求上下文绑定。
    */
-  beforeFetch?: (
-    req: Request,
-    env: Record<string, unknown>,
-    ctx: CloudflareExecutionContext
-  ) => void | Promise<void>;
+  beforeFetch?: (req: Request, env: Env, ctx: CloudflareExecutionContext) => void | Promise<void>;
   /**
    * 默认 true：未消费请求体时向平台传播异常，触发原生回源。
    * 请求体已消费或锁定后无法安全重放，此时返回受控 500；false 始终返回受控 500。
@@ -35,24 +30,20 @@ export interface CloudflareAdapterOptions {
   passThroughOnException?: boolean;
 }
 
-export interface CloudflareWorker {
-  fetch(
-    request: Request,
-    env: Record<string, unknown>,
-    ctx: CloudflareExecutionContext
-  ): Promise<Response>;
+export interface CloudflareWorker<Env extends object = Record<string, unknown>> {
+  fetch(request: Request, env: Env, ctx: CloudflareExecutionContext): Promise<Response>;
 }
 
-export function toCloudflareWorker(
-  handler: FetchHandler,
-  options: CloudflareAdapterOptions = {}
-): CloudflareWorker {
+export function toCloudflareWorker<Env extends object = Record<string, unknown>>(
+  handler: FetchHandler<Env>,
+  options: CloudflareAdapterOptions<Env> = {}
+): CloudflareWorker<Env> {
   const passThrough = options.passThroughOnException !== false;
   return {
     async fetch(request, env, ctx) {
       try {
         if (passThrough) ctx.passThroughOnException();
-        const edge: CloudflareEdgeContext = { env, waitUntil: ctx.waitUntil.bind(ctx) };
+        const edge: CloudflareEdgeContext<Env> = { env, waitUntil: ctx.waitUntil.bind(ctx) };
         bindEdgeContext(request, edge);
         await options.beforeFetch?.(request, env, ctx);
         return await handler.fetch(request, edge);

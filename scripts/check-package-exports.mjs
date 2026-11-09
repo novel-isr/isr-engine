@@ -120,8 +120,14 @@ try {
       type AutoServerCtx, type AutoServerHooks } from '@novel-isr/engine/auto-observability';
     import { createCoherentCacheStore, type ResponseCacheBackend } from '@novel-isr/engine';
     import { getEdgeContext, type EdgeContext } from '@novel-isr/engine/runtime';
-    const edge: EdgeContext<{ token: string }> | undefined =
-      getEdgeContext<{ token: string }>(new Request('https://consumer.test'));
+    import { toCloudflareWorker } from '@novel-isr/engine/adapters/runtime';
+    interface WorkerBindings { token: string; }
+    const edge: EdgeContext<WorkerBindings> | undefined =
+      getEdgeContext<WorkerBindings>(new Request('https://consumer.test'));
+    const worker = toCloudflareWorker<WorkerBindings>({ fetch(request, context) {
+      const token: string | undefined = context?.env.token;
+      void [request, token]; return new Response('ok');
+    } });
     // @ts-expect-error context lookup requires an explicit Request
     getEdgeContext();
     const factory: () => Promise<AutoServerHooks> = createAutoServerHooks;
@@ -132,7 +138,7 @@ try {
     const store = createCoherentCacheStore({ backend });
     // @ts-expect-error timestamps are numeric in the public contract
     const invalid: AutoServerCtx = { traceId: 'trace', startedAt: 'yesterday' };
-    void [factory, ctx, hooks, dsn, store, invalid, edge];
+    void [factory, ctx, hooks, dsn, store, invalid, edge, worker];
   `
   );
   const program = ts.createProgram([consumer], {

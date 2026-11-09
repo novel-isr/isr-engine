@@ -20,6 +20,23 @@ const errHandler = {
 };
 
 describe('toCloudflareWorker', () => {
+  it('preserves a synchronous native Fetch response and binding context', async () => {
+    const expected = new Response('synchronous');
+    const worker = toCloudflareWorker<{ marker: string }>({
+      fetch(request, context) {
+        expect(getEdgeContext<{ marker: string }>(request)).toBe(context);
+        expect(context?.env.marker).toBe('typed');
+        return expected;
+      },
+    });
+    const actual = await worker.fetch(
+      new Request('https://worker.test'),
+      { marker: 'typed' },
+      { waitUntil() {}, passThroughOnException() {} }
+    );
+    expect(actual).toBe(expected);
+    expect(await actual.text()).toBe('synchronous');
+  });
   it('正常返回 + 调用 passThroughOnException', async () => {
     const ctx = {
       waitUntil: vi.fn(),
