@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import { routes } from './routes';
 
 export async function App({ url }: { url: URL }) {
@@ -12,7 +13,7 @@ export async function App({ url }: { url: URL }) {
         <meta charSet='utf-8' />
         <title>Development CSS lifecycle</title>
       </head>
-      <body>
+      <body data-render-token={randomUUID()}>
         {routes({
           pathname: url.pathname,
           searchParams: url.searchParams,

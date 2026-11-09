@@ -141,6 +141,7 @@ test('twenty rapid alternating navigations preserve the latest committed route',
 }) => {
   await page.goto('/');
   await waitForRoute(page, 'home');
+  await waitForNavigationReady(page);
   await resetTemporalHistory(page);
 
   await page.evaluate(async () => {
@@ -279,32 +280,85 @@ test('removing and restoring an imported stylesheet releases only the removed ow
 test('an aborted RSC fetch cannot publish or commit its route stylesheet', async ({ page }) => {
   const diagnostics = Reflect.get(page, '__devCssDiagnostics') as Diagnostics;
   diagnostics.allowedFailurePatterns.push(
-    /\/article_\.rsc\?delay=750/,
+    /\/article_\.rsc\?abort=1/,
     /Article\.module\.scss.*__novel_isr_style_generation=/
   );
 
-  await page.goto('/');
-  await waitForRoute(page, 'home');
+  const bootstrap = deferred();
+  await page.route(/\/.*virtual:novel-isr\/client-entry(?:\?|$)/, async route => {
+    await bootstrap.promise;
+    await route.continue();
+  });
+  try {
+    // SSR styles can be ready while the navigation listener's hydration effect is absent.
+    await page.goto('/', { waitUntil: 'commit' });
+    await waitForRoute(page, 'home');
+    await expect(page.locator('[data-hydration-ready]')).toBeDisabled();
+  } finally {
+    bootstrap.resolve();
+  }
+  await waitForNavigationReady(page);
   await resetTemporalHistory(page);
 
-  const articleRequest = page.waitForRequest(request =>
-    request.url().includes('/article_.rsc?delay=750')
-  );
-  await page.evaluate(() => history.pushState(null, '', '/article?delay=750'));
-  await articleRequest;
-  await page.waitForTimeout(50);
-  await page.evaluate(() => history.pushState(null, '', '/'));
+  const responseReady = deferred();
+  const releaseResponse = deferred();
+  const responseSettled = deferred();
+  let routeError: unknown;
+  const delayedRoute = /\/article_\.rsc\?abort=1$/;
+  await page.route(delayedRoute, async route => {
+    try {
+      await route.fetch();
+      responseReady.resolve();
+      await releaseResponse.promise;
+      await route.abort('aborted');
+    } catch (error) {
+      routeError = error;
+      responseReady.resolve();
+    } finally {
+      responseSettled.resolve();
+    }
+  });
 
-  await waitForRoute(page, 'home');
-  await page.waitForTimeout(900);
-  await expect(page).toHaveURL('/');
+  try {
+    await page.evaluate(() => history.pushState(null, '', '/article?abort=1'));
+    await responseReady.promise;
+    expect(routeError).toBeUndefined();
+    const initialHomeToken = await page.locator('body').getAttribute('data-render-token');
+    const aborted = page.waitForEvent('requestfailed', {
+      predicate: request => delayedRoute.test(request.url()),
+    });
+    await page.evaluate(() => history.pushState(null, '', '/'));
+    await expect(page.locator('body')).not.toHaveAttribute('data-render-token', initialHomeToken!);
+    releaseResponse.resolve();
+    await aborted;
+    await responseSettled.promise;
+    expect(routeError).toBeUndefined();
+    await waitForRoute(page, 'home');
+    await expect(page).toHaveURL('/');
+    await settleFrames(page);
 
-  await assertTemporalInvariants(page);
-  await assertActiveRulesExclude(page, '--article-only-rule');
-  await expectActiveOwnerCount(page, 'Article.module.scss', 0);
-  await expectManagedOwner(page, 'Home.module.scss');
-  await assertManagedOwnerCardinality(page);
+    await assertTemporalInvariants(page);
+    await assertActiveRulesExclude(page, '--article-only-rule');
+    await expectActiveOwnerCount(page, 'Article.module.scss', 0);
+    await expectManagedOwner(page, 'Home.module.scss');
+    await assertManagedOwnerCardinality(page);
+  } finally {
+    releaseResponse.resolve();
+    if (!page.isClosed()) await page.unroute(delayedRoute);
+  }
 });
+
+function deferred(): { promise: Promise<void>; resolve: () => void } {
+  let resolve!: () => void;
+  const promise = new Promise<void>(settle => {
+    resolve = settle;
+  });
+  return { promise, resolve };
+}
+
+async function waitForNavigationReady(page: Page): Promise<void> {
+  await expect(page.locator('[data-hydration-ready]')).toBeEnabled();
+}
 
 function createDiagnostics(page: Page): Diagnostics {
   const diagnostics: Diagnostics = {
