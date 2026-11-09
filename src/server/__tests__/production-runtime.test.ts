@@ -5,6 +5,7 @@ import path from 'node:path';
 import { createHash } from 'node:crypto';
 import { startAppServer, shutdownServer } from '../manager';
 import { normalizeEngineConfig } from '@/config/normalizeEngineConfig';
+import { revalidatePath } from '@/rsc/revalidate';
 import { generateStaticCspManifest } from '@/security/staticCspManifest';
 
 let root: string;
@@ -25,9 +26,11 @@ it('programmatic production serves the built Fetch handler, preserves actions an
     '{"entry":{"file":"assets/main.js"}}'
   );
   await fs.writeFile(path.join(root, 'package.json'), '{"type":"module"}');
+  await fs.writeFile(path.join(root, 'source.txt'), 'version-0');
   await fs.writeFile(
     path.join(root, 'dist/rsc/index.js'),
-    `export default { fetch: async request => new Response(request.method === 'POST' ? await request.text() : '<html><body>production fixture</body></html>', { headers: { 'content-type': 'text/html' } }) };`
+    `import { readFile } from 'node:fs/promises';
+     export default { fetch: async request => new Response(request.method === 'POST' ? await request.text() : '<html><body>production fixture ' + await readFile(new URL('../../source.txt', import.meta.url), 'utf8') + '</body></html>', { headers: { 'content-type': 'text/html' } }) };`
   );
   await fs.mkdir(path.join(root, 'dist/client/prebuilt'));
   await fs.writeFile(
@@ -99,6 +102,30 @@ it('programmatic production serves the built Fetch handler, preserves actions an
   const prebuilt = await fetch(`${ctx.url}/prebuilt`);
   expect(prebuilt.headers.get('x-served-by')).toBe('ssg-static');
   expect(await prebuilt.text()).toContain('immutable build route');
+  await revalidatePath('/prebuilt');
+  for (const suffix of ['', '_.rsc']) {
+    await (await fetch(`${ctx.url}/prebuilt${suffix}`)).text();
+    const hit = await fetch(`${ctx.url}/prebuilt${suffix}`);
+    expect(hit.headers.get('x-cache-status')).toBe('HIT');
+    expect(await hit.text()).toContain('version-0');
+  }
+  let version = 0;
+  for (const alias of [
+    '/prebuilt/index.html',
+    '/prebuilt/',
+    '/%70rebuilt/%69ndex.html?ignored=yes',
+  ]) {
+    await fs.writeFile(path.join(root, 'source.txt'), `version-${++version}`);
+    await revalidatePath(alias);
+    for (const suffix of ['', '_.rsc']) {
+      const fresh = await fetch(`${ctx.url}/prebuilt${suffix}`);
+      expect(fresh.headers.get('x-cache-status')).toBe('MISS');
+      expect(await fresh.text()).toContain(`version-${version}`);
+      const hit = await fetch(`${ctx.url}/prebuilt${suffix}`);
+      expect(hit.headers.get('x-cache-status')).toBe('HIT');
+      expect(await hit.text()).toContain(`version-${version}`);
+    }
+  }
   const response = await fetch(ctx.url!);
   expect(response.status).toBe(200);
   expect(await response.text()).toContain('production fixture');
@@ -131,6 +158,17 @@ it('programmatic production serves the built Fetch handler, preserves actions an
   const flightAlias = await fetch(`${trusted.url}/prebuilt/_.rsc`, { redirect: 'manual' });
   expect(flightAlias.status).toBe(308);
   expect(flightAlias.headers.get('location')).toBe('/prebuilt_.rsc');
+  await revalidatePath('/prebuilt');
+  await (await fetch(`${trusted.url}/prebuilt`)).text();
+  await (await fetch(`${trusted.url}/prebuilt/`)).text();
+  await fs.writeFile(path.join(root, 'source.txt'), 'explicit-alias-version');
+  await revalidatePath('/prebuilt/');
+  const explicitFresh = await fetch(`${trusted.url}/prebuilt/`);
+  expect(explicitFresh.headers.get('x-cache-status')).toBe('MISS');
+  expect(await explicitFresh.text()).toContain('explicit-alias-version');
+  const canonicalUnchanged = await fetch(`${trusted.url}/prebuilt`);
+  expect(canonicalUnchanged.headers.get('x-cache-status')).toBe('HIT');
+  expect(await canonicalUnchanged.text()).toContain('version-3');
   const encodedOverride = await fetch(`${trusted.url}/prebuilt/%69ndex.html`, {
     redirect: 'manual',
   });

@@ -165,6 +165,11 @@ export async function createProductionRuntime(
       ssgAliases.set(alias + '_.rsc', target + '_.rsc');
     }
   }
+  const resolveSsgIdentity = (pathname: string): string => {
+    const logical = decodeHtmlPathname(pathname);
+    const known = ssgAliases.get(logical);
+    return known ? (explicitRoutes.get(logical) ?? known) : pathname;
+  };
   const cleanups: Array<() => void | Promise<void>> = [];
   let closed: Promise<void> | undefined;
   const close = () =>
@@ -370,6 +375,7 @@ export async function createProductionRuntime(
       { ...config, routes: cacheRoutes },
       {
         buildId: process.env.APP_VERSION ?? staticCspIndex.buildId,
+        resolveInvalidationPath: resolveSsgIdentity,
         staticSeedInfo: pathname => {
           const htmlPath = ssgFiles.get(pathname);
           if (!htmlPath) return;
@@ -444,7 +450,7 @@ export async function createProductionRuntime(
       }
       const known = ssgAliases.get(logical);
       if (!known) return next();
-      const canonical = explicitRoutes.get(logical) ?? known;
+      const canonical = resolveSsgIdentity(req.path);
       if (req.path === canonical) return next();
       const queryStart = req.url.indexOf('?');
       res.redirect(308, canonical + (queryStart < 0 ? '' : req.url.slice(queryStart)));

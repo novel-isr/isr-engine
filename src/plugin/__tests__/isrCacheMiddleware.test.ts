@@ -1016,3 +1016,48 @@ it('fails open when the immutable seed source hangs or rejects', async () => {
     }
   }
 });
+
+it('resolves incoming bus path aliases before invalidating canonical HTML and RSC entries', async () => {
+  let receive!: (
+    target: import('../isrCacheMiddleware').IsrInvalidationTarget
+  ) => Promise<void> | void;
+  const seen: string[] = [];
+  const fx = await startFixture({
+    resolveInvalidationPath: pathname => {
+      seen.push(pathname);
+      return pathname === '/page/index.html' ? '/page' : pathname;
+    },
+    invalidationBus: {
+      publish() {},
+      subscribe(listener) {
+        receive = listener;
+        return () => {};
+      },
+    },
+  });
+  let version = 1;
+  fx.renderImpl.current = (_req, res) => {
+    res.setHeader('content-type', 'text/html');
+    res.end(`<html>version-${version}</html>`);
+  };
+  try {
+    for (const suffix of ['', '_.rsc']) {
+      await httpGet(`${fx.baseUrl}/page${suffix}`);
+      expect((await httpGet(`${fx.baseUrl}/page${suffix}`)).cacheStatus).toBe('HIT');
+    }
+    version++;
+    await receive({
+      kind: 'path',
+      value: '/page/index.html_.rsc?ignored=yes',
+      protocol: 'response-v1',
+    });
+    expect(seen).toEqual(['/page/index.html']);
+    for (const suffix of ['', '_.rsc']) {
+      const fresh = await httpGet(`${fx.baseUrl}/page${suffix}`);
+      expect(fresh.cacheStatus).toBe('MISS');
+      expect(fresh.body).toContain('version-2');
+    }
+  } finally {
+    await teardown(fx);
+  }
+});

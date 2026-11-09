@@ -103,6 +103,8 @@ export interface IsrCacheMiddlewareOptions {
   development?: boolean;
   /** Production artifact identity; defaults to explicit APP_VERSION or dev for custom/dev hosts. */
   buildId?: string;
+  /** Resolve a normalized page invalidation path to its deployment's canonical identity. */
+  resolveInvalidationPath?: (pathname: string) => string;
   /** Manifest-bound immutable build timestamps; absent means runtime origin rendering. */
   staticSeedInfo?: (pathname: string) => { generatedAt: number } | undefined;
   /** Immutable build seed, consulted once per canonical SSG cache key; never a fallback. */
@@ -477,6 +479,10 @@ export function createIsrCacheHandler(
   const invalidationLog = new LRUCache<string, number>({ max: INVALIDATION_LOG_MAX });
 
   const invalidateLocal = async (target: IsrInvalidationTarget, durable = true): Promise<void> => {
+    if (target.kind === 'path') {
+      const pathname = stripRscSuffix(normalizePath(stripQuery(target.value)));
+      target = { ...target, value: options.resolveInvalidationPath?.(pathname) ?? pathname };
+    }
     // 不论清了多少条，都更新 invalidationLog —— inventory 端点能回答
     // “这个 target 上次被 revalidate 是什么时候”，即便本进程内没有匹配条目
     // （比如刚启动 / 或 entry 已经被 LRU 淘汰）。
