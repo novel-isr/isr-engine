@@ -853,7 +853,16 @@ async function handleRequest(
     return Promise.resolve();
   }
 
-  if (hasPrivateRequest(req, ctx.variantCookieName)) {
+  const requestDirectives = parseCacheDirectives(req.headers['cache-control']);
+  const pragmaNoCache =
+    req.headers['cache-control'] === undefined &&
+    parseCacheDirectives(req.headers.pragma).has('no-cache');
+  if (
+    hasPrivateRequest(req, ctx.variantCookieName) ||
+    requestDirectives.has('no-store') ||
+    requestDirectives.has('no-cache') ||
+    pragmaNoCache
+  ) {
     setHeaderOnce(res, 'X-Cache-Status', 'BYPASS');
     next();
     return;
@@ -969,6 +978,20 @@ async function handleRequest(
   }
   if (!isActive()) return;
   const now = Date.now();
+
+  // Request age constraints apply to every representation, including build seeds.
+  // Rendering origin without cache admission preserves the shared entry for other requests.
+  const maxAgeValues = requestDirectives.get('max-age');
+  if (maxAgeValues) {
+    const valid = maxAgeValues.every(value => value !== undefined && /^\d+$/.test(value));
+    const maxAge = valid ? Math.min(...maxAgeValues.map(value => Number(value))) : -1;
+    const ageMs = entry ? Math.max(0, now - entry.storedAt) : Infinity;
+    if (!entry || now >= entry.expiresAt || ageMs > maxAge * 1000) {
+      setHeaderOnce(res, 'X-Cache-Status', 'BYPASS');
+      next();
+      return;
+    }
+  }
 
   // HIT
   if (entry && now < entry.expiresAt) {
@@ -1788,9 +1811,48 @@ function raceWithTimeout<T>(
   });
 }
 
+/** Split directive lists only outside quoted strings (RFC 9111 section 5.2). */
+function parseCacheDirectives(
+  header: string | string[] | undefined
+): Map<string, (string | undefined)[]> {
+  const directives = new Map<string, (string | undefined)[]>();
+  const input = Array.isArray(header) ? header.join(',') : header || '';
+  let start = 0;
+  let quoted = false;
+  let escaped = false;
+  for (let i = 0; i <= input.length; i++) {
+    const char = input[i];
+    // EOF must flush even an unterminated quoted value ending in an escape.
+    if (i < input.length) {
+      if (escaped) {
+        escaped = false;
+        continue;
+      }
+      if (quoted && char === '\\') {
+        escaped = true;
+        continue;
+      }
+      if (char === '"') quoted = !quoted;
+    }
+    if (i !== input.length && (char !== ',' || quoted)) continue;
+    const part = input.slice(start, i).trim();
+    start = i + 1;
+    const match = part.match(/^([!#$%&'*+.^_`|~0-9a-z-]+)(?:\s*=\s*(.*))?$/i);
+    if (!match) continue;
+    const name = match[1].toLowerCase();
+    let value = match[2];
+    if (value?.startsWith('"') && value.endsWith('"')) {
+      value = value.slice(1, -1).replace(/\\(.)/g, '$1');
+    }
+    const values = directives.get(name) || [];
+    values.push(value);
+    directives.set(name, values);
+  }
+  return directives;
+}
+
 function hasPrivateRequest(req: IncomingMessage, variantCookieName: string): boolean {
   if (req.headers.authorization || req.headers.range) return true;
-  if (/no-store/i.test(String(req.headers['cache-control'] || ''))) return true;
   const cookies = parseCookieHeader(String(req.headers.cookie || ''));
   return Object.keys(cookies).some(name => name !== ANON_COOKIE_NAME && name !== variantCookieName);
 }

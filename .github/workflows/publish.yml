@@ -4,7 +4,7 @@ name: Publish to GitHub Packages
 #
 # 行为：
 #   1. tag push:           读 tag 里的版本号，必须跟 package.json version 一致
-#   2. workflow_dispatch:  用 inputs.version 覆盖 package.json，本地不打 tag
+#   2. workflow_dispatch:  校验 inputs.version 与已提交的 package.json 一致
 #
 # 消费方：novel-rating / 其他业务侧 通过 GitHub Packages 拉
 #   .npmrc:  @novel-isr:registry=https://npm.pkg.github.com/
@@ -17,7 +17,7 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: '要发布的版本号（semver，无 v 前缀；为空则读 package.json）'
+        description: '已提交的版本号（无 v 前缀；为空则读 package.json）'
         required: false
         default: ''
 
@@ -26,7 +26,18 @@ permissions:
   packages: write
 
 jobs:
+  verify:
+    uses: ./.github/workflows/ci.yml
+
+  benchmark:
+    uses: ./.github/workflows/bench.yml
+    with:
+      base_ref: HEAD^
+      tiers: '10'
+      duration: 5
+
   publish:
+    needs: [verify, benchmark]
     runs-on: ubuntu-latest
     timeout-minutes: 15
 
@@ -58,11 +69,16 @@ jobs:
           registry-url: 'https://npm.pkg.github.com'
           scope: '@novel-isr'
 
-      - name: Bump version (if workflow_dispatch)
+      - name: Verify requested version matches committed package
         if: github.event_name == 'workflow_dispatch' && inputs.version != ''
         env:
           RELEASE_VERSION: ${{ inputs.version }}
-        run: npm version "$RELEASE_VERSION" --no-git-tag-version
+        run: |
+          PKG_VERSION=$(node -p "require('./package.json').version")
+          if [ "$RELEASE_VERSION" != "$PKG_VERSION" ]; then
+            echo "Requested version must match the committed package.json version"
+            exit 1
+          fi
 
       - name: Verify tag matches package.json (if tag push)
         if: github.event_name == 'push'
@@ -85,6 +101,9 @@ jobs:
 
       - name: Verify package exports and consumer types
         run: pnpm run test:package
+
+      - name: Verify clean installation of release artifact
+        run: pnpm run test:package:installed
 
       - name: Verify official Workers runtime
         run: pnpm run test:workers

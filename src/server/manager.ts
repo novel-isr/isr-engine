@@ -199,8 +199,8 @@ async function startAppServerInternal(
       serverContext = null;
       const rollback = await Promise.allSettled([
         context?.httpServer ? closeServer(context.httpServer) : Promise.resolve(),
-        closeDevelopmentResources(),
       ]);
+      rollback.push(...(await Promise.allSettled([closeDevelopmentResources()])));
       for (const result of rollback) {
         if (result.status === 'rejected')
           logger.warn('Development startup cleanup failed', result.reason);
@@ -230,7 +230,11 @@ async function createAndListenAppServer(
       };
       return serverContext;
     } catch (error) {
-      await runtime.close();
+      try {
+        await runtime.close();
+      } catch (cleanupError) {
+        logger.warn('Production startup cleanup failed', cleanupError);
+      }
       throw error;
     }
   }
@@ -289,11 +293,15 @@ async function stopAppServer(): Promise<void> {
   const runtime = productionRuntime;
   serverContext = null;
   productionRuntime = undefined;
-  const results = await Promise.allSettled([
+  const listenerResults = await Promise.allSettled([
     context.httpServer ? closeServer(context.httpServer) : Promise.resolve(),
-    context.isDev ? closeDevelopmentResources() : Promise.resolve(),
-    runtime?.close(),
   ]);
+  const results = listenerResults.concat(
+    await Promise.allSettled([
+      Promise.resolve().then(() => (context.isDev ? closeDevelopmentResources() : undefined)),
+      Promise.resolve().then(() => runtime?.close()),
+    ])
+  );
   const errors = results.filter(
     (result): result is PromiseRejectedResult => result.status === 'rejected'
   );

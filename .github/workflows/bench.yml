@@ -1,158 +1,171 @@
 name: Bench (perf regression gate)
 
-# 设计：
-#   - 不在每个 PR 跑（runner 时间昂贵），改为 dispatch + nightly + perf-sensitive 路径触发
-#   - 用 bench/compare.mjs 对比 bench/baseline.json，退化 > 20% 阻断
-#   - 没有 baseline 时（首次跑 / 新分支）自动 skip，避免空检验阻塞
-#
-# Bench app：bench/app/ —— 自带的最小 ISR 应用，无 sibling 依赖
-#   GitHub Actions checkout 只拉本仓库就够跑，不需要 ../novel-rating-website
-
 on:
+  workflow_call:
+    inputs:
+      base_ref:
+        description: 'Revision to measure as baseline on this runner'
+        type: string
+        required: false
+        default: 'HEAD^'
+      tiers:
+        description: 'concurrency tiers (comma-separated)'
+        type: string
+        required: false
+        default: '10'
+      duration:
+        description: 'seconds per warm/SSR tier (regeneration always >=75s)'
+        type: number
+        required: false
+        default: 5
   workflow_dispatch:
     inputs:
+      base_ref:
+        description: 'Revision to measure as baseline on this runner (default HEAD^)'
+        required: false
+        default: 'HEAD^'
       tiers:
         description: 'concurrency tiers (comma-separated)'
         required: false
         default: '10,100,1000'
       duration:
-        description: 'seconds per tier'
+        description: 'seconds per warm/SSR tier (regeneration always >=75s)'
         required: false
         default: '15'
   schedule:
-    # 每天 UTC 02:00（北京时间 10:00）跑一次，捕获日常性能漂移
     - cron: '0 2 * * *'
   pull_request:
     paths:
-      # 只在改了 perf-sensitive 文件时跑——其他 PR 不浪费 runner 时间
-      - 'src/plugin/isrCacheStore.ts'
-      - 'src/plugin/isrCacheMiddleware.ts'
-      - 'src/rsc/**'
-      - 'src/engine/**'
-      - 'src/server/**'
-      - 'src/middlewares/**'
-      - 'src/cache/**'
-      - 'bench/*.mjs'
-      - 'bench/app/**'
-      - 'bench/baseline.json'
+      - 'src/**'
+      - 'bench/**'
       - '.github/workflows/bench.yml'
+      - 'pnpm-lock.yaml'
+
+permissions:
+  contents: read
 
 concurrency:
-  group: bench-${{ github.ref }}
+  group: bench-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
   bench:
-    name: Run bench + regression check
+    name: Measure both revisions + required regression comparison
     runs-on: ubuntu-latest
-    timeout-minutes: 25
-    # bench 不能 fork PR 跑（需要 secrets / artifact 权限），且 fork PR 性能数没意义
+    timeout-minutes: 40
     if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
-
+    env:
+      BENCH_TIERS: ${{ inputs.tiers || '10,100,1000' }}
+      BENCH_RUNNER_ID: ${{ github.run_id }}-${{ github.run_attempt }}
+      BENCH_MAX_ERRORS: '0'
+      BENCH_MAX_NON_2XX_RATE: '0'
+      BENCH_WARMUP_SECONDS: '3'
+      BENCH_COOLDOWN_MS: '2000'
+      BENCH_URL: http://127.0.0.1:3000
     steps:
       - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
 
-      - name: Set up pnpm
-        uses: pnpm/action-setup@v5
+      - name: Resolve distinct baseline revision
+        id: revisions
+        env:
+          BASE_REF: ${{ github.event.pull_request.base.sha || inputs.base_ref || 'HEAD^' }}
+        run: |
+          base=$(git rev-parse --verify "$BASE_REF^{commit}")
+          current=$(git rev-parse HEAD)
+          test "$base" != "$current" || { echo 'Baseline must be a distinct revision'; exit 1; }
+          echo "base=$base" >> "$GITHUB_OUTPUT"
+          echo "current=$current" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ steps.revisions.outputs.base }}
+          path: .bench-baseline
+
+      - uses: pnpm/action-setup@v5
         with:
           run_install: false
-
       - uses: actions/setup-node@v5
         with:
           node-version-file: '.nvmrc'
 
-      - name: Resolve pnpm store path
-        id: pnpm-store
-        run: echo "path=$(pnpm store path --silent)" >> "$GITHUB_OUTPUT"
-
-      - name: Restore pnpm store cache
-        uses: actions/cache@v4
-        with:
-          path: ${{ steps.pnpm-store.outputs.path }}
-          key: ${{ runner.os }}-node-${{ hashFiles('.nvmrc') }}-pnpm-${{ hashFiles('pnpm-lock.yaml', 'bench/app/pnpm-lock.yaml') }}
-          restore-keys: |
-            ${{ runner.os }}-node-${{ hashFiles('.nvmrc') }}-pnpm-
-
-      - name: Diagnostics
+      - name: Build both engines with the same benchmark fixture
         run: |
-          node --version
-          pnpm --version
-          which node
-          which pnpm
+          pnpm install --frozen-lockfile
+          pnpm run build
+          # Use the current fixture for both engine revisions; keep each engine's locked dependencies.
+          rsync -a --delete --exclude=node_modules --exclude=dist bench/app/ .bench-baseline/bench/app/
+          (cd .bench-baseline && pnpm install --frozen-lockfile && pnpm run build)
+          (cd bench/app && pnpm install --ignore-workspace --frozen-lockfile && pnpm run build)
+          (cd .bench-baseline/bench/app && pnpm install --ignore-workspace --frozen-lockfile && pnpm run build)
 
-      - name: Install engine deps
-        run: pnpm install --frozen-lockfile
-
-      - name: Build engine
-        run: pnpm run build
-
-      - name: Install bench app deps
-        working-directory: bench/app
-        run: pnpm install --no-frozen-lockfile
-
-      - name: Build bench app
-        working-directory: bench/app
-        run: pnpm run build
-
-      - name: Start bench app in background
-        working-directory: bench/app
+      - name: Measure baseline and current sequentially on this runner
         env:
+          WARM_DURATION: ${{ inputs.duration || '15' }}
+          BASE_REVISION: ${{ steps.revisions.outputs.base }}
+          CURRENT_REVISION: ${{ steps.revisions.outputs.current }}
+          NODE_ENV: production
           PORT: '3000'
-          NODE_ENV: 'production'
-          SITE_URL: 'http://localhost:3000'
+          SITE_URL: http://127.0.0.1:3000
+        shell: bash
         run: |
-          pnpm run start > /tmp/bench-app.log 2>&1 &
-          echo $! > /tmp/bench-app.pid
-          # 等服务起来：最多 30 秒
-          for i in $(seq 1 30); do
-            if curl -sf http://localhost:3000/ > /dev/null 2>&1; then
-              echo "bench app up after ${i}s"
-              exit 0
+          set -euo pipefail
+          harness="$PWD/bench/runner.mjs"
+          artifact_dir="$PWD"
+          stop_app() {
+            if [ -n "${app_pid:-}" ]; then
+              node "$artifact_dir/bench/stop-app.mjs" "$app_pid" 3000 || return $?
+              # Reap the already-confirmed exited launcher; TERM/KILL exit codes are expected.
+              wait "$app_pid" 2>/dev/null || :
+              app_pid=''
             fi
-            sleep 1
+          }
+          trap stop_app EXIT
+          for revision in baseline current; do
+            if [ "$revision" = baseline ]; then
+              app_dir="$artifact_dir/.bench-baseline/bench/app"
+              export BENCH_SOURCE_REVISION="$BASE_REVISION"
+            else
+              app_dir="$artifact_dir/bench/app"
+              export BENCH_SOURCE_REVISION="$CURRENT_REVISION"
+            fi
+            for scenario in warm ssr regeneration; do
+              # A fresh process/cache per scenario keeps both revisions' starting conditions equal.
+              (cd "$app_dir" && exec setsid pnpm run start) > "$artifact_dir/bench-$revision-$scenario.log" 2>&1 &
+              app_pid=$!
+              ready=0
+              for _attempt in $(seq 1 30); do
+                if curl --fail --silent http://127.0.0.1:3000/ > /dev/null; then ready=1; break; fi
+                sleep 1
+              done
+              test "$ready" = 1 || { cat "$artifact_dir/bench-$revision-$scenario.log"; exit 1; }
+              export BENCH_SCENARIO="$scenario"
+              export BENCH_DURATION="$WARM_DURATION"
+              if [ "$scenario" = regeneration ]; then export BENCH_DURATION=75; fi
+              export BENCH_OUTPUT="$artifact_dir/bench-$revision-$scenario.json"
+              node "$harness"
+              stop_app
+            done
           done
-          echo "bench app failed to start in 30s; logs:"
-          cat /tmp/bench-app.log
-          exit 1
 
-      - name: Run bench
-        env:
-          BENCH_TIERS: ${{ github.event.inputs.tiers || '10,100,1000' }}
-          BENCH_DURATION: ${{ github.event.inputs.duration || '8' }}
-          BENCH_PATHS: '/,/about,/books/1'
-          BENCH_OUTPUT: bench-current.json
-          BENCH_RUNNER_ID: github-actions-ubuntu-latest-x64-node22
-          BENCH_WARMUP_SECONDS: '3'
-          BENCH_COOLDOWN_MS: '2000'
-          BENCH_FAIL_ON_NON_2XX: '1'
-        run: pnpm run bench
-
-      - name: Compare against baseline (fail on regression)
+      - name: Require all scenario comparisons
         env:
           BENCH_P95_REGRESSION_PCT: '20'
           BENCH_QPS_REGRESSION_PCT: '15'
-          BENCH_MAX_NON_2XX_RATE: '0'
         run: |
-          if [ -f bench/baseline.json ]; then
-            node bench/compare.mjs bench/baseline.json bench-current.json
-          else
-            echo "::warning::no baseline at bench/baseline.json — skipping regression check"
-            echo "to seed: copy bench-current.json to bench/baseline.json and commit"
-          fi
+          for scenario in warm ssr regeneration; do
+            node bench/compare.mjs "bench-baseline-$scenario.json" "bench-current-$scenario.json"
+          done
 
-      - name: Stop bench app
-        if: always()
-        run: |
-          if [ -f /tmp/bench-app.pid ]; then
-            kill $(cat /tmp/bench-app.pid) || true
-          fi
-
-      - name: Upload bench artifacts
+      - name: Upload measured evidence (including failures)
         if: always()
         uses: actions/upload-artifact@v5
         with:
-          name: bench-current-${{ github.sha }}
+          name: bench-${{ github.sha }}
           path: |
-            bench-current.json
-            /tmp/bench-app.log
+            bench-baseline-*.json
+            bench-current-*.json
+            bench-*.log
           retention-days: 30

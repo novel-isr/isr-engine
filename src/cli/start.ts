@@ -40,7 +40,11 @@ export async function startProductionServer(options: StartOptions): Promise<void
       strictPort: config.server?.strictPort,
     });
   } catch (error) {
-    await runtime.close();
+    try {
+      await runtime.close();
+    } catch (cleanupError) {
+      logger.error('[CLI]', 'Production startup cleanup failed', cleanupError);
+    }
     throw error;
   }
   logger.success('[CLI]', `生产服务器已启动: ${result.url}`);
@@ -51,10 +55,15 @@ export async function startProductionServer(options: StartOptions): Promise<void
     }
     shuttingDown = true;
     logger.warn('[CLI]', `收到 ${signal}，关闭生产服务器...`);
+    const cleanups = await Promise.allSettled([closeServer(result.server)]);
     const forceExit = setTimeout(() => process.exit(1), 3000);
     forceExit.unref();
-    const cleanups = await Promise.allSettled([closeServer(result.server), runtime.close()]);
+    cleanups.push(...(await Promise.allSettled([Promise.resolve().then(() => runtime.close())])));
     clearTimeout(forceExit);
+    for (const cleanup of cleanups) {
+      if (cleanup.status === 'rejected')
+        logger.error('[CLI]', 'Production shutdown failed', cleanup.reason);
+    }
     process.exit(cleanups.some(result => result.status === 'rejected') ? 1 : 0);
   };
   process.on('SIGINT', () => void handleShutdown('SIGINT'));

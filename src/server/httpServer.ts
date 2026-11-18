@@ -8,7 +8,7 @@
  */
 
 import { createServer as createHttpServer, Server } from 'http';
-import type { AddressInfo } from 'net';
+import type { AddressInfo, Socket } from 'net';
 import type { Express } from 'express';
 import { Logger } from '@/logger/Logger';
 import type { ServerConfig, ServerInstance, ServerStartResult } from './types';
@@ -24,6 +24,7 @@ const DEFAULT_TIMEOUTS = {
   maxRequestsPerSocket: 0,
 };
 const LISTEN_BACKLOG = 8192;
+const serverSockets = new WeakMap<ServerInstance, Set<Socket>>();
 
 function applyHttpTimeouts(server: Server): void {
   server.requestTimeout = DEFAULT_TIMEOUTS.requestTimeoutMs;
@@ -62,6 +63,12 @@ export function startHttp1Server(app: Express, config: ServerConfig): Promise<Se
   return new Promise((resolve, reject) => {
     const server = createHttpServer(app);
     applyHttpTimeouts(server);
+    const sockets = new Set<Socket>();
+    serverSockets.set(server, sockets);
+    server.on('connection', socket => {
+      sockets.add(socket);
+      socket.once('close', () => sockets.delete(socket));
+    });
 
     let attempt = 0;
     const listen = (port: number) => {
@@ -96,64 +103,38 @@ export function startServer(app: Express, config: ServerConfig): Promise<ServerS
   return startHttp1Server(app, config);
 }
 
-/**
- * 强制关闭服务器 —— 同时释放已建立的 keep-alive 连接，避免端口被占用
- *
- * 关闭策略：
- *   1. 调用 `server.closeAllConnections()` 切断所有活跃连接（Node 18.2+）
- *   2. `server.close()` 异步等待 listener 关闭
- *   3. `server.unref()` 让进程可以立即退出
- *   4. shutdownTimeoutMs 后即使 close() 未回调也强制 resolve（防僵死）
- */
+const closingServers = new WeakMap<ServerInstance, Promise<void>>();
+
+/** Stop accepting requests, drain active responses, then force overdue connections closed. */
 export function closeServer(server: ServerInstance): Promise<void> {
-  return new Promise(resolve => {
+  const existing = closingServers.get(server);
+  if (existing) return existing;
+  const closing = new Promise<void>((resolve, reject) => {
     const shutdownTimeoutMs =
-      (server as unknown as { __shutdownTimeoutMs?: number }).__shutdownTimeoutMs ??
+      (server as ServerInstance & { __shutdownTimeoutMs?: number }).__shutdownTimeoutMs ??
       DEFAULT_TIMEOUTS.shutdownTimeoutMs;
-
-    const typedServer = server as unknown as {
-      close?: (cb?: () => void) => void;
-      closeAllConnections?: () => void;
-      closeIdleConnections?: () => void;
-      unref?: () => void;
-    };
-
-    // 1. 切断 keep-alive 连接 —— 否则 close() 会一直等已连接客户端超时
-    try {
-      typedServer.closeAllConnections?.();
-    } catch {
+    const timeout = setTimeout(() => {
       try {
-        typedServer.closeIdleConnections?.();
-      } catch {
-        // 两个都没有时依赖 close + timeout
+        server.closeAllConnections();
+        // Node excludes upgraded connections from closeAllConnections.
+        for (const socket of serverSockets.get(server) ?? []) socket.destroy();
+      } catch (error) {
+        reject(error);
       }
-    }
-
-    // 2. 让事件循环允许进程退出
+    }, shutdownTimeoutMs);
     try {
-      typedServer.unref?.();
-    } catch {
-      // unref 失败不影响关闭
-    }
-
-    // 3. close() + 超时兜底
-    let resolved = false;
-    const safeResolve = () => {
-      if (!resolved) {
-        resolved = true;
-        resolve();
-      }
-    };
-
-    const timeout = setTimeout(safeResolve, shutdownTimeoutMs);
-    if (typeof typedServer.close === 'function') {
-      typedServer.close(() => {
+      // close first prevents new connections racing with idle/forced connection cleanup.
+      server.close(error => {
         clearTimeout(timeout);
-        safeResolve();
+        if (error) reject(error);
+        else resolve();
       });
-    } else {
+      server.closeIdleConnections();
+    } catch (error) {
       clearTimeout(timeout);
-      safeResolve();
+      reject(error);
     }
   });
+  closingServers.set(server, closing);
+  return closing;
 }

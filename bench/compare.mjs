@@ -6,7 +6,7 @@
  *   node bench/compare.mjs <baseline.json> <current.json>
  *
  * 退出码：
- *   0 所有指标在容忍范围内 / baseline 缺失（首次运行，自动 skip）
+ *   0 完成有效比较且所有指标在容忍范围内
  *   1 P95 延迟劣化 > 20% 或 QPS 下降 > 15%（任一档）
  *   2 用法错误 / 当前结果文件不可读
  *
@@ -15,7 +15,7 @@
  *   BENCH_P95_REGRESSION_MS    默认 50    P95 绝对增加超过 50ms 才视为有效退化
  *   BENCH_QPS_REGRESSION_PCT   默认 15    QPS -15% → 视为退化
  *   BENCH_MAX_NON_2XX_RATE     默认 0     当前结果非 2xx 预算；baseline 超过则整份基线无效
- *   BENCH_MAX_ERRORS           默认不检查 autocannon 建连错误；显式设置后才作为预算
+ *   BENCH_MAX_ERRORS           默认 0，建连错误和超时的总预算
  */
 import { existsSync, readFileSync } from 'node:fs';
 
@@ -25,18 +25,28 @@ if (!baselinePath || !currentPath) {
   process.exit(2);
 }
 
-const P95_REGRESSION_PCT = parseFloat(process.env.BENCH_P95_REGRESSION_PCT ?? '20');
-const P95_REGRESSION_MS = parseFloat(process.env.BENCH_P95_REGRESSION_MS ?? '50');
-const QPS_REGRESSION_PCT = parseFloat(process.env.BENCH_QPS_REGRESSION_PCT ?? '15');
-const MAX_NON_2XX_RATE = parseFloat(process.env.BENCH_MAX_NON_2XX_RATE ?? '0');
-const MAX_ERRORS =
-  process.env.BENCH_MAX_ERRORS === undefined ? null : parseInt(process.env.BENCH_MAX_ERRORS, 10);
-
-// Baseline 缺失：首次跑或新分支没有基线 —— 退出 0，让 CI 把 current 作为新基线提交即可
+const P95_REGRESSION_PCT = Number(process.env.BENCH_P95_REGRESSION_PCT ?? '20');
+const P95_REGRESSION_MS = Number(process.env.BENCH_P95_REGRESSION_MS ?? '50');
+const QPS_REGRESSION_PCT = Number(process.env.BENCH_QPS_REGRESSION_PCT ?? '15');
+const MAX_NON_2XX_RATE = Number(process.env.BENCH_MAX_NON_2XX_RATE ?? '0');
+const MAX_ERRORS = Number(process.env.BENCH_MAX_ERRORS ?? '0');
+for (const value of [
+  P95_REGRESSION_PCT,
+  P95_REGRESSION_MS,
+  QPS_REGRESSION_PCT,
+  MAX_NON_2XX_RATE,
+  MAX_ERRORS,
+]) {
+  if (!Number.isFinite(value) || value < 0) {
+    console.error('invalid bench budget: expected a finite non-negative number');
+    process.exit(2);
+  }
+}
 if (!existsSync(baselinePath)) {
-  console.log(`no baseline at ${baselinePath} — skipping regression check (first run?)`);
-  console.log(`commit ${currentPath} as ${baselinePath} to seed future comparisons`);
-  process.exit(0);
+  console.error(
+    `required baseline not found: ${baselinePath}; acquire both revisions on the same runner`
+  );
+  process.exit(1);
 }
 
 if (!existsSync(currentPath)) {
@@ -50,6 +60,7 @@ const current = JSON.parse(readFileSync(currentPath, 'utf8'));
 const currentHealthIssues = collectHealthIssues(current.results, {
   maxNon2xxRate: MAX_NON_2XX_RATE,
   maxErrors: MAX_ERRORS,
+  meta: current.meta,
 });
 if (currentHealthIssues.length > 0) {
   console.error(`current bench result is unhealthy; refusing to compare perf numbers:`);
@@ -59,29 +70,36 @@ if (currentHealthIssues.length > 0) {
 
 const compatibilityIssues = collectCompatibilityIssues(baseline.meta, current.meta);
 if (compatibilityIssues.length > 0) {
-  console.log(`baseline protocol is incompatible with current bench run; skipping comparison.`);
+  console.log(`baseline protocol is incompatible with current bench run; refusing comparison.`);
   console.log(`incompatible fields:`);
   for (const issue of compatibilityIssues) console.log(`  ${issue}`);
   console.log(
-    `\ncurrent result passed configured health gates. Replace ${baselinePath} with ${currentPath} after one stable run.`
+    `\nRequired regression comparison did not run. Measure both revisions with the current harness on the same runner.`
   );
-  process.exit(0);
+  process.exit(1);
 }
 
 const baselineHealthIssues = collectHealthIssues(baseline.results, {
   maxNon2xxRate: MAX_NON_2XX_RATE,
   maxErrors: MAX_ERRORS,
+  meta: baseline.meta,
 });
 if (baselineHealthIssues.length > 0) {
-  console.log(`baseline is unhealthy; skipping regression comparison and requiring reseed.`);
+  console.log(`baseline is unhealthy; refusing regression comparison and requiring reseed.`);
   console.log(`unhealthy baseline rows:`);
   for (const issue of baselineHealthIssues) console.log(`  ${issue}`);
   console.log(
-    `\ncurrent result passed configured health gates. Replace ${baselinePath} with ${currentPath} on a stable runner.`
+    `\nRequired regression comparison did not run. Acquire a healthy baseline from the base revision on the same runner.`
   );
-  process.exit(0);
+  process.exit(1);
 }
 
+const baselineKeys = baseline.results.map(r => `${r.path}|${r.connections}`).sort();
+const currentKeys = current.results.map(r => `${r.path}|${r.connections}`).sort();
+if (JSON.stringify(baselineKeys) !== JSON.stringify(currentKeys)) {
+  console.error('required comparison rows differ between baseline and current');
+  process.exit(1);
+}
 const baselineMap = new Map(baseline.results.map(r => [`${r.path}|${r.connections}`, r]));
 
 console.log(`baseline: ${baselinePath}  (${baseline.meta.timestamp})`);
@@ -144,7 +162,35 @@ console.log('\n✓ no regressions detected');
 
 function collectHealthIssues(results, options) {
   const issues = [];
-  for (const row of results ?? []) {
+  if (!Array.isArray(results) || results.length === 0)
+    return ['results must contain measured rows'];
+  const seen = new Set();
+  const expected = new Set(
+    (options.meta?.paths ?? []).flatMap(path =>
+      (options.meta?.tiers ?? []).map(tier => `${path}|${tier}`)
+    )
+  );
+  if (expected.size === 0) issues.push('metadata must declare paths and tiers');
+  for (const row of results) {
+    const key = `${row.path}|${row.connections}`;
+    if (seen.has(key)) issues.push(`duplicate row ${key}`);
+    seen.add(key);
+    if (!expected.has(key)) issues.push(`undeclared measurement ${key}`);
+    if (
+      options.meta?.bench_protocol >= 3 &&
+      (!Number.isInteger(row.body_mismatches) || row.body_mismatches < 0)
+    )
+      issues.push(`${key} invalid body_mismatches`);
+    if (options.meta?.scenario === 'regeneration' && row.regeneration_verified !== true)
+      issues.push(`${key} regeneration not verified`);
+    if (typeof row.path !== 'string' || !Number.isInteger(row.connections) || row.connections <= 0)
+      issues.push(`invalid row identity ${key}`);
+    for (const field of ['non_2xx_rate', 'errors', 'timeouts']) {
+      if (typeof row[field] !== 'number' || !Number.isFinite(row[field]) || row[field] < 0)
+        issues.push(`${key} invalid ${field}`);
+    }
+    if (row.body_mismatches > 0 || row.regeneration_verified === false)
+      issues.push(`${key} semantic health failure`);
     const non2xxRate = numberOrZero(row.non_2xx_rate);
     const errors = numberOrZero(row.errors) + numberOrZero(row.timeouts);
     const p95 = Number(row.latency_p95_ms);
@@ -162,25 +208,30 @@ function collectHealthIssues(results, options) {
       issues.push(`${row.path} @${row.connections}c invalid P95=${row.latency_p95_ms}`);
     }
   }
+  for (const key of expected)
+    if (!seen.has(key)) issues.push(`missing required measurement ${key}`);
   return issues;
 }
 
 function collectCompatibilityIssues(baselineMeta = {}, currentMeta = {}) {
   const issues = [];
+  if (baselineMeta.bench_protocol !== 3 || currentMeta.bench_protocol !== 3)
+    issues.push('required bench protocol is 3; remeasure both revisions with the current harness');
   compareRequiredScalar(
     issues,
     'bench_protocol',
     baselineMeta.bench_protocol,
     currentMeta.bench_protocol
   );
+  compareRequiredScalar(issues, 'scenario', baselineMeta.scenario, currentMeta.scenario);
   compareRequiredScalar(issues, 'runner_id', baselineMeta.runner_id, currentMeta.runner_id);
-  compareScalar(issues, 'duration_s', baselineMeta.duration_s, currentMeta.duration_s);
-  compareScalar(issues, 'pipelining', baselineMeta.pipelining, currentMeta.pipelining);
-  compareScalar(issues, 'warmup_s', baselineMeta.warmup_s, currentMeta.warmup_s);
-  compareScalar(issues, 'cooldown_ms', baselineMeta.cooldown_ms, currentMeta.cooldown_ms);
+  compareRequiredScalar(issues, 'duration_s', baselineMeta.duration_s, currentMeta.duration_s);
+  compareRequiredScalar(issues, 'pipelining', baselineMeta.pipelining, currentMeta.pipelining);
+  compareRequiredScalar(issues, 'warmup_s', baselineMeta.warmup_s, currentMeta.warmup_s);
+  compareRequiredScalar(issues, 'cooldown_ms', baselineMeta.cooldown_ms, currentMeta.cooldown_ms);
   compareList(issues, 'tiers', baselineMeta.tiers, currentMeta.tiers);
   compareList(issues, 'paths', baselineMeta.paths, currentMeta.paths);
-  compareScalar(
+  compareRequiredScalar(
     issues,
     'node_major',
     majorVersion(baselineMeta.node),
@@ -207,7 +258,10 @@ function compareScalar(issues, field, baselineValue, currentValue) {
 }
 
 function compareList(issues, field, baselineValue, currentValue) {
-  if (!Array.isArray(baselineValue) || !Array.isArray(currentValue)) return;
+  if (!Array.isArray(baselineValue) || !Array.isArray(currentValue)) {
+    issues.push(`${field}: missing list`);
+    return;
+  }
   const baselineText = baselineValue.join(',');
   const currentText = currentValue.join(',');
   if (baselineText !== currentText) {

@@ -29,9 +29,10 @@
 import autocannon from 'autocannon';
 import { writeFileSync } from 'node:fs';
 import os from 'node:os';
-import { extractP95, sleep } from './utils.mjs';
+import { extractP95, sleep, verifyBenchBody } from './utils.mjs';
 
-const BENCH_PROTOCOL_VERSION = 2;
+const BENCH_PROTOCOL_VERSION = 3;
+const SCENARIO = process.env.BENCH_SCENARIO ?? 'warm';
 
 // Use a numeric loopback address by default. `localhost` can resolve to both ::1 and 127.0.0.1;
 // high-concurrency runs would then measure dual-stack connection churn instead of engine throughput.
@@ -40,8 +41,11 @@ const TIERS = (process.env.BENCH_TIERS ?? '10,100,1000,10000')
   .split(',')
   .map(s => parseInt(s.trim(), 10))
   .filter(n => Number.isFinite(n) && n > 0);
-const DURATION = parseInt(process.env.BENCH_DURATION ?? '15', 10);
-const PATHS = (process.env.BENCH_PATHS ?? '/,/books/1,/about').split(',').map(s => s.trim());
+const DURATION = Number(process.env.BENCH_DURATION ?? (SCENARIO === 'regeneration' ? '75' : '15'));
+const scenarioPaths = { warm: '/,/books/1,/about', ssr: '/api/health', regeneration: '/' };
+const PATHS = (process.env.BENCH_PATHS ?? scenarioPaths[SCENARIO] ?? '')
+  .split(',')
+  .map(s => s.trim());
 const OUTPUT = process.env.BENCH_OUTPUT;
 const P95_BUDGET = process.env.BENCH_P95_BUDGET_MS
   ? parseInt(process.env.BENCH_P95_BUDGET_MS, 10)
@@ -56,7 +60,35 @@ const WARMUP_SECONDS = parseInt(process.env.BENCH_WARMUP_SECONDS ?? '3', 10);
 const COOLDOWN_MS = parseInt(process.env.BENCH_COOLDOWN_MS ?? '2000', 10);
 // preflight 单 GET 的超时；设 0 关闭 preflight（不推荐）
 const PREFLIGHT_TIMEOUT_MS = parseInt(process.env.BENCH_PREFLIGHT_TIMEOUT_MS ?? '5000', 10);
+const MAX_ERRORS = Number(process.env.BENCH_MAX_ERRORS ?? '0');
+const MAX_NON_2XX_RATE = Number(process.env.BENCH_MAX_NON_2XX_RATE ?? '0');
 const RUNNER_ID = process.env.BENCH_RUNNER_ID ?? createRunnerId();
+
+if (
+  !scenarioPaths[SCENARIO] ||
+  TIERS.length === 0 ||
+  new Set(TIERS).size !== TIERS.length ||
+  PATHS.some(p => !p.startsWith('/')) ||
+  !Number.isInteger(DURATION) ||
+  DURATION <= 0 ||
+  ![
+    PIPELINING,
+    WARMUP_SECONDS,
+    COOLDOWN_MS,
+    PREFLIGHT_TIMEOUT_MS,
+    MAX_ERRORS,
+    MAX_NON_2XX_RATE,
+  ].every(n => Number.isFinite(n) && n >= 0) ||
+  PIPELINING < 1
+) {
+  console.error('invalid benchmark configuration');
+  process.exit(2);
+}
+if (SCENARIO === 'regeneration' && (DURATION < 65 || PATHS.join(',') !== '/')) {
+  console.error('regeneration requires at least 65 seconds on / (TTL 60s)');
+  process.exit(2);
+}
+const verifyBody = path => body => verifyBenchBody(path, body);
 
 console.log(`\n=== isr-engine bench ===`);
 console.log(`target:      ${URL}`);
@@ -71,7 +103,7 @@ console.log(`cooldown:    ${COOLDOWN_MS}ms (between tiers)`);
 const gates = [];
 if (P95_BUDGET) gates.push(`P95 ≤ ${P95_BUDGET}ms`);
 if (QPS_FLOOR) gates.push(`QPS ≥ ${QPS_FLOOR}`);
-if (FAIL_ON_NON_2XX) gates.push('non-2xx ≤ 5%');
+if (FAIL_ON_NON_2XX) gates.push(`non-2xx ≤ ${MAX_NON_2XX_RATE}%`);
 console.log(`CI gates:    ${gates.length > 0 ? gates.join(' / ') : 'none (informational)'}\n`);
 
 // ─── Preflight：每条 path 单 GET 校验 2xx ───
@@ -83,8 +115,10 @@ if (PREFLIGHT_TIMEOUT_MS > 0) {
       const ctrl = new AbortController();
       const t = setTimeout(() => ctrl.abort(), PREFLIGHT_TIMEOUT_MS);
       const res = await fetch(target, { signal: ctrl.signal });
+      const body = await res.text();
       clearTimeout(t);
       const ok = res.status >= 200 && res.status < 300;
+      if (!verifyBody(path)(body)) throw new Error('unexpected benchmark content');
       console.log(`   ${ok ? '✓' : '✗'} ${target} → ${res.status}`);
       if (!ok) {
         console.error(`✗ preflight failed for ${target}: status ${res.status}`);
@@ -111,6 +145,7 @@ if (WARMUP_SECONDS > 0) {
       duration: WARMUP_SECONDS,
       pipelining: PIPELINING,
       headers: { accept: 'text/html' },
+      verifyBody: verifyBody(path),
     });
     console.log('done');
   }
@@ -137,6 +172,7 @@ for (const path of PATHS) {
       duration: DURATION,
       pipelining: PIPELINING,
       headers: { accept: 'text/html' },
+      verifyBody: verifyBody(path),
     });
     const wallMs = Date.now() - t0;
     const non2xxRate = r.requests.total > 0 ? r.non2xx / r.requests.total : 0;
@@ -155,17 +191,33 @@ for (const path of PATHS) {
       latency_p99_ms: +r.latency.p99.toFixed(2),
       latency_max_ms: +r.latency.max.toFixed(2),
       errors: r.errors,
+      body_mismatches: r.mismatches,
       timeouts: r.timeouts,
       non_2xx: r.non2xx,
-      non_2xx_rate: +(non2xxRate * 100).toFixed(2),
+      non_2xx_rate: non2xxRate * 100,
     };
+    if (SCENARIO === 'regeneration') {
+      const response = await fetch(target, {
+        signal: AbortSignal.timeout(PREFLIGHT_TIMEOUT_MS || 5000),
+      });
+      await response.text();
+      const ageHeader = response.headers.get('x-cache-age');
+      row.regeneration_verified =
+        response.ok &&
+        ageHeader !== null &&
+        Number(ageHeader) >= 0 &&
+        Number(ageHeader) < 60 &&
+        response.headers.get('x-cache-status') === 'HIT';
+      row.post_cache_age_s = ageHeader === null ? null : Number(ageHeader);
+    }
     results.push(row);
 
     // Per-tier 状态（CI gates）
     const issues = [];
     if (P95_BUDGET && row.latency_p95_ms > P95_BUDGET) issues.push(`P95>${P95_BUDGET}ms`);
     if (QPS_FLOOR && row.requests_per_sec < QPS_FLOOR) issues.push(`QPS<${QPS_FLOOR}`);
-    if (FAIL_ON_NON_2XX && non2xxRate > 0.05) issues.push(`non2xx>${row.non_2xx_rate}%`);
+    if (FAIL_ON_NON_2XX && non2xxRate * 100 > MAX_NON_2XX_RATE)
+      issues.push(`non2xx>${row.non_2xx_rate}%`);
     const tag = issues.length > 0 ? `FAIL(${issues.join(',')})` : 'ok ';
     console.log(
       `${tag} ` +
@@ -213,6 +265,8 @@ if (OUTPUT) {
       {
         meta: {
           bench_protocol: BENCH_PROTOCOL_VERSION,
+          scenario: SCENARIO,
+          source_revision: process.env.BENCH_SOURCE_REVISION ?? null,
           url: URL,
           runner_id: RUNNER_ID,
           platform: process.platform,
@@ -240,14 +294,27 @@ if (OUTPUT) {
 // ─── 汇总 CI gates ───
 const failed = [];
 for (const r of results) {
+  if (
+    r.body_mismatches > 0 ||
+    r.regeneration_verified === false ||
+    r.errors + r.timeouts > MAX_ERRORS ||
+    r.requests_total <= 0 ||
+    r.requests_per_sec <= 0 ||
+    !Number.isFinite(r.latency_p95_ms)
+  )
+    failed.push(
+      `${r.path}@${r.connections}c unhealthy measurement (errors+timeouts=${r.errors + r.timeouts}, budget=${MAX_ERRORS})`
+    );
   if (P95_BUDGET && r.latency_p95_ms > P95_BUDGET) {
     failed.push(`${r.path}@${r.connections}c P95=${r.latency_p95_ms}ms (budget ${P95_BUDGET}ms)`);
   }
   if (QPS_FLOOR && r.requests_per_sec < QPS_FLOOR) {
     failed.push(`${r.path}@${r.connections}c QPS=${r.requests_per_sec} (floor ${QPS_FLOOR})`);
   }
-  if (FAIL_ON_NON_2XX && r.non_2xx_rate > 5) {
-    failed.push(`${r.path}@${r.connections}c non-2xx=${r.non_2xx_rate}% (budget 5%)`);
+  if (FAIL_ON_NON_2XX && r.non_2xx_rate > MAX_NON_2XX_RATE) {
+    failed.push(
+      `${r.path}@${r.connections}c non-2xx=${r.non_2xx_rate}% (budget ${MAX_NON_2XX_RATE}%)`
+    );
   }
 }
 if (failed.length > 0) {

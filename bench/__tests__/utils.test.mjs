@@ -108,3 +108,18 @@ describe('extractP95 —— 真实场景对比（旧行为 vs 新行为）', () 
     expect(got).toBeCloseTo(40, 0);
   });
 });
+
+describe('benchmark response content', () => {
+  it('accepts React text comment boundaries but rejects an unrelated HTTP 200 body', async () => {
+    const utils = await import('../utils.mjs');
+    expect(utils.verifyBenchBody?.('/books/1', '<h1>Book <!-- -->1</h1>')).toBe(true);
+    expect(utils.verifyBenchBody?.('/books/1', '<h1>Book 2</h1>')).toBe(false);
+    expect(utils.verifyBenchBody?.('/', '<h1>Server Error</h1>')).toBe(false);
+    expect(
+      utils.verifyBenchBody?.('/api/health', '<pre>{&quot;status&quot;:&quot;error&quot;}</pre>')
+    ).toBe(false);
+    expect(
+      utils.verifyBenchBody?.('/api/health', '<pre>{&quot;status&quot;:&quot;ok&quot;}</pre>')
+    ).toBe(true);
+  });
+});

@@ -7,7 +7,9 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import ts from 'typescript';
 import { build } from 'esbuild';
 
-const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
+const root = process.argv[2]
+  ? path.resolve(process.argv[2])
+  : path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const temporary = await fs.mkdtemp(path.join(os.tmpdir(), 'isr-package-check-'));
 try {
   const pkg = JSON.parse(await fs.readFile(path.join(root, 'package.json'), 'utf8'));
@@ -18,21 +20,23 @@ try {
     process.platform === 'win32'
       ? [path.join(path.dirname(process.execPath), 'node_modules/npm/bin/npm-cli.js')]
       : [];
-  const [pack] = JSON.parse(
-    execFileSync(
-      npmCommand,
-      [
-        ...npmPrefix,
-        'pack',
-        '--dry-run',
-        '--json',
-        '--ignore-scripts',
-        '--cache',
-        path.join(temporary, 'npm-cache'),
-      ],
-      { cwd: root, encoding: 'utf8' }
-    )
-  );
+  const [pack] = process.argv[3]
+    ? JSON.parse(await fs.readFile(process.argv[3], 'utf8'))
+    : JSON.parse(
+        execFileSync(
+          npmCommand,
+          [
+            ...npmPrefix,
+            'pack',
+            '--dry-run',
+            '--json',
+            '--ignore-scripts',
+            '--cache',
+            path.join(temporary, 'npm-cache'),
+          ],
+          { cwd: root, encoding: 'utf8' }
+        )
+      );
   const files = new Set(pack.files.map(file => file.path));
   const targets = new Set();
   function collect(value) {
@@ -45,6 +49,7 @@ try {
   const missing = [...targets].filter(target => !files.has(target));
   if (missing.length)
     throw new Error(`Package targets missing from npm pack: ${missing.join(', ')}`);
+  for (const target of targets) await fs.access(path.join(root, target));
   const tests = [...files].filter(file =>
     /(?:^|\/)__tests__\/|\.(?:test|spec)\.[cm]?[jt]sx?$/.test(file)
   );

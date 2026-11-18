@@ -242,32 +242,58 @@ test('production startup rejects a corrupt manifest before loading application c
 });
 
 test('cached ISR HTML refreshes every script attribute and JavaScript nonce reference on HIT', async ({
-  page,
+  browser,
+  baseURL,
 }) => {
   const seen: string[] = [];
   for (let attempt = 0; attempt < 3; attempt++) {
-    const response = attempt === 0 ? await page.goto('/cached') : await page.reload();
-    expect(response?.headers()['x-cache-status']).toBe(attempt === 0 ? 'MISS' : 'HIT');
-    const nonce = response?.headers()['content-security-policy'].match(/'nonce-([^']+)'/)?.[1];
-    expect(nonce).toMatch(/^[a-f0-9]{32}$/);
-    expect(seen).not.toContain(nonce);
-    const scripts = await page
-      .locator('script')
-      .evaluateAll(elements =>
-        elements.map(script => ({ nonce: script.nonce, text: script.textContent ?? '' }))
-      );
-    expect(scripts.length).toBeGreaterThan(0);
-    expect(scripts.every(script => script.nonce === nonce)).toBe(true);
-    expect(scripts.some(script => script.text.includes(`window.__nonceReference="${nonce}"`))).toBe(
-      true
-    );
-    expect(await page.evaluate(() => Reflect.get(window, '__nonceReference'))).toBe(nonce);
-    const html = await response!.text();
-    for (const previous of seen) expect(html).not.toContain(previous);
-    await page.getByRole('button', { name: 'Count 0' }).click();
-    await expect(page.getByRole('button', { name: 'Count 1' })).toBeVisible();
-    seen.push(nonce!);
+    // A reload explicitly requests revalidation. Independent contexts exercise
+    // shared-cache HITs without a browser cache or a forced-refresh directive.
+    const context = await browser.newContext({ baseURL });
+    try {
+      const page = await context.newPage();
+      page.on('pageerror', error => browserErrors.push(error.message));
+      page.on('console', message => {
+        if (message.type() === 'error') browserErrors.push(message.text());
+      });
+      const response = await page.goto('/cached');
+      expect(response?.headers()['x-cache-status']).toBe(attempt === 0 ? 'MISS' : 'HIT');
+      const nonce = response?.headers()['content-security-policy'].match(/'nonce-([^']+)'/)?.[1];
+      expect(nonce).toMatch(/^[a-f0-9]{32}$/);
+      expect(seen).not.toContain(nonce);
+      const scripts = await page
+        .locator('script')
+        .evaluateAll(elements =>
+          elements.map(script => ({ nonce: script.nonce, text: script.textContent ?? '' }))
+        );
+      expect(scripts.length).toBeGreaterThan(0);
+      expect(scripts.every(script => script.nonce === nonce)).toBe(true);
+      expect(
+        scripts.some(script => script.text.includes(`window.__nonceReference="${nonce}"`))
+      ).toBe(true);
+      expect(await page.evaluate(() => Reflect.get(window, '__nonceReference'))).toBe(nonce);
+      const html = await response!.text();
+      for (const previous of seen) expect(html).not.toContain(previous);
+      await page.getByRole('button', { name: 'Count 0' }).click();
+      await expect(page.getByRole('button', { name: 'Count 1' })).toBeVisible();
+      seen.push(nonce!);
+    } finally {
+      await context.close();
+    }
   }
+});
+
+test('browser reload requests origin freshness instead of replaying cached ISR HTML', async ({
+  page,
+}) => {
+  const first = await page.goto('/cached?browser-refresh=1');
+  expect(first?.headers()['x-cache-status']).toBe('MISS');
+  const refreshed = await page.reload();
+  const headers = await refreshed!.request().allHeaders();
+  expect(headers['cache-control']).toMatch(/no-cache|max-age=0/);
+  expect(refreshed?.headers()['x-cache-status']).toBe('BYPASS');
+  await page.getByRole('button', { name: 'Count 0' }).click();
+  await expect(page.getByRole('button', { name: 'Count 1' })).toBeVisible();
 });
 
 test('dynamic .html application routes render and hydrate without a static manifest entry', async ({

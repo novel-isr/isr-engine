@@ -11,7 +11,7 @@
  * 实现手段：跑真 http.Server 监听 ephemeral port，handler 挂 next()
  * 模拟下游 Vite + plugin-rsc 的渲染响应。
  */
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import http, { type IncomingMessage, type Server, type ServerResponse } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import {
@@ -1251,3 +1251,180 @@ describe('public render mode and cache route contract', () => {
     }
   });
 });
+
+describe('request cache directives', () => {
+  it.each(['no-cache', 'No-Cache', 'extension="a,no-store,b", no-cache'])(
+    '%s renders origin rather than reusing a warm entry',
+    async control => {
+      const fx = await startFixture();
+      let renders = 0;
+      fx.renderImpl.current = (_req, res) => {
+        res.setHeader('content-type', 'text/html');
+        res.end(`origin-${++renders}`);
+      };
+      try {
+        expect((await httpGet(fx.baseUrl)).body).toBe('origin-1');
+        expect((await httpGet(fx.baseUrl, { 'cache-control': control })).body).toBe('origin-2');
+      } finally {
+        await teardown(fx);
+      }
+    }
+  );
+
+  it('parses directive names without matching a quoted extension value', async () => {
+    const fx = await startFixture();
+    try {
+      await httpGet(fx.baseUrl);
+      expect(
+        (await httpGet(fx.baseUrl, { 'cache-control': 'extension="a,no-store,b"' })).cacheStatus
+      ).toBe('HIT');
+    } finally {
+      await teardown(fx);
+    }
+  });
+
+  it('honors max-age on fresh and stale entries without evicting them', async () => {
+    const store = createMemoryCacheStore({ max: 10 });
+    const fx = await startFixture({ store });
+    try {
+      const warm = await httpGet(fx.baseUrl);
+      const entry = store.get(warm.cacheKey!)!;
+      store.set(warm.cacheKey!, { ...entry, storedAt: Date.now() - 10_000 });
+      expect((await httpGet(fx.baseUrl, { 'cache-control': 'max-age="20"' })).cacheStatus).toBe(
+        'HIT'
+      );
+      expect((await httpGet(fx.baseUrl, { 'cache-control': 'max-age=5' })).cacheStatus).toBe(
+        'BYPASS'
+      );
+      expect((await httpGet(fx.baseUrl, { 'cache-control': 'max-age=0' })).cacheStatus).toBe(
+        'BYPASS'
+      );
+      store.set(warm.cacheKey!, {
+        ...entry,
+        storedAt: Date.now() - 10_000,
+        expiresAt: Date.now() - 100,
+      });
+      expect((await httpGet(fx.baseUrl, { 'cache-control': 'max-age=20' })).cacheStatus).toBe(
+        'BYPASS'
+      );
+      expect(store.get(warm.cacheKey!)?.body).toEqual(entry.body);
+    } finally {
+      await teardown(fx);
+    }
+  });
+
+  it('treats legacy pragma no-cache as revalidation only without Cache-Control', async () => {
+    const fx = await startFixture();
+    try {
+      await httpGet(fx.baseUrl);
+      expect((await httpGet(fx.baseUrl, { pragma: 'no-cache' })).cacheStatus).toBe('BYPASS');
+      expect(
+        (await httpGet(fx.baseUrl, { pragma: 'no-cache', 'cache-control': 'max-age=3600' }))
+          .cacheStatus
+      ).toBe('HIT');
+    } finally {
+      await teardown(fx);
+    }
+  });
+
+  it('does not replay an SSG build seed that exceeds request max-age', async () => {
+    const fx = await startFixture(
+      {
+        staticSeed: async () => ({
+          body: Buffer.from('old-build'),
+          statusCode: 200,
+          contentType: 'text/html',
+          headers: {},
+          storedAt: Date.now() - 60_000,
+          expiresAt: 0,
+          hardExpiresAt: 0,
+          tags: [],
+        }),
+      },
+      { renderMode: 'ssg', revalidate: 3600 }
+    );
+    try {
+      const response = await httpGet(fx.baseUrl, { 'cache-control': 'max-age=5' });
+      expect(response.body).toBe('<html>default</html>');
+    } finally {
+      await teardown(fx);
+    }
+  });
+});
+
+it('allows a zero-age cached response with max-age=0', async () => {
+  const fx = await startFixture();
+  const clock = vi.spyOn(Date, 'now').mockReturnValue(1_800_000_000_000);
+  try {
+    await httpGet(fx.baseUrl);
+    expect((await httpGet(fx.baseUrl, { 'cache-control': 'max-age=0' })).cacheStatus).toBe('HIT');
+  } finally {
+    clock.mockRestore();
+    await teardown(fx);
+  }
+});
+
+it('request no-store never admits the origin response into the shared cache', async () => {
+  const fx = await startFixture();
+  let renders = 0;
+  fx.renderImpl.current = (_req, res) => {
+    res.setHeader('content-type', 'text/html');
+    res.end(`origin-${++renders}`);
+  };
+  try {
+    expect(
+      (await httpGet(fx.baseUrl, { 'cache-control': 'extension="no-cache,x", No-Store' })).body
+    ).toBe('origin-1');
+    expect((await httpGet(fx.baseUrl)).body).toBe('origin-2');
+    expect((await httpGet(fx.baseUrl)).body).toBe('origin-2');
+  } finally {
+    await teardown(fx);
+  }
+});
+
+it('request no-cache bypasses stale entries without background reuse', async () => {
+  const store = createMemoryCacheStore({ max: 10 });
+  const fx = await startFixture({ store });
+  let renders = 0;
+  fx.renderImpl.current = (_req, res) => {
+    res.setHeader('content-type', 'text/html');
+    res.end(`origin-${++renders}`);
+  };
+  try {
+    const warm = await httpGet(fx.baseUrl);
+    const entry = store.get(warm.cacheKey!)!;
+    store.set(warm.cacheKey!, { ...entry, expiresAt: Date.now() - 100 });
+    const response = await httpGet(fx.baseUrl, { 'cache-control': 'no-cache' });
+    expect(response.body).toBe('origin-2');
+    expect(response.cacheStatus).toBe('BYPASS');
+    expect(store.get(warm.cacheKey!)?.body.toString()).toBe('origin-1');
+  } finally {
+    await teardown(fx);
+  }
+});
+
+it.each(['no-store="x\\', 'no-cache="x\\', 'max-age="0\\', 'max-age=5, max-age="0\\'])(
+  'fails safe for a trailing escape in request directive %s',
+  async control => {
+    const fx = await startFixture();
+    let renders = 0;
+    fx.renderImpl.current = (_req, res) => {
+      res.setHeader('content-type', 'text/html');
+      res.end(`origin-${++renders}`);
+    };
+    try {
+      const warm = await httpGet(fx.baseUrl);
+      expect(warm.body).toBe('origin-1');
+      const response = await httpGet(fx.baseUrl, { 'cache-control': control });
+      expect(response.cacheStatus).toBe('BYPASS');
+      expect(response.body).toBe('origin-2');
+      expect((await httpGet(fx.baseUrl)).body).toBe('origin-1');
+      const coldResponse = await httpGet(`${fx.baseUrl}/cold`, { 'cache-control': control });
+      expect(coldResponse.cacheStatus).toBe('BYPASS');
+      expect(coldResponse.body).toBe('origin-3');
+      expect((await httpGet(`${fx.baseUrl}/cold`)).body).toBe('origin-4');
+    } finally {
+      await teardown(fx);
+    }
+  }
+);

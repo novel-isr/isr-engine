@@ -175,3 +175,25 @@ it('shares concurrent shutdown and waits for it before starting a new developmen
   await Promise.all([stopping, duplicate, restarting]);
   expect(transport.createViteDevServer).toHaveBeenCalledTimes(2);
 });
+
+it('keeps request resources alive until HTTP draining finishes even if close fails', async () => {
+  await startAppServer(config(), () => {});
+  let reject!: (reason: Error) => void;
+  transport.closeServer.mockImplementationOnce(
+    () =>
+      new Promise<void>((_resolve, fail) => {
+        reject = fail;
+      })
+  );
+  const closing = shutdownServer();
+  await vi.advanceTimersByTimeAsync(0);
+  try {
+    expect(transport.closeViteDevServer).not.toHaveBeenCalled();
+    expect(signals.map(signal => process.listenerCount(signal))).not.toEqual(listeners);
+  } finally {
+    reject(new Error('listener close failed'));
+    await expect(closing).rejects.toThrow('Server shutdown failed');
+  }
+  expect(transport.closeViteDevServer).toHaveBeenCalledTimes(1);
+  expect(signals.map(signal => process.listenerCount(signal))).toEqual(listeners);
+});

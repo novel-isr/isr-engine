@@ -5,6 +5,7 @@ name: CI
 # 读取 .nvmrc。corepack 接管 pnpm（packageManager 字段是 source of truth）。
 
 on:
+  workflow_call:
   push:
     branches: ['**']
     tags-ignore: ['**']
@@ -12,7 +13,7 @@ on:
     branches: [main, develop]
 
 concurrency:
-  group: ci-${{ github.ref }}
+  group: ci-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
