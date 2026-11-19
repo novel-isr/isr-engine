@@ -177,7 +177,7 @@
     "rimraf": "^6.1.4",
     "rsc-html-stream": "^0.0.7",
     "sass-embedded": "^1.108.2",
-    "semantic-release": "25.0.9",
+    "semantic-release": "26.0.1",
     "tsc-alias": "^1.9.10",
     "vite": "8.1.6",
     "vitest": "^4.1.12"
