@@ -1,6 +1,6 @@
 export default {
   branches: ['main'],
-  tagFormat: 'v${version}',
+  tagFormat: 'isr-engine-v${version}',
   plugins: [
     [
       '@semantic-release/commit-analyzer',

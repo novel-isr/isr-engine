@@ -1110,7 +1110,7 @@ packages:
 
   isr-engine@file:../..:
     resolution: {directory: ../.., type: directory}
-    engines: {node: '>=22.21.1'}
+    engines: {node: '>=24.15.0'}
     hasBin: true
     peerDependencies:
       react: 19.3.0-canary-bd6ea412-20260824
