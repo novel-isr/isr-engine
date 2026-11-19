@@ -273,6 +273,8 @@ describe('Logger.logFile —— 文件持久化', () => {
     try {
       const logger = Logger.getInstance({ logFile: path.join(tmpDir, 'failed.log') });
       const destination = destinationSpy.mock.results.at(-1)!.value;
+      const closed = vi.fn();
+      destination.once('close', closed);
       destination.emit('error', new Error('disk failed\nforged\u001b[2J'));
       expect(() => logger.info('console survives')).not.toThrow();
       expect(getLoggedMessages().at(-1)).toContain('console survives');
@@ -280,7 +282,7 @@ describe('Logger.logFile —— 文件持久化', () => {
       // eslint-disable-next-line no-control-regex
       expect(diagnostic.trimEnd()).not.toMatch(/[\r\n\u001b]/);
       expect(diagnostic).toContain('disk failed\\nforged\\u001b[2J');
-      await vi.waitFor(() => expect(destination.destroyed).toBe(true));
+      await vi.waitFor(() => expect(closed).toHaveBeenCalledOnce());
     } finally {
       destinationSpy.mockRestore();
       stderrSpy.mockRestore();
@@ -294,15 +296,19 @@ describe('Logger.logFile —— 文件持久化', () => {
       const secondFile = path.join(tmpDir, 'second.log');
       const logger = Logger.getInstance({ logFile: firstFile });
       const firstDestination = destinationSpy.mock.results.at(-1)!.value;
+      const firstClosed = vi.fn();
+      firstDestination.once('close', firstClosed);
       logger.info('first');
       Logger.getInstance({ logFile: firstFile });
-      expect(firstDestination.destroyed).toBe(false);
+      expect(firstClosed).not.toHaveBeenCalled();
       Logger.getInstance({ logFile: secondFile });
       const secondDestination = destinationSpy.mock.results.at(-1)!.value;
-      await vi.waitFor(() => expect(firstDestination.destroyed).toBe(true));
+      const secondClosed = vi.fn();
+      secondDestination.once('close', secondClosed);
+      await vi.waitFor(() => expect(firstClosed).toHaveBeenCalledOnce());
       logger.info('second');
       Logger.getInstance({ logFile: '' });
-      await vi.waitFor(() => expect(secondDestination.destroyed).toBe(true));
+      await vi.waitFor(() => expect(secondClosed).toHaveBeenCalledOnce());
       logger.info('console-only');
       expect(JSON.parse(await fs.readFile(firstFile, 'utf8')).args).toEqual(['first']);
       expect(JSON.parse(await fs.readFile(secondFile, 'utf8')).args).toEqual(['second']);

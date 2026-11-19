@@ -18,7 +18,19 @@ export function isSafeLocalRedirect(target: string): boolean {
   }
 }
 
-export function redirectLocal(res: Response, status: 302 | 308, target: string): void {
+export function readRedirectQuery(url: string): string | undefined {
+  const delimiter = url.indexOf('?');
+  return delimiter < 0 ? undefined : url.slice(delimiter + 1);
+}
+
+export function redirectLocal(
+  res: Response,
+  status: 302 | 308,
+  pathname: string,
+  query?: string
+): void {
+  // Keep request query bytes in the query component, including a bare question mark.
+  const target = query === undefined ? pathname : `${pathname}?${query}`;
   if (!isSafeLocalRedirect(target)) {
     res.status(400).end();
     return;

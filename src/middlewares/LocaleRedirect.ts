@@ -18,8 +18,8 @@
  */
 import type { Request, Response, NextFunction } from 'express';
 import type { I18nConfig } from '../runtime/i18n';
-import { negotiateLocale, withLocale } from '../runtime/i18n';
-import { redirectLocal } from '../server/safeRedirect';
+import { negotiateLocale } from '../runtime/i18n';
+import { readRedirectQuery, redirectLocal } from '../server/safeRedirect';
 
 export interface CreateLocaleRedirectOptions {
   i18n: I18nConfig;
@@ -60,7 +60,21 @@ export function createLocaleRedirectMiddleware(
   if (!i18n.prefixDefault) return null;
   if (!i18n.locales || i18n.locales.length === 0) return null;
 
-  const localeSet = new Set(i18n.locales);
+  const localePrefixes = new Map(i18n.locales.map(locale => [locale, `/${locale}`]));
+
+  function redirectLocale(
+    res: Response,
+    status: 302 | 308,
+    prefix: string,
+    path: string,
+    suffix: string,
+    url: string
+  ): void {
+    const tail = path.startsWith('/') ? path.slice(1) : path;
+    // The namespace is selected from configuration; request data only supplies the tail.
+    const destination = tail ? `${prefix}/${tail}${suffix}` : prefix + suffix;
+    redirectLocal(res, status, destination, readRedirectQuery(url));
+  }
 
   return function localeRedirectMiddleware(req, res, next) {
     if (req.method !== 'GET' && req.method !== 'HEAD') return next();
@@ -88,13 +102,12 @@ export function createLocaleRedirectMiddleware(
     // 已带合法 locale 前缀就放行（对 BCP 47 大小写不敏感：/zh-cn/books → /zh-CN/books 也走这里）
     const first = path.split('/')[1];
     if (first) {
-      if (localeSet.has(first)) return next();
+      if (localePrefixes.has(first)) return next();
       const ci = i18n.locales.find(l => l.toLowerCase() === first.toLowerCase());
-      if (ci) {
+      const prefix = ci ? localePrefixes.get(ci) : undefined;
+      if (prefix) {
         const rest = path.slice(first.length + 1) || '/';
-        const search = req.url.includes('?') ? req.url.slice(req.url.indexOf('?')) : '';
-        const finalRest = rest === '/' ? '' : rest;
-        redirectLocal(res, 308, `/${ci}${finalRest}${rscSuffix}${search}`);
+        redirectLocale(res, 308, prefix, rest, rscSuffix, req.url);
         return;
       }
     }
@@ -103,14 +116,18 @@ export function createLocaleRedirectMiddleware(
     const cookieHeader = typeof req.headers['cookie'] === 'string' ? req.headers['cookie'] : '';
     const cookieLocale = readCookieLocale(cookieHeader);
     const target =
-      (cookieLocale && localeSet.has(cookieLocale) ? cookieLocale : null) ||
+      (cookieLocale && localePrefixes.has(cookieLocale) ? cookieLocale : null) ||
       negotiateLocale(
         typeof req.headers['accept-language'] === 'string' ? req.headers['accept-language'] : null,
         i18n
       );
 
-    const search = req.url.includes('?') ? req.url.slice(req.url.indexOf('?')) : '';
-    redirectLocal(res, 302, withLocale(path, target, i18n) + rscSuffix + search);
+    const prefix = localePrefixes.get(target);
+    if (!prefix) {
+      res.status(400).end();
+      return;
+    }
+    redirectLocale(res, 302, prefix, path, rscSuffix, req.url);
   };
 }
 

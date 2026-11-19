@@ -22,6 +22,7 @@ it('keeps negotiated and case-folded redirects on-origin and preserves query byt
         '/en/books?keep=a%2Fb&next=//external.invalid',
       ],
       ['/ZH-cn/books_.rsc?keep=a%2Fb', 308, '/zh-CN/books_.rsc?keep=a%2Fb'],
+      ['/ZH-cn/books?', 308, '/zh-CN/books?'],
       ['//external?keep=yes', 302, '/en//external?keep=yes'],
       ['/books\\unsafe', 400, undefined],
     ] as const) {

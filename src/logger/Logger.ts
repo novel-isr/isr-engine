@@ -68,6 +68,12 @@ export class Logger {
         if (this.fileDestination === destination) this.closeFileDestination();
         this.reportFileError(error);
       });
+      destination.once('close', () => {
+        if (this.fileDestination !== destination) return;
+        this.fileLogger = null;
+        this.fileDestination = null;
+        this.logFile = null;
+      });
       this.fileDestination = destination;
       this.fileLogger = pino(
         {
@@ -90,7 +96,7 @@ export class Logger {
     this.fileLogger = null;
     this.fileDestination = null;
     this.logFile = null;
-    if (!destination || destination.destroyed) return;
+    if (!destination) return;
     try {
       destination.flushSync();
       destination.end();

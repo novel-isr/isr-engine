@@ -16,7 +16,7 @@ import {
   getOpsRequestLimiter,
 } from '@/server/opsConfig';
 import { admitRequest, createRequestLimiter, validateRequestLimits } from './requestLimits';
-import { redirectLocal } from './safeRedirect';
+import { readRedirectQuery, redirectLocal } from './safeRedirect';
 import {
   assertDistinctHtmlRouteIdentities,
   decodeHtmlPathname,
@@ -484,10 +484,9 @@ export async function createProductionRuntime(
       }
       const known = ssgAliases.get(logical);
       if (!known) return next();
-      const canonical = resolveSsgIdentity(req.path);
+      const canonical = explicitRoutes.get(logical) ?? known;
       if (req.path === canonical) return next();
-      const queryStart = req.url.indexOf('?');
-      redirectLocal(res, 308, canonical + (queryStart < 0 ? '' : req.url.slice(queryStart)));
+      redirectLocal(res, 308, canonical, readRedirectQuery(req.url));
     });
     app.use(cache);
     const staticHtml = createStaticHtmlMiddlewareWithLimiter(
