@@ -1,0 +1,67 @@
+version: 2
+updates:
+  - package-ecosystem: npm
+    directory: /
+    schedule:
+      interval: daily
+      time: '02:00'
+      timezone: Etc/UTC
+    open-pull-requests-limit: 5
+    groups:
+      security:
+        applies-to: security-updates
+        patterns: ['*']
+      rendering-stack:
+        patterns:
+          - react
+          - react-dom
+          - react-server-dom-webpack
+          - vite
+          - '@vitejs/plugin-rsc'
+          - rsc-html-stream
+      other-dependencies:
+        patterns: ['*']
+        update-types: [minor, patch]
+    commit-message:
+      prefix: deps
+      prefix-development: deps-dev
+      include: scope
+  - package-ecosystem: npm
+    directory: /bench/app
+    schedule:
+      interval: daily
+      time: '02:00'
+      timezone: Etc/UTC
+    open-pull-requests-limit: 5
+    groups:
+      security:
+        applies-to: security-updates
+        patterns: ['*']
+      rendering-stack:
+        patterns:
+          - react
+          - react-dom
+          - react-server-dom-webpack
+          - vite
+          - '@vitejs/plugin-rsc'
+          - rsc-html-stream
+      other-dependencies:
+        patterns: ['*']
+        update-types: [minor, patch]
+    commit-message:
+      prefix: deps
+      prefix-development: deps-dev
+      include: scope
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+      time: '02:00'
+      timezone: Etc/UTC
+    groups:
+      actions:
+        patterns: ['*']
+        update-types: [minor, patch]
+    commit-message:
+      prefix: ci

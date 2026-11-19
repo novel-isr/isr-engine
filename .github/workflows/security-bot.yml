@@ -1,0 +1,67 @@
+name: Security Bot
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main, develop]
+  schedule:
+    - cron: '23 2 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: security-${{ github.event_name }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  audit:
+    name: Dependency audit (${{ matrix.directory }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        directory: ['.', bench/app]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v5
+        with:
+          run_install: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: '.nvmrc'
+      - name: Audit the independent lockfile without installing packages
+        working-directory: ${{ matrix.directory }}
+        run: pnpm --ignore-workspace audit --registry=https://registry.npmjs.org --audit-level=low --json > "$RUNNER_TEMP/dependency-audit.json"
+      - name: Preserve audit evidence including failures
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: dependency-audit-${{ strategy.job-index }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/dependency-audit.json
+          if-no-files-found: error
+          retention-days: 30
+
+  codeql:
+    name: CodeQL JavaScript and TypeScript
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+      actions: read
+      security-events: write
+    steps:
+      - uses: actions/checkout@v4
+      - name: Initialize security analysis
+        uses: github/codeql-action/init@v4
+        with:
+          languages: javascript-typescript
+          build-mode: none
+          queries: security-extended
+      - name: Analyze source and publish code scanning results
+        uses: github/codeql-action/analyze@v4
+        with:
+          category: /language:javascript-typescript
