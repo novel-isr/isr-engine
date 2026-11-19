@@ -88,6 +88,10 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
+      - name: Audit all locked dependencies
+        # Query the official advisory service; mirror registries may not expose it.
+        run: pnpm run audit:security
+
       - name: Type check
         run: pnpm run type-check
 

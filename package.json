@@ -101,6 +101,8 @@
     "test:browser": "playwright test e2e/dev-css-lifecycle/dev-css-lifecycle.spec.ts",
     "bench": "node bench/runner.mjs",
     "check": "pnpm run type-check && pnpm run lint && pnpm run test",
+    "audit:security": "pnpm audit --registry=https://registry.npmjs.org --audit-level=low",
+    "prepublishOnly": "pnpm run audit:security",
     "release": "pnpm run check && pnpm run build && npm publish --access restricted",
     "prepare": "husky",
     "test:package": "node scripts/check-package-exports.mjs",
