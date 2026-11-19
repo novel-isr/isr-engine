@@ -30,7 +30,12 @@ assert.equal(
   null
 );
 const pkg = JSON.parse(readFileSync('package.json', 'utf8'));
-assert.equal(pkg.publishConfig.registry, 'https://registry.npmjs.org');
+// The official npm plugin compares the OIDC registry URL verbatim, including its slash.
+const { default: getRegistry } =
+  await import('../node_modules/@semantic-release/npm/lib/get-registry.js');
+const { OFFICIAL_REGISTRY } =
+  await import('../node_modules/@semantic-release/npm/lib/definitions/constants.js');
+assert.equal(getRegistry(pkg, { cwd: process.cwd(), env: process.env }), OFFICIAL_REGISTRY);
 assert.equal(pkg.publishConfig.access, 'public');
 const plugins = config.plugins.map(plugin => (Array.isArray(plugin) ? plugin[0] : plugin));
 assert.ok(plugins.indexOf('@semantic-release/exec') < plugins.indexOf('@semantic-release/npm'));
