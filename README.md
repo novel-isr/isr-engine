@@ -6,19 +6,13 @@
 
 - Node.js **24.15.0**；仓库使用 pnpm 9.15.9。
 - TypeScript **6.0.3**；`paths` 相对声明它的配置文件解析，不再设置 `baseUrl`。
-- Vite **8.1.6**；内置 `@vitejs/plugin-rsc` **0.5.34**，无需额外注册 React 插件。
-- `react`、`react-dom`、`react-server-dom-webpack` 必须同为 **19.3.0-canary-bd6ea412-20260824**。当前支持该精确 canary 组合。
-- `rsc-html-stream` peer 范围为 `^0.0.7`，仓库锁定版本为 **0.0.7**。
+- Vite **8.1.6**；引擎内置 `@vitejs/plugin-rsc` **0.5.39** 及其 Flight 运行时。
+- React 与 React DOM 使用正式版 **19.3.1**。引擎管理 HTML 流传输依赖。
 
-在应用目录安装公共 npm 包及其 peer 依赖：
+在应用目录安装引擎和应用直接使用的 React、Vite：
 
 ```bash
-npm install isr-engine --registry=https://registry.npmjs.org/
-npm install --save-exact \
-  react@19.3.0-canary-bd6ea412-20260824 \
-  react-dom@19.3.0-canary-bd6ea412-20260824 \
-  react-server-dom-webpack@19.3.0-canary-bd6ea412-20260824 \
-  rsc-html-stream@0.0.7
+npm install --save-exact isr-engine react@19.3.1 react-dom@19.3.1
 npm install --save-dev --save-exact vite@8.1.6 typescript@6.0.3 \
   @types/node@24.19.2 @types/react@19.2.15 @types/react-dom@19.2.3
 ```

@@ -1,4 +1,4 @@
-import { createFromFetch } from 'react-server-dom-webpack/client.edge';
+import { createFromFetch } from '@vitejs/plugin-rsc/vendor/react-server-dom/client.edge';
 import { describe, expect, it, vi } from 'vitest';
 
 import { observeDevRscResponse } from '../dev-rsc-response.client';

@@ -8,6 +8,7 @@ import { fileURLToPath } from 'node:url';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const temporary = await fs.mkdtemp(path.join(os.tmpdir(), 'isr-installed-consumer-'));
+const strictPnpm = process.env.ISR_TEST_CONSUMER_INSTALL === 'pnpm';
 const npmCommand = process.platform === 'win32' ? process.execPath : 'npm';
 const npmPrefix =
   process.platform === 'win32'
@@ -23,28 +24,60 @@ function npm(args, cwd) {
 }
 
 try {
+  const engineManifest = JSON.parse(await fs.readFile(path.join(root, 'package.json'), 'utf8'));
   const [pack] = JSON.parse(
     npm(['pack', '--json', '--ignore-scripts', '--pack-destination', temporary], root)
   );
   await fs.writeFile(
     path.join(temporary, 'package.json'),
-    JSON.stringify({ private: true, type: 'module' })
+    JSON.stringify({
+      private: true,
+      type: 'module',
+      dependencies: { ...engineManifest.peerDependencies, 'isr-engine': `file:./${pack.filename}` },
+    })
   );
-  npm(
-    [
-      'install',
-      '--no-audit',
-      '--no-fund',
-      '--package-lock=false',
-      '--registry=https://registry.npmjs.org',
-      path.join(temporary, pack.filename),
-    ],
-    temporary
-  );
-  const installed = path.join(temporary, 'node_modules/isr-engine');
+  if (strictPnpm) {
+    execFileSync(
+      'pnpm',
+      [
+        'install',
+        '--ignore-workspace',
+        '--config.node-linker=isolated',
+        '--config.hoist=false',
+        '--config.auto-install-peers=false',
+        '--config.strict-peer-dependencies=true',
+        '--registry=https://registry.npmjs.org',
+      ],
+      { cwd: temporary, stdio: 'inherit', timeout: 300_000 }
+    );
+  } else {
+    npm(
+      [
+        'install',
+        '--no-audit',
+        '--no-fund',
+        '--package-lock=false',
+        '--registry=https://registry.npmjs.org',
+      ],
+      temporary
+    );
+  }
+  const installed = await fs.realpath(path.join(temporary, 'node_modules/isr-engine'));
   const manifest = path.join(temporary, 'pack-manifest.json');
   await fs.writeFile(manifest, JSON.stringify([pack]));
-  assert.equal((await fs.lstat(installed)).isSymbolicLink(), false);
+  assert.notEqual(installed, root);
+  if (strictPnpm) {
+    for (const internal of [
+      'rsc-html-stream',
+      'react-server-dom-webpack',
+      '@vitejs/plugin-rsc',
+      'webpack',
+    ]) {
+      await assert.rejects(fs.lstat(path.join(temporary, 'node_modules', internal)), {
+        code: 'ENOENT',
+      });
+    }
+  }
   for (const script of ['check-package-exports.mjs', 'check-production-runtime.mjs']) {
     const output = execFileSync(
       process.execPath,
@@ -58,14 +91,12 @@ try {
   }
   // Build and serve a real RSC application from the installed archive, not a
   // workspace link. This exercises shipped source entries as well as dist.
-  const fixture = path.join(temporary, 'app');
-  await fs.mkdir(fixture);
+  const fixture = temporary;
   for (const entry of ['src', 'ssr.config.ts', 'vite.config.ts']) {
     await fs.cp(path.join(root, 'bench/app', entry), path.join(fixture, entry), {
       recursive: true,
     });
   }
-  await fs.writeFile(path.join(fixture, 'package.json'), '{"private":true,"type":"module"}');
   const consumerRequire = createRequire(path.join(temporary, 'package.json'));
   const vite = path.join(path.dirname(consumerRequire.resolve('vite/package.json')), 'bin/vite.js');
   process.stdout.write(
@@ -103,7 +134,7 @@ try {
     })
   );
   console.log(
-    `Clean tarball installation, consumer types, exports and native HTTP verified: ${pack.filename}`
+    `Clean ${strictPnpm ? 'strict pnpm' : 'npm'} tarball installation, consumer types, exports and native HTTP verified: ${pack.filename}`
   );
 } finally {
   await fs.rm(temporary, { recursive: true, force: true });

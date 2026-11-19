@@ -109,6 +109,11 @@ jobs:
       - name: Verify package exports and consumer types
         run: pnpm run test:package
 
+      - name: Build and serve an installed package without hoisted internals
+        env:
+          ISR_TEST_CONSUMER_INSTALL: pnpm
+        run: pnpm run test:package:installed
+
   test:
     name: Unit + Integration Tests
     runs-on: ubuntu-latest

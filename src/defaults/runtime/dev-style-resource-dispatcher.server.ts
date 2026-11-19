@@ -1,6 +1,6 @@
 import * as ReactDOM from 'react-dom';
 
-const PINNED_REACT_DOM_VERSION = '19.3.0-canary-bd6ea412-20260824';
+const PINNED_REACT_DOM_VERSION = '19.3.1';
 
 interface ReactDomResourceDispatcher {
   S(href: string, precedence: string | undefined, options?: { media?: string }): void;
