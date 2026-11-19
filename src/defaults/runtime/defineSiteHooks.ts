@@ -108,36 +108,6 @@ export interface CreateAdminSeoLoaderOptions {
   dynamicResolvers?: readonly DynamicSeoResolver[];
 }
 
-/**
- * 内部用：把 `/books/:id` 这种 pattern 编译成 RegExp + 参数名列表。
- * `:name` 匹配单段（不跨 /）。`*` 匹配任意后缀（包括 /），收成 ":wildcard" param。
- * 编译后缓存，避免每次请求重算。
- */
-interface CompiledSeoResolver {
-  re: RegExp;
-  paramNames: string[];
-  resolver: DynamicSeoResolver;
-}
-
-function compileSeoResolver(resolver: DynamicSeoResolver): CompiledSeoResolver {
-  const paramNames: string[] = [];
-  const reSrc = resolver.pattern
-    .replace(/[.+?^${}()|[\]\\]/g, '\\$&')
-    .replace(/:([A-Za-z_][A-Za-z0-9_]*)|\\\*/g, (m, name) => {
-      if (m === '\\*') {
-        paramNames.push('wildcard');
-        return '(.*)';
-      }
-      paramNames.push(name);
-      return '([^/]+)';
-    });
-  return {
-    re: new RegExp(`^${reSrc}$`),
-    paramNames,
-    resolver,
-  };
-}
-
 export interface DefineAdminSiteHooksOptions {
   i18n?: {
     locales?: readonly string[];
@@ -271,23 +241,38 @@ export interface SiteHooksConfig {
   headExtras?: (ctx: { nonce?: string }) => string | undefined;
 }
 
-interface CompiledRoute {
+interface CompiledSeoPattern {
   re: RegExp;
   paramNames: string[];
+}
+
+interface CompiledRoute extends CompiledSeoPattern {
   resolver: (params: Record<string, string>) => Promise<PageSeoMeta | null> | PageSeoMeta | null;
 }
 
-/** 把 `/books/:id/reviews/:rid` 编译成 RegExp + 参数名列表 */
-function compilePattern(pattern: string): { re: RegExp; paramNames: string[] } {
+function escapeSeoPatternLiteral(literal: string): string {
+  return literal.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+/** Both SEO entry points recognize named parameters and a terminal /* before escaping literals. */
+function compileSeoPattern(pattern: string, captureWildcard = false): CompiledSeoPattern {
   const paramNames: string[] = [];
   const wildcard = pattern.endsWith('/*');
   const base = wildcard ? pattern.slice(0, -2) : pattern;
-  const escaped = base.replace(/[.+?^${}()|[\]\\]/g, '\\$&');
-  const reSrc = escaped.replace(/:(\w+)/g, (_, name) => {
-    paramNames.push(name);
-    return '([^/]+)';
-  });
-  return { re: new RegExp(`^${reSrc}${wildcard ? '(?:/.*)?' : ''}$`), paramNames };
+  let cursor = 0;
+  let source = '';
+  for (const match of base.matchAll(/:(\w+)/g)) {
+    source += escapeSeoPatternLiteral(base.slice(cursor, match.index)) + '([^/]+)';
+    paramNames.push(match[1]);
+    cursor = match.index + match[0].length;
+  }
+  source += escapeSeoPatternLiteral(base.slice(cursor));
+
+  if (wildcard) {
+    if (captureWildcard) paramNames.push('wildcard');
+    source += captureWildcard ? '(?:/(.*))?' : '(?:/.*)?';
+  }
+  return { re: new RegExp(`^${source}$`), paramNames };
 }
 
 function fillTemplate(template: string, vars: Record<string, string>): string {
@@ -335,9 +320,10 @@ export function createAdminSeoLoader(
   const endpoint = options.endpoint ?? '/api/seo?path={pathname}';
   const fallbackEntries = options.fallbackEntries ?? [];
   // 编译一次 + 缓存。N 个 resolver 在每个请求里只是 N 次正则 test，cost 可忽略。
-  const compiledResolvers: CompiledSeoResolver[] = (options.dynamicResolvers ?? []).map(
-    compileSeoResolver
-  );
+  const compiledResolvers = (options.dynamicResolvers ?? []).map(resolver => ({
+    ...compileSeoPattern(resolver.pattern, true),
+    resolver,
+  }));
 
   return async (params, ctx) => {
     const pathname = normalizePathname(params.pathname || '/');
@@ -390,6 +376,23 @@ export function defineAdminSiteHooks(options: DefineAdminSiteHooksOptions = {}):
   return createAdminSiteHooks(options, createEmptyRuntimeConfig());
 }
 
+function createAdminSeoEntry(
+  seo: NonNullable<DefineAdminSiteHooksOptions['seo']>,
+  runtimeSeo: Partial<RuntimeSeoConfig>
+): SeoLocalEntry {
+  return {
+    load: createAdminSeoLoader({
+      endpoint: seo.endpoint ?? runtimeSeo.endpoint,
+      fallbackEntries: normalizeAdminSeoFallbackEntries(
+        seo.fallbackLocal ?? runtimeSeo.fallbackLocal
+      ),
+      timeoutMs: seo.timeoutMs ?? runtimeSeo.timeoutMs,
+      dynamicResolvers: seo.dynamicResolvers ?? runtimeSeo.dynamicResolvers,
+    }),
+    ttl: seo.ttl ?? runtimeSeo.ttl ?? 60_000,
+  };
+}
+
 function createAdminSiteHooks(
   options: DefineAdminSiteHooksOptions,
   runtime: SiteRuntimeConfig
@@ -426,17 +429,7 @@ function createAdminSiteHooks(
         ttl: i18n.ttl ?? runtimeI18n.ttl ?? 60_000,
       },
       seo: {
-        '/*': {
-          load: createAdminSeoLoader({
-            endpoint: seo.endpoint ?? runtimeSeo.endpoint,
-            fallbackEntries: normalizeAdminSeoFallbackEntries(
-              seo.fallbackLocal ?? runtimeSeo.fallbackLocal
-            ),
-            timeoutMs: seo.timeoutMs ?? runtimeSeo.timeoutMs,
-            dynamicResolvers: seo.dynamicResolvers ?? runtimeSeo.dynamicResolvers,
-          }),
-          ttl: seo.ttl ?? runtimeSeo.ttl ?? 60_000,
-        },
+        '/*': createAdminSeoEntry(seo, runtimeSeo),
       },
     },
     runtime
@@ -526,10 +519,21 @@ export function applyRuntimeToServerHooks<T extends object>(
     } as T;
   }
 
+  // A dynamic SEO table on its own does not opt a plain server entry into the admin i18n
+  // loader or wrap its beforeRequest callback.
+  const runtimeSeo = runtime.seo;
+  const runtimeSeoHook =
+    !hasUserContentHooks && runtimeSeo?.dynamicResolvers?.length
+      ? createSiteHooks(
+          { intl: runtime.i18n, seo: { '/*': createAdminSeoEntry({}, runtimeSeo) } },
+          runtime
+        ).loadSeoMeta
+      : undefined;
   return {
     ...hooks,
     siteBaseUrl,
     apiBaseUrl,
+    ...(runtimeSeoHook && { loadSeoMeta: runtimeSeoHook }),
   } as T;
 }
 
@@ -642,7 +646,7 @@ function createSiteHooks(config: SiteHooksConfig, runtime: SiteRuntimeConfig): S
   >();
 
   for (const [pattern, value] of Object.entries(config.seo ?? {})) {
-    const { re, paramNames } = compilePattern(pattern);
+    const { re, paramNames } = compileSeoPattern(pattern);
 
     if (typeof value === 'function') {
       // 自定义 resolver

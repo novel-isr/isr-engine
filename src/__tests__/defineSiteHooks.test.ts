@@ -162,6 +162,23 @@ describe('defineSiteHooks: SEO 路由表', () => {
     const meta = await hooks.loadSeoMeta(new Request('http://x.com/custom'));
     expect(meta?.title).toBe('CUSTOM');
   });
+
+  it('matches a named route with an optional descendant suffix in the site hooks table', async () => {
+    const resolve = vi.fn(() => ({ title: 'Work' }));
+    const hooks = defineSiteHooks({ seo: { '/work/:id/*': resolve } });
+    expect(await hooks.loadSeoMeta(new Request('https://site.test/work/arcane'))).toEqual({
+      title: 'Work',
+    });
+    expect(await hooks.loadSeoMeta(new Request('https://site.test/work/arcane/credits'))).toEqual({
+      title: 'Work',
+    });
+    expect(resolve).toHaveBeenLastCalledWith({
+      id: 'arcane',
+      pathname: '/work/arcane/credits',
+      locale: expect.any(String),
+    });
+    expect(await hooks.loadSeoMeta(new Request('https://site.test/workshop/arcane'))).toBeNull();
+  });
 });
 
 describe('defineSiteHooks: i18n loader', () => {
@@ -325,6 +342,85 @@ describe('admin loaders', () => {
     expect(intl?.messages).toEqual({ home: { title: '首页' } });
     expect(intl?.source).toBe('local-fallback');
     expect(meta).toEqual({ title: '首页 SEO' });
+  });
+
+  it('passes the full relative tail of /* to a dynamic SEO resolver', async () => {
+    const resolve = vi.fn(({ params }: { params: Record<string, string> }) => ({
+      title: params.wildcard || 'Home',
+    }));
+    const hooks = applyRuntimeToServerHooks(
+      defineAdminSiteHooks(),
+      runtime({ seo: { dynamicResolvers: [{ pattern: '/*', resolve }] } })
+    );
+    const load = (path: string) => hooks.loadSeoMeta(new Request(`https://site.test${path}`));
+
+    expect(await load('/work/arcane')).toEqual({ title: 'work/arcane' });
+    expect(await load('/')).toEqual({ title: 'Home' });
+    expect(resolve).toHaveBeenLastCalledWith(
+      expect.objectContaining({ pathname: '/', params: { wildcard: '' } })
+    );
+  });
+
+  it('preserves named captures and literal punctuation with a wildcard suffix', async () => {
+    const hooks = applyRuntimeToServerHooks(
+      defineAdminSiteHooks(),
+      runtime({
+        seo: {
+          dynamicResolvers: [
+            {
+              pattern: '/work/v1.0/:id/*',
+              resolve: ({ params }: { params: Record<string, string> }) => ({
+                title: [params.id, params.wildcard].filter(Boolean).join('/'),
+              }),
+            },
+            {
+              pattern: '/work/:id',
+              resolve: ({ params }: { params: Record<string, string> }) => ({ title: params.id }),
+            },
+          ],
+        },
+      })
+    );
+    const load = (path: string) => hooks.loadSeoMeta(new Request(`https://site.test${path}`));
+
+    expect(await load('/work/v1.0/arcane/credits/cast')).toEqual({ title: 'arcane/credits/cast' });
+    expect(await load('/work/v1.0/arcane')).toEqual({ title: 'arcane' });
+    expect(await load('/work/v1x0/arcane/credits')).toBeNull();
+    expect(await load('/work/arcane')).toEqual({ title: 'arcane' });
+  });
+
+  it('automatically installs the SEO loader when runtime dynamic resolvers are the only content config', async () => {
+    const fetchSpy = vi
+      .spyOn(globalThis, 'fetch')
+      .mockResolvedValue(new Response(null, { status: 404 }));
+    const beforeRequest = vi.fn(async (_req: Request, { traceId }: typeof engineCtx) => ({
+      traceId,
+    }));
+    const hooks = applyRuntimeToServerHooks<Partial<ServerHooksOutput>>(
+      { beforeRequest },
+      runtime({
+        services: { api: 'https://admin.test' },
+        seo: {
+          dynamicResolvers: [
+            {
+              pattern: '/work/:id',
+              resolve: ({ params }: { params: Record<string, string> }) => ({ title: params.id }),
+            },
+          ],
+        },
+      })
+    );
+    const req = new Request('https://site.test/work/arcane');
+    expect(hooks.beforeRequest).toBe(beforeRequest);
+    expect(await hooks.beforeRequest?.(req, engineCtx)).toEqual({ traceId: engineCtx.traceId });
+    expect(hooks.loadIntl).toBeUndefined();
+    expect(await hooks.loadSeoMeta?.(req)).toEqual({
+      title: 'arcane',
+    });
+    expect(fetchSpy).toHaveBeenCalledExactlyOnceWith(
+      'https://admin.test/api/seo?path=%2Fwork%2Farcane',
+      expect.any(Object)
+    );
   });
 
   it('applyRuntimeToServerHooks 在没有 entry.server 数据 loader 时自动使用 runtime 配置', async () => {

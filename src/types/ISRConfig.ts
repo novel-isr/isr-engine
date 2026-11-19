@@ -143,7 +143,7 @@ export interface RuntimeI18nConfig {
  */
 export interface DynamicSeoResolver {
   /**
-   * 路径 pattern。支持 `:name` 命名参数（贪婪到 `/`）和 `*` 通配后缀。
+   * 路径 pattern。支持 `:name` 匹配单段和末尾 `/*` 匹配路径本身及其子路径。
    * 例：`/books/:id`、`/u/:handle`、`/dashboard/*`
    */
   pattern: string;
@@ -151,7 +151,8 @@ export interface DynamicSeoResolver {
    * 命中后的 resolver。返回 PageSeoMeta（平铺）或 null。
    * 抛错会被引擎吞掉并写到 onError，不会导致 SSR 失败。
    *
-   * input.params 包含 pattern 里 :name 解析出的值。
+   * input.params 包含命名参数。末尾 `/*` 还会返回 `wildcard`，
+   * 其值为不带起始斜杠的剩余路径，本身命中时为空字符串。
    * input.locale 是当前请求 locale（可能 undefined，特别是没启 i18n 时）。
    * input.services / input.runtime 给到完整 runtime context，可拿 api origin。
    */
