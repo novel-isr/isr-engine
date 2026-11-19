@@ -29,6 +29,23 @@ const git = (cwd, ...args) =>
     ],
     { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }
   );
+// The fixture owns its Git context; outer Actions branch/PR metadata and
+// credentials must not affect this local, non-publishing dry run.
+const fixtureEnvironment = Object.fromEntries(
+  Object.entries(process.env).filter(([key]) =>
+    [
+      'PATH',
+      'HOME',
+      'TMPDIR',
+      'TEMP',
+      'TMP',
+      'SystemRoot',
+      'COMSPEC',
+      'USERPROFILE',
+      'PATHEXT',
+    ].includes(key)
+  )
+);
 const quiet = new Writable({
   write(_chunk, _encoding, callback) {
     callback();
@@ -62,9 +79,10 @@ try {
           ],
         ],
       },
-      { cwd: working, env: process.env, stdout: quiet, stderr: quiet }
+      { cwd: working, env: fixtureEnvironment, stdout: quiet, stderr: quiet }
     );
   const first = await dryRun();
+  assert.ok(first, 'The local Git fixture must perform its own main-branch dry run');
   assert.equal(
     first.nextRelease.version,
     '1.0.0',
