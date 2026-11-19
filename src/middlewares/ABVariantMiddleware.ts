@@ -25,7 +25,7 @@
  *
  * 用法：
  *
- *   import { createABVariantMiddleware, getVariant } from '@novel-isr/engine';
+ *   import { createABVariantMiddleware, getVariant } from 'isr-engine';
  *
  *   app.use(createABVariantMiddleware({
  *     experiments: {
@@ -36,7 +36,7 @@
  *   }));
  *
  *   // Server Component：
- *   import { getVariant } from '@novel-isr/engine';
+ *   import { getVariant } from 'isr-engine';
  *   const v = getVariant('home-hero');
  *
  * 注意：本 middleware **完全不写 cookie**。anonId cookie 由 engine 入口 middleware

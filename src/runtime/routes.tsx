@@ -12,7 +12,7 @@
  * 业务用法：
  *
  *   // src/routes.tsx
- *   import { defineRoutes } from '@novel-isr/engine/runtime';
+ *   import { defineRoutes } from 'isr-engine/runtime';
  *   import HomePage from './pages/HomePage';        // async Server Component
  *   import BookDetail from './components/BookDetail'; // async Server Component
  *   import NotFoundPage from './pages/NotFoundPage';
@@ -27,7 +27,7 @@
  *   });
  *
  *   // src/pages/HomePage.tsx —— 一切都在这里
- *   import { cacheTag } from '@novel-isr/engine/rsc';
+ *   import { cacheTag } from 'isr-engine/rsc';
  *   export default async function HomePage({ searchParams }) {
  *     cacheTag('books');
  *     const data = await fetch(`${process.env.API_URL}/api/books`).then(r => r.json());
@@ -43,7 +43,7 @@ import * as React from 'react';
 import type { PageSeoMeta } from '../defaults/runtime/seo-runtime';
 
 declare global {
-  var __NOVEL_ISR_ROUTE_MANIFESTS__: RouteManifest[] | undefined;
+  var __ISR_ENGINE_ROUTE_MANIFESTS__: RouteManifest[] | undefined;
 }
 
 /** 路由匹配后传给 page 的 props */
@@ -190,8 +190,8 @@ export function defineRoutes(input: RouteManifest): DefinedRoutes {
 }
 
 function getRouteRegistry(): RouteManifest[] {
-  globalThis.__NOVEL_ISR_ROUTE_MANIFESTS__ ??= [];
-  return globalThis.__NOVEL_ISR_ROUTE_MANIFESTS__;
+  globalThis.__ISR_ENGINE_ROUTE_MANIFESTS__ ??= [];
+  return globalThis.__ISR_ENGINE_ROUTE_MANIFESTS__;
 }
 
 function registerRouteManifest(config: RouteManifest): void {

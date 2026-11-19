@@ -9,7 +9,7 @@
  * 路由系统由 isr-engine 内部解析 (基于 ssr.config.ts + URL pattern).
  * 你想加 client interactivity, 单独写带 'use client' 的组件然后 import 进来.
  */
-import { cacheTag } from '@novel-isr/engine/rsc';
+import { cacheTag } from 'isr-engine/rsc';
 
 export interface AppProps {
   url: URL;

@@ -41,7 +41,7 @@ try {
     ],
     temporary
   );
-  const installed = path.join(temporary, 'node_modules/@novel-isr/engine');
+  const installed = path.join(temporary, 'node_modules/isr-engine');
   const manifest = path.join(temporary, 'pack-manifest.json');
   await fs.writeFile(manifest, JSON.stringify([pack]));
   assert.equal((await fs.lstat(installed)).isSymbolicLink(), false);
@@ -78,7 +78,7 @@ try {
   );
   const smoke = `
     import assert from 'node:assert/strict';
-    import { createISRApp, loadConfig } from '@novel-isr/engine';
+    import { createISRApp, loadConfig } from 'isr-engine';
     process.env.NODE_ENV = 'production';
     const config = await loadConfig();
     config.server.host = '127.0.0.1';

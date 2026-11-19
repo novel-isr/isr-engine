@@ -1,10 +1,10 @@
 /**
- * @novel-isr/engine/runtime —— 业务页面通用运行时
+ * isr-engine/runtime —— 业务页面通用运行时
  *
- * 与主入口 `@novel-isr/engine`（Node 编排层）严格隔离，浏览器 + RSC 都安全
+ * 与主入口 `isr-engine`（Node 编排层）严格隔离，浏览器 + RSC 都安全
  *
  * 用法：
- *   import { defineRoutes, Boundary, parseLocale } from '@novel-isr/engine/runtime';
+ *   import { defineRoutes, Boundary, parseLocale } from 'isr-engine/runtime';
  */
 
 export { Boundary, ErrorBoundary } from './boundary';

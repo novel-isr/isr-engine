@@ -37,7 +37,7 @@ describe('development style navigation lifecycle', () => {
 
     expect(
       document.querySelector<HTMLStyleElement>(
-        'style[data-novel-isr-dev-style="/src/Home.module.scss"]'
+        'style[data-isr-engine-dev-style="/src/Home.module.scss"]'
       )?.textContent
     ).toBe('.home{color:green}');
 
@@ -75,7 +75,7 @@ describe('development style navigation lifecycle', () => {
 
     const preparation = lifecycle.prepareTree(0);
     const adopted = document.querySelector<HTMLLinkElement>(
-      'link[data-novel-isr-dev-style-link="/src/ServerOnly.scss"]'
+      'link[data-isr-engine-dev-style-link="/src/ServerOnly.scss"]'
     );
     expect(adopted).not.toBeNull();
     expect(bootstrap.isConnected).toBe(true);
@@ -140,7 +140,7 @@ describe('development style navigation lifecycle', () => {
     expect(bootstrap.isConnected).toBe(false);
     expect(
       document.querySelector<HTMLStyleElement>(
-        'style[data-novel-isr-dev-style="/src/ServerOnly.scss"]'
+        'style[data-isr-engine-dev-style="/src/ServerOnly.scss"]'
       )?.textContent
     ).toContain('blue');
 
@@ -148,7 +148,7 @@ describe('development style navigation lifecycle', () => {
     await lifecycle.prepareTree(1, []);
     lifecycle.commitTree(1, []);
     expect(committed).toEqual([0, 1]);
-    expect(document.querySelector('style[data-novel-isr-dev-style]')).toBeNull();
+    expect(document.querySelector('style[data-isr-engine-dev-style]')).toBeNull();
 
     registry.dispose();
     window.close();
@@ -438,13 +438,13 @@ describe('development style navigation lifecycle', () => {
     appendRscLink(document, '/src/C.scss?direct');
     lifecycle.commitTree(b.value.generation, ['/src/B.scss']);
 
-    expect(document.querySelector('style[data-novel-isr-dev-style="/src/B.scss"]')).not.toBeNull();
-    expect(document.querySelector('style[data-novel-isr-dev-style="/src/A.scss"]')).toBeNull();
+    expect(document.querySelector('style[data-isr-engine-dev-style="/src/B.scss"]')).not.toBeNull();
+    expect(document.querySelector('style[data-isr-engine-dev-style="/src/A.scss"]')).toBeNull();
 
     lifecycle.commitTree(c.value.generation, ['/src/C.scss']);
 
-    expect(document.querySelector('style[data-novel-isr-dev-style="/src/C.scss"]')).not.toBeNull();
-    expect(document.querySelector('style[data-novel-isr-dev-style="/src/B.scss"]')).toBeNull();
+    expect(document.querySelector('style[data-isr-engine-dev-style="/src/C.scss"]')).not.toBeNull();
+    expect(document.querySelector('style[data-isr-engine-dev-style="/src/B.scss"]')).toBeNull();
 
     registry.dispose();
     window.close();
@@ -474,8 +474,8 @@ describe('development style navigation lifecycle', () => {
       )
     ).rejects.toThrow('RSC navigation aborted');
 
-    expect(document.querySelector('style[data-novel-isr-dev-style="/src/A.scss"]')).not.toBeNull();
-    expect(document.querySelector('style[data-novel-isr-dev-style="/src/B.scss"]')).toBeNull();
+    expect(document.querySelector('style[data-isr-engine-dev-style="/src/A.scss"]')).not.toBeNull();
+    expect(document.querySelector('style[data-isr-engine-dev-style="/src/B.scss"]')).toBeNull();
 
     registry.dispose();
     window.close();

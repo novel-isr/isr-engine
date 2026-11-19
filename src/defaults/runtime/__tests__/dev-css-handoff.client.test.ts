@@ -12,7 +12,7 @@ describe('dev client-reference stylesheet ownership', () => {
     `;
     const ownerCount = () =>
       document.querySelectorAll(
-        'link[href*="Card.scss"],style[data-vite-dev-id*="Card.scss"],style[data-novel-isr-dev-style*="Card.scss"]'
+        'link[href*="Card.scss"],style[data-vite-dev-id*="Card.scss"],style[data-isr-engine-dev-style*="Card.scss"]'
       ).length;
 
     const registry = createDevStyleRegistry(document as unknown as Document);
@@ -34,7 +34,7 @@ describe('dev client-reference stylesheet ownership', () => {
     `;
     const ownerCount = () =>
       document.querySelectorAll(
-        'link[href*="Card.scss"],style[data-vite-dev-id*="Card.scss"],style[data-novel-isr-dev-style*="Card.scss"]'
+        'link[href*="Card.scss"],style[data-vite-dev-id*="Card.scss"],style[data-isr-engine-dev-style*="Card.scss"]'
       ).length;
     const registry = createDevStyleRegistry(document as unknown as Document);
 

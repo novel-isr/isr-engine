@@ -9,7 +9,7 @@
  * 覆盖, 不需要在 bench app 里再做集成测试 (那只会把响应弄成带 Set-Cookie,
  * 从而被 ISR 中间件按设计 skip 缓存, 污染 bench 数).
  */
-import { defineSiteHooks } from '@novel-isr/engine/site-hooks';
+import { defineSiteHooks } from 'isr-engine/site-hooks';
 
 export default defineSiteHooks({
   // SEO 全静态，无 endpoint —— 主测时不会触发任何 fetch

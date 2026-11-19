@@ -1,20 +1,5 @@
-# 拷贝成 .npmrc 后填入实际值。真实 .npmrc 已被 .gitignore 排除，不会进 git。
-#
-# @novel-isr/engine 发布到 GitHub Packages（npm.pkg.github.com）。
-# 消费侧（novel-rating / admin-server / 任何要 install 的项目）：
-#
-#   1. 生成 GitHub Personal Access Token (classic)
-#      https://github.com/settings/tokens
-#      勾选 scope: `read:packages`（只读消费）
-#
-#   2. 把 token 设成环境变量：
-#      export GITHUB_TOKEN=ghp_xxxxxxxxxxxxxxxxxxxx
-#
-#   3. 把本文件复制为 .npmrc（或追加到 ~/.npmrc）
+# Public installation and publishing use npmjs. No organization or GitHub token is needed.
+registry=https://registry.npmjs.org/
 
-@novel-isr:registry=https://npm.pkg.github.com
-//npm.pkg.github.com/:_authToken=${GITHUB_TOKEN}
-always-auth=true
-
-# pnpm
+# pnpm workspace development
 link-workspace-packages=true

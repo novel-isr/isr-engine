@@ -7,10 +7,10 @@ import { createImagePlugin } from './createImagePlugin';
 export function createAutomaticImagePlugin(root: string, inlineConfig: Partial<ISRConfig>): Plugin {
   let image: Plugin | undefined;
   return {
-    name: 'novel-isr:automatic-images',
+    name: 'isr-engine:automatic-images',
     async configResolved(config) {
       // An explicitly installed image plugin owns the endpoint and its own options.
-      if (config.plugins.some(plugin => plugin.name === 'novel-isr:image-optimization')) return;
+      if (config.plugins.some(plugin => plugin.name === 'isr-engine:image-optimization')) return;
       const application = Object.keys(inlineConfig).length
         ? inlineConfig
         : await loadConfig({ cwd: root });

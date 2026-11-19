@@ -6,7 +6,7 @@ export interface EdgeContext<Env extends object = Record<string, unknown>> {
 
 // Share the registry across the bundled adapter and the source runtime entry.
 // This is a weak request registry, never an ambient "current request" pointer.
-const registryKey = Symbol.for('@novel-isr/engine/request-edge-context/v1');
+const registryKey = Symbol.for('isr-engine/request-edge-context/v1');
 const registryHost = globalThis as typeof globalThis & {
   [registryKey]?: WeakMap<Request, EdgeContext<object>>;
 };

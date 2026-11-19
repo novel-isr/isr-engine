@@ -1,5 +1,5 @@
 /**
- * cli/dev —— `novel-isr dev` 启动开发服务器 + SIGINT/SIGTERM 优雅关闭
+ * cli/dev —— `isr-engine dev` 启动开发服务器 + SIGINT/SIGTERM 优雅关闭
  *
  * 测试策略：mock 掉 `loadConfig` + `createISRApp`，让 startDevServer 跑完整路径但
  * 不真起 Vite。捕获 process.on 注册的 signal handler 后手动触发，验证：

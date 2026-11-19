@@ -4,7 +4,7 @@
  * 思路：每个 SDK（Sentry / Datadog / OTel）都长得很像 —— start span / end span / capture
  * exception。我们抽象出一个通用形状，对各 SDK 各写一个薄 adapter，让用户
  *
- *   import { sentryServerHooks } from '@novel-isr/engine/adapters/observability';
+ *   import { sentryServerHooks } from 'isr-engine/adapters/observability';
  *
  * 一行接入，无需重写 hook 模板代码。
  */

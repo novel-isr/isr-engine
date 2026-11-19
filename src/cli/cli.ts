@@ -22,7 +22,7 @@ const program = new Command();
  * 主程序配置
  */
 program
-  .name('novel-isr')
+  .name('isr-engine')
   .description('ISR Engine — Vite + React 19 RSC 的 ISR/SSG/SSR 编排层')
   .version(pkg.version);
 

@@ -8,7 +8,7 @@
  */
 const URL_POSTFIX = '_.rsc';
 const HEADER_ACTION_ID = 'x-rsc-action';
-const HEADER_DEV_STYLE_GENERATION = 'x-novel-isr-dev-style-generation';
+const HEADER_DEV_STYLE_GENERATION = 'x-isr-engine-dev-style-generation';
 
 export interface RscRenderRequestOptions {
   devStyleGeneration?: number;

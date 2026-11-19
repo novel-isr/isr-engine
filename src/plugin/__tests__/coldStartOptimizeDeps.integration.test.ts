@@ -52,7 +52,7 @@ describe('default client entry dependency optimization', () => {
     expect(initialDependency).toBeDefined();
     const initialBrowserHash = optimizer!.metadata.browserHash;
 
-    const entry = await client.transformRequest('\0virtual:novel-isr/client-entry');
+    const entry = await client.transformRequest('\0virtual:isr-engine/client-entry');
     const defaultEntryUrl = entry?.code.match(
       /from\s+["']([^"']*\/src\/defaults\/runtime\/defineClientEntry\.tsx)["']/
     )?.[1];

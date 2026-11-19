@@ -207,7 +207,7 @@ function createEndpointAnalyticsClient(
       retryBaseDelayMs: analyticsOptions?.retryBaseDelayMs ?? 1000,
       retryMaxDelayMs: analyticsOptions?.retryMaxDelayMs ?? 30000,
       sampleRate: analyticsOptions?.sampleRate ?? 1,
-      key: 'novel_isr_builtin_analytics',
+      key: 'isr_engine_builtin_analytics',
     },
     getUser
   );
@@ -274,7 +274,7 @@ function createEndpointErrorReporter(
       retryBaseDelayMs: errorOptions?.retryBaseDelayMs ?? 1000,
       retryMaxDelayMs: errorOptions?.retryMaxDelayMs ?? 30000,
       sampleRate: errorOptions?.sampleRate ?? 1,
-      key: 'novel_isr_builtin_errors',
+      key: 'isr_engine_builtin_errors',
     },
     getUser
   );
@@ -670,7 +670,8 @@ function currentRoute(): string | undefined {
     document.body?.getAttribute('data-route') ??
     undefined;
   if (explicit) return explicit;
-  const globalRoute = (window as unknown as { __NOVEL_ISR_ROUTE__?: unknown }).__NOVEL_ISR_ROUTE__;
+  const globalRoute = (window as unknown as { __ISR_ENGINE_ROUTE__?: unknown })
+    .__ISR_ENGINE_ROUTE__;
   return typeof globalRoute === 'string' && globalRoute.trim() ? globalRoute : undefined;
 }
 

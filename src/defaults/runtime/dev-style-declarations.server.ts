@@ -10,8 +10,8 @@ import {
   emitDevStylesheetResource,
 } from './dev-style-resource-dispatcher.server';
 
-const DEV_STYLE_DECLARATIONS_KEY = '__NOVEL_ISR_DEV_STYLE_DECLARATIONS_V2__';
-const DEV_CLIENT_REFERENCE_STYLES_KEY = '__NOVEL_ISR_DEV_CLIENT_REFERENCE_STYLES__';
+const DEV_STYLE_DECLARATIONS_KEY = '__ISR_ENGINE_DEV_STYLE_DECLARATIONS_V2__';
+const DEV_CLIENT_REFERENCE_STYLES_KEY = '__ISR_ENGINE_DEV_CLIENT_REFERENCE_STYLES__';
 
 interface DevStyleDeclarationStore {
   styleIds: string[];
@@ -62,7 +62,7 @@ function validateDependencies(dependencies: unknown): PluginRscDependencies {
     !(dependencies as { css: unknown[] }).css.every(value => typeof value === 'string')
   ) {
     throw new Error(
-      '[novel-isr] Unsupported @vitejs/plugin-rsc dependency shape. Expected deps.css to be a string array.'
+      '[isr-engine] Unsupported @vitejs/plugin-rsc dependency shape. Expected deps.css to be a string array.'
     );
   }
   return dependencies as PluginRscDependencies;
@@ -111,7 +111,7 @@ export function registerDevClientReferenceStyles(
   styleIds: readonly string[]
 ): void {
   if (!referenceId || !styleIds.every(styleId => typeof styleId === 'string')) {
-    throw new Error('[novel-isr] Invalid development client-reference stylesheet mapping.');
+    throw new Error('[isr-engine] Invalid development client-reference stylesheet mapping.');
   }
   assertPinnedDevStyleResourceDispatcher();
   getClientReferenceStyles().set(
@@ -129,7 +129,7 @@ export function declareDevClientReferenceStyles(reference: unknown): void {
     !('deps' in reference)
   ) {
     throw new Error(
-      '[novel-isr] Unsupported @vitejs/plugin-rsc client reference dependency shape.'
+      '[isr-engine] Unsupported @vitejs/plugin-rsc client reference dependency shape.'
     );
   }
 
@@ -137,7 +137,7 @@ export function declareDevClientReferenceStyles(reference: unknown): void {
   const styleIds = getClientReferenceStyles().get(reference.id);
   if (!styleIds) {
     throw new Error(
-      `[novel-isr] Missing development stylesheet mapping for client reference ${reference.id}.`
+      `[isr-engine] Missing development stylesheet mapping for client reference ${reference.id}.`
     );
   }
   const collector = getDeclarationStorage().getStore()?.styleIds;

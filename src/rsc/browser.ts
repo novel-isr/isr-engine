@@ -1,5 +1,5 @@
 /**
- * Browser stub for @novel-isr/engine/rsc.
+ * Browser stub for isr-engine/rsc.
  *
  * Server Components may be referenced from a shared route manifest. Client builds must
  * never pull Node-only cache/action infrastructure just because those server modules

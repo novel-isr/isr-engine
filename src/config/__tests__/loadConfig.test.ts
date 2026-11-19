@@ -27,19 +27,19 @@ async function writeConfig(cwd: string, name: string, content: string): Promise<
 }
 
 /**
- * 在 cwd 下造一个假的 `@novel-isr/engine` 包，其 `./runtime` 导出指向源码 .ts。
- * 用来复现「配置 import @novel-isr/engine/runtime → 源码 .ts」这个真实场景：
+ * 在 cwd 下造一个假的 `isr-engine` 包，其 `./runtime` 导出指向源码 .ts。
+ * 用来复现「配置 import isr-engine/runtime → 源码 .ts」这个真实场景：
  * 若 loadConfig 把 engine external 出去，编译产物会残留对 .ts 的 import，
  * Node 22.18+/24 原生 type-stripping 会拒绝剥离 node_modules 下的 .ts。
  */
 async function writeFakeEngineWithSourceTs(cwd: string): Promise<void> {
-  const pkgDir = path.join(cwd, 'node_modules', '@novel-isr', 'engine');
+  const pkgDir = path.join(cwd, 'node_modules', 'isr-engine');
   const srcDir = path.join(pkgDir, 'src', 'runtime');
   await fs.mkdir(srcDir, { recursive: true });
   await fs.writeFile(
     path.join(pkgDir, 'package.json'),
     JSON.stringify({
-      name: '@novel-isr/engine',
+      name: 'isr-engine',
       version: '0.0.0',
       type: 'module',
       exports: { './runtime': { default: './src/runtime/index.ts' } },
@@ -294,7 +294,7 @@ ${fullConfigSource({ runtime: 'runtime' })}
   });
 });
 
-describe('loadConfig —— 配置 import @novel-isr/engine/runtime（源码 .ts 回归）', () => {
+describe('loadConfig —— 配置 import isr-engine/runtime（源码 .ts 回归）', () => {
   it('engine 的 ./runtime 导出指向源码 .ts 时，配置能正常加载（不被 external 出去）', async () => {
     const cwd = await mkTmpDir();
     try {
@@ -305,7 +305,7 @@ describe('loadConfig —— 配置 import @novel-isr/engine/runtime（源码 .ts
         cwd,
         'ssr.config.ts',
         `
-import { withLocale } from '@novel-isr/engine/runtime';
+import { withLocale } from 'isr-engine/runtime';
 const I18N = { locales: ['zh', 'en'] as const, defaultLocale: 'zh' };
 const revalidate = withLocale('/about', 'en', I18N).length;
 ${fullConfigSource({ renderMode: "'isr'", revalidate: 'revalidate' })}

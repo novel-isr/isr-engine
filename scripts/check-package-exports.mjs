@@ -110,11 +110,11 @@ try {
 
   // Resolve the real public exports from a consumer, without source paths or
   // an ambient declaration stub hiding a missing generated declaration.
-  const scope = path.join(temporary, 'node_modules/@novel-isr');
+  const scope = path.join(temporary, 'node_modules');
   await fs.mkdir(scope, { recursive: true });
   await fs.symlink(
     root,
-    path.join(scope, 'engine'),
+    path.join(scope, 'isr-engine'),
     process.platform === 'win32' ? 'junction' : 'dir'
   );
   const consumer = path.join(temporary, 'consumer.ts');
@@ -122,10 +122,10 @@ try {
     consumer,
     `
     import { createAutoServerHooks, composeAutoServerHooks, resolveSentryDsnFromEnv,
-      type AutoServerCtx, type AutoServerHooks } from '@novel-isr/engine/auto-observability';
-    import { createCoherentCacheStore, type ResponseCacheBackend } from '@novel-isr/engine';
-    import { getEdgeContext, type EdgeContext } from '@novel-isr/engine/runtime';
-    import { toCloudflareWorker } from '@novel-isr/engine/adapters/runtime';
+      type AutoServerCtx, type AutoServerHooks } from 'isr-engine/auto-observability';
+    import { createCoherentCacheStore, type ResponseCacheBackend } from 'isr-engine';
+    import { getEdgeContext, type EdgeContext } from 'isr-engine/runtime';
+    import { toCloudflareWorker } from 'isr-engine/adapters/runtime';
     interface WorkerBindings { token: string; }
     const edge: EdgeContext<WorkerBindings> | undefined =
       getEdgeContext<WorkerBindings>(new Request('https://consumer.test'));

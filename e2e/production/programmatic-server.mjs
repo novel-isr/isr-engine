@@ -1,6 +1,6 @@
 // Exercise the published programmatic entry and let natural process exit detect leaked resources.
 process.env.NODE_ENV = 'production';
-const { createISRApp, loadConfig } = await import('../../dist/novel-isr.js');
+const { createISRApp, loadConfig } = await import('../../dist/isr-engine.js');
 const { revalidatePath } = await import('../../dist/rsc/index.js');
 const config = await loadConfig();
 config.server.port = 0;

@@ -95,9 +95,11 @@ describe('development RSC stylesheet identity', () => {
     };
     const flight = await new Response(await rscEntry.render(1)).text();
 
-    expect(flight).toContain('/src/ClientCard.module.scss?direct=&__novel_isr_style_generation=1');
-    expect(flight).toContain('/src/NestedPanel.module.scss?direct=&__novel_isr_style_generation=1');
-    expect(flight).toContain('/src/NestedLeaf.module.scss?direct=&__novel_isr_style_generation=1');
+    expect(flight).toContain('/src/ClientCard.module.scss?direct=&__isr_engine_style_generation=1');
+    expect(flight).toContain(
+      '/src/NestedPanel.module.scss?direct=&__isr_engine_style_generation=1'
+    );
+    expect(flight).toContain('/src/NestedLeaf.module.scss?direct=&__isr_engine_style_generation=1');
     expect(flight).not.toContain('Worker.module.scss');
   });
 
@@ -255,16 +257,16 @@ describe('development RSC stylesheet identity', () => {
       render(generation?: number): Promise<ReadableStream<Uint8Array>>;
     };
     const flight = await new Response(await rscEntry.render(3)).text();
-    expect(flight).toContain('__novel_isr_style_generation=3');
+    expect(flight).toContain('__isr_engine_style_generation=3');
     expect(flight).toContain('not all');
-    expect(flight).toContain('/src/ClientCard.module.scss?direct=&__novel_isr_style_generation=3');
+    expect(flight).toContain('/src/ClientCard.module.scss?direct=&__isr_engine_style_generation=3');
     expect(flight).toMatch(
-      /:HS\["\/src\/ClientCard\.module\.scss\?direct=&__novel_isr_style_generation=3","vite-rsc\/client-reference",\{"media":"not all"\}\]/
+      /:HS\["\/src\/ClientCard\.module\.scss\?direct=&__isr_engine_style_generation=3","vite-rsc\/client-reference",\{"media":"not all"\}\]/
     );
     expect(flight).toMatch(
-      /:HS\["\/src\/Page\.scss\?direct=&__novel_isr_style_generation=3","vite-rsc\/importer-resources",\{"media":"not all"\}\]/
+      /:HS\["\/src\/Page\.scss\?direct=&__isr_engine_style_generation=3","vite-rsc\/importer-resources",\{"media":"not all"\}\]/
     );
-    expect(flight).not.toMatch(/:HL\["\/src\/Page\.scss\?direct=&__novel_isr_style_generation=3"/);
+    expect(flight).not.toMatch(/:HL\["\/src\/Page\.scss\?direct=&__isr_engine_style_generation=3"/);
 
     const initialFlight = await new Response(await rscEntry.render()).text();
     expect(initialFlight).not.toContain('not all');
@@ -283,7 +285,7 @@ describe('development RSC stylesheet identity', () => {
       headers: { accept: 'text/css,*/*;q=0.1', 'sec-fetch-dest': 'style' },
     });
     const generatedTransportStylesheet = await fetch(
-      `${origin}/src/Page.scss?direct=&__novel_isr_style_generation=3`,
+      `${origin}/src/Page.scss?direct=&__isr_engine_style_generation=3`,
       { headers: { accept: 'text/css,*/*;q=0.1', 'sec-fetch-dest': 'style' } }
     );
     const cssModule = await fetch(`${origin}/src/ClientCard.module.scss`, {
@@ -297,9 +299,9 @@ describe('development RSC stylesheet identity', () => {
     expect(cssModule.headers.get('content-type')).toContain('text/javascript');
     const cssModuleCode = await cssModule.text();
     expect(cssModuleCode).toMatch(/export default\s*\{[^}]*["']?card["']?\s*:\s*card/);
-    expect(cssModuleCode).toContain('virtual:novel-isr/dev-style-registry');
-    expect(cssModuleCode).toContain('__novel_isr_dev_styles.publish(');
-    expect(cssModuleCode).toContain('__novel_isr_dev_styles.prune(');
+    expect(cssModuleCode).toContain('virtual:isr-engine/dev-style-registry');
+    expect(cssModuleCode).toContain('__isr_engine_dev_styles.publish(');
+    expect(cssModuleCode).toContain('__isr_engine_dev_styles.prune(');
     expect(cssModuleCode).not.toMatch(/__vite__updateStyle\s*\(/);
     expect(cssModuleCode).not.toMatch(/__vite__removeStyle\s*\(/);
 
@@ -314,14 +316,14 @@ describe('development RSC stylesheet identity', () => {
     const externalUrl = `/@fs/${externalStyle}`;
     const externalWrapper = await server.environments.client.transformRequest(externalUrl);
 
-    expect(rootWrapper?.code).toContain('__novel_isr_dev_styles.publish("/src/Page.scss"');
+    expect(rootWrapper?.code).toContain('__isr_engine_dev_styles.publish("/src/Page.scss"');
     expect(semanticWrapper?.code).toContain(
-      '__novel_isr_dev_styles.publish("/src/Page.scss?theme=dark"'
+      '__isr_engine_dev_styles.publish("/src/Page.scss?theme=dark"'
     );
     expect(externalWrapper?.code).toContain(
-      `__novel_isr_dev_styles.publish(${JSON.stringify(externalUrl)}`
+      `__isr_engine_dev_styles.publish(${JSON.stringify(externalUrl)}`
     );
-    expect(externalWrapper?.code).not.toContain('__novel_isr_dev_styles.publish("/src/Page.scss"');
+    expect(externalWrapper?.code).not.toContain('__isr_engine_dev_styles.publish("/src/Page.scss"');
   });
 
   it('keeps the stylesheet cleanup boundary SSR-safe for pure Server Component CSS', async () => {

@@ -3,7 +3,7 @@
  *
  * 用户态：
  *   import { trace } from '@opentelemetry/api';
- *   import { createOtelServerHooks } from '@novel-isr/engine/adapters/observability';
+ *   import { createOtelServerHooks } from 'isr-engine/adapters/observability';
  *   export default createOtelServerHooks({ tracer: trace.getTracer('my-app') });
  *
  * 自动：每请求开 SERVER kind span + 注入 traceId attribute + onError record exception

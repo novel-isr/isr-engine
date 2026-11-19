@@ -7,7 +7,7 @@
  *   - ISR cache 中间件 (dev + prod)
  */
 import { defineConfig } from 'vite';
-import { createIsrPlugin } from '@novel-isr/engine';
+import { createIsrPlugin } from 'isr-engine';
 
 export default defineConfig({
   plugins: [...createIsrPlugin()],

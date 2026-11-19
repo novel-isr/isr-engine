@@ -77,7 +77,7 @@ test('cold SSR applies direct and transitive client CSS before the client entry 
     )
     .toBe('primary');
 
-  await expect(page.locator('style[data-novel-isr-dev-style]')).toHaveCount(0);
+  await expect(page.locator('style[data-isr-engine-dev-style]')).toHaveCount(0);
   await expect(
     page.locator(
       'link[rel="stylesheet"][data-precedence="vite-rsc/client-reference"][href*="Home.module.scss"]'
@@ -290,10 +290,12 @@ for (const mode of ['hydrated', 'CSR shell'] as const) {
       });
     }
     const diagnostics = Reflect.get(page, '__devCssDiagnostics') as Diagnostics;
-    diagnostics.allowedFailurePatterns.push(/Article\.module\.scss.*__novel_isr_style_generation=/);
+    diagnostics.allowedFailurePatterns.push(
+      /Article\.module\.scss.*__isr_engine_style_generation=/
+    );
 
     const bootstrap = deferred();
-    await page.route(/\/.*virtual:novel-isr\/client-entry(?:\?|$)/, async route => {
+    await page.route(/\/.*virtual:isr-engine\/client-entry(?:\?|$)/, async route => {
       await bootstrap.promise;
       await route.continue();
     });
@@ -318,7 +320,7 @@ for (const mode of ['hydrated', 'CSR shell'] as const) {
     await page.route(delayedRoute, async route => {
       try {
         const response = await route.fetch();
-        if (!route.request().headers()['x-novel-isr-dev-style-generation']) {
+        if (!route.request().headers()['x-isr-engine-dev-style-generation']) {
           prefetchReady.resolve();
           await releasePrefetch.promise;
           await route.fulfill({ response });
@@ -331,7 +333,7 @@ for (const mode of ['hydrated', 'CSR shell'] as const) {
         routeError = error;
         responseReady.resolve();
       } finally {
-        if (route.request().headers()['x-novel-isr-dev-style-generation'])
+        if (route.request().headers()['x-isr-engine-dev-style-generation'])
           responseSettled.resolve();
       }
     });
@@ -349,7 +351,7 @@ for (const mode of ['hydrated', 'CSR shell'] as const) {
       const prefetchFinished = page.waitForEvent('requestfinished', {
         predicate: request =>
           delayedRoute.test(request.url()) &&
-          !request.headers()['x-novel-isr-dev-style-generation'],
+          !request.headers()['x-isr-engine-dev-style-generation'],
       });
       await page.evaluate(() => history.pushState(null, '', '/article?abort=1'));
       await responseReady.promise;
@@ -358,7 +360,7 @@ for (const mode of ['hydrated', 'CSR shell'] as const) {
       const aborted = page.waitForEvent('requestfailed', {
         predicate: request =>
           delayedRoute.test(request.url()) &&
-          !!request.headers()['x-novel-isr-dev-style-generation'],
+          !!request.headers()['x-isr-engine-dev-style-generation'],
       });
       await page.evaluate(() => history.pushState(null, '', '/'));
       await expect(page.locator('body')).not.toHaveAttribute(
@@ -421,7 +423,7 @@ function createDiagnostics(page: Page): Diagnostics {
         request.method() === 'GET' &&
         request.resourceType() === 'fetch' &&
         new URL(request.url()).pathname.endsWith('_.rsc') &&
-        /^\d+$/.test(request.headers()['x-novel-isr-dev-style-generation'] ?? ''),
+        /^\d+$/.test(request.headers()['x-isr-engine-dev-style-generation'] ?? ''),
     });
   });
   return diagnostics;
@@ -467,7 +469,7 @@ async function installTemporalObserver(page: Page): Promise<void> {
 
     const canonicalId = (value: string): string => {
       const url = new URL(value, document.baseURI);
-      for (const key of ['direct', 't', 'v', 'import', '__novel_isr_style_generation']) {
+      for (const key of ['direct', 't', 'v', 'import', '__isr_engine_style_generation']) {
         url.searchParams.delete(key);
       }
       url.searchParams.sort();
@@ -477,21 +479,21 @@ async function installTemporalObserver(page: Page): Promise<void> {
       const owners: BrowserOwner[] = [];
       document
         .querySelectorAll<HTMLElement>(
-          'style[data-novel-isr-dev-style],style[data-vite-dev-id],link[rel="stylesheet"][data-precedence^="vite-rsc/"]'
+          'style[data-isr-engine-dev-style],style[data-vite-dev-id],link[rel="stylesheet"][data-precedence^="vite-rsc/"]'
         )
         .forEach(node => {
           if (node instanceof HTMLLinkElement && node.media === 'not all') return;
           const raw =
             node instanceof HTMLLinkElement
               ? (node.getAttribute('href') ?? node.href)
-              : (node.dataset.novelIsrDevStyle ?? node.dataset.viteDevId ?? '');
+              : (node.dataset.isrEngineDevStyle ?? node.dataset.viteDevId ?? '');
           if (!raw) return;
           owners.push({
             id: canonicalId(raw),
             kind:
               node instanceof HTMLLinkElement
                 ? 'link'
-                : node.dataset.novelIsrDevStyle
+                : node.dataset.isrEngineDevStyle
                   ? 'managed'
                   : 'vite',
           });
@@ -531,7 +533,7 @@ async function installTemporalObserver(page: Page): Promise<void> {
         'href',
         'media',
         'rel',
-        'data-novel-isr-dev-style',
+        'data-isr-engine-dev-style',
         'data-vite-dev-id',
       ],
       childList: true,
@@ -631,7 +633,7 @@ async function assertTemporalInvariants(
 
 async function expectManagedOwner(page: Page, fileName: string): Promise<void> {
   await expect
-    .poll(() => page.locator(`style[data-novel-isr-dev-style$="/src/styles/${fileName}"]`).count())
+    .poll(() => page.locator(`style[data-isr-engine-dev-style$="/src/styles/${fileName}"]`).count())
     .toBe(1);
 }
 
@@ -641,7 +643,7 @@ async function expectActiveOwnerCount(page: Page, fileName: string, count: numbe
       page.evaluate(file => {
         const canonicalId = (value: string): string => {
           const url = new URL(value, document.baseURI);
-          for (const key of ['direct', 't', 'v', 'import', '__novel_isr_style_generation']) {
+          for (const key of ['direct', 't', 'v', 'import', '__isr_engine_style_generation']) {
             url.searchParams.delete(key);
           }
           url.searchParams.sort();
@@ -649,14 +651,14 @@ async function expectActiveOwnerCount(page: Page, fileName: string, count: numbe
         };
         return Array.from(
           document.querySelectorAll<HTMLElement>(
-            'style[data-novel-isr-dev-style],style[data-vite-dev-id],link[rel="stylesheet"][data-precedence^="vite-rsc/"]'
+            'style[data-isr-engine-dev-style],style[data-vite-dev-id],link[rel="stylesheet"][data-precedence^="vite-rsc/"]'
           )
         ).filter(node => {
           if (node instanceof HTMLLinkElement && node.media === 'not all') return false;
           const raw =
             node instanceof HTMLLinkElement
               ? (node.getAttribute('href') ?? node.href)
-              : (node.dataset.novelIsrDevStyle ?? node.dataset.viteDevId ?? '');
+              : (node.dataset.isrEngineDevStyle ?? node.dataset.viteDevId ?? '');
           return raw !== '' && canonicalId(raw).endsWith(`/src/styles/${file}`);
         }).length;
       }, fileName)
@@ -667,10 +669,12 @@ async function expectActiveOwnerCount(page: Page, fileName: string, count: numbe
 async function assertManagedOwnerCardinality(page: Page): Promise<void> {
   const duplicateOwners = await page.evaluate(() => {
     const counts = new Map<string, number>();
-    document.querySelectorAll<HTMLStyleElement>('style[data-novel-isr-dev-style]').forEach(node => {
-      const id = node.dataset.novelIsrDevStyle ?? '';
-      counts.set(id, (counts.get(id) ?? 0) + 1);
-    });
+    document
+      .querySelectorAll<HTMLStyleElement>('style[data-isr-engine-dev-style]')
+      .forEach(node => {
+        const id = node.dataset.isrEngineDevStyle ?? '';
+        counts.set(id, (counts.get(id) ?? 0) + 1);
+      });
     return Array.from(counts).filter(([, count]) => count > 1);
   });
   expect(duplicateOwners, 'more than one engine-managed node owns a canonical id').toEqual([]);
@@ -683,7 +687,7 @@ async function assertActiveRulesExclude(page: Page, marker: string): Promise<voi
         const text: string[] = [];
         document
           .querySelectorAll<HTMLElement>(
-            'style[data-novel-isr-dev-style],style[data-vite-dev-id],link[rel="stylesheet"][data-precedence^="vite-rsc/"]'
+            'style[data-isr-engine-dev-style],style[data-vite-dev-id],link[rel="stylesheet"][data-precedence^="vite-rsc/"]'
           )
           .forEach(node => {
             if (node instanceof HTMLLinkElement && node.media === 'not all') return;

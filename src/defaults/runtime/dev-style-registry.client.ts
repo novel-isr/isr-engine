@@ -6,7 +6,7 @@ import {
 } from './dev-style-id';
 
 const RSC_STYLESHEET = 'link[rel="stylesheet"][data-precedence^="vite-rsc/"]';
-const DEV_STYLE_REGISTRY_INSPECT = Symbol.for('novel-isr.dev-style-registry.inspect');
+const DEV_STYLE_REGISTRY_INSPECT = Symbol.for('isr-engine.dev-style-registry.inspect');
 const devStyleRegistries = new WeakMap<Document, DevStyleRegistry>();
 
 type DevStyleState = 'ssr-active' | 'client-active' | 'updating' | 'pending-release' | 'released';
@@ -171,7 +171,7 @@ export function createDevStyleRegistry(
   const installManagedNode = (record: StyleRecord): HTMLStyleElement => {
     const node = record.node?.isConnected ? record.node : document.createElement('style');
     if (!node.isConnected) {
-      node.setAttribute('data-novel-isr-dev-style', record.id);
+      node.setAttribute('data-isr-engine-dev-style', record.id);
       document.head.appendChild(node);
       record.node = node;
     }
@@ -304,7 +304,7 @@ export function createDevStyleRegistry(
 
     const owned = bootstrap.cloneNode(false) as HTMLLinkElement;
     owned.removeAttribute('data-rsc-css-href');
-    owned.dataset.novelIsrDevStyleLink = id;
+    owned.dataset.isrEngineDevStyleLink = id;
 
     return new Promise<void>((resolve, reject) => {
       const cleanup = () => {
@@ -346,7 +346,7 @@ export function createDevStyleRegistry(
     link.rel = 'preload';
     link.as = 'style';
     link.href = href;
-    link.dataset.novelIsrDevStylePreload = id;
+    link.dataset.isrEngineDevStylePreload = id;
     generationPreloads.get(generation)?.set(id, link);
 
     return new Promise<void>((resolve, reject) => {

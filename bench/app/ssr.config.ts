@@ -10,7 +10,7 @@
  * 这套路由是有意设计的：bench 测出的 QPS 同时反映 isr / ssg / ssr 三种
  * 渲染路径的性能，避免单点偏差。
  */
-import type { ISRConfig } from '@novel-isr/engine';
+import type { ISRConfig } from 'isr-engine';
 
 const config: ISRConfig = {
   renderMode: 'isr',

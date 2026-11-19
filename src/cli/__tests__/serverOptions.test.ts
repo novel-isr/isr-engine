@@ -5,7 +5,7 @@ import { addServerBindingOptions } from '../serverOptions';
 
 function parseOptions(args: string[]): { port?: string; host?: string } {
   const command = addServerBindingOptions(new Command());
-  command.parse(['node', 'novel-isr', ...args]);
+  command.parse(['node', 'isr-engine', ...args]);
   return command.opts();
 }
 

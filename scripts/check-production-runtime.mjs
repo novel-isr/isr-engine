@@ -8,7 +8,7 @@ const cwd = process.cwd();
 const root = await fs.mkdtemp(path.join(os.tmpdir(), 'isr #native-runtime-'));
 process.env.NODE_ENV = 'production';
 const { createISRApp, Logger } = await import(
-  pathToFileURL(path.join(cwd, 'dist/novel-isr.js')).href
+  pathToFileURL(path.join(cwd, 'dist/isr-engine.js')).href
 );
 Logger.getInstance({ logFile: path.join(root, 'runtime.log') });
 let app;

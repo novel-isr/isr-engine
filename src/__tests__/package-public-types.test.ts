@@ -25,7 +25,7 @@ it('generates auto-observability declarations from implementation and compiles a
   expect(diagnostics.map(d => ts.flattenDiagnosticMessageText(d.messageText, '\n'))).toEqual([]);
   expect(program.emit().emitSkipped).toBe(false);
 
-  const staged = path.join(dir, 'node_modules/@novel-isr/engine');
+  const staged = path.join(dir, 'node_modules/isr-engine');
   await fs.mkdir(staged, { recursive: true });
   await fs.copyFile(
     path.join(outDir, 'defaults/auto-observability.d.ts'),
@@ -34,7 +34,7 @@ it('generates auto-observability declarations from implementation and compiles a
   await fs.writeFile(
     path.join(staged, 'package.json'),
     JSON.stringify({
-      name: '@novel-isr/engine',
+      name: 'isr-engine',
       type: 'module',
       exports: { './auto-observability': { types: './auto.d.ts' } },
     })
@@ -44,7 +44,7 @@ it('generates auto-observability declarations from implementation and compiles a
     consumer,
     `
     import { createAutoServerHooks, composeAutoServerHooks, resolveSentryDsnFromEnv,
-      type AutoServerHooks, type AutoServerCtx } from '@novel-isr/engine/auto-observability';
+      type AutoServerHooks, type AutoServerCtx } from 'isr-engine/auto-observability';
     const factory: () => Promise<AutoServerHooks> = createAutoServerHooks;
     const ctx: AutoServerCtx = { traceId: 'trace', startedAt: 1 };
     const hooks: AutoServerHooks = composeAutoServerHooks([{ onResponse(response, context) {

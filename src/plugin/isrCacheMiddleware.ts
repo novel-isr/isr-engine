@@ -82,7 +82,7 @@ const PREFETCH_COOLDOWN_TRACK_MAX = 1000;
 /** “最近失败” 窗口（毫秒）—— 在窗口内的 STALE 标记为 swr-bg-failed-recent */
 const BG_FAILURE_RECENT_WINDOW_MS = 60_000;
 /** Dev-only RSC transport identity. Generation-bound responses are single-use representations. */
-const DEV_STYLE_GENERATION_HEADER = 'x-novel-isr-dev-style-generation';
+const DEV_STYLE_GENERATION_HEADER = 'x-isr-engine-dev-style-generation';
 
 /** 路由匹配解析结果（对应一个请求的缓存策略） */
 interface ResolvedRouteRule {

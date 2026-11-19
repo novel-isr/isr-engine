@@ -43,7 +43,7 @@ export interface RevalidateInvalidator {
 }
 
 /** 全局单例 key（Symbol.for 保证跨模块图复用同一注册表） */
-const REGISTRY_KEY = Symbol.for('@novel-isr/engine:revalidate-registry');
+const REGISTRY_KEY = Symbol.for('isr-engine:revalidate-registry');
 
 type GlobalWithRegistry = typeof globalThis & {
   [REGISTRY_KEY]?: Set<RevalidateInvalidator>;

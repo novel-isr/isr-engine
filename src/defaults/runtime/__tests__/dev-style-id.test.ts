@@ -43,7 +43,7 @@ describe('development stylesheet identifiers', () => {
   it('keeps the generation as transport metadata but removes it from canonical ownership', () => {
     const transport = withDevStyleTransportGeneration('/src/Card.scss?direct&theme=dark', 7);
 
-    expect(transport).toBe('/src/Card.scss?direct=&theme=dark&__novel_isr_style_generation=7');
+    expect(transport).toBe('/src/Card.scss?direct=&theme=dark&__isr_engine_style_generation=7');
     expect(getDevStyleTransportGeneration(transport)).toBe(7);
     expect(canonicalizeDevStyleId(transport)).toBe('/src/Card.scss?theme=dark');
     expect(getDevStyleTransportGeneration('/src/Card.scss?direct')).toBeUndefined();

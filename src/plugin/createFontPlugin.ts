@@ -63,7 +63,7 @@ export function createFontPlugin(options: FontPluginOptions = {}): Plugin {
   const generatedCss: string[] = []; // google fonts 自托管生成的 css
 
   return {
-    name: 'novel-isr:font-optimization',
+    name: 'isr-engine:font-optimization',
     enforce: 'post',
     configResolved(c) {
       resolved = c;
@@ -137,7 +137,7 @@ export function createFontPlugin(options: FontPluginOptions = {}): Plugin {
         // 内联 <style>，避免再发一次 CSS 请求
         tags.push({
           tag: 'style',
-          attrs: { 'data-novel-isr-font': 'google' },
+          attrs: { 'data-isr-engine-font': 'google' },
           injectTo: 'head',
         });
       }
@@ -170,7 +170,7 @@ export function createFontPlugin(options: FontPluginOptions = {}): Plugin {
         .join('\n    ');
       const styleTag =
         generatedCss.length > 0
-          ? `<style data-novel-isr-font="google">${generatedCss.join('\n')}</style>`
+          ? `<style data-isr-engine-font="google">${generatedCss.join('\n')}</style>`
           : '';
       const inject = `${linkTags}\n    ${styleTag}\n`;
       return html.replace('</head>', `    ${inject}</head>`);

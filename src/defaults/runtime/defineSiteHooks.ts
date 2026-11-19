@@ -20,7 +20,7 @@
  *   - A/B variant 由 runtime.experiments + engine middleware 注入，页面用 getVariant()。
  *
  * 用户态写法（商业项目推荐）：
- *   import { defineAdminSiteHooks } from '@novel-isr/engine/site-hooks';
+ *   import { defineAdminSiteHooks } from 'isr-engine/site-hooks';
  *
  *   export default defineAdminSiteHooks({
  *     beforeRequest: req => ({
@@ -260,7 +260,7 @@ export interface SiteHooksConfig {
    * 必须带上 nonce 属性，否则被 nonce-based CSP 阻断：
    *
    * ```ts
-   * import { THEME_INIT_SCRIPT } from '@novel-isr/ui/theme-utils';
+   * import { THEME_INIT_SCRIPT } from '@app/ui/theme-utils';
    *
    * defineAdminSiteHooks({
    *   headExtras: ({ nonce }) =>
@@ -899,7 +899,7 @@ function createServerErrorEndpointReporter(
   });
   if (!endpoint) return null;
 
-  const app = config.app ?? 'novel-isr-app';
+  const app = config.app ?? 'isr-engine-app';
   const release = config.release;
   const environment = config.environment;
   const includeQueryString = config.includeQueryString === true;

@@ -126,7 +126,7 @@ describe('createDevCssLifecyclePlugins', () => {
 
     expect(result?.code).toContain('prepareDevStyleDependencies');
     expect(result?.code).toContain('getDevStyleTransportMedia');
-    expect(result?.code).toContain('media: __novel_isr_transport_media');
+    expect(result?.code).toContain('media: __isr_engine_transport_media');
     expect(result?.code).toContain('{ js: [], css: ["/src/Page.scss"] }');
     expect(result?.code).toContain('export function Resources()');
   });
@@ -367,7 +367,7 @@ describe('createDevCssLifecyclePlugins', () => {
     expect(
       validate(
         '/@id/__x00__virtual:fixture/card?t=1234567890123&theme=dark&v=12&import',
-        '\0virtual:fixture/card?theme=dark&t=1234567890124&direct&__novel_isr_style_generation=4'
+        '\0virtual:fixture/card?theme=dark&t=1234567890124&direct&__isr_engine_style_generation=4'
       )
     ).toBe('/@id/__x00__virtual:fixture/card?t=1234567890123&theme=dark&v=12&import');
 
@@ -398,11 +398,11 @@ describe('createDevCssLifecyclePlugins', () => {
     const mixedReference =
       '/@id/__x00__virtual:fixture/card?direct&direct=dark&import=&import=x' +
       '&t=1234567890123&t=11&v=12&v=&theme=dark' +
-      '&__novel_isr_style_generation=4&__novel_isr_style_generation=-1';
+      '&__isr_engine_style_generation=4&__isr_engine_style_generation=-1';
     const mixedModule =
       '\0virtual:fixture/card?direct=&direct=dark&import&import=x' +
       '&t=1234567890124&t=11&v=other.version&v=&theme=dark' +
-      '&__novel_isr_style_generation=5&__novel_isr_style_generation=-1';
+      '&__isr_engine_style_generation=5&__isr_engine_style_generation=-1';
     expect(validate(mixedReference, mixedModule)).toBe(mixedReference);
 
     for (const [referenceQuery, moduleQuery] of [
@@ -410,8 +410,8 @@ describe('createDevCssLifecyclePlugins', () => {
       ['import=x', 'import=y'],
       ['t=11', 't=dark'],
       ['v=', ''],
-      ['__novel_isr_style_generation=-1', ''],
-      ['__novel_isr_style_generation=9007199254740992', ''],
+      ['__isr_engine_style_generation=-1', ''],
+      ['__isr_engine_style_generation=9007199254740992', ''],
       ['variant=a%2Fb', 'variant=a/b'],
     ]) {
       expect(
@@ -719,7 +719,7 @@ describe('createDevCssLifecyclePlugins', () => {
 
     expect(result?.code).toContain(`from "${DEV_STYLE_REGISTRY_ID}"`);
     expect(result?.code).toContain(
-      '__novel_isr_dev_styles.publish("/src/Card.css", ".card{color:green}")'
+      '__isr_engine_dev_styles.publish("/src/Card.css", ".card{color:green}")'
     );
   });
 
@@ -760,7 +760,7 @@ describe('createDevCssLifecyclePlugins', () => {
     );
 
     expect(result.code).toContain(
-      '__novel_isr_dev_styles.publish("/src/theme.scss?theme=dark", ".theme{color:green}")'
+      '__isr_engine_dev_styles.publish("/src/theme.scss?theme=dark", ".theme{color:green}")'
     );
   });
 
@@ -797,9 +797,9 @@ describe('createDevCssLifecyclePlugins', () => {
     );
 
     expect(result.code).toContain(
-      '__novel_isr_dev_styles.publish("/src/a%3Fb.scss", ".encoded{color:green}")'
+      '__isr_engine_dev_styles.publish("/src/a%3Fb.scss", ".encoded{color:green}")'
     );
-    expect(result.code).not.toContain('__novel_isr_dev_styles.publish("/src/a?b.scss="');
+    expect(result.code).not.toContain('__isr_engine_dev_styles.publish("/src/a?b.scss="');
   });
 
   it('rejects an exact graph URL that drops a resolved semantic query', async () => {
@@ -871,7 +871,7 @@ describe('createDevCssLifecyclePlugins', () => {
         '/workspace/app/src/plain.scss?t=123'
       )
     ).toMatchObject({
-      code: expect.stringContaining('__novel_isr_dev_styles.publish("/src/plain.scss"'),
+      code: expect.stringContaining('__isr_engine_dev_styles.publish("/src/plain.scss"'),
     });
     expect(
       transform.call(
@@ -881,7 +881,7 @@ describe('createDevCssLifecyclePlugins', () => {
       )
     ).toMatchObject({
       code: expect.stringContaining(
-        '__novel_isr_dev_styles.publish("/src/theme.scss?mode=wide&theme=dark"'
+        '__isr_engine_dev_styles.publish("/src/theme.scss?mode=wide&theme=dark"'
       ),
     });
   });

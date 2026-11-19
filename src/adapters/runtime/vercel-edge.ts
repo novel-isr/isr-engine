@@ -7,7 +7,7 @@
  *
  *    // api/[[...slug]].ts
  *    import handler from '../src/entry.server';
- *    import { toVercelEdge } from '@novel-isr/engine/adapters/runtime';
+ *    import { toVercelEdge } from 'isr-engine/adapters/runtime';
  *    export const config = { runtime: 'edge' };
  *    export default toVercelEdge(handler);
  *
@@ -15,7 +15,7 @@
  *
  *    // middleware.ts
  *    import handler from './src/entry.server';
- *    import { toVercelMiddleware } from '@novel-isr/engine/adapters/runtime';
+ *    import { toVercelMiddleware } from 'isr-engine/adapters/runtime';
  *    export default toVercelMiddleware(handler, {
  *      // 返回 passthrough 的路径 —— 让请求继续去 origin / 另一个函数
  *      shouldPassthrough: (req) => !req.url.includes('/rsc'),

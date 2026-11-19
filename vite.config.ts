@@ -20,7 +20,7 @@ export default defineConfig({
   build: {
     lib: {
       entry: {
-        'novel-isr': resolve(__dirname, 'src/index.ts'),
+        'isr-engine': resolve(__dirname, 'src/index.ts'),
         'cli/cli': resolve(__dirname, 'src/cli/cli.ts'),
         // 独立 rsc 子入口 —— 仅包含 RSC 环境安全的导出（revalidatePath/revalidateTag
         // / server action registry），不含 react-dom/server 等 Node-only 模块
@@ -69,7 +69,7 @@ export default defineConfig({
         /^react(-dom)?(\/.*)?$/,
         /^@vitejs\/plugin-rsc(\/.*)?$/,
         // engine 自身子路径 —— auto-observability 用 dynamic import 自己的 adapters 子包
-        /^@novel-isr\/engine(\/.*)?$/,
+        /^isr-engine(\/.*)?$/,
         // 可选 SDK —— 用户没装时静默跳过（adapters/observability 里 dynamic import）
         // 不写进 deps（避免强制安装），但必须 external 防止 bundler inline + 解析失败
         'web-vitals',

@@ -5,12 +5,12 @@
   "description": "最小化的 isr-engine 消费者示例 —— 演示 ISR/SSG/SSR 三种用户级渲染模式 + csr-shell fallback.",
   "type": "module",
   "scripts": {
-    "dev": "novel-isr dev",
+    "dev": "isr-engine dev",
     "build": "vite build",
-    "start": "novel-isr start"
+    "start": "isr-engine start"
   },
   "dependencies": {
-    "@novel-isr/engine": "file:../..",
+    "isr-engine": "file:../..",
     "react": "^19.2.0",
     "react-dom": "^19.2.0",
     "react-server-dom-webpack": "^19.2.0",

@@ -1,6 +1,6 @@
 import ProductionView from './view.client';
 import fs from 'node:fs/promises';
-import { cacheTag } from '@novel-isr/engine';
+import { cacheTag } from 'isr-engine';
 
 export async function App({ url }: { url: URL }) {
   const regenerated = url.pathname === '/regenerated';

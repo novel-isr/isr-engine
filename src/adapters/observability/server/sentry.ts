@@ -4,7 +4,7 @@
  * 用户态最简写法：
  *   // src/entry.server.tsx
  *   import * as Sentry from '@sentry/node';
- *   import { createSentryServerHooks } from '@novel-isr/engine/adapters/observability';
+ *   import { createSentryServerHooks } from 'isr-engine/adapters/observability';
  *
  *   Sentry.init({ dsn: process.env.SENTRY_DSN, tracesSampleRate: 0.1 });
  *   export default createSentryServerHooks({ Sentry });

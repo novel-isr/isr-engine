@@ -247,7 +247,7 @@ export interface ClientEntryHooks {
   /**
    * 浏览器 telemetry。engine 接管启动、导航和 Server Action 失败这些生命周期点；
    * 具体上报只通过 ssr.config.ts runtime.telemetry 里的 endpoint。
-   * engine 不 import `@novel-isr/analytics` / `@novel-isr/error-reporting`；
+   * engine 不 import `@app/analytics` / `@app/error-reporting`；
    * 这两个独立 SDK 只给非 engine 应用或业务自定义接入使用。
    */
   telemetry?: false | BrowserObservabilityOptions;

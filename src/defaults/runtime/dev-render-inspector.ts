@@ -12,7 +12,7 @@ interface InspectorState {
   url: string;
 }
 
-const INSPECTOR_ID = 'novel-isr-render-inspector';
+const INSPECTOR_ID = 'isr-engine-render-inspector';
 let deferredInstallScheduled = false;
 let watchdogStarted = false;
 let watchdogInstallScheduled = false;
@@ -79,7 +79,7 @@ export function installDevRenderInspector(): void {
 
     shadow.innerHTML = `
       <style>${STYLE}</style>
-      <aside class="inspector" aria-label="Novel ISR 开发模式渲染检查器">
+      <aside class="inspector" aria-label="ISR Engine 开发模式渲染检查器">
         <button type="button" class="summary" data-action="toggle" aria-expanded="${expanded}">
           ${summaryPill('Mode', view.modeCode, 'mode', view.resolvedMode)}
           ${summaryPill('Strategy', view.strategy, 'strategy')}
@@ -91,7 +91,7 @@ export function installDevRenderInspector(): void {
               <div class="panel">
                 <div class="panel-head">
                   <div>
-                    <p class="eyebrow">Novel ISR Inspector</p>
+                    <p class="eyebrow">ISR Engine Inspector</p>
                     <strong>Render mode · ${escapeHtml(view.modeCode)}</strong>
                     <span class="mode-desc">${escapeHtml(view.modeLabel)}</span>
                   </div>
@@ -225,7 +225,7 @@ async function inspectCurrentPage(): Promise<InspectorState> {
       cache: 'no-store',
       headers: {
         Accept: 'text/html',
-        'X-Novel-Isr-Inspector': '1',
+        'X-Isr-Engine-Inspector': '1',
       },
     });
     await response.text().catch(() => undefined);

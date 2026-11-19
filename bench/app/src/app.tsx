@@ -10,7 +10,7 @@
  * Inline data only (no remote fetch) so bench measures engine middleware,
  * not network jitter.
  */
-import { cacheTag } from '@novel-isr/engine/rsc';
+import { cacheTag } from 'isr-engine/rsc';
 
 export interface AppProps {
   url: URL;

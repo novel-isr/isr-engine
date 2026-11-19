@@ -30,7 +30,7 @@ interface TagStore {
   uncacheable: boolean;
 }
 
-const ALS_KEY = Symbol.for('@novel-isr/engine:cache-tag-als');
+const ALS_KEY = Symbol.for('isr-engine:cache-tag-als');
 
 type GlobalWithALS = typeof globalThis & {
   [ALS_KEY]?: AsyncLocalStorage<TagStore>;

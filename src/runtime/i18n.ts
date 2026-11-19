@@ -3,7 +3,7 @@
  *
  * 业务侧用法：
  *
- *   import { parseLocale, withLocale, negotiateLocale } from '@novel-isr/engine/runtime';
+ *   import { parseLocale, withLocale, negotiateLocale } from 'isr-engine/runtime';
  *
  *   const I18N = { locales: ['zh', 'en'] as const, defaultLocale: 'zh' };
  *

@@ -3,7 +3,7 @@
  *
  * 用户态：
  *   import * as Sentry from '@sentry/browser';
- *   import { createSentryClientHooks } from '@novel-isr/engine/adapters/observability/client';
+ *   import { createSentryClientHooks } from 'isr-engine/adapters/observability/client';
  *
  *   defineClientEntry(createSentryClientHooks({
  *     Sentry,

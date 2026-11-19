@@ -28,7 +28,7 @@ describe('automatic image endpoint', () => {
       const plugins = (createIsrPlugin({ root, config: { renderMode: 'ssr' } }) as unknown[]).flat(
         Infinity
       ) as Plugin[];
-      const image = plugins.find(plugin => plugin.name === 'novel-isr:automatic-images');
+      const image = plugins.find(plugin => plugin.name === 'isr-engine:automatic-images');
       expect(image).toBeDefined();
       const resolved = {
         root,
@@ -75,7 +75,7 @@ describe('automatic image endpoint', () => {
   it('defers to an explicitly installed image plugin', async () => {
     const image = createAutomaticImagePlugin('/unused', {});
     await (image.configResolved as (config: ResolvedConfig) => Promise<void>)({
-      plugins: [{ name: 'novel-isr:image-optimization' }],
+      plugins: [{ name: 'isr-engine:image-optimization' }],
     } as unknown as ResolvedConfig);
     let registered = false;
     (image.configureServer as (server: ViteDevServer) => void)({

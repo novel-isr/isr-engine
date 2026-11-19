@@ -2,7 +2,7 @@
  * createSsgPostBuildPlugin —— vite 构建结束后自动跑 SSG 预渲染
  *
  * 让 `vite build` 成为唯一的构建入口（用户只需在 vite.config.ts 用 createIsrPlugin），
- * 不再需要 `novel-isr build` 这种 CLI 包一层。
+ * 不再需要 `isr-engine build` 这种 CLI 包一层。
  *
  * 实现要点：
  *   - 在 plugin-rsc 的多 pass 构建里，client environment 是最后一轮
@@ -128,7 +128,7 @@ export function createSsgPostBuildPlugin(explicitConfig: ISRConfig | undefined):
   }
 
   return {
-    name: 'novel-isr:ssg-post-build',
+    name: 'isr-engine:ssg-post-build',
     apply: 'build',
     configResolved(resolved) {
       root = resolved.root;

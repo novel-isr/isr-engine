@@ -10,7 +10,7 @@ interface RegistryFixture {
 }
 
 const fixtures: RegistryFixture[] = [];
-const DEV_STYLE_REGISTRY_INSPECT = Symbol.for('novel-isr.dev-style-registry.inspect');
+const DEV_STYLE_REGISTRY_INSPECT = Symbol.for('isr-engine.dev-style-registry.inspect');
 
 interface GenerationStateSnapshot {
   committedWatermark: number;
@@ -51,7 +51,7 @@ function appendRscLink(document: Document, href: string, generation?: number): H
     link.href = href;
   } else {
     const url = new URL(href, document.baseURI);
-    url.searchParams.set('__novel_isr_style_generation', String(generation));
+    url.searchParams.set('__isr_engine_style_generation', String(generation));
     link.href = `${url.pathname}${url.search}`;
   }
   link.dataset.precedence = 'vite-rsc/client-reference';
@@ -86,9 +86,9 @@ describe('development style registry', () => {
     registry.publish('/@fs/workspace/package/src/Card.scss', '.external{color:red}');
 
     const nodes = Array.from(
-      document.querySelectorAll<HTMLStyleElement>('style[data-novel-isr-dev-style]')
+      document.querySelectorAll<HTMLStyleElement>('style[data-isr-engine-dev-style]')
     );
-    expect(nodes.map(node => node.dataset.novelIsrDevStyle)).toEqual([
+    expect(nodes.map(node => node.dataset.isrEngineDevStyle)).toEqual([
       '/src/Card.scss',
       '/@fs/workspace/package/src/Card.scss',
     ]);
@@ -106,7 +106,7 @@ describe('development style registry', () => {
     registry.publish('/src/Card.scss', '.card { color: green }');
     registry.reconcileDocumentStyles(0, ['/src/Card.scss']);
     expect(
-      document.querySelector('style[data-novel-isr-dev-style="/src/Card.scss"]')
+      document.querySelector('style[data-isr-engine-dev-style="/src/Card.scss"]')
     ).not.toBeNull();
     expect(document.querySelector('link[href*="Card.scss"]')).toBeNull();
 
@@ -138,7 +138,7 @@ describe('development style registry', () => {
     registry.prune('/src/Card.scss');
     registry.commitUpdate(['/src/Other.scss']);
 
-    expect(document.querySelector('style[data-novel-isr-dev-style]')).toBeNull();
+    expect(document.querySelector('style[data-isr-engine-dev-style]')).toBeNull();
   });
 
   it('keeps a pending node when an update commits without an active set', () => {
@@ -173,11 +173,11 @@ describe('development style registry', () => {
     registry.publish('/src/Card.scss?direct&t=42', '.card { color: green }');
     registry.publish('/src/Card.scss?v=43', '.card { color: green }');
 
-    expect(document.querySelectorAll('style[data-novel-isr-dev-style]').length).toBe(1);
+    expect(document.querySelectorAll('style[data-isr-engine-dev-style]').length).toBe(1);
     expect(
       document
-        .querySelector('style[data-novel-isr-dev-style]')
-        ?.getAttribute('data-novel-isr-dev-style')
+        .querySelector('style[data-isr-engine-dev-style]')
+        ?.getAttribute('data-isr-engine-dev-style')
     ).toBe('/src/Card.scss');
   });
 
@@ -192,8 +192,8 @@ describe('development style registry', () => {
     expect(document.querySelector('link[href*="Card.scss"]')).toBeNull();
     expect(
       document
-        .querySelector('style[data-novel-isr-dev-style]')
-        ?.getAttribute('data-novel-isr-dev-style')
+        .querySelector('style[data-isr-engine-dev-style]')
+        ?.getAttribute('data-isr-engine-dev-style')
     ).toBe('/src/Card.scss');
   });
 
@@ -206,7 +206,7 @@ describe('development style registry', () => {
       for (const record of records) {
         for (const node of record.addedNodes) {
           if (node instanceof window.HTMLStyleElement) {
-            mutations.push(`insert-style:${node.dataset.novelIsrDevStyle}`);
+            mutations.push(`insert-style:${node.dataset.isrEngineDevStyle}`);
           }
         }
         for (const node of record.removedNodes) {
@@ -214,7 +214,7 @@ describe('development style registry', () => {
             mutations.push(`remove-link:${node.getAttribute('href')}`);
           }
           if (node instanceof window.HTMLStyleElement) {
-            mutations.push(`remove-style:${node.dataset.novelIsrDevStyle}`);
+            mutations.push(`remove-style:${node.dataset.isrEngineDevStyle}`);
           }
         }
       }
@@ -228,8 +228,8 @@ describe('development style registry', () => {
     await window.happyDOM.whenAsyncComplete();
     observer.disconnect();
 
-    expect(document.querySelector('style[data-novel-isr-dev-style="/src/B.scss"]')).not.toBeNull();
-    expect(document.querySelector('style[data-novel-isr-dev-style="/src/A.scss"]')).toBeNull();
+    expect(document.querySelector('style[data-isr-engine-dev-style="/src/B.scss"]')).not.toBeNull();
+    expect(document.querySelector('style[data-isr-engine-dev-style="/src/A.scss"]')).toBeNull();
 
     const insertB = mutations.indexOf('insert-style:/src/B.scss');
     const removeBLink = mutations.indexOf('remove-link:/src/B.scss?direct');
@@ -249,7 +249,7 @@ describe('development style registry', () => {
     registry.reconcileDocumentStyles(1, ['/src/B.scss']);
     registry.abortRscUpdate(1);
 
-    expect(document.querySelector('style[data-novel-isr-dev-style="/src/A.scss"]')).not.toBeNull();
+    expect(document.querySelector('style[data-isr-engine-dev-style="/src/A.scss"]')).not.toBeNull();
   });
 
   it('commits an RSC DOM resource set when its managed owners are already active', () => {
@@ -261,9 +261,9 @@ describe('development style registry', () => {
     appendRscLink(document, '/src/B.scss?direct');
     registry.reconcileDocumentStyles(1, ['/src/B.scss']);
 
-    expect(document.querySelector('style[data-novel-isr-dev-style="/src/B.scss"]')).not.toBeNull();
+    expect(document.querySelector('style[data-isr-engine-dev-style="/src/B.scss"]')).not.toBeNull();
     expect(document.querySelector('link[href*="/src/B.scss"]')).toBeNull();
-    expect(document.querySelector('style[data-novel-isr-dev-style="/src/A.scss"]')).toBeNull();
+    expect(document.querySelector('style[data-isr-engine-dev-style="/src/A.scss"]')).toBeNull();
   });
 
   it('keeps the committed owner across repeated boundary effects for the same RSC tree', () => {
@@ -273,16 +273,16 @@ describe('development style registry', () => {
     appendRscLink(document, '/src/B.scss?direct');
     registry.publish('/src/B.scss', '.b{display:grid}');
     registry.reconcileDocumentStyles(0, ['/src/B.scss']);
-    const owner = document.querySelector('style[data-novel-isr-dev-style="/src/B.scss"]');
+    const owner = document.querySelector('style[data-isr-engine-dev-style="/src/B.scss"]');
 
     registry.reconcileDocumentStyles(0, ['/src/B.scss']);
     registry.reconcileDocumentStyles(0, ['/src/B.scss']);
 
     expect(owner).not.toBeNull();
     expect(owner?.isConnected).toBe(true);
-    expect(document.querySelectorAll('style[data-novel-isr-dev-style="/src/B.scss"]')).toHaveLength(
-      1
-    );
+    expect(
+      document.querySelectorAll('style[data-isr-engine-dev-style="/src/B.scss"]')
+    ).toHaveLength(1);
   });
 
   it('removes only an aborted generation transport link while a newer generation stays pending', () => {
@@ -304,21 +304,21 @@ describe('development style registry', () => {
 
     registry.abortRscUpdate(1);
 
-    expect(document.querySelector('style[data-novel-isr-dev-style="/src/A.scss"]')).not.toBeNull();
-    expect(document.querySelector('style[data-novel-isr-dev-style="/src/B.scss"]')).toBeNull();
+    expect(document.querySelector('style[data-isr-engine-dev-style="/src/A.scss"]')).not.toBeNull();
+    expect(document.querySelector('style[data-isr-engine-dev-style="/src/B.scss"]')).toBeNull();
     expect(document.querySelector('link[href*="/src/B.scss"]')).toBeNull();
     expect(cLink.isConnected).toBe(true);
 
     registry.publish('/src/B.scss', '.b{display:grid}');
-    expect(document.querySelector('style[data-novel-isr-dev-style="/src/B.scss"]')).toBeNull();
+    expect(document.querySelector('style[data-isr-engine-dev-style="/src/B.scss"]')).toBeNull();
     expect(document.querySelector('link[href*="/src/B.scss"]')).toBeNull();
 
     registry.publish('/src/C.scss', '.c{display:flex}');
     registry.reconcileDocumentStyles(2, ['/src/C.scss']);
 
-    expect(document.querySelector('style[data-novel-isr-dev-style="/src/A.scss"]')).toBeNull();
-    expect(document.querySelector('style[data-novel-isr-dev-style="/src/B.scss"]')).toBeNull();
-    expect(document.querySelector('style[data-novel-isr-dev-style="/src/C.scss"]')).not.toBeNull();
+    expect(document.querySelector('style[data-isr-engine-dev-style="/src/A.scss"]')).toBeNull();
+    expect(document.querySelector('style[data-isr-engine-dev-style="/src/B.scss"]')).toBeNull();
+    expect(document.querySelector('style[data-isr-engine-dev-style="/src/C.scss"]')).not.toBeNull();
   });
 
   it('removes every exact transport owner for an aborted generation', () => {
@@ -397,8 +397,8 @@ describe('development style registry', () => {
     expect(committed).toEqual([0, 1]);
     expect(
       Array.from(
-        document.querySelectorAll<HTMLStyleElement>('style[data-novel-isr-dev-style]')
-      ).map(node => node.dataset.novelIsrDevStyle)
+        document.querySelectorAll<HTMLStyleElement>('style[data-isr-engine-dev-style]')
+      ).map(node => node.dataset.isrEngineDevStyle)
     ).toEqual(['/src/B.scss']);
     expect(bLink.isConnected).toBe(false);
     expect(cLink.isConnected).toBe(true);
@@ -410,8 +410,8 @@ describe('development style registry', () => {
     expect(committed).toEqual([0, 1, 2]);
     expect(
       Array.from(
-        document.querySelectorAll<HTMLStyleElement>('style[data-novel-isr-dev-style]')
-      ).map(node => node.dataset.novelIsrDevStyle)
+        document.querySelectorAll<HTMLStyleElement>('style[data-isr-engine-dev-style]')
+      ).map(node => node.dataset.isrEngineDevStyle)
     ).toEqual(['/src/C.scss']);
   });
 
@@ -428,8 +428,8 @@ describe('development style registry', () => {
     registry.abortRscUpdate(1);
     registry.publish('/src/B.scss', '.b{display:grid}');
 
-    expect(document.querySelector('style[data-novel-isr-dev-style="/src/B.scss"]')).toBeNull();
-    expect(document.querySelector('style[data-novel-isr-dev-style="/src/A.scss"]')).not.toBeNull();
+    expect(document.querySelector('style[data-isr-engine-dev-style="/src/B.scss"]')).toBeNull();
+    expect(document.querySelector('style[data-isr-engine-dev-style="/src/A.scss"]')).not.toBeNull();
 
     registry.beginRscUpdate(2);
     registry.declareRscStyles(2, ['/src/C.scss']);
@@ -438,8 +438,8 @@ describe('development style registry', () => {
 
     expect(
       Array.from(
-        document.querySelectorAll<HTMLStyleElement>('style[data-novel-isr-dev-style]')
-      ).map(node => node.dataset.novelIsrDevStyle)
+        document.querySelectorAll<HTMLStyleElement>('style[data-isr-engine-dev-style]')
+      ).map(node => node.dataset.isrEngineDevStyle)
     ).toEqual(['/src/C.scss']);
   });
 
@@ -461,8 +461,8 @@ describe('development style registry', () => {
     registry.reconcileDocumentStyles(1, ['/src/B.scss']);
 
     expect(committed).toEqual([0]);
-    expect(document.querySelector('style[data-novel-isr-dev-style="/src/A.scss"]')).not.toBeNull();
-    expect(document.querySelector('style[data-novel-isr-dev-style="/src/B.scss"]')).toBeNull();
+    expect(document.querySelector('style[data-isr-engine-dev-style="/src/A.scss"]')).not.toBeNull();
+    expect(document.querySelector('style[data-isr-engine-dev-style="/src/B.scss"]')).toBeNull();
   });
 
   it('treats a committed importer-resource link as an active owner', () => {
@@ -475,7 +475,7 @@ describe('development style registry', () => {
     registry.reconcileDocumentStyles(1, ['/src/B.scss']);
 
     expect(link.isConnected).toBe(true);
-    expect(document.querySelector('style[data-novel-isr-dev-style="/src/A.scss"]')).toBeNull();
+    expect(document.querySelector('style[data-isr-engine-dev-style="/src/A.scss"]')).toBeNull();
   });
 
   it('converges a shared importer to one owner across generations 0 through 3', () => {
@@ -655,7 +655,7 @@ describe('development style registry', () => {
     await window.happyDOM.whenAsyncComplete();
     observer.disconnect();
 
-    expect(document.querySelector('style[data-novel-isr-dev-style="/src/A.scss"]')).not.toBeNull();
+    expect(document.querySelector('style[data-isr-engine-dev-style="/src/A.scss"]')).not.toBeNull();
     expect(promoted.isConnected).toBe(false);
     expect(mutations.indexOf('insert-managed')).toBeGreaterThanOrEqual(0);
     expect(mutations.indexOf('remove-promoted')).toBeGreaterThan(
@@ -831,7 +831,7 @@ describe('development style registry', () => {
 
     expect(generation2.isConnected).toBe(false);
     expect(generation3.isConnected).toBe(true);
-    expect(document.querySelector('style[data-novel-isr-dev-style="/src/A.scss"]')).not.toBeNull();
+    expect(document.querySelector('style[data-isr-engine-dev-style="/src/A.scss"]')).not.toBeNull();
   });
 
   it('retains inactive CSS bytes across A to B to A without a client module republish', async () => {
@@ -850,8 +850,8 @@ describe('development style registry', () => {
     registry.beginRscUpdate(2);
     registry.reconcileDocumentStyles(1, ['/src/B.scss']);
 
-    expect(document.querySelector('style[data-novel-isr-dev-style="/src/A.scss"]')).toBeNull();
-    const bNode = document.querySelector('style[data-novel-isr-dev-style="/src/B.scss"]')!;
+    expect(document.querySelector('style[data-isr-engine-dev-style="/src/A.scss"]')).toBeNull();
+    const bNode = document.querySelector('style[data-isr-engine-dev-style="/src/B.scss"]')!;
     expect(bNode.textContent).toContain('blue');
 
     const mutations: string[] = [];
@@ -859,12 +859,12 @@ describe('development style registry', () => {
       for (const record of records) {
         for (const node of record.addedNodes) {
           if (node instanceof window.HTMLStyleElement) {
-            mutations.push(`insert:${node.dataset.novelIsrDevStyle}`);
+            mutations.push(`insert:${node.dataset.isrEngineDevStyle}`);
           }
         }
         for (const node of record.removedNodes) {
           if (node instanceof window.HTMLStyleElement) {
-            mutations.push(`remove:${node.dataset.novelIsrDevStyle}`);
+            mutations.push(`remove:${node.dataset.isrEngineDevStyle}`);
           }
         }
       }
@@ -876,7 +876,7 @@ describe('development style registry', () => {
     await window.happyDOM.whenAsyncComplete();
     observer.disconnect();
 
-    const aNode = document.querySelector('style[data-novel-isr-dev-style="/src/A.scss"]');
+    const aNode = document.querySelector('style[data-isr-engine-dev-style="/src/A.scss"]');
     expect(aNode?.textContent).toContain('green');
     expect(bNode.isConnected).toBe(false);
     expect(committed).toEqual([1, 2]);
@@ -965,7 +965,7 @@ describe('development style registry', () => {
     expect(preloadB.isConnected).toBe(false);
     expect(transportB.isConnected).toBe(false);
     expect(document.querySelector('link[rel="preload"][href*="/src/B.scss"]')).toBeNull();
-    expect(document.querySelector('style[data-novel-isr-dev-style="/src/C.scss"]')).not.toBeNull();
+    expect(document.querySelector('style[data-isr-engine-dev-style="/src/C.scss"]')).not.toBeNull();
     expect(preloadD.isConnected).toBe(true);
     expect(transportD.isConnected).toBe(true);
     expect(transportD.media).toBe('not all');
@@ -1034,7 +1034,7 @@ describe('development style registry', () => {
       preparing: [],
       promises: [],
     });
-    expect(document.querySelector('style[data-novel-isr-dev-style="/src/Z.scss"]')).not.toBeNull();
+    expect(document.querySelector('style[data-isr-engine-dev-style="/src/Z.scss"]')).not.toBeNull();
   });
 
   it('removes an undeclared invalid transport that arrives before a newer commit', async () => {
@@ -1079,7 +1079,7 @@ describe('development style registry', () => {
     await expect(preparationB).rejects.toThrow(/generation 1 was aborted/i);
     expect(preloadB.isConnected).toBe(false);
     expect(transportB.isConnected).toBe(false);
-    expect(document.querySelector('style[data-novel-isr-dev-style="/src/C.scss"]')).not.toBeNull();
+    expect(document.querySelector('style[data-isr-engine-dev-style="/src/C.scss"]')).not.toBeNull();
   });
 
   it('reclaims late stale transport at every public generation lifecycle touch', async () => {
@@ -1130,7 +1130,7 @@ describe('development style registry', () => {
     expect(duplicateCurrent.isConnected).toBe(false);
 
     registry.reconcileDocumentStyles(2, ['/src/C.scss']);
-    expect(document.querySelector('style[data-novel-isr-dev-style="/src/C.scss"]')).not.toBeNull();
+    expect(document.querySelector('style[data-isr-engine-dev-style="/src/C.scss"]')).not.toBeNull();
   });
 
   it('requires the exact prepared generation owner instead of activating an older fallback', async () => {
@@ -1204,8 +1204,8 @@ describe('development style registry', () => {
 
     registry.reconcileDocumentStyles(1, ['/src/B.scss']);
 
-    expect(document.querySelector('style[data-novel-isr-dev-style="/src/A.scss"]')).toBeNull();
-    expect(document.querySelector('style[data-novel-isr-dev-style="/src/B.scss"]')).not.toBeNull();
+    expect(document.querySelector('style[data-isr-engine-dev-style="/src/A.scss"]')).toBeNull();
+    expect(document.querySelector('style[data-isr-engine-dev-style="/src/B.scss"]')).not.toBeNull();
     expect(futureA.isConnected).toBe(true);
     expect(futureA.media).toBe('not all');
 
@@ -1217,12 +1217,12 @@ describe('development style registry', () => {
         }
         for (const node of mutation.addedNodes) {
           if (node instanceof window.HTMLStyleElement) {
-            mutations.push(`insert:${node.dataset.novelIsrDevStyle}`);
+            mutations.push(`insert:${node.dataset.isrEngineDevStyle}`);
           }
         }
         for (const node of mutation.removedNodes) {
           if (node instanceof window.HTMLStyleElement) {
-            mutations.push(`remove:${node.dataset.novelIsrDevStyle}`);
+            mutations.push(`remove:${node.dataset.isrEngineDevStyle}`);
           }
         }
       }
@@ -1237,8 +1237,8 @@ describe('development style registry', () => {
     await window.happyDOM.whenAsyncComplete();
     observer.disconnect();
 
-    expect(document.querySelector('style[data-novel-isr-dev-style="/src/A.scss"]')).not.toBeNull();
-    expect(document.querySelector('style[data-novel-isr-dev-style="/src/B.scss"]')).toBeNull();
+    expect(document.querySelector('style[data-isr-engine-dev-style="/src/A.scss"]')).not.toBeNull();
+    expect(document.querySelector('style[data-isr-engine-dev-style="/src/B.scss"]')).toBeNull();
     expect(futureA.isConnected).toBe(false);
     expect(mutations.indexOf('insert:/src/A.scss')).toBeGreaterThanOrEqual(0);
     expect(mutations.indexOf('remove:/src/B.scss')).toBeGreaterThan(
@@ -1274,15 +1274,15 @@ describe('development style registry', () => {
 
     registry.publish('/src/A.scss', '.a{color:red}');
 
-    expect(document.querySelector('style[data-novel-isr-dev-style="/src/A.scss"]')).toBeNull();
+    expect(document.querySelector('style[data-isr-engine-dev-style="/src/A.scss"]')).toBeNull();
     registry.beginRscUpdate(2);
     registry.declareRscStyles(2, ['/src/A.scss']);
     registry.reconcileDocumentStyles(2, ['/src/A.scss']);
 
     expect(
-      document.querySelector('style[data-novel-isr-dev-style="/src/A.scss"]')?.textContent
+      document.querySelector('style[data-isr-engine-dev-style="/src/A.scss"]')?.textContent
     ).toContain('red');
-    expect(document.querySelector('style[data-novel-isr-dev-style="/src/B.scss"]')).toBeNull();
+    expect(document.querySelector('style[data-isr-engine-dev-style="/src/B.scss"]')).toBeNull();
   });
 
   it('clears retained CSS bytes when the registry is disposed', () => {
@@ -1298,7 +1298,7 @@ describe('development style registry', () => {
     registry.declareRscStyles(2, ['/src/A.scss']);
     registry.reconcileDocumentStyles(2, ['/src/A.scss']);
 
-    expect(document.querySelector('style[data-novel-isr-dev-style]')).toBeNull();
+    expect(document.querySelector('style[data-isr-engine-dev-style]')).toBeNull();
   });
 
   it('disposes managed nodes idempotently', () => {
@@ -1308,6 +1308,6 @@ describe('development style registry', () => {
     registry.dispose();
     registry.dispose();
 
-    expect(document.querySelector('style[data-novel-isr-dev-style]')).toBeNull();
+    expect(document.querySelector('style[data-isr-engine-dev-style]')).toBeNull();
   });
 });

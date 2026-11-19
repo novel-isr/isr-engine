@@ -1,5 +1,5 @@
 /**
- * `novel-isr test-fallback-local` —— 本地 SSR → SPA fallback 验证代理
+ * `isr-engine test-fallback-local` —— 本地 SSR → SPA fallback 验证代理
  *
  * 行为是 nginx `error_page 5xx = @spa_fallback` 的功能等价物，
  * 让开发者**不装 nginx**也能在本地复现整条降级链路。
@@ -14,8 +14,8 @@
  * 用法：
  *   pnpm build
  *   pnpm --filter mock-server start              # :3001
- *   novel-isr start                              # :3000  SSR
- *   novel-isr test-fallback-local                # :8080  ← 用户访问这个
+ *   isr-engine start                              # :3000  SSR
+ *   isr-engine test-fallback-local                # :8080  ← 用户访问这个
  *   open http://localhost:8080/                  # → 看到 SSR 渲染
  *   kill <ssr pid>; reload                       # → 自动看到橙色 banner + SPA 兜底
  *   重启 SSR; reload                             # → 自动切回 SSR
@@ -30,7 +30,7 @@ import { logger } from '@/logger';
 export interface FallbackProxyOptions {
   /** 监听端口（用户访问此处） */
   port: string;
-  /** SSR 上游端口（novel-isr start 监听的） */
+  /** SSR 上游端口（isr-engine start 监听的） */
   ssrPort: string;
   /** API 上游端口（mock-server / 真后端） */
   apiPort: string;

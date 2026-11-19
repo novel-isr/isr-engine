@@ -22,7 +22,7 @@ function pinnedResourceDispatcher(): ReactDomResourceDispatcher {
   const dispatcher = module.__DOM_INTERNALS_DO_NOT_USE_OR_WARN_USERS_THEY_CANNOT_UPGRADE?.d;
   if (module.version !== PINNED_REACT_DOM_VERSION || typeof dispatcher?.S !== 'function') {
     throw new Error(
-      `[novel-isr] Development CSS transport requires react-dom ${PINNED_REACT_DOM_VERSION} ` +
+      `[isr-engine] Development CSS transport requires react-dom ${PINNED_REACT_DOM_VERSION} ` +
         'with the pinned stylesheet resource dispatcher shape.'
     );
   }

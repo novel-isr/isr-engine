@@ -8,7 +8,7 @@
  *
  * 部署地址、Redis、telemetry、A/B 定义都放 ssr.config.ts runtime。
  */
-import { defineSiteHooks } from '@novel-isr/engine/site-hooks';
+import { defineSiteHooks } from 'isr-engine/site-hooks';
 
 export default defineSiteHooks({
   seo: {

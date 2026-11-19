@@ -26,8 +26,8 @@ import { createAutoServerHooks } from './auto-observability';
 //   - 用户提供 src/entry.server.tsx 时 → 解析到该文件
 //   - 用户没提供时              → 解析到 engine 内置 empty-config（默认 {}）
 import userConfig from '@app/_server-config';
-// @ts-expect-error - virtual:novel-isr/runtime-config 由 createIsrPlugin 注入 ssr.config.ts runtime
-import runtimeConfig from 'virtual:novel-isr/runtime-config';
+// @ts-expect-error - virtual:isr-engine/runtime-config 由 createIsrPlugin 注入 ssr.config.ts runtime
+import runtimeConfig from 'virtual:isr-engine/runtime-config';
 
 interface FetchHandlerLike {
   fetch: (request: Request) => Promise<Response>;

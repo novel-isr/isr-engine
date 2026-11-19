@@ -18,15 +18,5 @@ export default {
       { prepareCmd: 'node scripts/prepare-release.mjs ${nextRelease.version}' },
     ],
     ['@semantic-release/npm', { tarballDir: '.release' }],
-    [
-      '@semantic-release/github',
-      {
-        assets: '.release/*.tgz',
-        successComment: false,
-        failComment: false,
-        failTitle: false,
-        releasedLabels: false,
-      },
-    ],
   ],
 };

@@ -12,7 +12,7 @@ interface I18nRuntimeState {
   keyPathCache: Map<string, string[]>;
 }
 
-const I18N_RUNTIME_STATE_KEY = '__NOVEL_ISR_I18N_RUNTIME_STATE__';
+const I18N_RUNTIME_STATE_KEY = '__ISR_ENGINE_I18N_RUNTIME_STATE__';
 
 const runtimeState = getRuntimeState();
 

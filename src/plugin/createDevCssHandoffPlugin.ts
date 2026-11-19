@@ -22,9 +22,9 @@ import {
 import { assertPinnedDevStyleResourceDispatcher } from '../defaults/runtime/dev-style-resource-dispatcher.server';
 
 export const VITE_RSC_REMOVE_DUPLICATE_CSS_ID = 'virtual:vite-rsc/remove-duplicate-server-css';
-export const DEV_CSS_HANDOFF_RESOLVED_ID = '\0virtual:novel-isr/dev-css-handoff';
-export const DEV_STYLE_REGISTRY_ID = 'virtual:novel-isr/dev-style-registry';
-export const DEV_STYLE_REGISTRY_RESOLVED_ID = '\0virtual:novel-isr/dev-style-registry';
+export const DEV_CSS_HANDOFF_RESOLVED_ID = '\0virtual:isr-engine/dev-css-handoff';
+export const DEV_STYLE_REGISTRY_ID = 'virtual:isr-engine/dev-style-registry';
+export const DEV_STYLE_REGISTRY_RESOLVED_ID = '\0virtual:isr-engine/dev-style-registry';
 const VITE_RSC_CSS_RESOLVED_PREFIX = '\0virtual:vite-rsc/css?';
 const STYLESHEET_URL = /\.(?:css|less|sass|scss|styl|stylus|pcss|postcss|sss)(?:[?#]|$)/i;
 const SPECIAL_STYLESHEET_QUERY = /[?&](?:direct|inline|raw|url)(?:[=&]|$)/;
@@ -52,7 +52,7 @@ const PINNED_VITE_VERSION = '8.1.6';
 export function assertPinnedViteVersion(actualVersion: string): void {
   if (actualVersion !== PINNED_VITE_VERSION) {
     throw new Error(
-      `[novel-isr] Development CSS lifecycle requires Vite ${PINNED_VITE_VERSION}; ` +
+      `[isr-engine] Development CSS lifecycle requires Vite ${PINNED_VITE_VERSION}; ` +
         `detected ${actualVersion}. Install the engine's exact Vite peer version.`
     );
   }
@@ -131,9 +131,11 @@ function browserStyleIdForResolvedModule(
 
   const cleanNode = moduleGraph?.getModuleById(modulePathname(id));
   if (cleanNode?.url && !cleanNode.url.startsWith('\0')) {
-    const cleanGraphPath = new URL(canonicalizeDevStyleId(cleanNode.url), 'http://novel-isr.local/')
-      .pathname;
-    const mappedPath = new URL(mappedId, 'http://novel-isr.local/').pathname;
+    const cleanGraphPath = new URL(
+      canonicalizeDevStyleId(cleanNode.url),
+      'http://isr-engine.local/'
+    ).pathname;
+    const mappedPath = new URL(mappedId, 'http://isr-engine.local/').pathname;
     if (cleanGraphPath !== mappedPath) return undefined;
   }
   return mappedId;
@@ -152,7 +154,7 @@ function hasUseClientDirective(code: string, id: string): boolean {
 
 function unsupportedClientProxy(id: string): Error {
   return new Error(
-    `[novel-isr] Unsupported @vitejs/plugin-rsc client reference proxy shape in ${id}. ` +
+    `[isr-engine] Unsupported @vitejs/plugin-rsc client reference proxy shape in ${id}. ` +
       'Expected the pinned 0.5.34 registerClientReference wrapper.'
   );
 }
@@ -476,7 +478,7 @@ async function collectClientReferenceStyles(server: ViteDevServer, id: string): 
     (await environment.moduleGraph.getModuleByUrl(requestUrl)) ??
     environment.moduleGraph.getModuleById(moduleId);
   if (!entry) {
-    throw new Error(`[novel-isr] Could not inspect the client dependency graph for ${id}.`);
+    throw new Error(`[isr-engine] Could not inspect the client dependency graph for ${id}.`);
   }
 
   const visited = new Set<EnvironmentModuleNode>();
@@ -760,11 +762,11 @@ function addTransportMediaToPinnedFactory(
   const replacements = [
     {
       position: lastParameter.getEnd() - factoryStart,
-      value: ', __novel_isr_transport_media',
+      value: ', __isr_engine_transport_media',
     },
     {
       position: linkProps.getEnd() - factoryStart - 1,
-      value: ',\n          media: __novel_isr_transport_media',
+      value: ',\n          media: __isr_engine_transport_media',
     },
   ].sort((left, right) => right.position - left.position);
   let factoryCode = code.slice(factoryStart, factory.getEnd());
@@ -879,7 +881,7 @@ export function instrumentDevRscStylesheetModule(
     )
   ) {
     throw new Error(
-      `[novel-isr] Unsupported @vitejs/plugin-rsc server stylesheet resource shape in ${id}. ` +
+      `[isr-engine] Unsupported @vitejs/plugin-rsc server stylesheet resource shape in ${id}. ` +
         'Expected the pinned 0.5.34 Resources factory.'
     );
   }
@@ -902,21 +904,21 @@ export function instrumentDevRscStylesheetModule(
     initializer.arguments[3].getEnd()
   );
   const replacement = `
-const __novel_isr_create_RscResources = ${factoryCode};
+const __isr_engine_create_RscResources = ${factoryCode};
 export function Resources() {
-  const __novel_isr_RscResources = __novel_isr_create_RscResources(
+  const __isr_engine_RscResources = __isr_engine_create_RscResources(
     ${reactCode},
-    __novel_isr_prepare_styles(${depsCode}),
+    __isr_engine_prepare_styles(${depsCode}),
     ${cleanupCode},
     ${precedenceCode},
-    __novel_isr_get_transport_media(),
+    __isr_engine_get_transport_media(),
   );
-  return ${reactCode}.createElement(__novel_isr_RscResources);
+  return ${reactCode}.createElement(__isr_engine_RscResources);
 }`;
 
   return {
     code:
-      `import { getDevStyleTransportMedia as __novel_isr_get_transport_media, prepareDevStyleDependencies as __novel_isr_prepare_styles } from ${JSON.stringify(declarationsUrl)};\n` +
+      `import { getDevStyleTransportMedia as __isr_engine_get_transport_media, prepareDevStyleDependencies as __isr_engine_prepare_styles } from ${JSON.stringify(declarationsUrl)};\n` +
       code.slice(0, resourcesStatement.getStart(source)) +
       replacement +
       code.slice(resourcesStatement.getEnd()),
@@ -974,7 +976,7 @@ export function createDevCssLifecyclePluginPhases(
         const boundary = readFileSync(lifecycleBoundaryPath, 'utf8');
         const directive = "'use client';";
         if (!boundary.startsWith(directive)) {
-          throw new Error('[novel-isr] Development CSS boundary lost its client directive.');
+          throw new Error('[isr-engine] Development CSS boundary lost its client directive.');
         }
         if (this.environment.name !== 'client') return boundary;
         return boundary.replace(
@@ -1006,15 +1008,15 @@ export function createDevCssLifecyclePluginPhases(
         }
         if (!devServer) {
           throw new Error(
-            '[novel-isr] Development server is unavailable for CSS dependency mapping.'
+            '[isr-engine] Development server is unavailable for CSS dependency mapping.'
           );
         }
         const referenceId = clientReferenceIdFromProxy(code, moduleId, devServer.config.root);
         const styleIds = await collectClientReferenceStyles(devServer, moduleId);
         return {
           code:
-            `import { registerDevClientReferenceStyles as __novel_isr_register_client_styles } from ${JSON.stringify(declarationsUrl)};\n` +
-            `__novel_isr_register_client_styles(${JSON.stringify(referenceId)}, ${JSON.stringify(styleIds)});\n` +
+            `import { registerDevClientReferenceStyles as __isr_engine_register_client_styles } from ${JSON.stringify(declarationsUrl)};\n` +
+            `__isr_engine_register_client_styles(${JSON.stringify(referenceId)}, ${JSON.stringify(styleIds)});\n` +
             code,
           map: null,
         };

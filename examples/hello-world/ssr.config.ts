@@ -10,7 +10,7 @@
  * Engine-owned defaults such as HTTP listener details, port fallback, timeouts, compression,
  * sitemap/robots switches and cache backend are intentionally not public config.
  */
-import type { ISRConfig } from '@novel-isr/engine';
+import type { ISRConfig } from 'isr-engine';
 
 export default {
   renderMode: 'isr',

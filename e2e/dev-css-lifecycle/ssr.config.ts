@@ -1,4 +1,4 @@
-import type { ISRConfig } from '@novel-isr/engine';
+import type { ISRConfig } from 'isr-engine';
 
 export default {
   renderMode: 'ssr',

@@ -2,7 +2,7 @@
  * ISR 插件工厂 —— 组合 @vitejs/plugin-rsc + ISR 缓存中间件
  *
  * 真·开箱即用：
- *   import { createIsrPlugin } from '@novel-isr/engine';
+ *   import { createIsrPlugin } from 'isr-engine';
  *   export default defineConfig({ plugins: [...createIsrPlugin()] });
  *
  * 用户**唯一必需的应用代码**：`<root>/src/root.tsx`
@@ -44,10 +44,10 @@ import type { ISRConfig } from '../types';
 const logger = Logger.getInstance();
 
 const VIRTUAL_ENTRY_IDS = {
-  client: 'virtual:novel-isr/client-entry',
-  rsc: 'virtual:novel-isr/rsc-entry',
-  runtime: 'virtual:novel-isr/runtime-config',
-  clientRuntime: 'virtual:novel-isr/client-runtime-config',
+  client: 'virtual:isr-engine/client-entry',
+  rsc: 'virtual:isr-engine/rsc-entry',
+  runtime: 'virtual:isr-engine/runtime-config',
+  clientRuntime: 'virtual:isr-engine/client-runtime-config',
 } as const;
 
 const RESOLVED_VIRTUAL_PREFIX = '\0';
@@ -105,9 +105,7 @@ function resolveEngineDefaultsDir(): string {
   for (const c of candidates) {
     if (fs.existsSync(c)) return c;
   }
-  throw new Error(
-    `[@novel-isr/engine] 找不到 engine defaults 目录（候选：${candidates.join(' / ')}）`
-  );
+  throw new Error(`[isr-engine] 找不到 engine defaults 目录（候选：${candidates.join(' / ')}）`);
 }
 
 /**
@@ -126,7 +124,7 @@ function resolveEntries(root: string): ResolvedEntries {
     const abs = path.resolve(defaultsDir, file);
     if (!fs.existsSync(abs)) {
       throw new Error(
-        `[@novel-isr/engine] engine 内置 wrapper 缺失：${abs}（请检查 engine 安装是否完整）`
+        `[isr-engine] engine 内置 wrapper 缺失：${abs}（请检查 engine 安装是否完整）`
       );
     }
     return abs;
@@ -136,7 +134,7 @@ function resolveEntries(root: string): ResolvedEntries {
   const appPath = path.resolve(root, 'src/app.tsx');
   if (!fs.existsSync(appPath)) {
     throw new Error(
-      `[@novel-isr/engine] 找不到应用根组件 src/app.tsx，这是 engine 唯一要求的用户文件。\n` +
+      `[isr-engine] 找不到应用根组件 src/app.tsx，这是 engine 唯一要求的用户文件。\n` +
         `请创建 ${appPath} 并 export function App({ url }: { url: URL }) {...}`
     );
   }
@@ -361,7 +359,7 @@ function createEngineDefaultEntriesPlugin(root: string, inlineConfig: Partial<IS
         return `
           import { defineServerEntry } from ${fileImport('runtime/defineServerEntry.tsx')};
           import { applyRuntimeToServerHooks } from ${fileImport('runtime/defineSiteHooks.ts')};
-          import { createAutoServerHooks } from '@novel-isr/engine/auto-observability';
+          import { createAutoServerHooks } from 'isr-engine/auto-observability';
           import userConfig from '@app/_server-config';
           import runtimeConfig from '${VIRTUAL_ENTRY_IDS.runtime}';
 
@@ -526,8 +524,8 @@ function createAppAliasPlugin(root: string): Plugin {
           ],
           exclude: [
             ...clientReferenceDeps,
-            '@novel-isr/engine',
-            '@novel-isr/engine/runtime',
+            'isr-engine',
+            'isr-engine/runtime',
             '@app/_entry',
             '@app/_routes',
             '@app/_client-config',
@@ -602,7 +600,7 @@ export function createIsrPlugin(options: CreateIsrPluginOptions = {}): PluginOpt
   // causal boundary; `enforce: 'post'` alone does not order them after another post hook.
   plugins.push(...devCssLifecycle.afterRsc);
 
-  // 让 `vite build` 自动跑 SSG 预渲染，无需 `novel-isr build` CLI 包一层
+  // 让 `vite build` 自动跑 SSG 预渲染，无需 `isr-engine build` CLI 包一层
   plugins.push(createSsgPostBuildPlugin(userConfig as ISRConfig | undefined));
 
   return plugins;

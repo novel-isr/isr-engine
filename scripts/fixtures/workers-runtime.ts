@@ -1,5 +1,5 @@
-import { toCloudflareWorker } from '@novel-isr/engine/adapters/runtime';
-import { getEdgeContext } from '@novel-isr/engine/runtime';
+import { toCloudflareWorker } from 'isr-engine/adapters/runtime';
+import { getEdgeContext } from 'isr-engine/runtime';
 
 interface Bindings {
   MARKER: string;

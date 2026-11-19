@@ -25,17 +25,17 @@ describe('transformDevCssModule', () => {
     const result = transformDevCssModule(
       VITE_WRAPPER,
       '/workspace/app/src/Card.module.scss',
-      'virtual:novel-isr/dev-style-registry',
+      'virtual:isr-engine/dev-style-registry',
       '/src/Card.module.scss'
     );
 
     expect(result?.code).toContain(
-      '__novel_isr_dev_styles.publish("/src/Card.module.scss", __vite__css);'
+      '__isr_engine_dev_styles.publish("/src/Card.module.scss", __vite__css);'
     );
     expect(result?.code).toContain(
-      'import.meta.hot.prune(() => __novel_isr_dev_styles.prune("/src/Card.module.scss"));'
+      'import.meta.hot.prune(() => __isr_engine_dev_styles.prune("/src/Card.module.scss"));'
     );
-    expect(result?.code).not.toContain('__novel_isr_dev_styles.publish(__vite__id');
+    expect(result?.code).not.toContain('__isr_engine_dev_styles.publish(__vite__id');
   });
 
   it('rejects a mutator-bearing wrapper without an exact browser module mapping', () => {
@@ -43,7 +43,7 @@ describe('transformDevCssModule', () => {
       transformDevCssModule(
         VITE_WRAPPER,
         '/workspace/unknown/Card.module.scss',
-        'virtual:novel-isr/dev-style-registry'
+        'virtual:isr-engine/dev-style-registry'
       )
     ).toThrow(/missing an exact browser module URL from the Vite module graph/i);
   });
@@ -53,7 +53,7 @@ describe('transformDevCssModule', () => {
       transformDevCssModule(
         VITE_WRAPPER.replace('"/src/Card.module.scss"', '"/src/a%3Fb.scss"'),
         '/src/a?b.scss',
-        'virtual:novel-isr/dev-style-registry',
+        'virtual:isr-engine/dev-style-registry',
         '/src/a?b.scss'
       )
     ).toThrow(/stylesheet (?:identity|semantic query).*does not match/i);
@@ -65,17 +65,17 @@ describe('transformDevCssModule', () => {
       const result = transformDevCssModule(
         VITE_WRAPPER.replaceAll('/src/Card.module.scss', id),
         id,
-        'virtual:novel-isr/dev-style-registry'
+        'virtual:isr-engine/dev-style-registry'
       );
 
       expect(result?.code).toContain(
-        'import { devStyleRegistry as __novel_isr_dev_styles } from "virtual:novel-isr/dev-style-registry";'
+        'import { devStyleRegistry as __isr_engine_dev_styles } from "virtual:isr-engine/dev-style-registry";'
       );
       expect(result?.code).toContain(
-        `__novel_isr_dev_styles.publish(${JSON.stringify(id)}, __vite__css);`
+        `__isr_engine_dev_styles.publish(${JSON.stringify(id)}, __vite__css);`
       );
       expect(result?.code).toContain(
-        `import.meta.hot.prune(() => __novel_isr_dev_styles.prune(${JSON.stringify(id)}));`
+        `import.meta.hot.prune(() => __isr_engine_dev_styles.prune(${JSON.stringify(id)}));`
       );
       expect(result?.code).toContain('export default { card: "_card_123" };');
       expect(result?.code).not.toContain('__vite__updateStyle(__vite__id, __vite__css)');
@@ -91,13 +91,13 @@ describe('transformDevCssModule', () => {
         'disposeStyle'
       ),
       '/src/Card.module.scss',
-      'virtual:novel-isr/dev-style-registry'
+      'virtual:isr-engine/dev-style-registry'
     );
 
     expect(result?.code).toContain(
-      '__novel_isr_dev_styles.publish("/src/Card.module.scss", __vite__css);'
+      '__isr_engine_dev_styles.publish("/src/Card.module.scss", __vite__css);'
     );
-    expect(result?.code).toContain('__novel_isr_dev_styles.prune("/src/Card.module.scss")');
+    expect(result?.code).toContain('__isr_engine_dev_styles.prune("/src/Card.module.scss")');
     expect(result?.code).not.toContain('applyStyle(__vite__id, __vite__css)');
     expect(result?.code).not.toContain('disposeStyle(__vite__id)');
   });
@@ -106,13 +106,13 @@ describe('transformDevCssModule', () => {
     const result = transformDevCssModule(
       VITE_WRAPPER.replace('"/@vite/client"', '"/app/@vite/client"'),
       '/src/Card.module.scss',
-      'virtual:novel-isr/dev-style-registry'
+      'virtual:isr-engine/dev-style-registry'
     );
 
     expect(result?.code).toContain(
-      '__novel_isr_dev_styles.publish("/src/Card.module.scss", __vite__css);'
+      '__isr_engine_dev_styles.publish("/src/Card.module.scss", __vite__css);'
     );
-    expect(result?.code).toContain('__novel_isr_dev_styles.prune("/src/Card.module.scss")');
+    expect(result?.code).toContain('__isr_engine_dev_styles.prune("/src/Card.module.scss")');
   });
 
   it.each([
@@ -132,7 +132,7 @@ describe('transformDevCssModule', () => {
           ${mutatorCall}
         `,
         '/src/Card.module.scss',
-        'virtual:novel-isr/dev-style-registry'
+        'virtual:isr-engine/dev-style-registry'
       )
     ).toThrow(/Vite development CSS wrapper compatibility error.*\/src\/Card\.module\.scss/);
   });
@@ -152,7 +152,7 @@ describe('transformDevCssModule', () => {
           export default { card: "_card_123" };
         `,
         '/src/Card.module.scss',
-        'virtual:novel-isr/dev-style-registry'
+        'virtual:isr-engine/dev-style-registry'
       )
     ).toThrow(/Vite development CSS wrapper compatibility error.*\/src\/Card\.module\.scss/);
   });
@@ -161,13 +161,13 @@ describe('transformDevCssModule', () => {
     const result = transformDevCssModule(
       VITE_BUNDLED_WRAPPER,
       '/src/Card.module.scss',
-      'virtual:novel-isr/dev-style-registry'
+      'virtual:isr-engine/dev-style-registry'
     );
 
     expect(result?.code).toContain(
-      '__novel_isr_dev_styles.publish("/src/Card.module.scss", __vite__css);'
+      '__isr_engine_dev_styles.publish("/src/Card.module.scss", __vite__css);'
     );
-    expect(result?.code).toContain('__novel_isr_dev_styles.prune("/src/Card.module.scss")');
+    expect(result?.code).toContain('__isr_engine_dev_styles.prune("/src/Card.module.scss")');
   });
 
   it('rejects unsupported Vite bundled-development mutator access', () => {
@@ -178,7 +178,7 @@ describe('transformDevCssModule', () => {
           mutators.updateStyle("/src/Card.module.scss", ".card{color:green}");
         `,
         '/src/Card.module.scss',
-        'virtual:novel-isr/dev-style-registry'
+        'virtual:isr-engine/dev-style-registry'
       )
     ).toThrow(/Vite development CSS wrapper compatibility error.*\/src\/Card\.module\.scss/);
   });
@@ -198,7 +198,7 @@ describe('transformDevCssModule', () => {
     ],
   ])('rejects %s', (_description, code) => {
     expect(() =>
-      transformDevCssModule(code, '/src/Card.module.scss', 'virtual:novel-isr/dev-style-registry')
+      transformDevCssModule(code, '/src/Card.module.scss', 'virtual:isr-engine/dev-style-registry')
     ).toThrow(/Vite development CSS wrapper compatibility error.*\/src\/Card\.module\.scss/);
   });
 
@@ -207,7 +207,7 @@ describe('transformDevCssModule', () => {
       transformDevCssModule(
         `${VITE_BUNDLED_WRAPPER}\nimport.meta.hot._internal.updateStyle(__vite__id, ".extra{color:red}");`,
         '/src/Card.module.scss',
-        'virtual:novel-isr/dev-style-registry'
+        'virtual:isr-engine/dev-style-registry'
       )
     ).toThrow(/Vite development CSS wrapper compatibility error.*\/src\/Card\.module\.scss/);
   });
@@ -217,7 +217,7 @@ describe('transformDevCssModule', () => {
       transformDevCssModule(
         `${VITE_BUNDLED_WRAPPER}\nimport.meta.hot["_internal"].removeStyle(__vite__id);`,
         '/src/Card.module.scss',
-        'virtual:novel-isr/dev-style-registry'
+        'virtual:isr-engine/dev-style-registry'
       )
     ).toThrow(/Vite development CSS wrapper compatibility error.*\/src\/Card\.module\.scss/);
   });
@@ -227,14 +227,14 @@ describe('transformDevCssModule', () => {
       transformDevCssModule(
         VITE_WRAPPER,
         '/src/Card.module.scss?direct',
-        'virtual:novel-isr/dev-style-registry'
+        'virtual:isr-engine/dev-style-registry'
       )
     ).toBeUndefined();
   });
 
   it('does not transform unrelated JavaScript modules', () => {
     expect(
-      transformDevCssModule(VITE_WRAPPER, '/src/Card.tsx', 'virtual:novel-isr/dev-style-registry')
+      transformDevCssModule(VITE_WRAPPER, '/src/Card.tsx', 'virtual:isr-engine/dev-style-registry')
     ).toBeUndefined();
   });
 
@@ -243,7 +243,7 @@ describe('transformDevCssModule', () => {
       transformDevCssModule(
         'export default { card: "_card_123" };',
         '/src/Card.module.scss',
-        'virtual:novel-isr/dev-style-registry'
+        'virtual:isr-engine/dev-style-registry'
       )
     ).toBeUndefined();
   });
@@ -253,7 +253,7 @@ describe('transformDevCssModule', () => {
       transformDevCssModule(
         VITE_WRAPPER.replace('import.meta.hot.prune(() => __vite__removeStyle(__vite__id));', ''),
         '/src/Card.module.scss',
-        'virtual:novel-isr/dev-style-registry'
+        'virtual:isr-engine/dev-style-registry'
       )
     ).toThrow(/Vite development CSS wrapper compatibility error.*\/src\/Card\.module\.scss/);
   });
@@ -276,7 +276,7 @@ describe('transformDevCssModule', () => {
     ],
   ])('rejects wrappers with %s', (_description, code) => {
     expect(() =>
-      transformDevCssModule(code, '/src/Card.module.scss', 'virtual:novel-isr/dev-style-registry')
+      transformDevCssModule(code, '/src/Card.module.scss', 'virtual:isr-engine/dev-style-registry')
     ).toThrow(/Vite development CSS wrapper compatibility error.*\/src\/Card\.module\.scss/);
   });
 });

@@ -4,7 +4,7 @@ import type { ISRContextData } from '../types/ISRContext';
 // 复用 ISRContextData 类型，确保 ALS 中的数据结构与 ISRContext.data 一致
 export type RequestContextState = ISRContextData;
 
-const REQUEST_CONTEXT_KEY = '__NOVEL_ISR_REQUEST_CONTEXT__';
+const REQUEST_CONTEXT_KEY = '__ISR_ENGINE_REQUEST_CONTEXT__';
 
 function getGlobalRequestContext(): AsyncLocalStorage<RequestContextState> {
   const globalState = globalThis as typeof globalThis & {

@@ -4,7 +4,7 @@
  * 用户态写法（覆盖 engine 默认行为）：
  *
  *   // src/entry.server.tsx
- *   import { defineServerEntry } from '@novel-isr/engine/server-entry';
+ *   import { defineServerEntry } from 'isr-engine/server-entry';
  *   export default defineServerEntry({
  *     beforeRequest: (req) => ({ traceId: crypto.randomUUID() }),
  *     onResponse:    (res, ctx) => res.headers.set('x-trace-id', ctx.traceId),

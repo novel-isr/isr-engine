@@ -8,20 +8,20 @@ describe('RSC request protocol', () => {
       devStyleGeneration: 7,
     });
 
-    expect(request.headers.get('x-novel-isr-dev-style-generation')).toBe('7');
+    expect(request.headers.get('x-isr-engine-dev-style-generation')).toBe('7');
     expect(parseRenderRequest(request).devStyleGeneration).toBe(7);
   });
 
   it('omits the development style protocol when no generation is supplied', () => {
     const request = createRscRenderRequest('http://localhost:3000/articles');
 
-    expect(request.headers.has('x-novel-isr-dev-style-generation')).toBe(false);
+    expect(request.headers.has('x-isr-engine-dev-style-generation')).toBe(false);
     expect(parseRenderRequest(request).devStyleGeneration).toBeUndefined();
   });
 
   it('rejects malformed development style generations', () => {
     const request = new Request('http://localhost:3000/articles_.rsc', {
-      headers: { 'x-novel-isr-dev-style-generation': '7x' },
+      headers: { 'x-isr-engine-dev-style-generation': '7x' },
     });
 
     expect(() => parseRenderRequest(request)).toThrow(/invalid development style generation/i);

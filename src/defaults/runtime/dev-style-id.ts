@@ -1,4 +1,4 @@
-export const DEV_STYLE_TRANSPORT_GENERATION_PARAM = '__novel_isr_style_generation';
+export const DEV_STYLE_TRANSPORT_GENERATION_PARAM = '__isr_engine_style_generation';
 
 const TRANSPORT_QUERY_KEYS = new Set([
   'direct',
@@ -26,12 +26,15 @@ function canonicalUrl(value: string, baseUrl: string): URL {
 
 export function canonicalizeDevStyleSemanticQuery(
   value: string,
-  baseUrl = 'http://novel-isr.local/'
+  baseUrl = 'http://isr-engine.local/'
 ): string {
   return canonicalUrl(value, baseUrl).search;
 }
 
-export function canonicalizeDevStyleId(value: string, baseUrl = 'http://novel-isr.local/'): string {
+export function canonicalizeDevStyleId(
+  value: string,
+  baseUrl = 'http://isr-engine.local/'
+): string {
   const url = canonicalUrl(value, baseUrl);
   return `${canonicalizePathname(url.pathname)}${url.search}`;
 }
@@ -43,7 +46,7 @@ export function styleIdsMatch(left: string, right: string, baseUrl?: string): bo
 export function withDevStyleTransportGeneration(
   value: string,
   generation: number,
-  baseUrl = 'http://novel-isr.local/'
+  baseUrl = 'http://isr-engine.local/'
 ): string {
   if (!Number.isSafeInteger(generation) || generation < 0) {
     throw new Error(`Invalid development stylesheet generation: ${generation}.`);
@@ -58,7 +61,7 @@ export function withDevStyleTransportGeneration(
 export function createDevStyleTransportHref(
   value: string,
   generation: number,
-  baseUrl = 'http://novel-isr.local/'
+  baseUrl = 'http://isr-engine.local/'
 ): string {
   return withDevStyleTransportGeneration(
     createDevStyleStylesheetHref(value, baseUrl),
@@ -69,7 +72,7 @@ export function createDevStyleTransportHref(
 
 export function createDevStyleStylesheetHref(
   value: string,
-  baseUrl = 'http://novel-isr.local/'
+  baseUrl = 'http://isr-engine.local/'
 ): string {
   const canonical = canonicalizeDevStyleId(value, baseUrl);
   const url = new URL(canonical, baseUrl);
@@ -78,7 +81,7 @@ export function createDevStyleStylesheetHref(
 
 export function getDevStyleTransportGeneration(
   value: string,
-  baseUrl = 'http://novel-isr.local/'
+  baseUrl = 'http://isr-engine.local/'
 ): number | undefined {
   const encoded = new URL(value, baseUrl).searchParams.get(DEV_STYLE_TRANSPORT_GENERATION_PARAM);
   if (encoded === null) return undefined;

@@ -2,7 +2,7 @@
  * <Image> —— next/image 对标的图片组件，自动处理 LCP / CLS / 多分辨率。
  *
  * 用法：
- *   import { Image } from '@novel-isr/engine/image';
+ *   import { Image } from 'isr-engine/image';
  *
  *   // 内部资产（走 /_/img sharp 优化端点）
  *   <Image src="/covers/book-1.jpg" width={800} height={600} alt="..." />

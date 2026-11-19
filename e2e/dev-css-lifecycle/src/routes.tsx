@@ -1,4 +1,4 @@
-import { defineRoutes } from '@novel-isr/engine/runtime';
+import { defineRoutes } from 'isr-engine/runtime';
 
 export const { routes } = defineRoutes({
   routes: [

@@ -1,5 +1,5 @@
 /**
- * Novel ISR Engine —— 公开入口
+ * ISR Engine —— 公开入口
  *
  * 定位：ISR / SSG / Fallback / Route / Metrics 编排层 —— 构建于 `@vitejs/plugin-rsc` 之上
  *

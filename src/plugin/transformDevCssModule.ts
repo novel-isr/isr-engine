@@ -375,12 +375,12 @@ export function transformDevCssModule(
     {
       start: updateStyleCall.getStart(source),
       end: updateStyleCall.getEnd(),
-      value: `__novel_isr_dev_styles.publish(${JSON.stringify(canonicalBrowserStyleId)}, ${updateStyleCall.arguments[1]?.getText(source)})`,
+      value: `__isr_engine_dev_styles.publish(${JSON.stringify(canonicalBrowserStyleId)}, ${updateStyleCall.arguments[1]?.getText(source)})`,
     },
     {
       start: removeStyleCall.getStart(source),
       end: removeStyleCall.getEnd(),
-      value: `__novel_isr_dev_styles.prune(${JSON.stringify(canonicalBrowserStyleId)})`,
+      value: `__isr_engine_dev_styles.prune(${JSON.stringify(canonicalBrowserStyleId)})`,
     },
   ];
 
@@ -393,7 +393,7 @@ export function transformDevCssModule(
   }
 
   return {
-    code: `import { devStyleRegistry as __novel_isr_dev_styles } from ${JSON.stringify(registryId)};\n${transformed}`,
+    code: `import { devStyleRegistry as __isr_engine_dev_styles } from ${JSON.stringify(registryId)};\n${transformed}`,
     map: null,
   };
 }

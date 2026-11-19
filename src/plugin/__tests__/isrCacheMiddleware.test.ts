@@ -271,7 +271,7 @@ describe('isrCacheMiddleware —— dev stylesheet transport representations', (
     fx.renderImpl.current = (req, res) => {
       callCount++;
       res.setHeader('content-type', 'text/x-component;charset=utf-8');
-      const generation = req.headers['x-novel-isr-dev-style-generation'];
+      const generation = req.headers['x-isr-engine-dev-style-generation'];
       if (generation === '-1') {
         res.statusCode = 400;
         res.end('Invalid development style generation in RSC request.');
@@ -286,19 +286,19 @@ describe('isrCacheMiddleware —— dev stylesheet transport representations', (
     expect(prefetch.body).toBe('call=1;generation=undefined');
 
     const generation1 = await httpGet(`${fx.baseUrl}/page_.rsc`, {
-      'x-novel-isr-dev-style-generation': '1',
+      'x-isr-engine-dev-style-generation': '1',
     });
     expect(generation1.cacheStatus).toBe('BYPASS');
     expect(generation1.body).toBe('call=2;generation=1');
 
     const repeatedGeneration1 = await httpGet(`${fx.baseUrl}/page_.rsc`, {
-      'x-novel-isr-dev-style-generation': '1',
+      'x-isr-engine-dev-style-generation': '1',
     });
     expect(repeatedGeneration1.cacheStatus).toBe('BYPASS');
     expect(repeatedGeneration1.body).toBe('call=3;generation=1');
 
     const generation2 = await httpGet(`${fx.baseUrl}/page_.rsc`, {
-      'x-novel-isr-dev-style-generation': '2',
+      'x-isr-engine-dev-style-generation': '2',
     });
     expect(generation2.cacheStatus).toBe('BYPASS');
     expect(generation2.body).toBe('call=4;generation=2');
@@ -308,7 +308,7 @@ describe('isrCacheMiddleware —— dev stylesheet transport representations', (
     expect(cachedPrefetch.body).toBe('call=1;generation=undefined');
 
     const malformed = await httpGet(`${fx.baseUrl}/page_.rsc`, {
-      'x-novel-isr-dev-style-generation': '-1',
+      'x-isr-engine-dev-style-generation': '-1',
     });
     expect(malformed.cacheStatus).toBe('BYPASS');
     expect(malformed.status).toBe(400);
@@ -326,10 +326,10 @@ describe('isrCacheMiddleware —— dev stylesheet transport representations', (
     };
 
     const first = await httpGet(`${fx.baseUrl}/page`, {
-      'x-novel-isr-dev-style-generation': '1',
+      'x-isr-engine-dev-style-generation': '1',
     });
     const second = await httpGet(`${fx.baseUrl}/page`, {
-      'x-novel-isr-dev-style-generation': '2',
+      'x-isr-engine-dev-style-generation': '2',
     });
 
     expect(first.cacheStatus).toBe('MISS');
@@ -352,7 +352,7 @@ describe('isrCacheMiddleware —— production stylesheet transport isolation', 
 
       const first = await httpGet(`${fx.baseUrl}/page_.rsc`);
       const withDevelopmentHeader = await httpGet(`${fx.baseUrl}/page_.rsc`, {
-        'x-novel-isr-dev-style-generation': '1',
+        'x-isr-engine-dev-style-generation': '1',
       });
 
       expect(first.cacheStatus).toBe('MISS');

@@ -3,7 +3,7 @@
  *
  * 用户态：
  *   import tracer from 'dd-trace';
- *   import { createDatadogServerHooks } from '@novel-isr/engine/adapters/observability';
+ *   import { createDatadogServerHooks } from 'isr-engine/adapters/observability';
  *   tracer.init({ service: 'my-app', env: 'prod' });
  *   export default createDatadogServerHooks({ tracer });
  *

@@ -13,7 +13,7 @@
     "skipLibCheck": true,
     "paths": {
       "@/*": ["./src/*"],
-      "@novel-isr/engine/adapters/observability": ["./src/adapters/observability/index.ts"]
+      "isr-engine/adapters/observability": ["./src/adapters/observability/index.ts"]
     }
   },
   "include": ["src/**/*.ts", "src/**/*.tsx"],

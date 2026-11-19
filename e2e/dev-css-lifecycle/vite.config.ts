@@ -1,4 +1,4 @@
-import { createIsrPlugin } from '@novel-isr/engine';
+import { createIsrPlugin } from 'isr-engine';
 import { defineConfig } from 'vite';
 
 export default defineConfig({

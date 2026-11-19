@@ -72,7 +72,7 @@ export function createImagePlugin(
   dependencies: ImageProcessingDependencies = {}
 ): Plugin {
   return {
-    name: 'novel-isr:image-optimization',
+    name: 'isr-engine:image-optimization',
     configureServer(server) {
       // Development resolves source assets under Vite's filesystem policy.
       server.middlewares.use(

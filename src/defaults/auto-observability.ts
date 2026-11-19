@@ -15,8 +15,8 @@
  */
 // 不引 Logger（它的 alias 在用户 RSC 上下文不解析）；用 console.* 直出
 const logger = {
-  info: (...a: unknown[]) => console.log('[novel-isr:auto-obs]', ...a),
-  warn: (...a: unknown[]) => console.warn('[novel-isr:auto-obs]', ...a),
+  info: (...a: unknown[]) => console.log('[isr-engine:auto-obs]', ...a),
+  warn: (...a: unknown[]) => console.warn('[isr-engine:auto-obs]', ...a),
 };
 
 /**
@@ -129,10 +129,10 @@ function hasAnyHook(hook: AutoServerHooks): boolean {
  * - 三个 hook factory 在 dist/ 里通过 `./adapters/observability` 子路径已公开 export
  * - 用 subpath 既避免相对路径依赖（src/adapters/* 不在 npm tarball 里），也复用编译产物
  */
-type ObservabilityAdapters = typeof import('@novel-isr/engine/adapters/observability');
+type ObservabilityAdapters = typeof import('isr-engine/adapters/observability');
 
 async function loadObservability(): Promise<ObservabilityAdapters> {
-  return (await import('@novel-isr/engine/adapters/observability')) as ObservabilityAdapters;
+  return (await import('isr-engine/adapters/observability')) as ObservabilityAdapters;
 }
 
 async function loadSentry(dsn: string): Promise<AutoServerHooks> {
@@ -185,7 +185,7 @@ async function loadOtel(endpoint: string): Promise<AutoServerHooks> {
         getTracer: (name: string) => Parameters<typeof createOtelServerHooks>[0]['tracer'];
       };
     };
-    const tracer = otelApi.trace.getTracer(process.env.OTEL_SERVICE_NAME ?? 'novel-isr-app');
+    const tracer = otelApi.trace.getTracer(process.env.OTEL_SERVICE_NAME ?? 'isr-engine-app');
     logger.info(`🛰️  telemetry: OTel auto-wired (endpoint=${endpoint})`);
     return createOtelServerHooks({ tracer }) as AutoServerHooks;
   } catch (err) {

@@ -4,7 +4,7 @@
  * 职责：
  *   1. 加载用户项目的 vite.config.ts（含 createIsrPlugin() 返回的 RSC/React/Cache 插件）
  *   2. 以 middleware 模式创建 Vite dev server，供 Express 挂载
- *   3. 确保 ssr.noExternal 包含 `@novel-isr/engine` —— 防止子路径解析失败
+ *   3. 确保 ssr.noExternal 包含 `isr-engine` —— 防止子路径解析失败
  */
 
 import net from 'node:net';
@@ -93,7 +93,7 @@ export async function createViteDevServer(): Promise<ViteDevServer> {
     if (loadResult?.config) {
       const userConfig = loadResult.config;
 
-      // 确保 ssr.noExternal 包含引擎自身（防止 @novel-isr/engine 子路径解析失败）
+      // 确保 ssr.noExternal 包含引擎自身（防止 isr-engine 子路径解析失败）
       const userSsrNoExternal = userConfig.ssr?.noExternal;
       const ssrNoExternal = Array.isArray(userSsrNoExternal)
         ? [...userSsrNoExternal]
@@ -101,8 +101,8 @@ export async function createViteDevServer(): Promise<ViteDevServer> {
           ? [userSsrNoExternal]
           : [];
 
-      if (!ssrNoExternal.includes('@novel-isr/engine')) {
-        ssrNoExternal.push('@novel-isr/engine');
+      if (!ssrNoExternal.includes('isr-engine')) {
+        ssrNoExternal.push('isr-engine');
       }
 
       const finalConfig = mergeConfig(userConfig, {
@@ -119,7 +119,7 @@ export async function createViteDevServer(): Promise<ViteDevServer> {
       logger.warn('未找到 vite.config.ts —— 消费者必须在项目根下提供配置，否则 RSC 不工作');
       viteServer = await createServer({
         ...engineOverrides,
-        ssr: { noExternal: ['@novel-isr/engine'] },
+        ssr: { noExternal: ['isr-engine'] },
       });
     }
 
