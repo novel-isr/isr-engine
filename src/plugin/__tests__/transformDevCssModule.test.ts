@@ -61,9 +61,25 @@ describe('transformDevCssModule', () => {
     ).toThrow(/stylesheet (?:identity|semantic query).*does not match/i);
   });
 
-  it.each(['/src/Card.css', '/src/Card.scss', '/src/Card.module.scss'])(
+  it.each([
+    [
+      '/src/Card.css',
+      '__isr_engine_dev_styles.publish("/src/Card.css", __vite__css);',
+      'import.meta.hot.prune(() => __isr_engine_dev_styles.prune("/src/Card.css"));',
+    ],
+    [
+      '/src/Card.scss',
+      '__isr_engine_dev_styles.publish("/src/Card.scss", __vite__css);',
+      'import.meta.hot.prune(() => __isr_engine_dev_styles.prune("/src/Card.scss"));',
+    ],
+    [
+      '/src/Card.module.scss',
+      '__isr_engine_dev_styles.publish("/src/Card.module.scss", __vite__css);',
+      'import.meta.hot.prune(() => __isr_engine_dev_styles.prune("/src/Card.module.scss"));',
+    ],
+  ])(
     'routes Vite DOM mutations for %s through the development style registry',
-    id => {
+    (id, publishStatement, pruneStatement) => {
       const result = transformDevCssModule(
         createViteWrapper(id),
         id,
@@ -73,12 +89,8 @@ describe('transformDevCssModule', () => {
       expect(result?.code).toContain(
         'import { devStyleRegistry as __isr_engine_dev_styles } from "virtual:isr-engine/dev-style-registry";'
       );
-      expect(result?.code).toContain(
-        `__isr_engine_dev_styles.publish(${JSON.stringify(id)}, __vite__css);`
-      );
-      expect(result?.code).toContain(
-        `import.meta.hot.prune(() => __isr_engine_dev_styles.prune(${JSON.stringify(id)}));`
-      );
+      expect(result?.code).toContain(publishStatement);
+      expect(result?.code).toContain(pruneStatement);
       expect(result?.code).toContain('export default { card: "_card_123" };');
       expect(result?.code).not.toContain('__vite__updateStyle(__vite__id, __vite__css)');
       expect(result?.code).not.toContain('__vite__removeStyle(__vite__id)');
