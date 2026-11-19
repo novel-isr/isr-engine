@@ -64,6 +64,36 @@ test('data and Blob images load under both development and production image poli
   }
 });
 
+test('SSR controls become actionable only after their client modules hydrate', async ({ page }) => {
+  let releaseModules!: () => void;
+  let reportBlockedModule!: () => void;
+  const modulesReady = new Promise<void>(resolve => {
+    releaseModules = resolve;
+  });
+  const moduleBlocked = new Promise<void>(resolve => {
+    reportBlockedModule = resolve;
+  });
+  await page.route(/\/assets\/.*\.js(?:\?|$)/, async route => {
+    reportBlockedModule();
+    await modulesReady;
+    await route.continue();
+  });
+  try {
+    await page.goto('/static?hydration-contract=1', { waitUntil: 'commit' });
+    const button = page.getByRole('button', { name: 'Count 0' });
+    await expect(button).toBeVisible();
+    await moduleBlocked;
+    expect(await button.isDisabled()).toBe(true);
+    releaseModules();
+    await expect(button).toBeEnabled();
+    await button.click();
+    await expect(page.getByRole('button', { name: 'Count 1' })).toBeVisible();
+  } finally {
+    releaseModules();
+    await page.unrouteAll({ behavior: 'wait' });
+  }
+});
+
 test('SSG with a query hydrates under its CSP and supports RSC navigation', async ({ page }) => {
   const response = await page.goto('/static?search=a.b');
   expect(response?.headers()['x-served-by']).toBe('ssg-runtime');
