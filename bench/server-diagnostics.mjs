@@ -76,8 +76,13 @@ if (output) {
     if (samples.length > 600) samples.shift();
   }, 1000);
   interval.unref();
+  const flush = () => {
+    writeFileSync(output, JSON.stringify({ accepted, requests, finished, aborted, samples }));
+  };
+  // Preserve evidence even if the engine cannot drain before CI's forced kill.
+  process.once('SIGTERM', flush);
   process.once('exit', () => {
     clearInterval(interval);
-    writeFileSync(output, JSON.stringify({ accepted, requests, finished, aborted, samples }));
+    flush();
   });
 }
