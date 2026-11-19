@@ -248,8 +248,7 @@ export interface RuntimeTelemetryOtelExporterConfig {
 }
 
 export type RuntimeTelemetryExporterConfig =
-  | RuntimeTelemetryDatadogExporterConfig
-  | RuntimeTelemetryOtelExporterConfig;
+  RuntimeTelemetryDatadogExporterConfig | RuntimeTelemetryOtelExporterConfig;
 
 export interface RuntimeTelemetryIntegrationsConfig {
   /**
@@ -385,11 +384,7 @@ export const FallbackChain: Record<RenderModeType, InternalStrategyType[]> = {
 // 主配置接口
 /** Express-compatible policy for determining whether a remote proxy is trusted. */
 export type ProxyTrustPolicy =
-  | boolean
-  | number
-  | string
-  | string[]
-  | ((address: string, hop: number) => boolean);
+  boolean | number | string | string[] | ((address: string, hop: number) => boolean);
 
 export interface ISRConfig {
   /** 全局默认渲染模式 */

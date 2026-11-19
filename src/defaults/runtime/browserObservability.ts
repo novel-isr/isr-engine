@@ -569,8 +569,7 @@ function installFallbackWebVitals(
   };
 
   const nav = performance.getEntriesByType('navigation')[0] as
-    | PerformanceNavigationTiming
-    | undefined;
+    PerformanceNavigationTiming | undefined;
   if (nav) {
     base.enqueue({
       name: 'web_vital',
@@ -678,8 +677,7 @@ function currentRoute(): string | undefined {
 function currentNavigationType(): string | undefined {
   if (!isBrowser() || typeof performance.getEntriesByType !== 'function') return undefined;
   const nav = performance.getEntriesByType('navigation')[0] as
-    | PerformanceNavigationTiming
-    | undefined;
+    PerformanceNavigationTiming | undefined;
   return typeof nav?.type === 'string' ? nav.type : undefined;
 }
 

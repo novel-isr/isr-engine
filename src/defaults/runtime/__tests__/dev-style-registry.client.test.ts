@@ -26,8 +26,7 @@ interface GenerationStateSnapshot {
 
 function generationState(registry: DevStyleRegistry): GenerationStateSnapshot {
   const inspect = Reflect.get(registry, DEV_STYLE_REGISTRY_INSPECT) as
-    | (() => GenerationStateSnapshot)
-    | undefined;
+    (() => GenerationStateSnapshot) | undefined;
   expect(inspect).toBeTypeOf('function');
   return inspect!();
 }
