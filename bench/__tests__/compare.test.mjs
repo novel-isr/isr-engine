@@ -54,7 +54,7 @@ describe('bench/compare.mjs', () => {
     expect(result.status).toBe(1);
 
     expect(output).toContain('baseline protocol is incompatible');
-    expect(output).toContain('bench_protocol: baseline=<missing> current=3');
+    expect(output).toContain('bench_protocol: baseline=<missing> current=4');
     expect(output).toContain('runner_id: baseline=<missing> current=unit-runner');
   });
 
@@ -118,7 +118,7 @@ describe('bench/compare.mjs', () => {
     expect(result.stderr).toContain('current bench result is unhealthy');
   });
 
-  it('rejects autocannon errors by default and accepts an explicit budget', () => {
+  it('rejects benchmark errors by default and accepts an explicit budget', () => {
     const dir = mkdtempSync(path.join(tmpdir(), 'bench-compare-'));
     const baselinePath = writeBench(dir, 'baseline.json', [
       row({ path: '/', connections: 1000, qps: 2_000, p95: 4 }),
@@ -145,7 +145,7 @@ describe('bench/compare.mjs', () => {
     expect(strictResult.stderr).toContain('errors=3 (timeouts=0)');
   });
 
-  it('counts timeouts as a subset of autocannon errors rather than adding them twice', () => {
+  it('counts timeouts as a subset of total errors rather than adding them twice', () => {
     const dir = mkdtempSync(path.join(tmpdir(), 'bench-compare-'));
     const baselinePath = writeBench(dir, 'baseline.json', [
       row({ path: '/', connections: 1000, qps: 2_000, p95: 4 }),
@@ -234,6 +234,52 @@ describe('bench/compare.mjs', () => {
     expect(spawnSync(process.execPath, [comparePath, base, current]).status).toBe(1);
   });
 
+  it.each([
+    undefined,
+    { primed_connections: 9, setup_ms: 1 },
+    { primed_connections: 10, setup_ms: -1 },
+    { primed_connections: 10, setup_ms: 10001 },
+  ])('rejects throughput recorded without a fully verified connection pool: %j', startup => {
+    const dir = mkdtempSync(path.join(tmpdir(), 'bench-compare-'));
+    const valid = row({ path: '/', connections: 10, qps: 2000, p95: 4 });
+    const base = writeBench(dir, 'base.json', [valid]);
+    const current = writeBench(dir, 'current.json', [{ ...valid, startup }]);
+    const result = spawnSync(process.execPath, [comparePath, base, current], { encoding: 'utf8' });
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain('connection pool was not fully verified');
+  });
+
+  it.each([
+    { node: 'v22.21.1' },
+    { load_generator: 'autocannon' },
+    { connection_setup: 'unverified-tcp-connect' },
+    { request_timeout_ms: 20000 },
+    { setup_timeout_ms: 20000 },
+  ])('rejects matching reports that violate protocol 4: %j', meta => {
+    const dir = mkdtempSync(path.join(tmpdir(), 'bench-compare-'));
+    const rows = [row({ path: '/', connections: 10, qps: 2000, p95: 4 })];
+    const base = writeBench(dir, 'base.json', rows, meta);
+    const current = writeBench(dir, 'current.json', rows, meta);
+    const result = spawnSync(process.execPath, [comparePath, base, current], { encoding: 'utf8' });
+    expect(result.status).toBe(1);
+    expect(result.stdout).toContain('protocol 4 requires Node 24.15.0');
+  });
+
+  it.each([undefined, { connected_at_start: 10, connected_at_end: 9 }])(
+    'rejects a report missing its verified connection pool at cleanup: %j',
+    pool => {
+      const dir = mkdtempSync(path.join(tmpdir(), 'bench-compare-'));
+      const valid = row({ path: '/', connections: 10, qps: 2000, p95: 4 });
+      const base = writeBench(dir, 'base.json', [valid]);
+      const current = writeBench(dir, 'current.json', [{ ...valid, pool }]);
+      const result = spawnSync(process.execPath, [comparePath, base, current], {
+        encoding: 'utf8',
+      });
+      expect(result.status).toBe(1);
+      expect(result.stderr).toContain('verified connection pool was lost');
+    }
+  );
+
   it('does not produce Infinity when baseline p95 is zero', () => {
     const dir = mkdtempSync(path.join(tmpdir(), 'bench-compare-'));
     const baselinePath = writeBench(dir, 'baseline.json', [
@@ -292,7 +338,11 @@ function writeBench(dir, filename, results, meta = {}) {
     JSON.stringify({
       meta: {
         timestamp: '2026-05-04T00:00:00.000Z',
-        bench_protocol: 3,
+        bench_protocol: 4,
+        load_generator: 'undici',
+        connection_setup: 'verified-response-barrier',
+        request_timeout_ms: 10000,
+        setup_timeout_ms: 10000,
         runner_id: 'unit-runner',
         scenario: 'warm',
         duration_s: 15,
@@ -301,7 +351,7 @@ function writeBench(dir, filename, results, meta = {}) {
         pipelining: 1,
         warmup_s: 3,
         cooldown_ms: 2000,
-        node: 'v22.21.1',
+        node: 'v24.15.0',
         ...meta,
       },
       results,
@@ -315,9 +365,12 @@ function row({ path, connections, qps, p95, non2xxRate = 0, errors = 0, timeouts
     path,
     connections,
     requests_per_sec: qps,
+    requests_total: Math.round(qps * 15),
     latency_p95_ms: p95,
     non_2xx_rate: non2xxRate,
     body_mismatches: 0,
+    startup: { primed_connections: connections, setup_ms: 1 },
+    pool: { connected_at_start: connections, connected_at_end: connections },
     errors,
     timeouts,
   };

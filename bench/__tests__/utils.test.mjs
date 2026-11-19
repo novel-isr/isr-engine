@@ -14,6 +14,9 @@ import { describe, it, expect } from 'vitest';
 import { extractP95 } from '../utils.mjs';
 
 describe('extractP95 —— 优先用 hdr-histogram', () => {
+  it('uses the measured native P95 without percentile interpolation', () => {
+    expect(extractP95({ latency: { p95: 12.34, p90: 10, p97_5: 80 } })).toBe(12.34);
+  });
   it('histogram.getValueAtPercentile(95) 返回有效值时，直接采用', () => {
     const result = {
       latency: {
