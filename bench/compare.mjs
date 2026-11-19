@@ -191,18 +191,27 @@ function collectHealthIssues(results, options) {
     }
     if (row.body_mismatches > 0 || row.regeneration_verified === false)
       issues.push(`${key} semantic health failure`);
+    if (
+      row.startup?.primed_connections !== row.connections ||
+      !Number.isFinite(row.startup?.setup_ms) ||
+      row.startup.setup_ms < 0 ||
+      row.startup.setup_ms > options.meta?.setup_timeout_ms
+    )
+      issues.push(`${key} connection pool was not fully verified before measurement`);
     const non2xxRate = numberOrZero(row.non_2xx_rate);
-    // Autocannon's errors already includes timeouts; the latter is a subset.
+    // Timeouts are a subset of total health errors, not an additional count.
     const errors = numberOrZero(row.errors);
     if (numberOrZero(row.timeouts) > errors) issues.push(`${key} timeouts exceed total errors`);
-    const p95 = Number(row.latency_p95_ms);
-    const qps = Number(row.requests_per_sec);
+    const p95 = row.latency_p95_ms;
+    const qps = row.requests_per_sec;
     if (non2xxRate > options.maxNon2xxRate) {
       issues.push(`${row.path} @${row.connections}c non-2xx=${non2xxRate}%`);
     }
     if (typeof options.maxErrors === 'number' && errors > options.maxErrors) {
       issues.push(`${row.path} @${row.connections}c errors=${errors} (timeouts=${row.timeouts})`);
     }
+    if (!Number.isInteger(row.requests_total) || row.requests_total <= 0)
+      issues.push(`${key} no measured requests`);
     if (!Number.isFinite(qps) || qps <= 0) {
       issues.push(`${row.path} @${row.connections}c invalid QPS=${row.requests_per_sec}`);
     }
@@ -217,8 +226,21 @@ function collectHealthIssues(results, options) {
 
 function collectCompatibilityIssues(baselineMeta = {}, currentMeta = {}) {
   const issues = [];
-  if (baselineMeta.bench_protocol !== 3 || currentMeta.bench_protocol !== 3)
-    issues.push('required bench protocol is 3; remeasure both revisions with the current harness');
+  if (baselineMeta.bench_protocol !== 4 || currentMeta.bench_protocol !== 4)
+    issues.push('required bench protocol is 4; remeasure both revisions with the current harness');
+  for (const meta of [baselineMeta, currentMeta]) {
+    if (
+      meta.bench_protocol === 4 &&
+      (meta.node !== 'v24.15.0' ||
+        meta.load_generator !== 'undici' ||
+        meta.connection_setup !== 'verified-response-barrier' ||
+        meta.request_timeout_ms !== 10000 ||
+        meta.setup_timeout_ms !== 10000)
+    )
+      issues.push(
+        'protocol 4 requires Node 24.15.0 and verified HTTP connection setup with 10s deadlines'
+      );
+  }
   compareRequiredScalar(
     issues,
     'bench_protocol',
@@ -226,6 +248,13 @@ function collectCompatibilityIssues(baselineMeta = {}, currentMeta = {}) {
     currentMeta.bench_protocol
   );
   compareRequiredScalar(issues, 'scenario', baselineMeta.scenario, currentMeta.scenario);
+  for (const field of [
+    'load_generator',
+    'connection_setup',
+    'request_timeout_ms',
+    'setup_timeout_ms',
+  ])
+    compareRequiredScalar(issues, field, baselineMeta[field], currentMeta[field]);
   compareRequiredScalar(issues, 'runner_id', baselineMeta.runner_id, currentMeta.runner_id);
   compareRequiredScalar(issues, 'duration_s', baselineMeta.duration_s, currentMeta.duration_s);
   compareRequiredScalar(issues, 'pipelining', baselineMeta.pipelining, currentMeta.pipelining);

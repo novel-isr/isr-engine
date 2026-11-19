@@ -10,6 +10,8 @@ updates:
     ignore:
       - dependency-name: '@types/node'
         versions: ['>=25.0.0']
+      - dependency-name: semantic-release
+        versions: ['>=26.0.0']
     groups:
       security:
         applies-to: security-updates

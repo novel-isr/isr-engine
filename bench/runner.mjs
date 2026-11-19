@@ -1,10 +1,10 @@
 #!/usr/bin/env node
 /**
- * 多档并发 HTTP 基准测试 —— 用 autocannon 验证 isr-engine 在不同负载下的表现
+ * 多档并发 HTTP 基准测试 —— 用 HTTP/1.1 验证 isr-engine 在不同负载下的表现
  *
  * 流水线：
  *   preflight  → 每条 path 单 GET 校验 2xx，把死配置 fail-fast 暴露
- *   warmup     → 每条 path 短跑 autocannon（让 JIT 稳态 + 把 cache 全填上 HIT）
+ *   warmup     → 每条 path 短跑 HTTP/1.1（让 JIT 稳态 + 把 cache 全填上 HIT）
  *   bench      → 多档并发主测，每档间 cooldown
  *   summary    → 按 path 分组汇总
  *
@@ -26,13 +26,12 @@
  *   1 任一门槛被打破
  *   2 preflight 失败（服务器没起来 / 路径返回 4xx/5xx）
  */
-import autocannon from 'autocannon';
+import { measureHttp } from './http-load.mjs';
 import { writeFileSync } from 'node:fs';
 import os from 'node:os';
-import { createLoadDiagnostics } from './diagnostics.mjs';
 import { extractP95, sleep, verifyBenchBody } from './utils.mjs';
 
-const BENCH_PROTOCOL_VERSION = 3;
+const BENCH_PROTOCOL_VERSION = 4;
 const SCENARIO = process.env.BENCH_SCENARIO ?? 'warm';
 
 // Use a numeric loopback address by default. `localhost` can resolve to both ::1 and 127.0.0.1;
@@ -54,7 +53,7 @@ const P95_BUDGET = process.env.BENCH_P95_BUDGET_MS
 const QPS_FLOOR = process.env.BENCH_QPS_FLOOR ? parseInt(process.env.BENCH_QPS_FLOOR, 10) : null;
 const FAIL_ON_NON_2XX = process.env.BENCH_FAIL_ON_NON_2XX !== '0';
 const PIPELINING = parseInt(process.env.BENCH_PIPELINING ?? '1', 10);
-// Per-path warmup duration（每条 path 单独跑一遍 autocannon 预热；让首次 MISS
+// Per-path warmup duration（每条 path 单独跑一遍 HTTP/1.1 预热；让首次 MISS
 // 不污染主测，并把 ISR cache 全部填上 HIT）。默认 3s，设 0 关闭。
 const WARMUP_SECONDS = parseInt(process.env.BENCH_WARMUP_SECONDS ?? '3', 10);
 // 档间 cooldown：释放上一档的 keep-alive 连接 + 留给 GC / event-loop 恢复的时间。
@@ -66,6 +65,7 @@ const MAX_NON_2XX_RATE = Number(process.env.BENCH_MAX_NON_2XX_RATE ?? '0');
 const RUNNER_ID = process.env.BENCH_RUNNER_ID ?? createRunnerId();
 
 if (
+  process.versions.node !== '24.15.0' ||
   !scenarioPaths[SCENARIO] ||
   TIERS.length === 0 ||
   new Set(TIERS).size !== TIERS.length ||
@@ -132,7 +132,7 @@ if (PREFLIGHT_TIMEOUT_MS > 0) {
   }
 }
 
-// ─── Warmup：每条 path 单独短跑一次 autocannon ───
+// ─── Warmup：每条 path 单独短跑一次 HTTP/1.1 ───
 // 关键：原版只 warmup PATHS[0]，导致 PATHS[1+] 在主测时还要承担首次 MISS。
 // 现在每条 path 都跑 WARMUP_SECONDS，主测开始时所有路径都已稳态 HIT。
 if (WARMUP_SECONDS > 0) {
@@ -140,7 +140,7 @@ if (WARMUP_SECONDS > 0) {
   for (const path of PATHS) {
     const target = `${URL}${path}`;
     process.stdout.write(`   ${target} ... `);
-    await autocannon({
+    const warmup = await measureHttp({
       url: target,
       connections: Math.min(5, TIERS[0]),
       duration: WARMUP_SECONDS,
@@ -148,6 +148,8 @@ if (WARMUP_SECONDS > 0) {
       headers: { accept: 'text/html' },
       verifyBody: verifyBody(path),
     });
+    if (warmup.errors || warmup.mismatches || warmup.non2xx)
+      throw new Error(`unhealthy warmup for ${path}`);
     console.log('done');
   }
 }
@@ -167,24 +169,27 @@ for (const path of PATHS) {
     const target = `${URL}${path}`;
     process.stdout.write(`   ${target}  conns=${conns}  ... `);
     const t0 = Date.now();
-    const diagnostics = createLoadDiagnostics();
-    const r = await autocannon({
+    const r = await measureHttp({
       url: target,
       connections: conns,
       duration: DURATION,
       pipelining: PIPELINING,
       headers: { accept: 'text/html' },
       verifyBody: verifyBody(path),
-      setupClient: diagnostics.setupClient,
+    }).catch(error => {
+      if (!error.result) throw error;
+      console.error(`connection setup failed for ${path}@${conns}: ${error.message}`);
+      return error.result;
     });
     const wallMs = Date.now() - t0;
-    const non2xxRate = r.requests.total > 0 ? r.non2xx / r.requests.total : 0;
+    const non2xxRate = r.health_responses_total > 0 ? r.non2xx / r.health_responses_total : 0;
     const row = {
       path,
       connections: conns,
       duration_s: DURATION,
       wall_ms: wallMs,
       requests_total: r.requests.total,
+      health_responses_total: r.health_responses_total,
       requests_per_sec: Math.round(r.requests.average),
       throughput_mb_s: +(r.throughput.average / 1024 / 1024).toFixed(2),
       latency_avg_ms: +r.latency.average.toFixed(2),
@@ -198,7 +203,8 @@ for (const path of PATHS) {
       timeouts: r.timeouts,
       non_2xx: r.non2xx,
       non_2xx_rate: non2xxRate * 100,
-      diagnostics: diagnostics.finish(),
+      startup: r.startup,
+      diagnostics: r.diagnostics,
     };
     if (SCENARIO === 'regeneration') {
       const response = await fetch(target, {
@@ -270,6 +276,10 @@ if (OUTPUT) {
         meta: {
           bench_protocol: BENCH_PROTOCOL_VERSION,
           scenario: SCENARIO,
+          load_generator: 'undici',
+          connection_setup: 'verified-response-barrier',
+          request_timeout_ms: 10000,
+          setup_timeout_ms: 10000,
           source_revision: process.env.BENCH_SOURCE_REVISION ?? null,
           url: URL,
           runner_id: RUNNER_ID,
@@ -300,6 +310,7 @@ const failed = [];
 for (const r of results) {
   if (
     r.body_mismatches > 0 ||
+    r.startup?.primed_connections !== r.connections ||
     r.regeneration_verified === false ||
     r.errors > MAX_ERRORS ||
     r.requests_total <= 0 ||
