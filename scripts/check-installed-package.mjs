@@ -111,8 +111,19 @@ try {
     import assert from 'node:assert/strict';
     import { createISRApp, invalidatorRunsTotal, loadConfig } from 'isr-engine';
     import { revalidateTag } from 'isr-engine/rsc';
+    import { applyRuntimeToServerHooks } from 'isr-engine/site-hooks';
     process.env.NODE_ENV = 'production';
     const config = await loadConfig();
+    const seoHooks = applyRuntimeToServerHooks({}, {
+      ...config.runtime,
+      services: {},
+      telemetry: false,
+      seo: {
+        dynamicResolvers: [{ pattern: '/*', resolve: ({ params }) => ({ title: params.wildcard }) }],
+      },
+    });
+    const seoMeta = await seoHooks.loadSeoMeta(new Request('https://site.test/work/arcane'));
+    assert.deepEqual(seoMeta, { title: 'work/arcane' });
     config.server.host = '127.0.0.1';
     config.server.port = 0;
     const app = await createISRApp(config);

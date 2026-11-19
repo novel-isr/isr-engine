@@ -361,7 +361,7 @@ describe('admin loaders', () => {
     );
   });
 
-  it('preserves named captures, literal punctuation and declaration order with a wildcard suffix', async () => {
+  it('preserves named captures and literal punctuation with a wildcard suffix', async () => {
     const hooks = applyRuntimeToServerHooks(
       defineAdminSiteHooks(),
       runtime({
