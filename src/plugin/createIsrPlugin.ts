@@ -474,6 +474,17 @@ async function resolveClientRuntimeConfigModule(
 function createAppAliasPlugin(root: string): Plugin {
   const userSrc = path.resolve(root, 'src');
   const defaultsDir = resolveEngineDefaultsDir();
+  const requireFromEngine = createRequire(path.resolve(defaultsDir, '../../package.json'));
+  // Vite resolves explicitly optimized dependencies from the app root. Resolve internal
+  // transports from the engine instead, including under pnpm's isolated node_modules.
+  const transportAliases = ['client', 'server'].map(entry => {
+    const find = `rsc-html-stream/${entry}`;
+    return { find, replacement: requireFromEngine.resolve(find) };
+  });
+  for (const entry of ['client.browser', 'client.edge', 'server.edge', 'static.edge']) {
+    const find = `@vitejs/plugin-rsc/vendor/react-server-dom/${entry}`;
+    transportAliases.push({ find, replacement: requireFromEngine.resolve(find) });
+  }
   const emptyConfig = path.resolve(defaultsDir, 'runtime/empty-config.ts');
   const emptyRoutes = path.resolve(defaultsDir, 'runtime/empty-routes.ts');
 
@@ -502,8 +513,8 @@ function createAppAliasPlugin(root: string): Plugin {
 
       return {
         resolve: {
-          alias: aliases,
-          dedupe: ['react', 'react-dom', 'react-server-dom-webpack', 'rsc-html-stream'],
+          alias: [...aliases, ...transportAliases],
+          dedupe: ['react', 'react-dom'],
         },
         // engine 把 client/rsc 入口指向虚拟模块 → 再 alias 到 engine 源 .tsx 文件，
         // 不在用户 node_modules 树里。Vite 的 optimizeDeps scanner 默认不跟 file:// URL

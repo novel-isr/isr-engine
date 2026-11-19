@@ -8,6 +8,7 @@
  *   - 默认采集 process_*（CPU / RSS / event-loop lag）—— 一行 collectDefaultMetrics
  */
 import { Counter, Histogram, Gauge, Registry, collectDefaultMetrics } from 'prom-client';
+import { setRevalidationMetricRecorder } from '../rsc/revalidationMetrics';
 
 export const promRegistry = new Registry();
 
@@ -139,6 +140,11 @@ export function normalizeRoute(route: string): string {
   }
   return segments.join('/');
 }
+
+setRevalidationMetricRecorder((event, kind, target) => {
+  const counter = event === 'run' ? invalidatorRunsTotal : invalidatorFailuresTotal;
+  counter.inc({ kind, target: kind === 'path' ? normalizeRoute(target) : target });
+});
 
 /** 一行调用更新所有计数 —— 给 isrCacheMiddleware / 中间件用 */
 export function recordHttpRequest(opts: {

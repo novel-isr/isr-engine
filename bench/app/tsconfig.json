@@ -17,7 +17,7 @@
     "noUnusedParameters": true,
     "noFallthroughCasesInSwitch": true,
     "sourceMap": true,
-    "types": ["@types/node", "vite/client", "@vitejs/plugin-rsc/types"]
+    "types": ["@types/node", "vite/client"]
   },
   "include": ["src", "ssr.config.ts", "vite.config.ts"]
 }

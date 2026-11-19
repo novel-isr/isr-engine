@@ -155,7 +155,7 @@ function hasUseClientDirective(code: string, id: string): boolean {
 function unsupportedClientProxy(id: string): Error {
   return new Error(
     `[isr-engine] Unsupported @vitejs/plugin-rsc client reference proxy shape in ${id}. ` +
-      'Expected the pinned 0.5.34 registerClientReference wrapper.'
+      'Expected the pinned 0.5.39 registerClientReference wrapper.'
   );
 }
 
@@ -593,8 +593,8 @@ function isCreateElementCall(
 }
 
 function isPinnedLinkProps(node: ts.Node, hrefBinding: string, precedenceBinding: string): boolean {
-  if (!ts.isObjectLiteralExpression(node) || node.properties.length !== 5) return false;
-  const [key, rel, precedence, href, dataHref] = node.properties;
+  if (!ts.isObjectLiteralExpression(node) || node.properties.length !== 6) return false;
+  const [key, rel, crossOrigin, precedence, href, dataHref] = node.properties;
   if (
     !key ||
     !ts.isPropertyAssignment(key) ||
@@ -611,6 +611,14 @@ function isPinnedLinkProps(node: ts.Node, hrefBinding: string, precedenceBinding
     !ts.isPropertyAssignment(rel) ||
     propertyName(rel.name) !== 'rel' ||
     !stringIs(rel.initializer, 'stylesheet')
+  ) {
+    return false;
+  }
+  if (
+    !crossOrigin ||
+    !ts.isPropertyAssignment(crossOrigin) ||
+    propertyName(crossOrigin.name) !== 'crossOrigin' ||
+    !stringIs(crossOrigin.initializer, 'anonymous')
   ) {
     return false;
   }
@@ -651,11 +659,21 @@ function isPinnedResourcesFactory(factory: ts.ArrowFunction | ts.FunctionExpress
       return expected !== undefined && identifierIs(parameter.name, expected);
     }) ||
     !ts.isBlock(factory.body) ||
-    factory.body.statements.length !== 1
+    factory.body.statements.length !== 2
   ) {
     return false;
   }
-  const factoryReturn = factory.body.statements[0];
+  const [element, factoryReturn] = factory.body.statements;
+  if (
+    !element ||
+    !ts.isVariableStatement(element) ||
+    (element.declarationList.flags & ts.NodeFlags.Const) === 0 ||
+    element.declarationList.declarations.length !== 1
+  ) {
+    return false;
+  }
+  const declaration = element.declarationList.declarations[0];
+  if (!declaration || !identifierIs(declaration.name, 'element')) return false;
   if (
     !factoryReturn ||
     !ts.isReturnStatement(factoryReturn) ||
@@ -668,16 +686,18 @@ function isPinnedResourcesFactory(factory: ts.ArrowFunction | ts.FunctionExpress
     return false;
   }
   const resourcesReturn = factoryReturn.expression.body.statements[0];
-  const resourcesCall =
-    resourcesReturn &&
-    ts.isReturnStatement(resourcesReturn) &&
-    resourcesReturn.expression &&
-    isCreateElementCall(resourcesReturn.expression, 'React', 3)
-      ? resourcesReturn.expression
-      : undefined;
-  const [fragment, nullValue, children] = resourcesCall?.arguments ?? [];
+  const resourcesCall = declaration.initializer;
   if (
+    !resourcesReturn ||
+    !ts.isReturnStatement(resourcesReturn) ||
+    !identifierIs(resourcesReturn.expression, 'element') ||
     !resourcesCall ||
+    !isCreateElementCall(resourcesCall, 'React', 3)
+  ) {
+    return false;
+  }
+  const [fragment, nullValue, children] = resourcesCall.arguments;
+  if (
     !fragment ||
     !isPropertyPath(fragment, 'React', 'Fragment') ||
     nullValue?.kind !== ts.SyntaxKind.NullKeyword ||
@@ -882,7 +902,7 @@ export function instrumentDevRscStylesheetModule(
   ) {
     throw new Error(
       `[isr-engine] Unsupported @vitejs/plugin-rsc server stylesheet resource shape in ${id}. ` +
-        'Expected the pinned 0.5.34 Resources factory.'
+        'Expected the pinned 0.5.39 Resources factory.'
     );
   }
 

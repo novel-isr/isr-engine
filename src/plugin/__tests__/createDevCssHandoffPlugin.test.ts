@@ -27,15 +27,17 @@ describe('createDevCssLifecyclePlugins', () => {
     import __vite_rsc_react__ from "react";
     import RemoveDuplicateServerCss from "virtual:vite-rsc/remove-duplicate-server-css";
     export const Resources = ((React, deps, RemoveDuplicateServerCss, precedence) => {
-      return function Resources() {
-        ${extraBody}
-        return React.createElement(React.Fragment, null, [...deps.css.map((href) => React.createElement("link", {
+      const element = React.createElement(React.Fragment, null, [...deps.css.map((href) => React.createElement("link", {
           key: "css:" + href,
           rel: "stylesheet",
+          crossOrigin: "anonymous",
           ...precedence ? { precedence } : {},
           href,
           "data-rsc-css-href": href
         })), RemoveDuplicateServerCss && React.createElement(RemoveDuplicateServerCss, { key: "remove-duplicate-css" })]);
+      return function Resources() {
+        ${extraBody}
+        return element;
       };
     })(
       __vite_rsc_react__,

@@ -1,10 +1,11 @@
 import { readFileSync } from 'node:fs';
-import { resolve } from 'node:path';
+import { createRequire } from 'node:module';
+import { dirname, resolve } from 'node:path';
 
 import { describe, expect, it } from 'vitest';
 
 const root = process.cwd();
-const reactWithStyleHintFix = '19.3.0-canary-bd6ea412-20260824';
+const reactWithStyleHintFix = '19.3.1';
 
 function source(path: string): string {
   return readFileSync(resolve(root, path), 'utf8');
@@ -28,11 +29,23 @@ describe('stylesheet lifecycle ownership', () => {
       devDependencies: Record<string, string>;
     };
 
-    for (const dependency of ['react', 'react-dom', 'react-server-dom-webpack']) {
+    for (const dependency of ['react', 'react-dom']) {
       expect(packageJson.peerDependencies[dependency]).toBe(reactWithStyleHintFix);
       expect(packageJson.devDependencies[dependency]).toBe(reactWithStyleHintFix);
     }
-    expect(packageJson.dependencies['@vitejs/plugin-rsc']).toBe('0.5.34');
+    expect(packageJson.dependencies).not.toHaveProperty('react-server-dom-webpack');
+    expect(packageJson.dependencies).not.toHaveProperty('webpack');
+    expect(packageJson.dependencies['rsc-html-stream']).toBe('0.0.7');
+    expect(packageJson.peerDependencies).not.toHaveProperty('react-server-dom-webpack');
+    expect(packageJson.peerDependencies).not.toHaveProperty('rsc-html-stream');
+    expect(packageJson.dependencies['@vitejs/plugin-rsc']).toBe('0.5.39');
+    const pluginDir = dirname(
+      createRequire(import.meta.url).resolve('@vitejs/plugin-rsc/package.json')
+    );
+    const flightManifest = JSON.parse(
+      readFileSync(resolve(pluginDir, 'dist/vendor/react-server-dom/package.json'), 'utf8')
+    );
+    expect(flightManifest.version).toBe(reactWithStyleHintFix);
     expect(packageJson.peerDependencies.vite).toBe('8.1.6');
     expect(packageJson.devDependencies.vite).toBe('8.1.6');
   });
