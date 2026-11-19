@@ -26,19 +26,20 @@ jobs:
       matrix:
         directory: ['.', bench/app]
     steps:
-      - uses: actions/checkout@v4
-      - uses: pnpm/action-setup@v5
-        with:
-          run_install: false
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
         with:
           node-version-file: '.nvmrc'
+          package-manager-cache: false
+      - uses: pnpm/action-setup@v6
+        with:
+          run_install: false
       - name: Audit the independent lockfile without installing packages
         working-directory: ${{ matrix.directory }}
         run: pnpm --ignore-workspace audit --registry=https://registry.npmjs.org --audit-level=low --json > "$RUNNER_TEMP/dependency-audit.json"
       - name: Preserve audit evidence including failures
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: dependency-audit-${{ strategy.job-index }}-${{ github.run_attempt }}
           path: ${{ runner.temp }}/dependency-audit.json
@@ -54,7 +55,7 @@ jobs:
       actions: read
       security-events: write
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Initialize security analysis
         uses: github/codeql-action/init@v4
         with:

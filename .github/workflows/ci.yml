@@ -22,13 +22,14 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
-      - uses: actions/checkout@v4
-      - uses: pnpm/action-setup@v5
-        with:
-          run_install: false
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
         with:
           node-version-file: '.nvmrc'
+          package-manager-cache: false
+      - uses: pnpm/action-setup@v6
+        with:
+          run_install: false
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
       - name: Build package
@@ -41,13 +42,14 @@ jobs:
     runs-on: windows-latest
     timeout-minutes: 15
     steps:
-      - uses: actions/checkout@v4
-      - uses: pnpm/action-setup@v5
-        with:
-          run_install: false
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
         with:
           node-version-file: '.nvmrc'
+          package-manager-cache: false
+      - uses: pnpm/action-setup@v6
+        with:
+          run_install: false
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
       - name: Test filesystem and policy contracts
@@ -67,16 +69,16 @@ jobs:
     timeout-minutes: 10
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
-      - name: Set up pnpm
-        uses: pnpm/action-setup@v5
-        with:
-          run_install: false
-
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version-file: '.nvmrc'
+          package-manager-cache: false
+      - name: Set up pnpm
+        uses: pnpm/action-setup@v6
+        with:
+          run_install: false
 
       - name: Diagnostics
         run: |
@@ -124,16 +126,16 @@ jobs:
       ISR_TEST_REDIS_URL: redis://127.0.0.1:6379
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
-      - name: Set up pnpm
-        uses: pnpm/action-setup@v5
-        with:
-          run_install: false
-
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version-file: '.nvmrc'
+          package-manager-cache: false
+      - name: Set up pnpm
+        uses: pnpm/action-setup@v6
+        with:
+          run_install: false
 
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
@@ -146,7 +148,7 @@ jobs:
     runs-on: ubuntu-24.04
     container:
       # Match the locked Playwright version; browsers and OS dependencies are preinstalled.
-      image: mcr.microsoft.com/playwright:v1.62.1-noble@sha256:dcc5531e97840b9b5e794f2814476b21571c5124a3fca2267d73041f56e7580e
+      image: mcr.microsoft.com/playwright:v1.65.1-noble@sha256:1507cbfc550a63a6b7396791ca4f00df17beb56342d2447b3f106c306f525579
       options: --init --ipc=host
     timeout-minutes: 15
     services:
@@ -160,11 +162,12 @@ jobs:
     env:
       PLAYWRIGHT_REDIS_URL: redis://redis:6379
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
         with:
           node-version-file: '.nvmrc'
-      - uses: pnpm/action-setup@v5
+          package-manager-cache: false
+      - uses: pnpm/action-setup@v6
         with:
           run_install: false
       - name: Install workspace dependencies
@@ -175,7 +178,7 @@ jobs:
         run: pnpm run test:browser:production
       - name: Upload browser diagnostics
         if: failure()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: production-browser-report
           path: |
