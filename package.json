@@ -170,7 +170,7 @@
     "happy-dom": "^21.0.4",
     "husky": "^9.1.7",
     "ioredis-mock": "^8.9.0",
-    "jsdom": "^29.1.1",
+    "jsdom": "^31.0.1",
     "miniflare": "4.20260730.0",
     "prettier": "^3.3.3",
     "react": "19.3.0-canary-bd6ea412-20260824",
