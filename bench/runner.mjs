@@ -229,7 +229,7 @@ for (const path of PATHS) {
         `p50=${row.latency_p50_ms.toString().padStart(5)}ms ` +
         `p95=${row.latency_p95_ms.toString().padStart(5)}ms ` +
         `p99=${row.latency_p99_ms.toString().padStart(5)}ms ` +
-        `errs=${row.errors + row.timeouts} non2xx=${row.non_2xx_rate}%`
+        `errs=${row.errors} (timeouts=${row.timeouts}) non2xx=${row.non_2xx_rate}%`
     );
   }
 }
@@ -254,7 +254,7 @@ for (const [path, rows] of byPath) {
         r.latency_p95_ms,
         r.latency_p99_ms,
         r.non_2xx_rate,
-        r.errors + r.timeouts,
+        r.errors,
       ]
         .map(s => String(s).padEnd(12))
         .join('')
@@ -301,13 +301,13 @@ for (const r of results) {
   if (
     r.body_mismatches > 0 ||
     r.regeneration_verified === false ||
-    r.errors + r.timeouts > MAX_ERRORS ||
+    r.errors > MAX_ERRORS ||
     r.requests_total <= 0 ||
     r.requests_per_sec <= 0 ||
     !Number.isFinite(r.latency_p95_ms)
   )
     failed.push(
-      `${r.path}@${r.connections}c unhealthy measurement (errors+timeouts=${r.errors + r.timeouts}, budget=${MAX_ERRORS})`
+      `${r.path}@${r.connections}c unhealthy measurement (errors=${r.errors}, timeouts=${r.timeouts}, budget=${MAX_ERRORS})`
     );
   if (P95_BUDGET && r.latency_p95_ms > P95_BUDGET) {
     failed.push(`${r.path}@${r.connections}c P95=${r.latency_p95_ms}ms (budget ${P95_BUDGET}ms)`);

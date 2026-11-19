@@ -142,7 +142,35 @@ describe('bench/compare.mjs', () => {
       env: { ...process.env, BENCH_MAX_ERRORS: '0' },
     });
     expect(strictResult.status).toBe(1);
-    expect(strictResult.stderr).toContain('errors+timeouts=3');
+    expect(strictResult.stderr).toContain('errors=3 (timeouts=0)');
+  });
+
+  it('counts timeouts as a subset of autocannon errors rather than adding them twice', () => {
+    const dir = mkdtempSync(path.join(tmpdir(), 'bench-compare-'));
+    const baselinePath = writeBench(dir, 'baseline.json', [
+      row({ path: '/', connections: 1000, qps: 2_000, p95: 4 }),
+    ]);
+    const currentPath = writeBench(dir, 'current.json', [
+      row({ path: '/', connections: 1000, qps: 2_100, p95: 4, errors: 3, timeouts: 3 }),
+    ]);
+    const result = spawnSync(process.execPath, [comparePath, baselinePath, currentPath], {
+      encoding: 'utf8',
+      env: { ...process.env, BENCH_MAX_ERRORS: '3' },
+    });
+    expect(result.status).toBe(0);
+    const inconsistentPath = writeBench(dir, 'inconsistent.json', [
+      row({ path: '/', connections: 1000, qps: 2_100, p95: 4, errors: 2, timeouts: 3 }),
+    ]);
+    const inconsistent = spawnSync(
+      process.execPath,
+      [comparePath, baselinePath, inconsistentPath],
+      {
+        encoding: 'utf8',
+        env: { ...process.env, BENCH_MAX_ERRORS: '3' },
+      }
+    );
+    expect(inconsistent.status).toBe(1);
+    expect(inconsistent.stderr).toContain('timeouts exceed total errors');
   });
 
   it.each([

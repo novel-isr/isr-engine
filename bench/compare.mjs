@@ -192,14 +192,16 @@ function collectHealthIssues(results, options) {
     if (row.body_mismatches > 0 || row.regeneration_verified === false)
       issues.push(`${key} semantic health failure`);
     const non2xxRate = numberOrZero(row.non_2xx_rate);
-    const errors = numberOrZero(row.errors) + numberOrZero(row.timeouts);
+    // Autocannon's errors already includes timeouts; the latter is a subset.
+    const errors = numberOrZero(row.errors);
+    if (numberOrZero(row.timeouts) > errors) issues.push(`${key} timeouts exceed total errors`);
     const p95 = Number(row.latency_p95_ms);
     const qps = Number(row.requests_per_sec);
     if (non2xxRate > options.maxNon2xxRate) {
       issues.push(`${row.path} @${row.connections}c non-2xx=${non2xxRate}%`);
     }
     if (typeof options.maxErrors === 'number' && errors > options.maxErrors) {
-      issues.push(`${row.path} @${row.connections}c errors+timeouts=${errors}`);
+      issues.push(`${row.path} @${row.connections}c errors=${errors} (timeouts=${row.timeouts})`);
     }
     if (!Number.isFinite(qps) || qps <= 0) {
       issues.push(`${row.path} @${row.connections}c invalid QPS=${row.requests_per_sec}`);
