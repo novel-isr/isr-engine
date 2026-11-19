@@ -134,7 +134,8 @@ jobs:
             fi
             for scenario in warm ssr regeneration; do
               # A fresh process/cache per scenario keeps both revisions' starting conditions equal.
-              (cd "$app_dir" && exec setsid pnpm run start) > "$artifact_dir/bench-$revision-$scenario.log" 2>&1 &
+              export BENCH_SERVER_DIAGNOSTICS="$artifact_dir/bench-$revision-$scenario-server.json"
+              (cd "$app_dir" && exec setsid node --import "$artifact_dir/bench/server-diagnostics.mjs" ../../dist/cli/cli.js start) > "$artifact_dir/bench-$revision-$scenario.log" 2>&1 &
               app_pid=$!
               ready=0
               for _attempt in $(seq 1 30); do

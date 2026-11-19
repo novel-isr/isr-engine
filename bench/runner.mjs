@@ -29,6 +29,7 @@
 import autocannon from 'autocannon';
 import { writeFileSync } from 'node:fs';
 import os from 'node:os';
+import { createLoadDiagnostics } from './diagnostics.mjs';
 import { extractP95, sleep, verifyBenchBody } from './utils.mjs';
 
 const BENCH_PROTOCOL_VERSION = 3;
@@ -166,6 +167,7 @@ for (const path of PATHS) {
     const target = `${URL}${path}`;
     process.stdout.write(`   ${target}  conns=${conns}  ... `);
     const t0 = Date.now();
+    const diagnostics = createLoadDiagnostics();
     const r = await autocannon({
       url: target,
       connections: conns,
@@ -173,6 +175,7 @@ for (const path of PATHS) {
       pipelining: PIPELINING,
       headers: { accept: 'text/html' },
       verifyBody: verifyBody(path),
+      setupClient: diagnostics.setupClient,
     });
     const wallMs = Date.now() - t0;
     const non2xxRate = r.requests.total > 0 ? r.non2xx / r.requests.total : 0;
@@ -195,6 +198,7 @@ for (const path of PATHS) {
       timeouts: r.timeouts,
       non_2xx: r.non2xx,
       non_2xx_rate: non2xxRate * 100,
+      diagnostics: diagnostics.finish(),
     };
     if (SCENARIO === 'regeneration') {
       const response = await fetch(target, {
