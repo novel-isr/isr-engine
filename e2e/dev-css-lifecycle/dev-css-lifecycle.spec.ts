@@ -2,6 +2,11 @@ import { expect, test, type ConsoleMessage, type Page, type Request } from '@pla
 import { readFile, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import {
+  DocumentRequestTracker,
+  isExpectedRscCancellation,
+  type BrowserRequestFailure,
+} from './request-diagnostics';
 
 type RouteName = 'home' | 'article' | 'server';
 
@@ -23,7 +28,7 @@ interface OwnerEvent {
 interface Diagnostics {
   consoleErrors: string[];
   pageErrors: string[];
-  requestFailures: Array<{ url: string; error: string; navigationRequest: boolean }>;
+  requestFailures: BrowserRequestFailure[];
   allowedFailurePatterns: RegExp[];
 }
 
@@ -411,6 +416,15 @@ function createDiagnostics(page: Page): Diagnostics {
     requestFailures: [],
     allowedFailurePatterns: [],
   };
+  const documents = new DocumentRequestTracker();
+  page.on('request', (request: Request) => {
+    documents.observe(
+      request,
+      request.isNavigationRequest() &&
+        request.resourceType() === 'document' &&
+        request.frame() === page.mainFrame()
+    );
+  });
   page.on('console', (message: ConsoleMessage) => {
     if (message.type() === 'error') diagnostics.consoleErrors.push(message.text());
   });
@@ -418,6 +432,9 @@ function createDiagnostics(page: Page): Diagnostics {
   page.on('requestfailed', (request: Request) => {
     diagnostics.requestFailures.push({
       url: request.url(),
+      method: request.method(),
+      resourceType: request.resourceType(),
+      earlierDocument: documents.belongsToEarlierDocument(request),
       error: request.failure()?.errorText ?? 'unknown request failure',
       navigationRequest:
         request.method() === 'GET' &&
@@ -431,9 +448,9 @@ function createDiagnostics(page: Page): Diagnostics {
 
 function assertCleanDiagnostics(diagnostics: Diagnostics): void {
   const unexpectedFailures = diagnostics.requestFailures.filter(failure => {
-    // Route requests explicitly carry their navigation generation. Superseding one
-    // aborts its browser fetch; speculative requests and stylesheet failures stay visible.
-    if (failure.navigationRequest && failure.error === 'net::ERR_ABORTED') return false;
+    // Starting a newer document navigation can cancel earlier RSC prefetches.
+    // Current-document speculation and all stylesheet failures remain visible.
+    if (isExpectedRscCancellation(failure)) return false;
     return (
       !diagnostics.allowedFailurePatterns.some(pattern => pattern.test(failure.url)) ||
       !/abort|cancel/i.test(failure.error)
