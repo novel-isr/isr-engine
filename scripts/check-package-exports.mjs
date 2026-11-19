@@ -50,9 +50,13 @@ try {
   if (missing.length)
     throw new Error(`Package targets missing from npm pack: ${missing.join(', ')}`);
   for (const target of targets) await fs.access(path.join(root, target));
-  const tests = [...files].filter(file =>
-    /(?:^|\/)__tests__\/|\.(?:test|spec)\.[cm]?[jt]sx?$/.test(file)
-  );
+  const tests = [...files].filter(file => {
+    const segments = file.split('/');
+    return (
+      segments.includes('__tests__') ||
+      /^.*\.(?:test|spec)\.[cm]?[jt]sx?$/.test(segments.at(-1) ?? '')
+    );
+  });
   if (tests.length) throw new Error(`Test files included in npm pack: ${tests.join(', ')}`);
 
   const require = createRequire(path.join(root, 'package.json'));

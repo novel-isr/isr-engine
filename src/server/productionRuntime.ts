@@ -10,13 +10,19 @@ import pkg from '../../package.json';
 import { logger } from '@/logger';
 import { routeToFilePath } from '@/ssg/spider';
 import { createIsrCacheHandler } from '@/plugin/isrCacheMiddleware';
-import { resolveOpsConfig, createOpsAuthMiddleware } from '@/server/opsConfig';
+import {
+  resolveOpsConfig,
+  createOpsAuthMiddleware,
+  getOpsRequestLimiter,
+} from '@/server/opsConfig';
+import { admitRequest, createRequestLimiter, validateRequestLimits } from './requestLimits';
+import { redirectLocal } from './safeRedirect';
 import {
   assertDistinctHtmlRouteIdentities,
   decodeHtmlPathname,
   isHtmlRoutePattern,
 } from '@/utils/htmlPathname';
-import type { ISRConfig, RuntimeConfig } from '@/types';
+import type { ISRConfig, RuntimeConfig, RequestLimitPolicy } from '@/types';
 import type { RouteSetupFn } from './types';
 import {
   loadStaticCspManifest,
@@ -198,6 +204,7 @@ export async function createProductionRuntime(
         );
     })());
   try {
+    validateRequestLimits(config.server.requestLimits);
     // 平台运行时配置只从 ssr.config.ts runtime 读取。
     const runtime = config.runtime;
     applyTelemetryIntegrationEnv(runtime);
@@ -278,10 +285,6 @@ export async function createProductionRuntime(
       }
     }
 
-    // Rate limiting / trace snapshot 已从 engine 移除 —— 业界共识（Next.js / Remix /
-    // Astro 都不做）：rate-limit 应该走 CDN/WAF/Gateway（Cloudflare / Kong / Vercel
-    // Edge），trace 应该走 OTel + Sentry / Honeycomb / Datadog。框架不该承担这些职责。
-
     // A/B variant —— ssr.config.ts runtime.experiments + experimentManifest + experimentTracking
     // 优先级：manifest（admin-server 动态拉）> experiments 静态配置
     // 曝光上报：experimentTracking.endpoint 配上 → engine 异步 fire-and-forget POST
@@ -334,17 +337,38 @@ export async function createProductionRuntime(
 
     // ops 路由：先于 ISR 缓存 + 静态 + 动态 handler
     if (opsConfig.health.enabled) {
-      app.get('/health', createOpsAuthMiddleware('health', opsConfig), (_req, res) => {
-        res.json({
-          status: 'healthy',
-          version: pkg.version,
-          mode: 'plugin-rsc-production',
-          timestamp: new Date().toISOString(),
-        });
-      });
+      app.get(
+        '/health',
+        getOpsRequestLimiter(opsConfig),
+        createOpsAuthMiddleware('health', opsConfig),
+        (_req, res) => {
+          res.json({
+            status: 'healthy',
+            version: pkg.version,
+            mode: 'plugin-rsc-production',
+            timestamp: new Date().toISOString(),
+          });
+        }
+      );
     }
 
     options.setupRoutes?.(app);
+
+    const staticHtmlLimiter = createRequestLimiter('staticHtml', config.server.requestLimits?.staticHtml);
+    const seoLimiter = createRequestLimiter('seo', config.server.requestLimits?.seo);
+    // Protect file-backed SEO before generic asset serving, as well as generated responses.
+    app.use((req, res, next) => {
+      if (req.method !== 'GET' && req.method !== 'HEAD') return next();
+      let pathname: string;
+      try {
+        pathname = normalizeStaticAssetPathname(req.path).toLowerCase().replace(/\/$/, '');
+      } catch {
+        res.status(400).end();
+        return;
+      }
+      if (pathname === '/sitemap.xml' || pathname === '/robots.txt') return seoLimiter(req, res, next);
+      next();
+    });
 
     // Immutable SSG HTML seeds the response cache below; it must not bypass invalidation.
 
@@ -381,6 +405,7 @@ export async function createProductionRuntime(
       {
         buildId: process.env.APP_VERSION ?? staticCspIndex.buildId,
         resolveInvalidationPath: resolveSsgIdentity,
+        staticSeedAdmission: (req, res) => admitRequest(staticHtmlLimiter, req, res),
         staticSeedInfo: pathname => {
           const htmlPath = ssgFiles.get(pathname);
           if (!htmlPath) return;
@@ -458,10 +483,14 @@ export async function createProductionRuntime(
       const canonical = resolveSsgIdentity(req.path);
       if (req.path === canonical) return next();
       const queryStart = req.url.indexOf('?');
-      res.redirect(308, canonical + (queryStart < 0 ? '' : req.url.slice(queryStart)));
+      redirectLocal(res, 308, canonical + (queryStart < 0 ? '' : req.url.slice(queryStart)));
     });
     app.use(cache);
-    const staticHtml = createStaticHtmlMiddleware(clientDir, staticCspIndex);
+    const staticHtml = createStaticHtmlMiddlewareWithLimiter(
+      clientDir,
+      staticCspIndex,
+      staticHtmlLimiter
+    );
     app.use((req, res, next) => {
       // Runtime SSG misses must reach the renderer; other indexed documents remain static.
       if (
@@ -476,17 +505,22 @@ export async function createProductionRuntime(
     // Prometheus 抓取端点（prom-client 文本格式）
     const { promRegistry } = await import('@/metrics/PromMetrics');
     if (opsConfig.metrics.enabled) {
-      app.get('/metrics', createOpsAuthMiddleware('metrics', opsConfig), async (_req, res) => {
-        try {
-          res.set('content-type', promRegistry.contentType);
-          res.end(await promRegistry.metrics());
-        } catch (err) {
-          res
-            .status(500)
-            .type('text/plain')
-            .end(`metrics error: ${String(err)}`);
+      app.get(
+        '/metrics',
+        getOpsRequestLimiter(opsConfig),
+        createOpsAuthMiddleware('metrics', opsConfig),
+        async (_req, res) => {
+          try {
+            res.set('content-type', promRegistry.contentType);
+            res.end(await promRegistry.metrics());
+          } catch (err) {
+            res
+              .status(500)
+              .type('text/plain')
+              .end(`metrics error: ${String(err)}`);
+          }
         }
-      });
+      );
     }
 
     // SEO 端点：sitemap.xml + robots.txt（基于 SEOEngine 自动生成）
@@ -687,8 +721,37 @@ export async function pipeWebResponse(response: Response, res: express.Response)
 /** Static HTML can only be served from the build index validated before startup. */
 export function createStaticHtmlMiddleware(
   clientDir: string,
-  index: StaticCspIndex
+  index: StaticCspIndex,
+  policy?: RequestLimitPolicy
 ): express.RequestHandler {
+  return createStaticHtmlMiddlewareWithLimiter(clientDir, index, createRequestLimiter('staticHtml', policy));
+}
+
+function createStaticHtmlMiddlewareWithLimiter(
+  clientDir: string,
+  index: StaticCspIndex,
+  limiter: express.RequestHandler
+): express.RequestHandler {
+  const targets = new WeakMap<express.Request, { htmlPath: string; hashes: readonly string[] }>();
+  const guarded = express.Router();
+  guarded.use(limiter);
+  guarded.use((req, res, next) => {
+    const target = targets.get(req);
+    targets.delete(req);
+    if (!target) return next();
+    res.setHeader(
+      'Content-Security-Policy',
+      applyStaticScriptPolicy(
+        String(res.getHeader('Content-Security-Policy') ?? "default-src 'self'"),
+        target.hashes
+      )
+    );
+    res.setHeader('Cache-Control', 'public, max-age=3600');
+    res.setHeader('X-Served-By', 'ssg-static');
+    res.sendFile(target.htmlPath, { root: clientDir, maxAge: '1h', dotfiles: 'ignore' }, error => {
+      if (error) next(error);
+    });
+  });
   return (req, res, next) => {
     if (req.method !== 'GET' && req.method !== 'HEAD') return next();
     let pathname: string;
@@ -707,22 +770,20 @@ export function createStaticHtmlMiddleware(
           : relative + '/index.html';
     const hashes = index.scriptHashes.get(htmlPath);
     if (!hashes) return next();
-    res.setHeader(
-      'Content-Security-Policy',
-      applyStaticScriptPolicy(
-        String(res.getHeader('Content-Security-Policy') ?? "default-src 'self'"),
-        hashes
-      )
-    );
-    res.setHeader('Cache-Control', 'public, max-age=3600');
-    res.setHeader('X-Served-By', 'ssg-static');
-    res.sendFile(htmlPath, { root: clientDir, maxAge: '1h', dotfiles: 'ignore' }, error => {
-      if (error) next(error);
-    });
+    // Manifest misses and application SSR/API requests never consume the file-read budget.
+    targets.set(req, { htmlPath, hashes });
+    guarded(req, res, next);
   };
 }
 
 /** Asset serving must never discover HTML outside the validated build manifest. */
+function normalizeStaticAssetPathname(pathname: string): string {
+  // Preserve origin-form leading slashes; //file.html is a path, never an authority.
+  return path.posix.normalize(
+    decodeURIComponent(new URL(`http://localhost${pathname}`).pathname).replaceAll('\\', '/')
+  );
+}
+
 export function createStaticAssetMiddleware(clientDir: string): express.RequestHandler {
   const assets = express.static(clientDir, {
     index: false,
@@ -740,10 +801,7 @@ export function createStaticAssetMiddleware(clientDir: string): express.RequestH
   return (req, res, next) => {
     let pathname: string;
     try {
-      // Preserve origin-form leading slashes; //file.html is a path, never an authority.
-      pathname = path.posix.normalize(
-        decodeURIComponent(new URL(`http://localhost${req.path}`).pathname).replaceAll('\\', '/')
-      );
+      pathname = normalizeStaticAssetPathname(req.path);
     } catch {
       res.status(400).end();
       return;

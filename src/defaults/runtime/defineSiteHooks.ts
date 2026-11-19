@@ -905,7 +905,10 @@ function createServerErrorEndpointReporter(
   const includeQueryString = config.includeQueryString === true;
 
   return (err, req, errorCtx) => {
+    const id = createServerReportId();
+    if (!id) return;
     const report = normalizeServerErrorReport(err, req, errorCtx, {
+      id,
       release,
       environment,
       includeQueryString,
@@ -934,6 +937,7 @@ function normalizeServerErrorReport(
   req: Request,
   ctx: { traceId: string; locale?: string },
   options: {
+    id: string;
     release?: string;
     environment?: string;
     includeQueryString?: boolean;
@@ -945,7 +949,7 @@ function normalizeServerErrorReport(
   const url = safeRequestPath(req.url, options.includeQueryString);
 
   return {
-    id: createServerReportId(),
+    id: options.id,
     ts: Date.now(),
     level: 'error',
     message,
@@ -976,12 +980,13 @@ function safeRequestPath(rawUrl: string, includeQueryString?: boolean): string {
   }
 }
 
-function createServerReportId(): string {
-  const random =
-    typeof crypto !== 'undefined' && 'randomUUID' in crypto
-      ? crypto.randomUUID()
-      : Math.random().toString(36).slice(2);
-  return `srv_${Date.now().toString(36)}_${random}`;
+function createServerReportId(): string | null {
+  try {
+    return `srv_${crypto.randomUUID()}`;
+  } catch {
+    // Optional reporting must not weaken IDs or interrupt rendering without Web Crypto.
+    return null;
+  }
 }
 
 async function fetchJsonWithTimeout<T>(url: string, timeoutMs = 1200): Promise<T | null> {

@@ -1,6 +1,7 @@
 import { timingSafeEqual } from 'node:crypto';
 import type { RequestHandler } from 'express';
-import type { ISRConfig } from '@/types';
+import type { ISRConfig, RequestLimitPolicy } from '@/types';
+import { createRequestLimiter, resolveRequestLimitPolicy } from './requestLimits';
 
 type OpsEndpointName = 'health' | 'metrics' | 'inventory';
 
@@ -16,6 +17,19 @@ export interface ResolvedOpsConfig {
   metrics: ResolvedOpsEndpointConfig;
   inventory: ResolvedOpsEndpointConfig;
   warnings: string[];
+  requestLimit?: RequestLimitPolicy;
+}
+
+const opsLimiters = new WeakMap<ResolvedOpsConfig, RequestHandler>();
+
+/** Share one ops admission budget across endpoint handlers owned by this runtime. */
+export function getOpsRequestLimiter(resolved: ResolvedOpsConfig): RequestHandler {
+  let limiter = opsLimiters.get(resolved);
+  if (!limiter) {
+    limiter = createRequestLimiter('ops', resolved.requestLimit);
+    opsLimiters.set(resolved, limiter);
+  }
+  return limiter;
 }
 
 const OPS_ENDPOINT_PATHS: Record<OpsEndpointName, string> = {
@@ -86,6 +100,7 @@ export function resolveOpsConfig(
 
   return {
     authToken,
+    requestLimit: resolveRequestLimitPolicy('ops', config?.server?.requestLimits?.ops),
     tokenHeader: trimToUndefined(ops?.tokenHeader) ?? DEFAULT_TOKEN_HEADER,
     health: resolveEndpointConfig('health', ops?.health, defaults.health, env, authToken, warnings),
     metrics: resolveEndpointConfig(

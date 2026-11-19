@@ -120,9 +120,6 @@ async function initServerContext(config?: ISRConfig): Promise<ServerContext> {
     if (localeRedirect) serverContext.requestHandler.use(localeRedirect);
   }
 
-  // Rate limiting / trace snapshot 已从 engine 移除 —— 业界共识（Next.js / Remix /
-  // Astro 都不做）：rate-limit 走 CDN/WAF/Gateway，trace 走 OTel + Sentry/Honeycomb。
-
   // A/B variant —— 同 cli/start.ts：manifest > static + exposure tracking
   const hasStaticExps =
     config?.runtime?.experiments && Object.keys(config.runtime.experiments).length > 0;

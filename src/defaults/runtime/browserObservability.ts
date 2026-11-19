@@ -211,6 +211,7 @@ function createEndpointAnalyticsClient(
     },
     getUser
   );
+  if (!base) return null;
 
   return {
     track(name, properties, trackOptions) {
@@ -278,6 +279,7 @@ function createEndpointErrorReporter(
     },
     getUser
   );
+  if (!base) return null;
 
   const captureException = (error: unknown, context: TelemetryCaptureOptions = {}) => {
     const normalized = normalizeError(error);
@@ -375,6 +377,8 @@ function createEndpointQueue(
   const queue: FallbackPayload[] = [];
   const sessionId = readOrCreateBrowserId(`${baseOptions.key}_session`);
   const anonymousId = readOrCreateBrowserId(`${baseOptions.key}_anonymous`);
+  // Telemetry is optional: fail closed for identifiers without blocking client hydration.
+  if (!sessionId || !anonymousId) return null;
   let timer: number | null = null;
   let retryTimer: number | null = null;
   let inFlight = false;
@@ -414,9 +418,11 @@ function createEndpointQueue(
   const enqueue = (payload: FallbackPayload) => {
     if (baseOptions.sampleRate <= 0) return;
     if (baseOptions.sampleRate < 1 && Math.random() > baseOptions.sampleRate) return;
+    const id = createId(baseOptions.key.includes('errors') ? 'err' : 'evt');
+    if (!id) return;
 
     queue.push({
-      id: createId(baseOptions.key.includes('errors') ? 'err' : 'evt'),
+      id,
       app: options.app,
       ts: Date.now(),
       release: options.release,
@@ -486,7 +492,7 @@ function createEndpointQueue(
 }
 
 function installFallbackWebVitals(
-  base: ReturnType<typeof createEndpointQueue>,
+  base: NonNullable<ReturnType<typeof createEndpointQueue>>,
   includeQueryString?: boolean
 ): () => void {
   if (!isBrowser() || typeof PerformanceObserver === 'undefined') return () => {};
@@ -760,21 +766,33 @@ function isBrowser(): boolean {
   return typeof window !== 'undefined' && typeof document !== 'undefined';
 }
 
-function createId(prefix: string): string {
-  return `${prefix}_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 10)}`;
+function createId(prefix: 'runtime' | 'evt' | 'err'): string | null {
+  try {
+    if (typeof globalThis.crypto?.getRandomValues !== 'function') return null;
+    const bytes = globalThis.crypto.getRandomValues(new Uint8Array(16));
+    return `${prefix}_${Array.from(bytes, byte => byte.toString(16).padStart(2, '0')).join('')}`;
+  } catch {
+    return null;
+  }
 }
 
-function readOrCreateBrowserId(key: string): string {
+function readOrCreateBrowserId(key: string): string | null {
   if (!isBrowser()) return createId('runtime');
   try {
     const existing = window.localStorage.getItem(key);
-    if (existing) return existing;
-    const next = createId('runtime');
-    window.localStorage.setItem(key, next);
-    return next;
+    // Older timestamp/Math.random identifiers must not retain the weak generator's output.
+    if (existing && /^runtime_[0-9a-f]{32}$/.test(existing)) return existing;
   } catch {
-    return createId('runtime');
+    // Storage can be unavailable in privacy modes; use an ephemeral secure identifier.
   }
+  const next = createId('runtime');
+  if (!next) return null;
+  try {
+    window.localStorage.setItem(key, next);
+  } catch {
+    // Persisting an identifier is optional and must not affect event delivery.
+  }
+  return next;
 }
 
 /** 解析 ignoreSourcePatterns 选项 —— false 关闭过滤；数组与默认合并；缺省走默认。 */

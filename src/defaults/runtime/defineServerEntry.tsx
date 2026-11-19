@@ -154,9 +154,9 @@ export interface ServerEntryModule {
   fetch: (request: Request) => Promise<Response>;
 }
 
-/** 生成一个紧凑的 trace-id（10 位 base36，约 2^52 / 1e6 = 4.5T 条不重碰）*/
+/** Node 24 and supported edge runtimes expose the Web Crypto UUID generator. */
 function genTraceId(): string {
-  return `t-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+  return `t-${crypto.randomUUID()}`;
 }
 
 export function defineServerEntry<C extends ServerCtx = ServerCtx>(

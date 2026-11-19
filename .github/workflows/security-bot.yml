@@ -8,12 +8,13 @@ on:
   schedule:
     - cron: '23 2 * * *'
   workflow_dispatch:
+  workflow_call:
 
 permissions:
   contents: read
 
 concurrency:
-  group: security-${{ github.event_name }}-${{ github.ref }}
+  group: security-${{ github.workflow }}-${{ github.event_name }}-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
@@ -56,6 +57,10 @@ jobs:
       security-events: write
     steps:
       - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version-file: '.nvmrc'
+          package-manager-cache: false
       - name: Initialize security analysis
         uses: github/codeql-action/init@v4
         with:
@@ -63,6 +68,18 @@ jobs:
           build-mode: none
           queries: security-extended
       - name: Analyze source and publish code scanning results
+        id: analyze
         uses: github/codeql-action/analyze@v4
         with:
           category: /language:javascript-typescript
+          output: ${{ runner.temp }}/codeql-results
+      - name: Require complete analysis with zero findings
+        run: node scripts/check-code-scanning.mjs "${{ steps.analyze.outputs.sarif-output }}"
+      - name: Preserve code-scanning evidence including failures
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: codeql-evidence-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/codeql-results
+          if-no-files-found: error
+          retention-days: 30

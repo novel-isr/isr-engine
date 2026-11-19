@@ -95,6 +95,7 @@ export default class ISREngine {
       const routes = new ISRRoutes(this, this.logger, {
         renderMode: this.config.renderMode,
         routes: this.config.routes,
+        requestLimits: this.config.server.requestLimits,
       });
       routes.setup(requestHandler);
     });

@@ -30,8 +30,7 @@ export function readCookie(source: CookieHeaderSource, name: string): string | u
 }
 
 export function parseCookieHeader(header: string): Record<string, string> {
-  const cookies: Record<string, string> = Object.create(null);
-  if (!header) return cookies;
+  const entries = new Map<string, string>();
 
   for (const part of header.split(';')) {
     const trimmed = part.trim();
@@ -44,9 +43,12 @@ export function parseCookieHeader(header: string): Record<string, string> {
     if (!key) continue;
 
     const rawValue = trimmed.slice(index + 1).trim();
-    cookies[key] = safeDecodeCookieValue(rawValue);
+    entries.set(key, safeDecodeCookieValue(rawValue));
   }
 
+  // fromEntries creates own data properties, including __proto__, without invoking setters.
+  const cookies = Object.fromEntries(entries);
+  Object.setPrototypeOf(cookies, null);
   return cookies;
 }
 

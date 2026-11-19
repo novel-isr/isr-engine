@@ -130,11 +130,17 @@ TTL 与 SWR 单位为秒。`routes` 控制渲染策略；页面路由可使用 `
 
 `Logger.spin()` 返回 Ora 10 对象。`prefixText`、`suffixText` 可为字符串或生成函数；`color` 接受颜色名、`false` 或 `undefined`；自定义 spinner 的 `interval` 必须是正安全整数。
 
+`Logger.getInstance({ logFile })` 的文件输出为 JSON Lines，每行独立保存时间、级别、请求上下文、参数与错误；采集程序应按 JSON 解析，原有纯文本文件可在升级前轮转。
+
 ## 运维与部署
 
 部署保留完整 `dist/`、应用依赖及 `ssr.config.*`；配置编译需要应用根目录可写的 `.isr-cache/`。容器按需设置 `HOST=0.0.0.0`，反向代理后显式配置 `server.trustProxy` 的可信来源。
 
 `/health` 默认公开。生产 `/metrics` 默认关闭；非公开 metrics/inventory 未配置 `server.ops.authToken` 会自动关闭。启用后通过 `Authorization: Bearer <token>` 或配置的 token header 访问；设为 `public: true` 会绕过 token 校验。
+
+引擎运维接口、静态 HTML 文件读取和 SEO 路由分别使用进程内请求预算；超额返回 `429` 与 `Retry-After`。通过 `server.requestLimits.{ops,staticHtml,seo}` 配置 `windowMs`、单客户端 `maxRequests`、总量 `globalMaxRequests` 与容量 `maxClients`，均须为正整数。默认每分钟单客户端/总量分别为 `120/1200`、`600/12000`、`120/1200`；缓存 HIT 与应用 SSR/API 不计入这些预算。
+
+Google 字体自托管只接受指定 Google HTTPS 来源，验证下载内容后交给 Vite 输出；`outDir` 相对构建输出目录，开发环境从内存提供资源。下载失败会使该优化任务失败，构建不再改写应用 `public/`。
 
 ```bash
 curl -fsS http://localhost:3000/health
@@ -164,5 +170,7 @@ curl -fsS -H "x-isr-admin-token: $ISR_OPS_TOKEN" \
 配置字段与默认行为见 [公共配置类型](./src/types/ISRConfig.ts) 和 [默认配置](./src/config/defaults.ts)。
 
 `main` 的自动发布流程通过验证后由 semantic-release 计算版本，以 npm OIDC 发布到 `registry.npmjs.org`；配置见 [发布工作流](./.github/workflows/publish.yml) 与 [release.config.mjs](./release.config.mjs)。npm 端需绑定对应仓库和工作流的 Trusted Publisher。
+
+发布必须通过依赖审计和 CodeQL `security-extended` 扫描；任何扫描结果或缺失的扫描证据都会阻止发布，原始审计与 SARIF 结果保留为工作流产物。
 
 许可证声明为 **UNLICENSED**，以 `package.json` 为准。

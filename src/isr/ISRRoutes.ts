@@ -13,13 +13,15 @@ import fs from 'node:fs';
 import path from 'node:path';
 import pkg from '../../package.json';
 
-import type { RenderModeType, RouteRule } from '@/types';
+import type { RenderModeType, RouteRule, RequestLimitsConfig } from '@/types';
+import { createRequestLimiter } from '../server/requestLimits';
 import type ISREngine from '@/engine/ISREngine';
 import type { Logger } from '@/logger/Logger';
 
 export class ISRRoutes {
   private readonly defaultMode: RenderModeType;
   private readonly routes: Record<string, RouteRule>;
+  private readonly requestLimits: RequestLimitsConfig | undefined;
 
   constructor(
     private engine: ISREngine,
@@ -27,27 +29,34 @@ export class ISRRoutes {
     config: {
       renderMode: RenderModeType;
       routes?: Record<string, RouteRule>;
+      requestLimits?: RequestLimitsConfig;
     }
   ) {
     this.defaultMode = config.renderMode;
     this.routes = config.routes || {};
+    this.requestLimits = config.requestLimits;
   }
 
   setup(requestHandler: Express): void {
+    const seoLimiter = createRequestLimiter('seo', this.requestLimits?.seo);
     // 健康检查
-    requestHandler.get('/health', (_req: Request, res: Response) => {
-      res.json({
-        status: 'healthy',
-        version: pkg.version,
-        mode: 'plugin-rsc',
-        defaultRenderMode: this.defaultMode,
-        routes: Object.keys(this.routes).length,
-        timestamp: new Date().toISOString(),
-      });
-    });
+    requestHandler.get(
+      '/health',
+      createRequestLimiter('ops', this.requestLimits?.ops),
+      (_req: Request, res: Response) => {
+        res.json({
+          status: 'healthy',
+          version: pkg.version,
+          mode: 'plugin-rsc',
+          defaultRenderMode: this.defaultMode,
+          routes: Object.keys(this.routes).length,
+          timestamp: new Date().toISOString(),
+        });
+      }
+    );
 
     // 站点地图 —— 优先返回 SSG/public 已存在的文件，否则由 SEO 引擎动态生成
-    requestHandler.get('/sitemap.xml', async (_req: Request, res: Response) => {
+    requestHandler.get('/sitemap.xml', seoLimiter, async (_req: Request, res: Response) => {
       try {
         const candidates = [
           path.resolve(process.cwd(), 'dist/client/sitemap.xml'),
@@ -83,7 +92,7 @@ export class ISRRoutes {
     });
 
     // Robots.txt
-    requestHandler.get('/robots.txt', async (_req: Request, res: Response) => {
+    requestHandler.get('/robots.txt', seoLimiter, async (_req: Request, res: Response) => {
       try {
         const candidates = [
           path.resolve(process.cwd(), 'dist/client/robots.txt'),

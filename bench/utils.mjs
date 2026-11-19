@@ -23,12 +23,15 @@ export function extractP95(result) {
 /** 简单的 sleep helper —— 给档间 cooldown 用 */
 export const sleep = ms => new Promise(r => setTimeout(r, ms));
 
-/** Match fixture content across React's streamed text boundaries. */
+/** Verify known fixture markup directly, including React's optional text boundary. */
 export function verifyBenchBody(path, body) {
-  const html = body.toString().replace(/<!--[\s\S]*?-->/g, '');
+  const html = body.toString();
   if (path === '/') return html.includes('<h1>Bench Home</h1>');
   if (path === '/about') return html.includes('<h1>Bench About (SSG)</h1>');
-  if (path.startsWith('/books/')) return html.includes(`<h1>Book ${path.split('/')[2]}</h1>`);
+  if (path.startsWith('/books/')) {
+    const id = path.split('/')[2];
+    return html.includes(`<h1>Book ${id}</h1>`) || html.includes(`<h1>Book <!-- -->${id}</h1>`);
+  }
   if (path === '/api/health')
     return /<pre>\{(?:&quot;|")status(?:&quot;|"):(?:&quot;|")ok(?:&quot;|")\}<\/pre>/.test(html);
   return true;

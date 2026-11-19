@@ -110,6 +110,11 @@ export interface IsrCacheMiddlewareOptions {
   staticSeedInfo?: (pathname: string) => { generatedAt: number } | undefined;
   /** Immutable build seed, consulted once per canonical SSG cache key; never a fallback. */
   staticSeed?: (pathname: string, policy: string) => Promise<CachedEntry | undefined>;
+  /**
+   * Admission for the single-flight leader before a new seed read. Returning false must
+   * finish the denied response; neither denial nor an admission error can fall through to SSR.
+   */
+  staticSeedAdmission?: (req: IncomingMessage, res: ServerResponse) => Promise<boolean>;
   /** 缓存最大条目数，默认 1000 */
   max?: number;
   /** 默认 TTL（秒），若未显式配置 revalidate 时兜底 */
@@ -432,7 +437,7 @@ export function createIsrCacheHandler(
   /** 后台重验证正在进行的 key 集合 —— 防止并发 STALE 请求重复触发多次 bg 拉取 */
   const revalidating = new Set<string>();
   const state = { invalidationGeneration: 0 };
-  const seeded = new Map<string, Promise<void>>();
+  const seeded = new Map<string, Promise<boolean>>();
   const internalToken = randomBytes(24).toString('hex');
   const singleflightWaitMs = options.singleflightWaitMs ?? 5_000;
   const maxCachedBodyBytes = options.maxCachedBodyBytes ?? 5 * 1024 * 1024;
@@ -564,6 +569,7 @@ export function createIsrCacheHandler(
       pathTagPrefix: `__isr_path:${cacheNamespace}:`,
       staticSeed: options.staticSeed,
       staticSeedInfo: options.staticSeedInfo,
+      staticSeedAdmission: options.staticSeedAdmission,
       seeded,
     }).catch(err => {
       logger.warn('ISR cache handler 异常，回退到下游处理:', err);
@@ -702,6 +708,9 @@ export function createIsrCacheMiddleware(
         }
 
         const opsConfig = resolveOpsConfig(resolvedConfig, 'development');
+        const { getOpsRequestLimiter } = await import('../server/opsConfig');
+        const opsLimiter = getOpsRequestLimiter(opsConfig);
+        const metricsAuth = createOpsAuthMiddleware('metrics', opsConfig);
         const nextHandler = createIsrCacheHandler(
           resolvedConfig,
           withRuntimeCacheOptions(resolvedConfig, { ...options, development: true })
@@ -718,17 +727,20 @@ export function createIsrCacheMiddleware(
           server.middlewares.use((req, res, next) => {
             if (handler !== nextHandler) return next();
             if (opsConfig.metrics.enabled && req.url === '/metrics' && req.method === 'GET') {
-              createOpsAuthMiddleware('metrics', opsConfig)(req as never, res as never, () => {
-                import('@/metrics/PromMetrics')
-                  .then(async ({ promRegistry }) => {
-                    const body = await promRegistry.metrics();
-                    res.setHeader('content-type', promRegistry.contentType);
-                    res.end(body);
-                  })
-                  .catch(err => {
-                    res.statusCode = 500;
-                    res.end(`metrics error: ${String(err)}`);
-                  });
+              opsLimiter(req as never, res as never, error => {
+                if (error) return next(error);
+                metricsAuth(req as never, res as never, () => {
+                  import('@/metrics/PromMetrics')
+                    .then(async ({ promRegistry }) => {
+                      const body = await promRegistry.metrics();
+                      res.setHeader('content-type', promRegistry.contentType);
+                      res.end(body);
+                    })
+                    .catch(err => {
+                      res.statusCode = 500;
+                      res.end(`metrics error: ${String(err)}`);
+                    });
+                });
               });
               return;
             }
@@ -780,7 +792,8 @@ interface HandleContext {
   pathTagPrefix: string;
   staticSeed?: IsrCacheMiddlewareOptions['staticSeed'];
   staticSeedInfo?: IsrCacheMiddlewareOptions['staticSeedInfo'];
-  seeded: Map<string, Promise<void>>;
+  staticSeedAdmission?: IsrCacheMiddlewareOptions['staticSeedAdmission'];
+  seeded: Map<string, Promise<boolean>>;
 }
 
 /**
@@ -925,55 +938,80 @@ async function handleRequest(
     !ctx.variantIsolation &&
     !ctx.hostIsolation
   ) {
-    if (!ctx.seeded.has(cacheKey)) {
-      const seedTask = (async () => {
-        const generation = ctx.state.invalidationGeneration;
-        const seed = await raceWithTimeout(
-          ctx.staticSeed!(
-            logicalPath,
-            String(res.getHeader('content-security-policy') || "default-src 'self'")
-          ),
-          ctx.l2ReadTimeoutMs
-        );
-        if (!seed) {
-          ctx.seeded.delete(cacheKey);
-          return;
+    while (isActive() && ctx.state.invalidationGeneration === 0) {
+      let seedTask = ctx.seeded.get(cacheKey);
+      const leader = !seedTask;
+      if (!seedTask) {
+        // Reserve the task before admission yields, so followers never spend another quota.
+        seedTask = Promise.resolve().then(async () => {
+          try {
+            if (ctx.staticSeedAdmission && !(await ctx.staticSeedAdmission(req, res))) return false;
+          } catch (error) {
+            logger.warn('SSG seed admission failed; refusing origin fallback', error);
+            if (!res.headersSent && !res.writableEnded && !res.destroyed) {
+              res.statusCode = 503;
+              res.setHeader('Cache-Control', 'no-store');
+              res.end('Static seed admission unavailable');
+            }
+            return false;
+          }
+          if (!isActive()) return false;
+          const generation = ctx.state.invalidationGeneration;
+          if (generation !== 0) return true;
+          const seed = await raceWithTimeout(
+            ctx.staticSeed!(
+              logicalPath,
+              String(res.getHeader('content-security-policy') || "default-src 'self'")
+            ),
+            ctx.l2ReadTimeoutMs
+          );
+          if (!seed) {
+            ctx.seeded.delete(cacheKey);
+            return true;
+          }
+          const lease = ctx.cache.coherence
+            ? await raceWithTimeout(ctx.cache.coherence.beginRender(), ctx.l2ReadTimeoutMs)
+            : undefined;
+          if (lease && lease.revision !== '0') return true;
+          if (generation !== ctx.state.invalidationGeneration) return true;
+          const ttl = resolved.ttlSeconds * 1000;
+          const seededEntry = {
+            ...seed,
+            tags: [...seed.tags, `${ctx.pathTagPrefix}__static_seed`],
+            expiresAt: seed.storedAt + ttl,
+            hardExpiresAt: seed.storedAt + ttl + resolved.swrSeconds * 1000,
+            pathTag: `${ctx.pathTagPrefix}${logicalPath}`,
+          };
+          if (Date.now() >= seededEntry.hardExpiresAt) return true;
+          if (ctx.cache.coherence) {
+            if (lease && ctx.cache.coherence.seed)
+              await raceWithTimeout(
+                ctx.cache.coherence.seed(cacheKey, seededEntry, lease),
+                ctx.l2ReadTimeoutMs
+              );
+          } else {
+            ctx.cache.set(cacheKey, seededEntry);
+          }
+          return true;
+        });
+        ctx.seeded.set(cacheKey, seedTask);
+      }
+      try {
+        if (!(await seedTask)) {
+          if (ctx.seeded.get(cacheKey) === seedTask) ctx.seeded.delete(cacheKey);
+          if (leader) return; // This response was denied or disconnected; never render origin.
+          // A denied leader did not read a file. A follower must obtain its own admission.
+          continue;
         }
-        const lease = ctx.cache.coherence
-          ? await raceWithTimeout(ctx.cache.coherence.beginRender(), ctx.l2ReadTimeoutMs)
-          : undefined;
-        if (generation !== 0 || (lease && lease.revision !== '0')) return;
-        if (generation !== ctx.state.invalidationGeneration) return;
-        const ttl = resolved.ttlSeconds * 1000;
-        const seededEntry = {
-          ...seed,
-          tags: [...seed.tags, `${ctx.pathTagPrefix}__static_seed`],
-          expiresAt: seed.storedAt + ttl,
-          hardExpiresAt: seed.storedAt + ttl + resolved.swrSeconds * 1000,
-          pathTag: `${ctx.pathTagPrefix}${logicalPath}`,
-        };
-        if (Date.now() >= seededEntry.hardExpiresAt) return;
-        if (ctx.cache.coherence) {
-          if (lease && ctx.cache.coherence.seed)
-            await raceWithTimeout(
-              ctx.cache.coherence.seed(cacheKey, seededEntry, lease),
-              ctx.l2ReadTimeoutMs
-            );
-        } else {
-          ctx.cache.set(cacheKey, seededEntry);
-        }
-      })();
-      ctx.seeded.set(cacheKey, seedTask);
-    }
-    try {
-      await ctx.seeded.get(cacheKey);
-      if (!isActive()) return;
-      entry = ctx.cache.getAsync
-        ? await raceWithTimeout(ctx.cache.getAsync(cacheKey), ctx.l2ReadTimeoutMs)
-        : ctx.cache.get(cacheKey);
-    } catch (error) {
-      ctx.seeded.delete(cacheKey);
-      logger.warn('SSG build seed unavailable; rendering origin', error);
+        if (!isActive()) return;
+        entry = ctx.cache.getAsync
+          ? await raceWithTimeout(ctx.cache.getAsync(cacheKey), ctx.l2ReadTimeoutMs)
+          : ctx.cache.get(cacheKey);
+      } catch (error) {
+        if (ctx.seeded.get(cacheKey) === seedTask) ctx.seeded.delete(cacheKey);
+        logger.warn('SSG build seed unavailable; rendering origin', error);
+      }
+      break;
     }
   }
   if (!isActive()) return;

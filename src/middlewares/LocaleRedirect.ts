@@ -19,6 +19,7 @@
 import type { Request, Response, NextFunction } from 'express';
 import type { I18nConfig } from '../runtime/i18n';
 import { negotiateLocale, withLocale } from '../runtime/i18n';
+import { redirectLocal } from '../server/safeRedirect';
 
 export interface CreateLocaleRedirectOptions {
   i18n: I18nConfig;
@@ -93,7 +94,7 @@ export function createLocaleRedirectMiddleware(
         const rest = path.slice(first.length + 1) || '/';
         const search = req.url.includes('?') ? req.url.slice(req.url.indexOf('?')) : '';
         const finalRest = rest === '/' ? '' : rest;
-        res.redirect(308, `/${ci}${finalRest}${rscSuffix}${search}`);
+        redirectLocal(res, 308, `/${ci}${finalRest}${rscSuffix}${search}`);
         return;
       }
     }
@@ -109,7 +110,7 @@ export function createLocaleRedirectMiddleware(
       );
 
     const search = req.url.includes('?') ? req.url.slice(req.url.indexOf('?')) : '';
-    res.redirect(302, withLocale(path, target, i18n) + rscSuffix + search);
+    redirectLocal(res, 302, withLocale(path, target, i18n) + rscSuffix + search);
   };
 }
 

@@ -9,6 +9,30 @@ describe('cookie utilities', () => {
     const cookies = parseCookieHeader('__proto__=value; constructor=own');
     expect(cookies.__proto__).toBe('value');
     expect(cookies.constructor).toBe('own');
+    expect(Object.getPrototypeOf(cookies)).toBeNull();
+    expect(Object.getPrototypeOf({})).toBe(Object.prototype);
+    expect(Object.prototype).not.toHaveProperty('polluted');
+  });
+  it('creates own data properties for every cookie name and preserves last-value semantics', () => {
+    const cookies = parseCookieHeader(
+      '__proto__=polluted; constructor=first; toString=text; valueOf=value; constructor=last'
+    );
+    for (const [name, value] of [
+      ['__proto__', 'polluted'],
+      ['constructor', 'last'],
+      ['toString', 'text'],
+      ['valueOf', 'value'],
+    ]) {
+      expect(Object.getOwnPropertyDescriptor(cookies, name)).toEqual({
+        value,
+        writable: true,
+        enumerable: true,
+        configurable: true,
+      });
+    }
+    expect(readCookie('__proto__=value', '__proto__')).toBe('value');
+    expect(Object.keys(parseCookieHeader(''))).toEqual([]);
+    expect(Object.getPrototypeOf(parseCookieHeader(''))).toBeNull();
   });
   it('reads cookies from a Web Request', () => {
     const req = new Request('https://example.com', {
