@@ -97,6 +97,36 @@ try {
       recursive: true,
     });
   }
+  // Exercise runtime-only SEO through the installed default RSC entry and real app config.
+  const fixtureConfig = path.join(fixture, 'ssr.config.ts');
+  await fs.rename(fixtureConfig, path.join(fixture, 'bench.ssr.config.ts'));
+  await fs.writeFile(
+    fixtureConfig,
+    `import base from './bench.ssr.config.ts';
+    import type { ISRConfig } from 'isr-engine';
+    export default {
+      ...base,
+      runtime: {
+        ...base.runtime,
+        seo: {
+          endpoint: undefined,
+          fallbackLocal: undefined,
+          ttl: 60_000,
+          timeoutMs: 1200,
+          dynamicResolvers: [{ pattern: '/*', resolve: ({ params }) => ({ title: 'SEO ' + params.wildcard }) }],
+        },
+      },
+    } satisfies ISRConfig;`
+  );
+  await fs.writeFile(
+    path.join(fixture, 'src/entry.server.tsx'),
+    `export default {
+      beforeRequest(_req: Request, { traceId }: { traceId: string }) {
+        if (!traceId) throw new Error('Missing engine trace ID');
+        return {};
+      },
+    };`
+  );
   const consumerRequire = createRequire(path.join(temporary, 'package.json'));
   const vite = path.join(path.dirname(consumerRequire.resolve('vite/package.json')), 'bin/vite.js');
   process.stdout.write(
@@ -111,19 +141,8 @@ try {
     import assert from 'node:assert/strict';
     import { createISRApp, invalidatorRunsTotal, loadConfig } from 'isr-engine';
     import { revalidateTag } from 'isr-engine/rsc';
-    import { applyRuntimeToServerHooks } from 'isr-engine/site-hooks';
     process.env.NODE_ENV = 'production';
     const config = await loadConfig();
-    const seoHooks = applyRuntimeToServerHooks({}, {
-      ...config.runtime,
-      services: {},
-      telemetry: false,
-      seo: {
-        dynamicResolvers: [{ pattern: '/*', resolve: ({ params }) => ({ title: params.wildcard }) }],
-      },
-    });
-    const seoMeta = await seoHooks.loadSeoMeta(new Request('https://site.test/work/arcane'));
-    assert.deepEqual(seoMeta, { title: 'work/arcane' });
     config.server.host = '127.0.0.1';
     config.server.port = 0;
     const app = await createISRApp(config);
@@ -132,7 +151,9 @@ try {
       for (const [route, expected] of [['/', 'Bench Home'], ['/about', 'Bench About'], ['/books/1', 'Book '], ['/api/health', 'status']]) {
         const response = await fetch(url + route, { signal: AbortSignal.timeout(10000) });
         assert.equal(response.status, 200, route);
-        assert.ok((await response.text()).includes(expected), route);
+        const body = await response.text();
+        assert.ok(body.includes(expected), route);
+        if (route === '/books/1') assert.ok(body.includes('<title>SEO books/1</title>'), 'dynamic SEO title');
       }
       await revalidateTag('books');
       const metric = await invalidatorRunsTotal.get();

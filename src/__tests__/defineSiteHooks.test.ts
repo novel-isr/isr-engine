@@ -390,9 +390,16 @@ describe('admin loaders', () => {
   });
 
   it('automatically installs the SEO loader when runtime dynamic resolvers are the only content config', async () => {
+    const fetchSpy = vi
+      .spyOn(globalThis, 'fetch')
+      .mockResolvedValue(new Response(null, { status: 404 }));
+    const beforeRequest = vi.fn(async (_req: Request, { traceId }: typeof engineCtx) => ({
+      traceId,
+    }));
     const hooks = applyRuntimeToServerHooks<Partial<ServerHooksOutput>>(
-      {},
+      { beforeRequest },
       runtime({
+        services: { api: 'https://admin.test' },
         seo: {
           dynamicResolvers: [
             {
@@ -403,9 +410,17 @@ describe('admin loaders', () => {
         },
       })
     );
-    expect(await hooks.loadSeoMeta?.(new Request('https://site.test/work/arcane'))).toEqual({
+    const req = new Request('https://site.test/work/arcane');
+    expect(hooks.beforeRequest).toBe(beforeRequest);
+    expect(await hooks.beforeRequest?.(req, engineCtx)).toEqual({ traceId: engineCtx.traceId });
+    expect(hooks.loadIntl).toBeUndefined();
+    expect(await hooks.loadSeoMeta?.(req)).toEqual({
       title: 'arcane',
     });
+    expect(fetchSpy).toHaveBeenCalledExactlyOnceWith(
+      'https://admin.test/api/seo?path=%2Fwork%2Farcane',
+      expect.any(Object)
+    );
   });
 
   it('applyRuntimeToServerHooks 在没有 entry.server 数据 loader 时自动使用 runtime 配置', async () => {

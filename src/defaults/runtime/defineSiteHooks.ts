@@ -376,6 +376,23 @@ export function defineAdminSiteHooks(options: DefineAdminSiteHooksOptions = {}):
   return createAdminSiteHooks(options, createEmptyRuntimeConfig());
 }
 
+function createAdminSeoEntry(
+  seo: NonNullable<DefineAdminSiteHooksOptions['seo']>,
+  runtimeSeo: Partial<RuntimeSeoConfig>
+): SeoLocalEntry {
+  return {
+    load: createAdminSeoLoader({
+      endpoint: seo.endpoint ?? runtimeSeo.endpoint,
+      fallbackEntries: normalizeAdminSeoFallbackEntries(
+        seo.fallbackLocal ?? runtimeSeo.fallbackLocal
+      ),
+      timeoutMs: seo.timeoutMs ?? runtimeSeo.timeoutMs,
+      dynamicResolvers: seo.dynamicResolvers ?? runtimeSeo.dynamicResolvers,
+    }),
+    ttl: seo.ttl ?? runtimeSeo.ttl ?? 60_000,
+  };
+}
+
 function createAdminSiteHooks(
   options: DefineAdminSiteHooksOptions,
   runtime: SiteRuntimeConfig
@@ -412,17 +429,7 @@ function createAdminSiteHooks(
         ttl: i18n.ttl ?? runtimeI18n.ttl ?? 60_000,
       },
       seo: {
-        '/*': {
-          load: createAdminSeoLoader({
-            endpoint: seo.endpoint ?? runtimeSeo.endpoint,
-            fallbackEntries: normalizeAdminSeoFallbackEntries(
-              seo.fallbackLocal ?? runtimeSeo.fallbackLocal
-            ),
-            timeoutMs: seo.timeoutMs ?? runtimeSeo.timeoutMs,
-            dynamicResolvers: seo.dynamicResolvers ?? runtimeSeo.dynamicResolvers,
-          }),
-          ttl: seo.ttl ?? runtimeSeo.ttl ?? 60_000,
-        },
+        '/*': createAdminSeoEntry(seo, runtimeSeo),
       },
     },
     runtime
@@ -512,10 +519,21 @@ export function applyRuntimeToServerHooks<T extends object>(
     } as T;
   }
 
+  // A dynamic SEO table on its own does not opt a plain server entry into the admin i18n
+  // loader or wrap its beforeRequest callback.
+  const runtimeSeo = runtime.seo;
+  const runtimeSeoHook =
+    !hasUserContentHooks && runtimeSeo?.dynamicResolvers?.length
+      ? createSiteHooks(
+          { intl: runtime.i18n, seo: { '/*': createAdminSeoEntry({}, runtimeSeo) } },
+          runtime
+        ).loadSeoMeta
+      : undefined;
   return {
     ...hooks,
     siteBaseUrl,
     apiBaseUrl,
+    ...(runtimeSeoHook && { loadSeoMeta: runtimeSeoHook }),
   } as T;
 }
 
@@ -1027,7 +1045,6 @@ function hasRuntimeContentConfig(runtime: SiteRuntimeConfig): boolean {
     runtime.i18n?.fallbackLocal ||
     runtime.seo?.endpoint ||
     runtime.seo?.fallbackLocal ||
-    runtime.seo?.dynamicResolvers?.length ||
     runtime.telemetry
   );
 }
