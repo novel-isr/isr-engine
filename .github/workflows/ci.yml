@@ -143,7 +143,8 @@ jobs:
 
   browser:
     name: Production Browser Regressions
-    runs-on: ubuntu-latest
+    # Keep native browser dependencies reproducible across ubuntu-latest image upgrades.
+    runs-on: ubuntu-24.04
     timeout-minutes: 15
     services:
       redis:

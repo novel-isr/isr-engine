@@ -7,9 +7,10 @@ const rules = config.plugins[0][1];
 for (const [message, expected] of [
   ['feat: add a renderer', 'minor'],
   ['refactor: simplify cache boundaries', 'patch'],
-  ['ci: configure publishing', 'patch'],
+  ['ci: configure publishing', null],
   ['docs: clarify API', 'patch'],
   ['feat: replace API\n\nBREAKING CHANGE: remove old API', 'major'],
+  ['ci: replace pipeline\n\nBREAKING CHANGE: require a new runtime contract', 'major'],
 ]) {
   assert.equal(
     await analyzeCommits(rules, {

@@ -8,7 +8,8 @@ export default {
         releaseRules: [
           { breaking: true, release: 'major' },
           { type: 'feat', release: 'minor' },
-          { release: 'patch' },
+          { type: 'ci', release: false },
+          { type: '!(ci)', release: 'patch' },
         ],
       },
     ],

@@ -95,7 +95,13 @@ try {
   const next = await dryRun();
   assert.equal(next.nextRelease.version, '1.0.1');
   assert.equal(next.nextRelease.gitTag, 'isr-engine-v1.0.1');
-  console.log('Real Git release history verified: legacy v2 tags → 1.0.0 → 1.0.1.');
+  git(working, 'tag', '-a', next.nextRelease.gitTag, '-m', 'Patch release');
+  git(working, 'commit', '--allow-empty', '-m', 'ci: maintain release artifact upload');
+  git(working, 'push', '--follow-tags', 'origin', 'main');
+  assert.equal(await dryRun(), false, 'Pure CI maintenance must not publish an extra version');
+  console.log(
+    'Real Git release history verified: legacy v2 tags → 1.0.0 → 1.0.1; CI-only commits do not release.'
+  );
 } finally {
   quiet.end();
   rmSync(directory, { recursive: true, force: true });
