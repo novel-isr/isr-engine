@@ -115,7 +115,7 @@ it('serves SSG query URLs from the validated index and refuses unindexed HTML', 
     await fs.mkdir(`${dir}/client/rogue`);
     await fs.writeFile(`${dir}/client/rogue/index.html`, '<script>unindexed()</script>');
     const app = express();
-    app.use(createStaticHtmlMiddleware(`${dir}/client`, index));
+    app.use(createStaticHtmlMiddleware(`${dir}/client`, index, { maxRequests: 3 }));
     app.use(createStaticAssetMiddleware(`${dir}/client`));
     app.get('/articles/dynamic.html', (_req, res) =>
       res.type('html').send('<html>dynamic SSR</html>')
@@ -129,6 +129,10 @@ it('serves SSG query URLs from the validated index and refuses unindexed HTML', 
         expect(response.headers.get('content-security-policy')).not.toContain('unsafe-inline');
         expect(await response.text()).toContain('window.active=true');
       }
+      const limited = await fetch(url + '/page?another=query');
+      expect(limited.status).toBe(429);
+      expect(limited.headers.get('retry-after')).toMatch(/^\d+$/);
+      expect(limited.headers.get('cache-control')).toBe('no-store');
       for (const route of [
         '/late.html',
         '/late.htm',
@@ -193,17 +197,23 @@ it('allows the application to render dynamic .html routes absent from the static
   const { createStaticHtmlMiddleware } = await import('../start');
   const app = express();
   app.use(
-    createStaticHtmlMiddleware('/unused', {
-      legacy: false,
-      buildId: 'test',
-      scriptHashes: new Map(),
-    })
+    createStaticHtmlMiddleware(
+      '/unused',
+      {
+        legacy: false,
+        buildId: 'test',
+        scriptHashes: new Map(),
+      },
+      { maxRequests: 1 }
+    )
   );
   app.get('/articles/dynamic.html', (_req, res) => res.send('dynamic SSR'));
   await serve(app, async url => {
-    const response = await fetch(url + '/articles/dynamic.html');
-    expect(response.status).toBe(200);
-    expect(await response.text()).toBe('dynamic SSR');
+    for (let count = 0; count < 3; count++) {
+      const response = await fetch(url + '/articles/dynamic.html');
+      expect(response.status).toBe(200);
+      expect(await response.text()).toBe('dynamic SSR');
+    }
   });
 });
 

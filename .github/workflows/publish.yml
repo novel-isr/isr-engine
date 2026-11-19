@@ -17,6 +17,13 @@ jobs:
   verify:
     uses: ./.github/workflows/ci.yml
 
+  security:
+    permissions:
+      contents: read
+      actions: read
+      security-events: write
+    uses: ./.github/workflows/security-bot.yml
+
   benchmark:
     uses: ./.github/workflows/bench.yml
     with:
@@ -26,7 +33,7 @@ jobs:
 
   publish:
     if: github.ref == 'refs/heads/main'
-    needs: [verify, benchmark]
+    needs: [verify, benchmark, security]
     runs-on: ubuntu-latest
     timeout-minutes: 25
     permissions:

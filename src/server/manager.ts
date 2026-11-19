@@ -22,6 +22,7 @@ import { resolveManifestLoader } from '@/experiments/ManifestLoader';
 import { resolveExposureQueue } from '@/experiments/ExposureQueue';
 import { createLocaleRedirectMiddleware } from '@/middlewares/LocaleRedirect';
 import { resolveI18nConfig } from '@/runtime/i18n';
+import { bindRuntimeOpsConfig, getRuntimeOpsConfig, resolveOpsConfig } from './opsConfig';
 
 const logger = Logger.getInstance();
 
@@ -68,10 +69,14 @@ function loadProdManifest(): Record<string, unknown> | null {
 /**
  * 初始化开发模式服务器上下文
  */
-async function initDevContext(requestHandler: Express): Promise<ServerContext> {
+async function initDevContext(requestHandler: Express, config?: ISRConfig): Promise<ServerContext> {
   logger.info('🔧 初始化开发模式服务器...');
 
   const viteDevMiddleware = await createViteDevServer();
+  bindRuntimeOpsConfig(
+    requestHandler,
+    getRuntimeOpsConfig(viteDevMiddleware) ?? resolveOpsConfig(config, 'development')
+  );
 
   return {
     requestHandler,
@@ -93,7 +98,7 @@ async function initServerContext(config?: ISRConfig): Promise<ServerContext> {
   const requestHandler = express();
 
   // 根据环境初始化
-  serverContext = await initDevContext(requestHandler);
+  serverContext = await initDevContext(requestHandler, config);
   developmentCleanups.push(closeViteDevServer);
 
   // 仅应用前置中间件（安全 / 压缩 / Body 解析）
@@ -119,9 +124,6 @@ async function initServerContext(config?: ISRConfig): Promise<ServerContext> {
     });
     if (localeRedirect) serverContext.requestHandler.use(localeRedirect);
   }
-
-  // Rate limiting / trace snapshot 已从 engine 移除 —— 业界共识（Next.js / Remix /
-  // Astro 都不做）：rate-limit 走 CDN/WAF/Gateway，trace 走 OTel + Sentry/Honeycomb。
 
   // A/B variant —— 同 cli/start.ts：manifest > static + exposure tracking
   const hasStaticExps =

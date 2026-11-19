@@ -117,6 +117,8 @@ describe('benchmark response content', () => {
     const utils = await import('../utils.mjs');
     expect(utils.verifyBenchBody?.('/books/1', '<h1>Book <!-- -->1</h1>')).toBe(true);
     expect(utils.verifyBenchBody?.('/books/1', '<h1>Book 2</h1>')).toBe(false);
+    expect(utils.verifyBenchBody?.('/books/1', '<h1>Book <!--<!-- -->-->1</h1>')).toBe(false);
+    expect(utils.verifyBenchBody?.('/books/1', '<h1>Book <!-- arbitrary -->1</h1>')).toBe(false);
     expect(utils.verifyBenchBody?.('/', '<h1>Server Error</h1>')).toBe(false);
     expect(
       utils.verifyBenchBody?.('/api/health', '<pre>{&quot;status&quot;:&quot;error&quot;}</pre>')

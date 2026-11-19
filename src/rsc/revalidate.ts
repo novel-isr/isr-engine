@@ -28,10 +28,8 @@
  *   - 若未注册 invalidator（例如脱离 engine 的纯 RSC 场景），调用静默为 no-op
  */
 
-import { Logger } from '../logger/Logger';
+import { runtimeLogger as logger } from '../logger/runtimeLogger';
 import { recordRevalidationMetric } from './revalidationMetrics';
-
-const logger = Logger.getInstance();
 
 /** Invalidator 签名：接收失效目标描述 */
 export interface RevalidateInvalidator {

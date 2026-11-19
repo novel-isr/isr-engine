@@ -37,12 +37,67 @@ export async function resolveImageAddress(
 
 /** Bare hosts permit protocol-default ports; explicit ports remain exact restrictions. */
 export function isAllowedImageOrigin(url: URL, allow: Set<string>): boolean {
-  if (!['http:', 'https:'].includes(url.protocol)) return false;
-  const port = url.port || (url.protocol === 'https:' ? '443' : '80');
-  return allow.has(`${url.hostname}:${port}`) || (!url.port && allow.has(url.hostname));
+  return selectImageOrigin(url, allow) !== undefined;
 }
 
-/** A fresh socket uses exactly the DNS address validated above; URL hostname remains TLS identity. */
+interface ImageOrigin {
+  protocol: 'http:' | 'https:';
+  hostname: string;
+  authority: string;
+  port: number;
+}
+
+/** Return the configured authority, rather than carrying the request's authority past a guard. */
+function selectImageOrigin(url: URL, allow: Set<string>): ImageOrigin | undefined {
+  if (url.username || url.password || !['http:', 'https:'].includes(url.protocol)) return;
+  const protocol = url.protocol === 'https:' ? 'https:' : 'http:';
+  const defaultPort = protocol === 'https:' ? 443 : 80;
+  for (const entry of allow) {
+    if (/[\s/@?#*\\]/.test(entry)) continue;
+    const authority = /^(\[[^\]]+\]|[^:]+)(?::([0-9]+))?$/.exec(entry);
+    if (!authority) continue;
+    let configured: URL;
+    try {
+      configured = new URL(`${protocol}//${entry}`);
+    } catch {
+      continue;
+    }
+    const port = authority[2] === undefined ? defaultPort : Number(authority[2]);
+    if (
+      !configured.hostname ||
+      configured.pathname !== '/' ||
+      configured.username ||
+      configured.password ||
+      url.hostname !== configured.hostname ||
+      Number(url.port || defaultPort) !== port
+    )
+      continue;
+    return {
+      protocol,
+      hostname: configured.hostname.replace(/^\[|\]$/g, ''),
+      authority: configured.host,
+      port,
+    };
+  }
+}
+
+async function resolveBeforeAbort(hostname: string, signal: AbortSignal): Promise<Address> {
+  signal.throwIfAborted();
+  let abort: (() => void) | undefined;
+  try {
+    return await Promise.race([
+      resolveImageAddress(hostname),
+      new Promise<never>((_resolve, reject) => {
+        abort = () => reject(signal.reason);
+        signal.addEventListener('abort', abort, { once: true });
+      }),
+    ]);
+  } finally {
+    if (abort) signal.removeEventListener('abort', abort);
+  }
+}
+
+/** A fresh socket uses a validated public DNS answer and a configured origin at every hop. */
 export async function fetchRemoteImage(
   src: string,
   allow: Set<string>,
@@ -53,27 +108,7 @@ export async function fetchRemoteImage(
   try {
     let url = new URL(src);
     for (let hop = 0; hop <= 5; hop++) {
-      if (
-        !['http:', 'https:'].includes(url.protocol) ||
-        !isAllowedImageOrigin(url, allow) ||
-        url.username ||
-        url.password
-      )
-        throw new ImageSourceError(400, 'source origin not allowed');
-      const address = await Promise.race([
-        resolveImageAddress(url.hostname),
-        new Promise<never>((_, reject) => {
-          if (controller.signal.aborted)
-            reject(new ImageSourceError(504, 'source fetch timed out'));
-          else
-            controller.signal.addEventListener(
-              'abort',
-              () => reject(new ImageSourceError(504, 'source fetch timed out')),
-              { once: true }
-            );
-        }),
-      ]);
-      const response = await requestPinnedImage(url, address, controller.signal);
+      const response = await requestPinnedImage(url, allow, controller.signal);
       if ([301, 302, 303, 307, 308].includes(response.statusCode ?? 0)) {
         response.destroy();
         if (!response.headers.location || hop === 5)
@@ -112,18 +147,37 @@ export async function fetchRemoteImage(
   }
 }
 
-/** Internal transport boundary: the caller must supply an already validated address. */
-export function requestPinnedImage(
+/** No transport entry point accepts a caller-supplied address or unvalidated authority. */
+export async function requestPinnedImage(
   url: URL,
-  address: Address,
-  signal: AbortSignal
+  allow: Set<string>,
+  signal: AbortSignal,
+  accept = 'image/*',
+  userAgent?: string
 ): Promise<import('node:http').IncomingMessage> {
+  const origin = selectImageOrigin(url, allow);
+  if (!origin) throw new ImageSourceError(400, 'source origin not allowed');
+  // Snapshot request components before awaiting DNS; subsequent URL mutation cannot change the target.
+  const requestPath = url.pathname + url.search;
+  const resolved = await resolveBeforeAbort(origin.hostname, signal);
+  const address = { address: resolved.address, family: resolved.family };
+  signal.throwIfAborted();
   return new Promise<import('node:http').IncomingMessage>((resolve, reject) => {
-    const request = (url.protocol === 'https:' ? httpsRequest : httpRequest)(
-      url,
+    const request = (origin.protocol === 'https:' ? httpsRequest : httpRequest)(
       {
+        protocol: origin.protocol,
+        hostname: origin.hostname,
+        port: origin.port,
+        path: requestPath,
         agent: false,
         signal,
+        maxHeaderSize: 16 * 1024,
+        ...(origin.protocol === 'https:'
+          ? {
+              servername: isIP(origin.hostname) ? undefined : origin.hostname,
+              rejectUnauthorized: true,
+            }
+          : {}),
         // Node may request all answers for autoSelectFamily; return only the pinned answer.
         lookup: ((
           _host: string,
@@ -133,7 +187,12 @@ export function requestPinnedImage(
           if (options.all) callback(null, [address]);
           else callback(null, address.address, address.family);
         }) as import('node:net').LookupFunction,
-        headers: { accept: 'image/*', 'accept-encoding': 'identity' },
+        headers: {
+          host: origin.authority,
+          accept,
+          'accept-encoding': 'identity',
+          ...(userAgent ? { 'user-agent': userAgent } : {}),
+        },
       },
       resolve
     );

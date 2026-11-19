@@ -40,9 +40,10 @@
  */
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import type { Connect } from 'vite';
+import express from 'express';
 import type { IsrCacheHandler, IsrCacheInspectionEntry } from './isrCacheMiddleware';
 import type { ResolvedOpsConfig } from '../server/opsConfig';
-import { createOpsAuthMiddleware } from '../server/opsConfig';
+import { createOpsAuthMiddleware, getOpsRequestLimiter } from '../server/opsConfig';
 
 /** Inventory 端点路径常量 —— 与 isrCacheMiddleware.isBypassPath 中的 /__isr 前缀对齐 */
 export const CACHE_INVENTORY_PATH = '/__isr/cache/inventory';
@@ -104,6 +105,12 @@ export function createCacheInspectorMiddleware(
   }
 
   const auth = createOpsAuthMiddleware('inventory', opsConfig);
+  const guarded = express.Router();
+  guarded.use(getOpsRequestLimiter(opsConfig));
+  guarded.use(auth);
+  guarded.use((req, res) => {
+    void respond(req, res, handler);
+  });
 
   return (req: IncomingMessage, res: ServerResponse, next: Connect.NextFunction) => {
     if (req.method !== 'GET' && req.method !== 'HEAD') {
@@ -118,10 +125,8 @@ export function createCacheInspectorMiddleware(
       return;
     }
 
-    // 鉴权 —— public=true 时 createOpsAuthMiddleware 返回 noop next()
-    auth(req as never, res as never, () => {
-      void respond(req, res, handler);
-    });
+    // Admission precedes both authentication and any Redis inspection, including on Connect.
+    guarded(req as express.Request, res as express.Response, next);
   };
 
   async function respond(

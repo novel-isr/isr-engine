@@ -2,14 +2,16 @@ import { describe, expect, it } from 'vitest';
 
 import { transformDevCssModule } from '../transformDevCssModule';
 
-const VITE_WRAPPER = `
+const createViteWrapper = (moduleId: string) => `
 import { updateStyle as __vite__updateStyle, removeStyle as __vite__removeStyle } from "/@vite/client";
-const __vite__id = "/src/Card.module.scss";
+const __vite__id = ${JSON.stringify(moduleId)};
 const __vite__css = ".card{color:green}";
 __vite__updateStyle(__vite__id, __vite__css);
 import.meta.hot.prune(() => __vite__removeStyle(__vite__id));
 export default { card: "_card_123" };
 `;
+
+const VITE_WRAPPER = createViteWrapper('/src/Card.module.scss');
 
 const VITE_BUNDLED_WRAPPER = `
 const { updateStyle: __vite__updateStyle, removeStyle: __vite__removeStyle } = import.meta.hot._internal;
@@ -63,7 +65,7 @@ describe('transformDevCssModule', () => {
     'routes Vite DOM mutations for %s through the development style registry',
     id => {
       const result = transformDevCssModule(
-        VITE_WRAPPER.replaceAll('/src/Card.module.scss', id),
+        createViteWrapper(id),
         id,
         'virtual:isr-engine/dev-style-registry'
       );

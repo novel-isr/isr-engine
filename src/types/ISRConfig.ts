@@ -386,6 +386,23 @@ export const FallbackChain: Record<RenderModeType, InternalStrategyType[]> = {
 export type ProxyTrustPolicy =
   boolean | number | string | string[] | ((address: string, hop: number) => boolean);
 
+/** Positive, per-process admission budgets for engine-owned expensive request work. */
+export interface RequestLimitPolicy {
+  windowMs?: number;
+  /** Maximum requests from one IPv4 address or IPv6 /56 per window. */
+  maxRequests?: number;
+  /** Maximum aggregate requests per window, including rejected client attempts. */
+  globalMaxRequests?: number;
+  /** Maximum live client counters; new clients receive 429 when this capacity is full. */
+  maxClients?: number;
+}
+
+export interface RequestLimitsConfig {
+  ops?: RequestLimitPolicy;
+  staticHtml?: RequestLimitPolicy;
+  seo?: RequestLimitPolicy;
+}
+
 export interface ISRConfig {
   /** 全局默认渲染模式 */
   renderMode: RenderModeType;
@@ -441,6 +458,8 @@ export interface ISRConfig {
      * Hop counts/true require an ingress that overwrites client forwarded headers.
      */
     trustProxy?: ProxyTrustPolicy;
+    /** Engine ops, indexed static HTML reads and SEO admission. Page cache hits/APIs are separate. */
+    requestLimits?: RequestLimitsConfig;
     /** Node origin 监听端口；缺省 3000。 */
     port: number;
     /** Node origin 监听地址；通常本地留空，容器/内网按部署平台注入。 */

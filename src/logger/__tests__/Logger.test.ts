@@ -16,6 +16,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { promises as fs } from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
+import pino from 'pino';
 import { Logger, LogLevel } from '../Logger';
 import { requestContext } from '../../context/RequestContext';
 
@@ -126,9 +127,10 @@ describe('Logger 消息格式化', () => {
   it('普通对象 → JSON.stringify 缩进 2 空格', () => {
     const logger = Logger.getInstance({ verbose: true });
     logger.info({ a: 1, b: { c: 'nested' } });
-    const msgs = getLoggedMessages().join('\n');
-    expect(msgs).toContain('"a": 1');
-    expect(msgs).toContain('"c": "nested"');
+    const output = getLoggedMessages().at(-1)!;
+    const message = JSON.parse(output.slice(output.indexOf('message=') + 'message='.length));
+    expect(message).toContain('"a": 1');
+    expect(message).toContain('"c": "nested"');
   });
 
   it('accepts objects whose JSON representation is undefined', () => {
@@ -171,7 +173,10 @@ describe('Logger.logFile —— 文件持久化', () => {
 
     const content = await fs.readFile(logFile, 'utf8');
     expect(content).toContain('persisted-line');
-    expect(content).toContain('[INFO]');
+    expect(JSON.parse(content.trim())).toMatchObject({
+      severity: 'info',
+      args: ['persisted-line'],
+    });
     // 文件中不应有 ANSI 颜色码
     // eslint-disable-next-line no-control-regex
     expect(content).not.toMatch(/\[/);
@@ -204,6 +209,131 @@ describe('Logger.logFile —— 文件持久化', () => {
     expect(content).toContain('line-2');
     expect(content).toContain('line-3');
     expect(content.split('\n').filter(Boolean).length).toBeGreaterThanOrEqual(3);
+  });
+
+  it('persists separate context, arguments and errors in one JSONL record', async () => {
+    const logger = Logger.getInstance({ logFile: path.join(tmpDir, 'records.log') });
+    const input = 'value\r\n[ERROR] forged\u001b[2J\u0085\u2028\u2029';
+    const error = new Error(input);
+    error.stack = `Error: ${input}\n    at remote:1:2`;
+    const circular: Record<string, unknown> = { input, count: 42n };
+    circular.self = circular;
+
+    requestContext.run(
+      { traceId: 'trace] [ERROR] forged\n', requestId: 'req\rforged', anonId: 'anon' },
+      () => logger.warn(input, circular, error)
+    );
+
+    const content = await fs.readFile(path.join(tmpDir, 'records.log'), 'utf8');
+    expect(content.split('\n')).toHaveLength(2);
+    // eslint-disable-next-line no-control-regex
+    expect(content.slice(0, -1)).not.toMatch(/[\u0000-\u001f\u007f-\u009f\u2028\u2029]/);
+    expect(JSON.parse(content)).toMatchObject({
+      severity: 'warn',
+      traceId: 'trace] [ERROR] forged\n',
+      requestId: 'req\rforged',
+      args: [input, { input, count: '42n', self: '[Circular]' }, { name: 'Error', message: input }],
+      errors: [{ argument: 2, error: { name: 'Error', message: input, stack: error.stack } }],
+    });
+    const consoleMessage = getLoggedMessages().at(-1)!;
+    expect(consoleMessage).toContain('[WARN]');
+    expect(consoleMessage).toContain('traceId="trace] [ERROR] forged\\n"');
+    // eslint-disable-next-line no-control-regex
+    expect(consoleMessage).not.toMatch(/[\u0000-\u001f\u007f-\u009f\u2028\u2029]/);
+  });
+
+  it('keeps logging when argument serialization throws', async () => {
+    const logFile = path.join(tmpDir, 'unserializable.log');
+    const logger = Logger.getInstance({ logFile });
+    expect(() =>
+      logger.info({
+        toJSON() {
+          throw new Error('cannot serialize');
+        },
+      })
+    ).not.toThrow();
+    expect(JSON.parse(await fs.readFile(logFile, 'utf8')).args).toEqual([
+      '[Unserializable log argument]',
+    ]);
+  });
+
+  it('snapshots caller arguments once for both output destinations', async () => {
+    const logFile = path.join(tmpDir, 'snapshot.log');
+    const logger = Logger.getInstance({ logFile });
+    let serializations = 0;
+    logger.info({ toJSON: () => ({ snapshot: ++serializations }) });
+    expect(JSON.parse(await fs.readFile(logFile, 'utf8')).args).toEqual([{ snapshot: 1 }]);
+    expect(getLoggedMessages().at(-1)).toContain('snapshot');
+    expect(serializations).toBe(1);
+  });
+
+  it('reports destination errors as one encoded stderr record and continues console logging', async () => {
+    const destinationSpy = vi.spyOn(pino, 'destination');
+    const stderrSpy = vi.spyOn(process.stderr, 'write').mockImplementation(() => true);
+    try {
+      const logger = Logger.getInstance({ logFile: path.join(tmpDir, 'failed.log') });
+      const destination = destinationSpy.mock.results.at(-1)!.value;
+      const closed = vi.fn();
+      destination.once('close', closed);
+      destination.emit('error', new Error('disk failed\nforged\u001b[2J'));
+      expect(() => logger.info('console survives')).not.toThrow();
+      expect(getLoggedMessages().at(-1)).toContain('console survives');
+      const diagnostic = String(stderrSpy.mock.calls[0]?.[0]);
+      // eslint-disable-next-line no-control-regex
+      expect(diagnostic.trimEnd()).not.toMatch(/[\r\n\u001b]/);
+      expect(diagnostic).toContain('disk failed\\nforged\\u001b[2J');
+      await vi.waitFor(() => expect(closed).toHaveBeenCalledOnce());
+    } finally {
+      destinationSpy.mockRestore();
+      stderrSpy.mockRestore();
+    }
+  });
+
+  it('closes owned destinations when replacing or disabling file output', async () => {
+    const destinationSpy = vi.spyOn(pino, 'destination');
+    try {
+      const firstFile = path.join(tmpDir, 'first.log');
+      const secondFile = path.join(tmpDir, 'second.log');
+      const logger = Logger.getInstance({ logFile: firstFile });
+      const firstDestination = destinationSpy.mock.results.at(-1)!.value;
+      const firstClosed = vi.fn();
+      firstDestination.once('close', firstClosed);
+      logger.info('first');
+      Logger.getInstance({ logFile: firstFile });
+      expect(firstClosed).not.toHaveBeenCalled();
+      Logger.getInstance({ logFile: secondFile });
+      const secondDestination = destinationSpy.mock.results.at(-1)!.value;
+      const secondClosed = vi.fn();
+      secondDestination.once('close', secondClosed);
+      await vi.waitFor(() => expect(firstClosed).toHaveBeenCalledOnce());
+      logger.info('second');
+      Logger.getInstance({ logFile: '' });
+      await vi.waitFor(() => expect(secondClosed).toHaveBeenCalledOnce());
+      logger.info('console-only');
+      expect(JSON.parse(await fs.readFile(firstFile, 'utf8')).args).toEqual(['first']);
+      expect(JSON.parse(await fs.readFile(secondFile, 'utf8')).args).toEqual(['second']);
+      expect(getLoggedMessages().at(-1)).toContain('console-only');
+    } finally {
+      destinationSpy.mockRestore();
+    }
+  });
+
+  it('rejects runtime-invalid levels before writing a record', async () => {
+    const logFile = path.join(tmpDir, 'levels.log');
+    const logger = Logger.getInstance({ logFile });
+    expect(() => logger.log('info\n[ERROR]' as LogLevel, 'forged')).toThrow(TypeError);
+    logger.info('valid');
+    const records = (await fs.readFile(logFile, 'utf8'))
+      .trim()
+      .split('\n')
+      .map(line => JSON.parse(line));
+    expect(records).toHaveLength(1);
+    expect(records[0]).toMatchObject({ severity: 'info', args: ['valid'] });
+  });
+
+  it('rejects malformed log file configuration without treating it as a message', () => {
+    expect(() => Logger.getInstance({ logFile: 'bad\u0000path' })).toThrow(TypeError);
+    expect(() => Logger.getInstance({ logFile: 42 as unknown as string })).toThrow(TypeError);
   });
 
   it('文件写入失败 → 不抛错，stderr 提示', async () => {

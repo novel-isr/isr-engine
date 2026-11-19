@@ -110,6 +110,11 @@ export interface IsrCacheMiddlewareOptions {
   staticSeedInfo?: (pathname: string) => { generatedAt: number } | undefined;
   /** Immutable build seed, consulted once per canonical SSG cache key; never a fallback. */
   staticSeed?: (pathname: string, policy: string) => Promise<CachedEntry | undefined>;
+  /**
+   * Admission for the single-flight leader before a new seed read. Returning false must
+   * finish the denied response; neither denial nor an admission error can fall through to SSR.
+   */
+  staticSeedAdmission?: (req: IncomingMessage, res: ServerResponse) => Promise<boolean>;
   /** 缓存最大条目数，默认 1000 */
   max?: number;
   /** 默认 TTL（秒），若未显式配置 revalidate 时兜底 */
@@ -432,7 +437,7 @@ export function createIsrCacheHandler(
   /** 后台重验证正在进行的 key 集合 —— 防止并发 STALE 请求重复触发多次 bg 拉取 */
   const revalidating = new Set<string>();
   const state = { invalidationGeneration: 0 };
-  const seeded = new Map<string, Promise<void>>();
+  const seeded = new Map<string, Promise<StaticSeedResult>>();
   const internalToken = randomBytes(24).toString('hex');
   const singleflightWaitMs = options.singleflightWaitMs ?? 5_000;
   const maxCachedBodyBytes = options.maxCachedBodyBytes ?? 5 * 1024 * 1024;
@@ -564,6 +569,7 @@ export function createIsrCacheHandler(
       pathTagPrefix: `__isr_path:${cacheNamespace}:`,
       staticSeed: options.staticSeed,
       staticSeedInfo: options.staticSeedInfo,
+      staticSeedAdmission: options.staticSeedAdmission,
       seeded,
     }).catch(err => {
       logger.warn('ISR cache handler 异常，回退到下游处理:', err);
@@ -702,6 +708,9 @@ export function createIsrCacheMiddleware(
         }
 
         const opsConfig = resolveOpsConfig(resolvedConfig, 'development');
+        const { bindRuntimeOpsConfig, getOpsRequestLimiter } = await import('../server/opsConfig');
+        const opsLimiter = getOpsRequestLimiter(opsConfig);
+        const metricsAuth = createOpsAuthMiddleware('metrics', opsConfig);
         const nextHandler = createIsrCacheHandler(
           resolvedConfig,
           withRuntimeCacheOptions(resolvedConfig, { ...options, development: true })
@@ -718,17 +727,20 @@ export function createIsrCacheMiddleware(
           server.middlewares.use((req, res, next) => {
             if (handler !== nextHandler) return next();
             if (opsConfig.metrics.enabled && req.url === '/metrics' && req.method === 'GET') {
-              createOpsAuthMiddleware('metrics', opsConfig)(req as never, res as never, () => {
-                import('@/metrics/PromMetrics')
-                  .then(async ({ promRegistry }) => {
-                    const body = await promRegistry.metrics();
-                    res.setHeader('content-type', promRegistry.contentType);
-                    res.end(body);
-                  })
-                  .catch(err => {
-                    res.statusCode = 500;
-                    res.end(`metrics error: ${String(err)}`);
-                  });
+              opsLimiter(req as never, res as never, error => {
+                if (error) return next(error);
+                metricsAuth(req as never, res as never, () => {
+                  import('@/metrics/PromMetrics')
+                    .then(async ({ promRegistry }) => {
+                      const body = await promRegistry.metrics();
+                      res.setHeader('content-type', promRegistry.contentType);
+                      res.end(body);
+                    })
+                    .catch(err => {
+                      res.statusCode = 500;
+                      res.end(`metrics error: ${String(err)}`);
+                    });
+                });
               });
               return;
             }
@@ -739,6 +751,7 @@ export function createIsrCacheMiddleware(
               });
             } else nextHandler(req, res, next);
           });
+          bindRuntimeOpsConfig(server, opsConfig);
           mounted = true;
           if (inspector) logger.info('🔍 ISR cache inventory 已启用：GET /__isr/cache/inventory');
         } catch (error) {
@@ -780,7 +793,42 @@ interface HandleContext {
   pathTagPrefix: string;
   staticSeed?: IsrCacheMiddlewareOptions['staticSeed'];
   staticSeedInfo?: IsrCacheMiddlewareOptions['staticSeedInfo'];
-  seeded: Map<string, Promise<void>>;
+  staticSeedAdmission?: IsrCacheMiddlewareOptions['staticSeedAdmission'];
+  seeded: Map<string, Promise<StaticSeedResult>>;
+}
+
+interface StaticSeedDenial {
+  statusCode: number;
+  retryAfter?: string;
+}
+type StaticSeedResult = true | StaticSeedDenial;
+
+function seedDenial(res: ServerResponse): StaticSeedDenial {
+  const retryAfter = res.getHeader('Retry-After');
+  return {
+    statusCode: res.statusCode >= 400 && res.statusCode <= 599 ? res.statusCode : 503,
+    retryAfter:
+      typeof retryAfter === 'string' || typeof retryAfter === 'number'
+        ? String(retryAfter)
+        : undefined,
+  };
+}
+
+function sendSeedDenial(res: ServerResponse, denial: StaticSeedDenial): void {
+  if (res.destroyed || res.writableEnded) return;
+  if (res.headersSent) {
+    res.destroy();
+    return;
+  }
+  res.statusCode = denial.statusCode;
+  res.setHeader('Cache-Control', 'no-store');
+  res.setHeader('Content-Type', 'application/json; charset=utf-8');
+  if (denial.retryAfter) res.setHeader('Retry-After', denial.retryAfter);
+  res.end(
+    JSON.stringify({
+      error: denial.statusCode === 429 ? 'Too many requests' : 'Static seed admission unavailable',
+    })
+  );
 }
 
 /**
@@ -925,9 +973,28 @@ async function handleRequest(
     !ctx.variantIsolation &&
     !ctx.hostIsolation
   ) {
-    if (!ctx.seeded.has(cacheKey)) {
-      const seedTask = (async () => {
+    let seedTask = ctx.seeded.get(cacheKey);
+    const leader = !seedTask;
+    if (!seedTask) {
+      // Reserve the task before admission yields, so followers never spend another quota.
+      seedTask = Promise.resolve().then<StaticSeedResult>(async () => {
+        try {
+          if (ctx.staticSeedAdmission && !(await ctx.staticSeedAdmission(req, res)))
+            return seedDenial(res);
+        } catch (error) {
+          logger.warn('SSG seed admission failed; refusing origin fallback', error);
+          if (!res.headersSent && !res.writableEnded && !res.destroyed) {
+            res.statusCode = 503;
+            res.setHeader('Cache-Control', 'no-store');
+            res.end('Static seed admission unavailable');
+          } else if (!res.writableEnded && !res.destroyed) {
+            res.destroy(error instanceof Error ? error : undefined);
+          }
+          return seedDenial(res);
+        }
+        if (!isActive()) return seedDenial(res);
         const generation = ctx.state.invalidationGeneration;
+        if (generation !== 0) return true;
         const seed = await raceWithTimeout(
           ctx.staticSeed!(
             logicalPath,
@@ -937,13 +1004,13 @@ async function handleRequest(
         );
         if (!seed) {
           ctx.seeded.delete(cacheKey);
-          return;
+          return true;
         }
         const lease = ctx.cache.coherence
           ? await raceWithTimeout(ctx.cache.coherence.beginRender(), ctx.l2ReadTimeoutMs)
           : undefined;
-        if (generation !== 0 || (lease && lease.revision !== '0')) return;
-        if (generation !== ctx.state.invalidationGeneration) return;
+        if (lease && lease.revision !== '0') return true;
+        if (generation !== ctx.state.invalidationGeneration) return true;
         const ttl = resolved.ttlSeconds * 1000;
         const seededEntry = {
           ...seed,
@@ -952,7 +1019,7 @@ async function handleRequest(
           hardExpiresAt: seed.storedAt + ttl + resolved.swrSeconds * 1000,
           pathTag: `${ctx.pathTagPrefix}${logicalPath}`,
         };
-        if (Date.now() >= seededEntry.hardExpiresAt) return;
+        if (Date.now() >= seededEntry.hardExpiresAt) return true;
         if (ctx.cache.coherence) {
           if (lease && ctx.cache.coherence.seed)
             await raceWithTimeout(
@@ -962,17 +1029,24 @@ async function handleRequest(
         } else {
           ctx.cache.set(cacheKey, seededEntry);
         }
-      })();
+        return true;
+      });
       ctx.seeded.set(cacheKey, seedTask);
     }
     try {
-      await ctx.seeded.get(cacheKey);
+      const result = await seedTask;
+      if (result !== true) {
+        if (ctx.seeded.get(cacheKey) === seedTask) ctx.seeded.delete(cacheKey);
+        // Fan out one bounded denial instead of making N followers retry N successive leaders.
+        if (!leader && isActive()) sendSeedDenial(res, result);
+        return;
+      }
       if (!isActive()) return;
       entry = ctx.cache.getAsync
         ? await raceWithTimeout(ctx.cache.getAsync(cacheKey), ctx.l2ReadTimeoutMs)
         : ctx.cache.get(cacheKey);
     } catch (error) {
-      ctx.seeded.delete(cacheKey);
+      if (ctx.seeded.get(cacheKey) === seedTask) ctx.seeded.delete(cacheKey);
       logger.warn('SSG build seed unavailable; rendering origin', error);
     }
   }

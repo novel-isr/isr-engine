@@ -199,7 +199,7 @@ describe('loadConfig —— TS 走 esbuild 编译', () => {
         `
 const compute = (base: number): number => base * 2;
 const baseTtl = 1500;
-${fullConfigSource({ renderMode: "'isr' as const", revalidate: 'compute(baseTtl)' }).replace('export default', 'export default')}
+${fullConfigSource({ renderMode: "'isr' as const", revalidate: 'compute(baseTtl)' })}
 `
       );
       const config = await loadConfig({ cwd });

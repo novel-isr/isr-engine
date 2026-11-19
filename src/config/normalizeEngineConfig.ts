@@ -2,6 +2,7 @@ import { resolveImageOptions } from './resolveImageOptions';
 import type { ISRConfig } from '@/types';
 import { assertDistinctHtmlRouteIdentities } from '../utils/htmlPathname';
 import { resolveCacheDurations } from '../utils/cacheDuration';
+import { validateRequestLimits } from '../server/requestLimits';
 
 /**
  * Engine-owned config normalization.
@@ -51,6 +52,7 @@ export function normalizeEngineConfig(config: ISRConfig): ISRConfig {
   if (!isRecord(config.server)) {
     throw new Error('ssr.config.ts 必须显式声明 server 对象');
   }
+  validateRequestLimits(config.server.requestLimits);
   if (!isRecord(config.ssg)) {
     throw new Error('ssr.config.ts 必须显式声明 ssg 对象');
   }

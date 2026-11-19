@@ -19,6 +19,174 @@ describe('installBrowserObservability', () => {
     vi.unstubAllGlobals();
   });
 
+  it('uses cryptographic identifiers and migrates weak persisted browser identifiers', async () => {
+    installBrowserGlobals();
+    window.localStorage.setItem('isr_engine_builtin_analytics_session', 'runtime_old_random');
+    window.localStorage.setItem('isr_engine_builtin_analytics_anonymous', 'runtime_old_random');
+    let byte = 0;
+    vi.stubGlobal('crypto', {
+      getRandomValues: (bytes: Uint8Array) => {
+        bytes.fill(++byte);
+        return bytes;
+      },
+    });
+    const fetchMock = vi.fn(async () => new Response('{}', { status: 202 }));
+    vi.stubGlobal('fetch', fetchMock);
+    const handle = await installBrowserObservability({
+      app: 'secure-ids',
+      analytics: { endpoint: '/analytics', batchSize: 1, trackInitialPage: false },
+      errorReporting: false,
+    });
+    handle.track('first');
+    await handle.flush();
+    const event = JSON.parse(fetchMock.mock.calls[0]?.[1]?.body as string).events[0];
+    expect(event).toMatchObject({
+      sessionId: 'runtime_01010101010101010101010101010101',
+      anonymousId: 'runtime_02020202020202020202020202020202',
+      id: 'evt_03030303030303030303030303030303',
+    });
+    expect(window.localStorage.getItem('isr_engine_builtin_analytics_session')).toBe(
+      event.sessionId
+    );
+    handle.shutdown();
+
+    const next = await installBrowserObservability({
+      app: 'secure-ids',
+      analytics: { endpoint: '/analytics', batchSize: 1, trackInitialPage: false },
+      errorReporting: false,
+    });
+    next.track('second');
+    await next.flush();
+    const nextEvent = JSON.parse(fetchMock.mock.calls[1]?.[1]?.body as string).events[0];
+    expect(nextEvent.sessionId).toBe(event.sessionId);
+    expect(nextEvent.anonymousId).toBe(event.anonymousId);
+    expect(nextEvent.id).toBe('evt_04040404040404040404040404040404');
+  });
+
+  it.each([
+    undefined,
+    {
+      getRandomValues() {
+        throw new Error('crypto unavailable');
+      },
+    },
+  ])(
+    'disables telemetry safely when cryptographic identifiers cannot be created (%j)',
+    async crypto => {
+      installBrowserGlobals();
+      vi.stubGlobal('crypto', crypto);
+      const fetchMock = vi.fn(async () => new Response('{}', { status: 202 }));
+      vi.stubGlobal('fetch', fetchMock);
+      const handle = await installBrowserObservability({
+        app: 'no-crypto',
+        analytics: { endpoint: '/analytics', batchSize: 1 },
+        errorReporting: { endpoint: '/errors', batchSize: 1 },
+      });
+      expect(() => {
+        handle.track('event');
+        handle.page('/next');
+        handle.capture(new Error('failed'));
+        handle.captureActionError(new Error('action'), 'action');
+      }).not.toThrow();
+      await handle.flush();
+      expect(fetchMock).not.toHaveBeenCalled();
+    }
+  );
+
+  it.each(['access', 'write'])(
+    'uses ephemeral cryptographic identifiers when storage %s fails',
+    async failure => {
+      installBrowserGlobals();
+      vi.stubGlobal('crypto', {
+        getRandomValues: (bytes: Uint8Array) => {
+          bytes.fill(0xab);
+          return bytes;
+        },
+      });
+      if (failure === 'access') {
+        Object.defineProperty(window, 'localStorage', {
+          configurable: true,
+          get() {
+            throw new Error('storage denied');
+          },
+        });
+      } else {
+        window.localStorage.setItem = () => {
+          throw new Error('storage write denied');
+        };
+      }
+      const fetchMock = vi.fn(async () => new Response('{}', { status: 202 }));
+      vi.stubGlobal('fetch', fetchMock);
+      const handle = await installBrowserObservability({
+        app: 'no-storage',
+        analytics: { endpoint: '/analytics', batchSize: 1, trackInitialPage: false },
+        errorReporting: false,
+      });
+      handle.track('event');
+      await handle.flush();
+      expect(JSON.parse(fetchMock.mock.calls[0]?.[1]?.body as string).events[0]).toMatchObject({
+        sessionId: 'runtime_abababababababababababababababab',
+        anonymousId: 'runtime_abababababababababababababababab',
+        id: 'evt_abababababababababababababababab',
+      });
+    }
+  );
+
+  it('drops only the event affected by a later cryptographic failure', async () => {
+    installBrowserGlobals();
+    const getRandomValues = vi.fn((bytes: Uint8Array) => {
+      bytes.fill(0xcd);
+      return bytes;
+    });
+    vi.stubGlobal('crypto', { getRandomValues });
+    const fetchMock = vi.fn(async () => new Response('{}', { status: 202 }));
+    vi.stubGlobal('fetch', fetchMock);
+    const handle = await installBrowserObservability({
+      app: 'late-crypto-failure',
+      analytics: { endpoint: '/analytics', batchSize: 10, trackInitialPage: false },
+      errorReporting: false,
+    });
+    handle.track('before');
+    getRandomValues.mockImplementationOnce(() => {
+      throw new Error('crypto failed');
+    });
+    expect(() => handle.track('dropped')).not.toThrow();
+    handle.track('kept');
+    await handle.flush();
+    expect(JSON.parse(fetchMock.mock.calls[0]?.[1]?.body as string).events).toEqual([
+      expect.objectContaining({ name: 'before', id: 'evt_cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd' }),
+      expect.objectContaining({ name: 'kept', id: 'evt_cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd' }),
+    ]);
+  });
+
+  it('keeps the error queue available when analytics identifier creation fails', async () => {
+    installBrowserGlobals();
+    const getRandomValues = vi
+      .fn((bytes: Uint8Array) => {
+        bytes.fill(0xef);
+        return bytes;
+      })
+      .mockImplementationOnce(() => {
+        throw new Error('transient crypto failure');
+      });
+    vi.stubGlobal('crypto', { getRandomValues });
+    const fetchMock = vi.fn(async () => new Response('{}', { status: 202 }));
+    vi.stubGlobal('fetch', fetchMock);
+    const handle = await installBrowserObservability({
+      app: 'independent-queues',
+      analytics: { endpoint: '/analytics', batchSize: 1 },
+      errorReporting: { endpoint: '/errors', batchSize: 1 },
+    });
+    handle.track('disabled');
+    handle.capture(new Error('reported'));
+    await handle.flush();
+    expect(fetchMock.mock.calls.map(([endpoint]) => endpoint)).toEqual(['/errors']);
+    expect(JSON.parse(fetchMock.mock.calls[0]?.[1]?.body as string).reports[0]).toMatchObject({
+      message: 'reported',
+      id: 'err_efefefefefefefefefefefefefefefef',
+    });
+  });
+
   it('uploads page views and Server Action errors through configured endpoints', async () => {
     const fetchMock = vi.fn(async () => new Response('{}', { status: 202 }));
     vi.stubGlobal('fetch', fetchMock);

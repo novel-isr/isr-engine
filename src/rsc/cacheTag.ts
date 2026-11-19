@@ -20,9 +20,7 @@
 
 import { AsyncLocalStorage } from 'node:async_hooks';
 
-import { Logger } from '../logger/Logger';
-
-const logger = Logger.getInstance();
+import { runtimeLogger as logger } from '../logger/runtimeLogger';
 
 interface TagStore {
   tags: Set<string>;
