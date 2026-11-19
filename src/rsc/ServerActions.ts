@@ -13,9 +13,7 @@
  *     `'use server'` 声明的模块导出上）
  */
 
-import { Logger } from '../logger/Logger';
-
-const logger = Logger.getInstance();
+import { runtimeLogger as logger } from '../logger/runtimeLogger';
 
 export interface ServerActionMetadata {
   /** Action ID（应与 plugin 生成的 reference id 保持一致；自行注册时由调用方提供） */

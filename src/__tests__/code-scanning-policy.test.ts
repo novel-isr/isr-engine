@@ -25,11 +25,23 @@ describe('release code-scanning policy', () => {
   it.each([
     { executionSuccessful: false },
     { executionSuccessful: true, exitCode: 1 },
-    { executionSuccessful: true, toolExecutionNotifications: [{ level: 'error', message: { text: 'partial analysis' } }] },
-    { executionSuccessful: true, toolConfigurationNotifications: [{ level: 'error', message: { text: 'missing query pack' } }] },
+    {
+      executionSuccessful: true,
+      toolExecutionNotifications: [{ level: 'error', message: { text: 'partial analysis' } }],
+    },
+    {
+      executionSuccessful: true,
+      toolConfigurationNotifications: [{ level: 'error', message: { text: 'missing query pack' } }],
+    },
   ])('rejects explicitly failed analysis even without findings: %j', invocation => {
     const dir = directory();
-    writeFileSync(path.join(dir, 'source.sarif'), JSON.stringify({ version: '2.1.0', runs: [{ tool: { driver: { name: 'CodeQL' } }, results: [], invocations: [invocation] }] }));
+    writeFileSync(
+      path.join(dir, 'source.sarif'),
+      JSON.stringify({
+        version: '2.1.0',
+        runs: [{ tool: { driver: { name: 'CodeQL' } }, results: [], invocations: [invocation] }],
+      })
+    );
     expect(spawnSync(process.execPath, [script, dir]).status).toBe(1);
   });
 

@@ -31,8 +31,15 @@ try {
         throw new Error(`Invalid CodeQL invocation evidence: ${filename}`);
       }
       for (const invocation of run.invocations ?? []) {
-        const notifications = [...(invocation.toolExecutionNotifications ?? []), ...(invocation.toolConfigurationNotifications ?? [])];
-        if (invocation.executionSuccessful === false || (invocation.exitCode !== undefined && invocation.exitCode !== 0) || notifications.some(notification => notification.level === 'error')) {
+        const notifications = [
+          ...(invocation.toolExecutionNotifications ?? []),
+          ...(invocation.toolConfigurationNotifications ?? []),
+        ];
+        if (
+          invocation.executionSuccessful === false ||
+          (invocation.exitCode !== undefined && invocation.exitCode !== 0) ||
+          notifications.some(notification => notification.level === 'error')
+        ) {
           throw new Error(`CodeQL reported incomplete or failed analysis: ${filename}`);
         }
       }

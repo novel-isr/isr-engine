@@ -30,6 +30,11 @@ function invalid(message: string): never {
   throw new Error(`Google font ${message}`);
 }
 
+function isControlCharacter(character: string): boolean {
+  const code = character.charCodeAt(0);
+  return code < 32 || (code >= 127 && code <= 159);
+}
+
 export function normalizeFontOutDir(value: string): string {
   const directory = value.replace(/\/$/, '');
   if (
@@ -51,7 +56,7 @@ function validateOptions(families: string[], weights: string[]): void {
         !family ||
         family.length > 128 ||
         family.trim() !== family ||
-        /[\u0000-\u001f\u007f-\u009f]/.test(family)
+        Array.from(family).some(isControlCharacter)
     )
   )
     invalid('family list is invalid or too large');
@@ -550,14 +555,15 @@ export async function loadGoogleFontAssets(
 
 /** CSS strings are escaped for both the CSS parser and an HTML raw-text style element. */
 function cssString(value: string): string {
-  return (
-    '"' +
-    value.replace(
-      /[\u0000-\u001f\u007f-\u009f\\"<>]/g,
-      character => `\\${character.codePointAt(0)!.toString(16)} `
-    ) +
-    '"'
-  );
+  let output = '"';
+  for (const character of value) {
+    if (isControlCharacter(character) || '\\"<>'.includes(character)) {
+      output += `\\${character.charCodeAt(0).toString(16)} `;
+    } else {
+      output += character;
+    }
+  }
+  return output + '"';
 }
 
 export function renderGoogleFontCss(

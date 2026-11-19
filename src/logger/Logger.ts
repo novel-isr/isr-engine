@@ -10,6 +10,7 @@ import {
   snapshotLogArgument,
   type LogValue,
 } from './logRecord';
+import { setOriginLogger } from './runtimeLogger';
 
 export enum LogLevel {
   VERBOSE = 'verbose',
@@ -36,6 +37,7 @@ export class Logger {
   public static getInstance(options: LoggerOptions = {}): Logger {
     if (!Logger.instance) {
       Logger.instance = new Logger();
+      setOriginLogger(Logger.instance);
     }
 
     if (options.verbose !== undefined) {
