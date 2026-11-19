@@ -98,6 +98,15 @@ try {
     });
   }
   // Exercise runtime-only SEO through the installed default RSC entry and real app config.
+  const fixtureApp = path.join(fixture, 'src/app.tsx');
+  await fs.rename(fixtureApp, path.join(fixture, 'src/bench-app.tsx'));
+  await fs.writeFile(
+    fixtureApp,
+    `import { App as BenchApp, type AppProps } from './bench-app';
+    export function App(props: AppProps) {
+      return <html lang="en"><head><meta charSet="utf-8" /></head><body><BenchApp {...props} /></body></html>;
+    }`
+  );
   const fixtureConfig = path.join(fixture, 'ssr.config.ts');
   await fs.rename(fixtureConfig, path.join(fixture, 'bench.ssr.config.ts'));
   await fs.writeFile(
@@ -153,7 +162,9 @@ try {
         assert.equal(response.status, 200, route);
         const body = await response.text();
         assert.ok(body.includes(expected), route);
-        if (route === '/books/1') assert.ok(body.includes('<title>SEO books/1</title>'), 'dynamic SEO title');
+        if (route === '/books/1') {
+          assert.ok(body.includes('<title>SEO books/1</title>'), 'dynamic SEO title missing: ' + body.slice(0, 300));
+        }
       }
       await revalidateTag('books');
       const metric = await invalidatorRunsTotal.get();
