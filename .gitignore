@@ -93,3 +93,6 @@ temp/
 # runtime logs (engine writes engine.log etc here)
 logs/
 *.log
+
+# Verified release archives
+.release/

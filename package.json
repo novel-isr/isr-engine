@@ -11,7 +11,7 @@
   "bugs": "https://github.com/novel-isr/isr-engine/issues",
   "publishConfig": {
     "access": "public",
-    "registry": "https://npm.pkg.github.com"
+    "registry": "https://registry.npmjs.org"
   },
   "type": "module",
   "main": "./dist/novel-isr.cjs",
@@ -103,11 +103,12 @@
     "check": "pnpm run type-check && pnpm run lint && pnpm run test",
     "audit:security": "pnpm audit --registry=https://registry.npmjs.org --audit-level=low",
     "prepublishOnly": "pnpm run audit:security",
-    "release": "pnpm run check && pnpm run build && npm publish --access restricted",
+    "release": "semantic-release",
     "prepare": "husky",
     "test:package": "node scripts/check-package-exports.mjs",
     "test:package:installed": "node scripts/check-installed-package.mjs",
-    "test:workers": "tsc --noEmit -p scripts/fixtures/tsconfig.json && node scripts/check-workers-runtime.mjs"
+    "test:workers": "tsc --noEmit -p scripts/fixtures/tsconfig.json && node scripts/check-workers-runtime.mjs",
+    "test:release": "node scripts/check-release.mjs"
   },
   "engines": {
     "node": ">=22.21.1"
@@ -144,6 +145,11 @@
   "devDependencies": {
     "@eslint/js": "^9.15.0",
     "@playwright/test": "^1.62.1",
+    "@semantic-release/commit-analyzer": "13.0.1",
+    "@semantic-release/exec": "7.1.0",
+    "@semantic-release/github": "12.0.11",
+    "@semantic-release/npm": "13.2.0",
+    "@semantic-release/release-notes-generator": "14.1.1",
     "@types/compression": "^1.7.5",
     "@types/css-tree": "^3.2.0",
     "@types/express": "^5.0.0",
@@ -173,6 +179,7 @@
     "rimraf": "^6.1.4",
     "rsc-html-stream": "^0.0.7",
     "sass-embedded": "^1.79.4",
+    "semantic-release": "24.2.9",
     "tsc-alias": "^1.8.17",
     "vite": "8.1.6",
     "vitest": "^4.1.12"

@@ -1,29 +1,17 @@
-name: Publish to GitHub Packages
-
-# 触发：tag push (v1.2.3) 或手动 workflow_dispatch
-#
-# 行为：
-#   1. tag push:           读 tag 里的版本号，必须跟 package.json version 一致
-#   2. workflow_dispatch:  校验 inputs.version 与已提交的 package.json 一致
-#
-# 消费方：novel-rating / 其他业务侧 通过 GitHub Packages 拉
-#   .npmrc:  @novel-isr:registry=https://npm.pkg.github.com/
-#            //npm.pkg.github.com/:_authToken=${NODE_AUTH_TOKEN}
-#   package.json:  "@novel-isr/engine": "^2.3.1"
+name: Release main
 
 on:
   push:
-    tags: ['v*']
+    branches: [main]
   workflow_dispatch:
-    inputs:
-      version:
-        description: '已提交的版本号（无 v 前缀；为空则读 package.json）'
-        required: false
-        default: ''
 
 permissions:
   contents: read
-  packages: write
+
+# A release must finish before the next release can start; never cancel a publication.
+concurrency:
+  group: release-main
+  cancel-in-progress: false
 
 jobs:
   verify:
@@ -37,10 +25,14 @@ jobs:
       duration: 5
 
   publish:
+    if: github.ref == 'refs/heads/main'
     needs: [verify, benchmark]
     runs-on: ubuntu-latest
-    timeout-minutes: 15
-
+    timeout-minutes: 25
+    permissions:
+      contents: write
+      packages: write
+      id-token: write
     services:
       redis:
         image: redis:7-alpine
@@ -54,64 +46,38 @@ jobs:
       ISR_TEST_REDIS_URL: redis://127.0.0.1:6379
 
     steps:
-      - name: Checkout
+      - name: Checkout the verified commit and complete release history
         uses: actions/checkout@v4
-
-      - name: Set up pnpm
-        uses: pnpm/action-setup@v5
+        with:
+          fetch-depth: 0
+      - uses: pnpm/action-setup@v5
         with:
           run_install: false
-
-      - name: Set up Node.js
-        uses: actions/setup-node@v4
+      - uses: actions/setup-node@v4
         with:
           node-version-file: '.nvmrc'
-          registry-url: 'https://npm.pkg.github.com'
-          scope: '@novel-isr'
-
-      - name: Verify requested version matches committed package
-        if: github.event_name == 'workflow_dispatch' && inputs.version != ''
-        env:
-          RELEASE_VERSION: ${{ inputs.version }}
-        run: |
-          PKG_VERSION=$(node -p "require('./package.json').version")
-          if [ "$RELEASE_VERSION" != "$PKG_VERSION" ]; then
-            echo "Requested version must match the committed package.json version"
-            exit 1
-          fi
-
-      - name: Verify tag matches package.json (if tag push)
-        if: github.event_name == 'push'
-        run: |
-          TAG_VERSION="${GITHUB_REF_NAME#v}"
-          PKG_VERSION=$(node -p "require('./package.json').version")
-          if [ "$TAG_VERSION" != "$PKG_VERSION" ]; then
-            echo "❌ tag $GITHUB_REF_NAME does not match package.json version $PKG_VERSION"
-            exit 1
-          fi
-
-      - name: Install
+      - name: Install OIDC-capable npm
+        run: npm install --global npm@11.12.1 --registry=https://registry.npmjs.org
+      - name: Install locked dependencies
         run: pnpm install --frozen-lockfile
-
-      - name: Audit all locked dependencies
-        run: pnpm run audit:security
-
-      - name: Type, lint and regression checks
-        run: pnpm run check
-
-      - name: Build
-        run: pnpm run build
-
-      - name: Verify package exports and consumer types
-        run: pnpm run test:package
-
-      - name: Verify clean installation of release artifact
-        run: pnpm run test:package:installed
-
-      - name: Verify official Workers runtime
-        run: pnpm run test:workers
-
-      - name: Publish
-        run: npm publish
+      - name: Verify automatic version policy
+        run: pnpm run test:release
+      - name: Audit independent benchmark dependencies
+        working-directory: bench/app
+        run: pnpm --ignore-workspace audit --registry=https://registry.npmjs.org --audit-level=low
+      - name: Calculate version, verify versioned artifacts and publish with npm OIDC
+        run: pnpm run release
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: Mirror the published npm artifact to GitHub Packages
+        run: node scripts/mirror-release.mjs
         env:
           NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: Preserve release archives even after a publication failure
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-${{ github.sha }}-${{ github.run_attempt }}
+          path: .release/*.tgz
+          if-no-files-found: ignore
+          retention-days: 30
