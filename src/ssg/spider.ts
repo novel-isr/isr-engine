@@ -536,8 +536,7 @@ export async function spiderSsgRoutes(params: {
  * SSG 路由来源形状（兼容同步 / 异步函数两种配置）
  */
 export type SsgRoutesSource =
-  | readonly string[]
-  | (() => readonly string[] | string[] | Promise<readonly string[] | string[]>);
+  readonly string[] | (() => readonly string[] | string[] | Promise<readonly string[] | string[]>);
 
 type RouteEntry = string | { mode: string; ttl?: number; staleWhileRevalidate?: number };
 

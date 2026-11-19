@@ -70,5 +70,13 @@ assert.equal(
 );
 
 assert.equal(readFileSync('.nvmrc', 'utf8').trim(), '24.15.0');
-assert.equal(pkg.engines.node, '>=24.15.0');
+assert.equal(pkg.engines.node, '24.15.0');
 await import('./check-release-history.mjs');
+
+const playwright = JSON.parse(readFileSync('node_modules/@playwright/test/package.json', 'utf8'));
+assert.ok(
+  readFileSync('.github/workflows/ci.yml', 'utf8').includes(
+    `mcr.microsoft.com/playwright:v${playwright.version}-noble@sha256:`
+  ),
+  'The browser image must match the installed Playwright version'
+);

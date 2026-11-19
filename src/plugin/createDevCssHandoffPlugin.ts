@@ -184,7 +184,7 @@ const WINDOWS_DRIVE_PATH = /^[A-Za-z]:\//;
 
 function canonicalPathSegment(segment: string): string | undefined {
   let result = '';
-  for (let index = 0; index < segment.length; ) {
+  for (let index = 0; index < segment.length;) {
     const codePoint = segment.codePointAt(index);
     if (codePoint === undefined) return undefined;
     const character = String.fromCodePoint(codePoint);

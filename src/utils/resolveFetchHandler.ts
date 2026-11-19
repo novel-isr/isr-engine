@@ -3,9 +3,7 @@ import type { FetchHandler } from '../ssg/spider';
 /** Resolve the built RSC module once, retaining the selected export's receiver. */
 export function resolveFetchHandler(module: unknown): FetchHandler {
   const mod = module as
-    | { default?: { fetch?: unknown } | null; fetch?: unknown }
-    | null
-    | undefined;
+    { default?: { fetch?: unknown } | null; fetch?: unknown } | null | undefined;
   const defaultOwner = mod?.default;
   const defaultFetch = defaultOwner?.fetch;
   if (typeof defaultFetch === 'function') {

@@ -7,8 +7,7 @@ interface ReactDomResourceDispatcher {
 }
 
 export type DevStyleResourcePrecedence =
-  | 'vite-rsc/client-reference'
-  | 'vite-rsc/importer-resources';
+  'vite-rsc/client-reference' | 'vite-rsc/importer-resources';
 
 interface PinnedReactDomModule {
   version: string;

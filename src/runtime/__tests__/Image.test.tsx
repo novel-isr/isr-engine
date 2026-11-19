@@ -44,16 +44,14 @@ function readChildren(el: React.ReactElement): React.ReactNode[] {
 /** Image 返回 Fragment（可选 <link> + 必出 <img>），单测要从 children 里抽 img */
 function renderProps<P>(el: React.ReactElement): P {
   const img = readChildren(el).find(c => React.isValidElement(c) && c.type === 'img') as
-    | React.ReactElement
-    | undefined;
+    React.ReactElement | undefined;
   if (!img) throw new Error('Image did not render an <img>');
   return img.props as P;
 }
 
 function getPreloadLink(el: React.ReactElement): LinkProps | null {
   const link = readChildren(el).find(c => React.isValidElement(c) && c.type === 'link') as
-    | React.ReactElement
-    | undefined;
+    React.ReactElement | undefined;
   return link ? (link.props as LinkProps) : null;
 }
 

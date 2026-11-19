@@ -63,7 +63,7 @@ jobs:
       BENCH_COOLDOWN_MS: '2000'
       BENCH_URL: http://127.0.0.1:3000
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 0
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
@@ -79,17 +79,18 @@ jobs:
           echo "base=$base" >> "$GITHUB_OUTPUT"
           echo "current=$current" >> "$GITHUB_OUTPUT"
 
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
         with:
           ref: ${{ steps.revisions.outputs.base }}
           path: .bench-baseline
 
-      - uses: pnpm/action-setup@v5
-        with:
-          run_install: false
-      - uses: actions/setup-node@v5
+      - uses: actions/setup-node@v7
         with:
           node-version-file: '.nvmrc'
+          package-manager-cache: false
+      - uses: pnpm/action-setup@v6
+        with:
+          run_install: false
 
       - name: Build both engines with the same benchmark fixture
         run: |
@@ -98,8 +99,8 @@ jobs:
           # Use the current fixture for both engine revisions; keep each engine's locked dependencies.
           rsync -a --delete --exclude=node_modules --exclude=dist bench/app/ .bench-baseline/bench/app/
           (cd .bench-baseline && pnpm install --frozen-lockfile && pnpm run build)
-          (cd bench/app && pnpm install --ignore-workspace --frozen-lockfile && pnpm run build)
-          (cd .bench-baseline/bench/app && pnpm install --ignore-workspace --frozen-lockfile && pnpm run build)
+          (cd bench/app && pnpm install --ignore-workspace --frozen-lockfile && pnpm run type-check && pnpm run build)
+          (cd .bench-baseline/bench/app && pnpm install --ignore-workspace --frozen-lockfile && pnpm run type-check && pnpm run build)
 
       - name: Measure baseline and current sequentially on this runner
         env:
@@ -133,7 +134,8 @@ jobs:
             fi
             for scenario in warm ssr regeneration; do
               # A fresh process/cache per scenario keeps both revisions' starting conditions equal.
-              (cd "$app_dir" && exec setsid pnpm run start) > "$artifact_dir/bench-$revision-$scenario.log" 2>&1 &
+              export BENCH_SERVER_DIAGNOSTICS="$artifact_dir/bench-$revision-$scenario-server.json"
+              (cd "$app_dir" && exec setsid node --import "$artifact_dir/bench/server-diagnostics.mjs" ../../dist/cli/cli.js start) > "$artifact_dir/bench-$revision-$scenario.log" 2>&1 &
               app_pid=$!
               ready=0
               for _attempt in $(seq 1 30); do
@@ -161,7 +163,7 @@ jobs:
 
       - name: Upload measured evidence (including failures)
         if: always()
-        uses: actions/upload-artifact@v5
+        uses: actions/upload-artifact@v7
         with:
           name: bench-${{ github.sha }}
           path: |

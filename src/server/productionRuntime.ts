@@ -288,13 +288,9 @@ export async function createProductionRuntime(
     const hasStaticExps = runtime?.experiments && Object.keys(runtime.experiments).length > 0;
     const hasManifest = !!runtime?.experimentManifest?.endpoint;
     let manifestLoader:
-      | import('@/experiments/ManifestLoader').ManifestLoaderInstance
-      | null
-      | undefined;
+      import('@/experiments/ManifestLoader').ManifestLoaderInstance | null | undefined;
     let exposureQueue:
-      | import('@/experiments/ExposureQueue').ExposureQueueInstance
-      | null
-      | undefined;
+      import('@/experiments/ExposureQueue').ExposureQueueInstance | null | undefined;
     if (hasStaticExps || hasManifest) {
       const baseOrigin = runtime?.services?.api;
       const { createABVariantMiddleware } = await import('@/middlewares/ABVariantMiddleware');
