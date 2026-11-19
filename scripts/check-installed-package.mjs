@@ -109,7 +109,8 @@ try {
   );
   const smoke = `
     import assert from 'node:assert/strict';
-    import { createISRApp, loadConfig } from 'isr-engine';
+    import { createISRApp, invalidatorRunsTotal, loadConfig } from 'isr-engine';
+    import { revalidateTag } from 'isr-engine/rsc';
     process.env.NODE_ENV = 'production';
     const config = await loadConfig();
     config.server.host = '127.0.0.1';
@@ -122,6 +123,9 @@ try {
         assert.equal(response.status, 200, route);
         assert.ok((await response.text()).includes(expected), route);
       }
+      await revalidateTag('books');
+      const metric = await invalidatorRunsTotal.get();
+      assert.equal(metric.values.find(({ labels }) => labels.kind === 'tag' && labels.target === 'books')?.value, 1);
       console.log('Installed artifact RSC build and ISR/SSG/SSR HTTP routes verified.');
     } finally { await app.shutdown(); }
   `;
