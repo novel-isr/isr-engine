@@ -198,6 +198,11 @@ function collectHealthIssues(results, options) {
       row.startup.setup_ms > options.meta?.setup_timeout_ms
     )
       issues.push(`${key} connection pool was not fully verified before measurement`);
+    if (
+      row.pool?.connected_at_start !== row.connections ||
+      row.pool?.connected_at_end !== row.connections
+    )
+      issues.push(`${key} verified connection pool was lost during measurement`);
     const non2xxRate = numberOrZero(row.non_2xx_rate);
     // Timeouts are a subset of total health errors, not an additional count.
     const errors = numberOrZero(row.errors);

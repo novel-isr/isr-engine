@@ -204,6 +204,7 @@ for (const path of PATHS) {
       non_2xx: r.non2xx,
       non_2xx_rate: non2xxRate * 100,
       startup: r.startup,
+      pool: r.pool,
       diagnostics: r.diagnostics,
     };
     if (SCENARIO === 'regeneration') {
@@ -311,6 +312,8 @@ for (const r of results) {
   if (
     r.body_mismatches > 0 ||
     r.startup?.primed_connections !== r.connections ||
+    r.pool?.connected_at_start !== r.connections ||
+    r.pool?.connected_at_end !== r.connections ||
     r.regeneration_verified === false ||
     r.errors > MAX_ERRORS ||
     r.requests_total <= 0 ||

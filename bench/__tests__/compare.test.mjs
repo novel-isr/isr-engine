@@ -265,6 +265,21 @@ describe('bench/compare.mjs', () => {
     expect(result.stdout).toContain('protocol 4 requires Node 24.15.0');
   });
 
+  it.each([undefined, { connected_at_start: 10, connected_at_end: 9 }])(
+    'rejects a report missing its verified connection pool at cleanup: %j',
+    pool => {
+      const dir = mkdtempSync(path.join(tmpdir(), 'bench-compare-'));
+      const valid = row({ path: '/', connections: 10, qps: 2000, p95: 4 });
+      const base = writeBench(dir, 'base.json', [valid]);
+      const current = writeBench(dir, 'current.json', [{ ...valid, pool }]);
+      const result = spawnSync(process.execPath, [comparePath, base, current], {
+        encoding: 'utf8',
+      });
+      expect(result.status).toBe(1);
+      expect(result.stderr).toContain('verified connection pool was lost');
+    }
+  );
+
   it('does not produce Infinity when baseline p95 is zero', () => {
     const dir = mkdtempSync(path.join(tmpdir(), 'bench-compare-'));
     const baselinePath = writeBench(dir, 'baseline.json', [
@@ -355,6 +370,7 @@ function row({ path, connections, qps, p95, non2xxRate = 0, errors = 0, timeouts
     non_2xx_rate: non2xxRate,
     body_mismatches: 0,
     startup: { primed_connections: connections, setup_ms: 1 },
+    pool: { connected_at_start: connections, connected_at_end: connections },
     errors,
     timeouts,
   };

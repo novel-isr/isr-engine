@@ -266,6 +266,19 @@ export async function measureHttp({
   } finally {
     clearTimeout(setupTimer);
     connectedAtEnd = states.filter(state => state.connected && state.client.stats.connected).length;
+    if (phase === 'measure') {
+      for (const state of states) {
+        if ((!state.connected || !state.client.stats.connected) && !state.lostConnection) {
+          state.lostConnection = true;
+          recordError(
+            Object.assign(new Error('Verified connection was lost before cleanup'), {
+              code: 'BENCH_POOL_DISCONNECTED',
+            }),
+            state
+          );
+        }
+      }
+    }
     phase = 'cleanup';
     setupController.abort(failure);
     const cleanup = await Promise.allSettled(
@@ -301,6 +314,10 @@ export async function measureHttp({
     mismatches,
     non2xx,
     health_responses_total: healthResponses,
+    pool: {
+      connected_at_start: connectedAtBarrier,
+      connected_at_end: connectedAtEnd,
+    },
     startup: {
       primed_connections: primedConnections,
       setup_ms: setupMs || performance.now() - setupStarted,

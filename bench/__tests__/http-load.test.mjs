@@ -148,6 +148,32 @@ describe('measureHttp', () => {
     await expectClosed(sockets);
   });
 
+  it('rejects a connection closed by the final response during drain', async () => {
+    let requests = 0;
+    let release;
+    let seenTimed;
+    const timedRequest = new Promise(resolve => {
+      seenTimed = resolve;
+    });
+    const { url, sockets } = await serve((_request, response) => {
+      if (++requests === 1) return response.end('healthy');
+      release = () => {
+        response.setHeader('connection', 'close');
+        response.end('healthy');
+      };
+      seenTimed();
+    });
+    const measurement = measureHttp({ ...options(url), connections: 1, duration: 0.025 });
+    await timedRequest;
+    await delay(50);
+    release();
+    const result = await measurement;
+    expect(result.requests.total).toBe(0);
+    expect(result.pool.connected_at_end).toBe(0);
+    expect(result.errors).toBeGreaterThan(0);
+    await expectClosed(sockets);
+  });
+
   it('counts a request timeout during drain while excluding its late completion from metrics', async () => {
     let requests = 0;
     const { url, sockets } = await serve((_request, response) => {
