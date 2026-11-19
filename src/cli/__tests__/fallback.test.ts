@@ -14,13 +14,19 @@
  *   7) 静态请求路径穿越（`/assets/../etc/passwd`）→ 403
  *   8) 静态文件不存在 → 404
  */
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import http, { type Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { promises as fs } from 'node:fs';
+import * as fileIO from 'node:fs/promises';
+
+vi.mock('node:fs/promises', async importOriginal => {
+  const actual = await importOriginal<typeof import('node:fs/promises')>();
+  return { ...actual, stat: vi.fn(actual.stat), open: vi.fn(actual.open) };
+});
 import path from 'node:path';
 import os from 'node:os';
-import { createFallbackRequestHandler } from '../fallback';
+import { createFallbackRequestHandler, startFallbackProxy } from '../fallback';
 
 interface FX {
   dist: string;
@@ -181,6 +187,64 @@ describe('fallback proxy —— 静态资源直发', () => {
     const r = await get(fx.fallbackPort, '/logo.svg');
     expect(r.status).toBe(200);
     expect(r.body).toContain('logo');
+  });
+
+  it('rejects encoded traversal into a sibling with the same root prefix', async () => {
+    await fs.mkdir(path.join(fx.dist, 'client-private'));
+    await fs.writeFile(path.join(fx.dist, 'client-private', 'secret.txt'), 'private-fixture');
+    const r = await get(fx.fallbackPort, '/assets/..%2f..%2fclient-private%2fsecret.txt');
+    expect(r.status).toBe(403);
+    expect(r.body).not.toContain('private-fixture');
+  });
+
+  it('reads the same file descriptor whose type was checked when the path is replaced', async () => {
+    const file = path.join(fx.dist, 'client', 'assets', 'app.js');
+    const replacement = path.join(fx.dist, 'replacement.js');
+    await fs.writeFile(replacement, 'replacement-bytes');
+    const originalStat = fs.stat.bind(fs);
+    const originalOpen = fs.open.bind(fs);
+    const replace = () => fs.rename(replacement, file);
+    const statSpy = vi.spyOn(fileIO, 'stat').mockImplementation(async (...args) => {
+      const result = await originalStat(...args);
+      if (String(args[0]) === file) await replace();
+      return result;
+    });
+    const openSpy = vi.spyOn(fileIO, 'open').mockImplementation(async (...args) => {
+      const handle = await originalOpen(...args);
+      if (String(args[0]) === file) {
+        const stat = handle.stat.bind(handle);
+        vi.spyOn(handle, 'stat').mockImplementation(async (...statArgs) => {
+          const result = await stat(...statArgs);
+          await replace();
+          return result;
+        });
+      }
+      return handle;
+    });
+    try {
+      const r = await get(fx.fallbackPort, '/assets/app.js');
+      expect(r.status).toBe(200);
+      expect(r.body).toBe('console.log("static-app");');
+    } finally {
+      statSpy.mockRestore();
+      openSpy.mockRestore();
+    }
+  });
+
+  it('returns 400 for malformed percent encoding without rejecting the request handler', async () => {
+    const status = await new Promise<number>((resolve, reject) => {
+      const req = http.get(
+        { host: '127.0.0.1', port: fx.fallbackPort, path: '/assets/%zz' },
+        res => {
+          res.resume();
+          res.on('end', () => resolve(res.statusCode ?? 0));
+        }
+      );
+      req.setTimeout(500, () => req.destroy(new Error('malformed request received no response')));
+      req.on('error', reject);
+    });
+    expect(status).toBe(400);
+    expect((await get(fx.fallbackPort, '/assets/app.js')).status).toBe(200);
   });
 
   it('/assets/nonexistent.js → 404', async () => {
@@ -356,6 +420,21 @@ describe('fallback proxy —— SSR 反代 + SPA 兜底', () => {
       expect(r.body).toMatch(/pnpm build/);
     } finally {
       await teardown(fx);
+    }
+  });
+});
+
+describe('local fallback listener', () => {
+  it('binds only to the IPv4 loopback interface', async () => {
+    const server = startFallbackProxy({ port: '0', ssrPort: '1', apiPort: '1', dist: '.' });
+    try {
+      await new Promise<void>((resolve, reject) => {
+        server.once('listening', resolve);
+        server.once('error', reject);
+      });
+      expect((server.address() as AddressInfo).address).toBe('127.0.0.1');
+    } finally {
+      await close(server);
     }
   });
 });

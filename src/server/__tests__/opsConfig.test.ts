@@ -128,6 +128,42 @@ describe('resolveOpsConfig', () => {
 });
 
 describe('createOpsAuthMiddleware', () => {
+  it.each([
+    ['bEaReR\tsecret-token  ', 200],
+    ['Bearer \nsecret-token', 200],
+    ['Bearer\u2028secret-token', 200],
+    ['Bearersecret-token', 401],
+    ['Bearer secret-token\n', 401],
+    ['Bearer secret-token\r\n', 401],
+    ['Bearer secret-token\u2028', 401],
+    ['Bearer wrong-token', 403],
+    ['Bearer   ', 401],
+  ])('preserves Bearer scheme and token boundaries: %j', (authorization, expected) => {
+    const resolved = resolveOpsConfig(
+      serverOpsConfig({
+        authToken: 'secret-token',
+        metrics: { enabled: true, public: false },
+      }),
+      'production'
+    );
+    let status = 0;
+    const res = {
+      status(value: number) {
+        status = value;
+        return this;
+      },
+      json() {},
+    };
+    createOpsAuthMiddleware('metrics', resolved)(
+      { headers: { authorization } } as never,
+      res as never,
+      () => {
+        status = 200;
+      }
+    );
+    expect(status).toBe(expected);
+  });
+
   it('允许 Bearer token 访问受保护端点', () => {
     const resolved = resolveOpsConfig(
       serverOpsConfig({

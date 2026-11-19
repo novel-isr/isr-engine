@@ -25,6 +25,7 @@
  *   - 不内置消息字典 / 翻译机制 —— 那是 react-intl / FormatJS / lingui 的活
  */
 
+import { trimTrailingSlashes } from '../utils/trimTrailingSlashes';
 export interface I18nConfig {
   /** 支持的 locale 列表，如 ['zh', 'en', 'ja'] */
   locales: readonly string[];
@@ -60,7 +61,7 @@ export function parseLocale(pathname: string, config: I18nConfig): ParsedLocale 
     const rest = '/' + segments.slice(2).join('/');
     return {
       locale: first,
-      pathname: rest === '/' ? '/' : rest.replace(/\/+$/, ''),
+      pathname: rest === '/' ? '/' : trimTrailingSlashes(rest),
       hasPrefix: true,
     };
   }

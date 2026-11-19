@@ -18,6 +18,45 @@ interface PluginInternal {
 }
 
 describe('createFontPlugin', () => {
+  it.each([
+    ["@font-face { font-family: 'İ'; src: URL('/unicode.woff2'); }", '/unicode.woff2'],
+    ["@font-face { src: url('/first.woff2'), url('/second.woff2'); }", '/first.woff2'],
+  ])('preloads the first complete URL without changing character offsets', (css, expected) => {
+    const plugin = createFontPlugin() as unknown as PluginInternal;
+    plugin.transform!.call({}, css, 'app.css');
+    expect(plugin.transformIndexHtml!.call({}, '<head></head>')).toContain(`href="${expected}"`);
+  });
+
+  it('ignores commented font rules and keeps quoted braces and URL parentheses intact', () => {
+    const plugin = createFontPlugin() as unknown as PluginInternal;
+    const css = `/* @font-face { src: url('/comment.woff2'); } */
+@font-face { font-family: "Curly } Name"; src: url("/font(foo).woff2"); }`;
+    const out = plugin.transform!.call({}, css, 'app.css');
+    expect(out?.code).toContain('font-family: "Curly } Name"; src: url("/font(foo).woff2");');
+    const html = plugin.transformIndexHtml!.call({}, '<head></head>');
+    expect(html).toContain('href="/font(foo).woff2"');
+    expect(html).not.toContain('/comment.woff2');
+  });
+
+  it('decodes CSS URL escapes and escapes preload HTML attributes', () => {
+    const plugin = createFontPlugin() as unknown as PluginInternal;
+    const css = String.raw`@font-face { src: url("/fonts/quote\"font.woff2"); }`;
+    const out = plugin.transform!.call({}, css, 'app.css');
+    expect(out?.code).toContain(String.raw`url("/fonts/quote\"font.woff2")`);
+    expect(plugin.transformIndexHtml!.call({}, '<head></head>')).toContain(
+      'href="/fonts/quote&quot;font.woff2"'
+    );
+  });
+
+  it('inserts a declaration after an unterminated final declaration inside an unknown at-rule', () => {
+    const plugin = createFontPlugin() as unknown as PluginInternal;
+    const css = `@custom-theme example { @font-face { /* font-display: block */ src: url('/last.woff2') } }`;
+    const out = plugin.transform!.call({}, css, 'app.css');
+    expect(out?.code).toContain("src: url('/last.woff2') ;  font-display: swap;");
+    expect(out?.code).toContain('@custom-theme example {');
+    expect(plugin.transformIndexHtml!.call({}, '<head></head>')).toContain('href="/last.woff2"');
+  });
+
   it('注入 font-display: swap', () => {
     const p = createFontPlugin() as unknown as PluginInternal;
     const css = `@font-face { font-family: 'X'; src: url('/x.woff2') format('woff2'); }`;

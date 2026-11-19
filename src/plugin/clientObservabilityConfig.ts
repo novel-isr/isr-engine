@@ -1,3 +1,4 @@
+import { trimTrailingSlashes } from '../utils/trimTrailingSlashes';
 import fs from 'node:fs';
 import path from 'node:path';
 
@@ -104,7 +105,7 @@ function resolveEndpoint(
 function joinEndpoint(origin: string, endpoint: string): string {
   if (/^https?:\/\//i.test(endpoint)) return endpoint;
   if (!origin) return endpoint.startsWith('/') ? endpoint : `/${endpoint}`;
-  return `${origin.replace(/\/+$/, '')}/${endpoint.replace(/^\/+/, '')}`;
+  return `${trimTrailingSlashes(origin)}/${endpoint.replace(/^\/+/, '')}`;
 }
 
 function readPackageName(root: string): string | undefined {

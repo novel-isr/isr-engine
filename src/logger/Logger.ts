@@ -55,16 +55,17 @@ export class Logger {
     const requestId = getRequestId();
 
     let levelTag = `[${levelName}]`;
-    let traceTag = `[${traceId}]`;
-    let requestTag = requestId !== 'unknown' ? `[${requestId}]` : '';
+    let traceTag = `[${escapeLogValue(traceId)}]`;
+    let requestTag = requestId !== 'unknown' ? `[${escapeLogValue(requestId)}]` : '';
 
     const message = args
       .map(arg => {
         if (arg instanceof Error) {
           return arg.stack || arg.message;
         }
-        return typeof arg === 'object' ? JSON.stringify(arg, null, 2) : String(arg);
+        return typeof arg === 'object' ? (JSON.stringify(arg, null, 2) ?? '') : String(arg);
       })
+      .map(escapeLogValue)
       .join(' ');
 
     if (colorize) {
@@ -171,4 +172,16 @@ export class Logger {
       this.spinner = null;
     }
   }
+}
+
+function escapeLogValue(value: string): string {
+  return Array.from(value, character => {
+    const code = character.charCodeAt(0);
+    if (character === '\n') return '\\n';
+    if (character === '\r') return '\\r';
+    if (code < 0x20 || (code >= 0x7f && code <= 0x9f) || code === 0x2028 || code === 0x2029) {
+      return `\\u${code.toString(16).padStart(4, '0')}`;
+    }
+    return character;
+  }).join('');
 }

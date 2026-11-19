@@ -23,6 +23,7 @@
  */
 
 import fs from 'node:fs';
+import ts from 'typescript';
 import { createRequire } from 'node:module';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
@@ -50,8 +51,6 @@ const VIRTUAL_ENTRY_IDS = {
 } as const;
 
 const RESOLVED_VIRTUAL_PREFIX = '\0';
-const USE_CLIENT_DIRECTIVE_RE =
-  /^\uFEFF?\s*(?:(?:\/\/[^\n]*|\/\*[\s\S]*?\*\/)\s*)*['"]use client['"];?/;
 
 export interface CreateIsrPluginOptions {
   /** 显式传入 ssr.config —— 未传则缓存中间件内异步自动 loadConfig() */
@@ -270,7 +269,17 @@ function readPackageDependencies(root: string): string[] {
 function hasUseClientDirective(filePath: string): boolean {
   try {
     const source = fs.readFileSync(filePath, 'utf8').slice(0, 2048);
-    return USE_CLIENT_DIRECTIVE_RE.test(source);
+    // Tokenization skips comments deterministically, including malformed comments.
+    const scanner = ts.createScanner(
+      ts.ScriptTarget.Latest,
+      true,
+      ts.LanguageVariant.Standard,
+      source
+    );
+    return (
+      scanner.scan() === ts.SyntaxKind.StringLiteral &&
+      (scanner.getTokenText() === "'use client'" || scanner.getTokenText() === '"use client"')
+    );
   } catch {
     return false;
   }

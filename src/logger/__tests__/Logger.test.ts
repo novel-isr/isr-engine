@@ -131,6 +131,14 @@ describe('Logger 消息格式化', () => {
     expect(msgs).toContain('"c": "nested"');
   });
 
+  it('accepts objects whose JSON representation is undefined', () => {
+    const logger = Logger.getInstance({ verbose: true });
+    expect(() => logger.info({ toJSON: () => undefined })).not.toThrow();
+    const message = String(consoleLogSpy.mock.calls.at(-1)?.[0]);
+    expect(message).toContain('[INFO]');
+    expect(message).not.toMatch(/[\r\n\u2028\u2029]/);
+  });
+
   it('多参数拼接（用空格连接）', () => {
     const logger = Logger.getInstance({ verbose: true });
     logger.info('part1', 'part2', 42);
@@ -152,6 +160,7 @@ describe('Logger.logFile —— 文件持久化', () => {
     tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'logger-'));
   });
   afterEach(async () => {
+    Logger.getInstance({ logFile: '' });
     await fs.rm(tmpDir, { recursive: true, force: true });
   });
 
@@ -166,6 +175,21 @@ describe('Logger.logFile —— 文件持久化', () => {
     // 文件中不应有 ANSI 颜色码
     // eslint-disable-next-line no-control-regex
     expect(content).not.toMatch(/\[/);
+  });
+
+  it('keeps untrusted messages and context identifiers inside one physical log record', async () => {
+    const logFile = path.join(tmpDir, 'untrusted.log');
+    const logger = Logger.getInstance({ logFile });
+    requestContext.run({ traceId: 'trace\nforged', requestId: 'req\rforged', anonId: 'anon' }, () =>
+      logger.info('input\r\n[ERROR] forged\u001b[2J\u2028another')
+    );
+    const content = await fs.readFile(logFile, 'utf8');
+    expect(content.split('\n')).toHaveLength(2);
+    expect(content).toContain('trace\\nforged');
+    expect(content).toContain('req\\rforged');
+    expect(content).toContain('input\\r\\n[ERROR] forged\\u001b[2J\\u2028another');
+    const consoleMessage = String(consoleLogSpy.mock.calls.at(-1)?.[0]);
+    expect(consoleMessage).not.toMatch(/[\r\n\u2028\u2029]/);
   });
 
   it('多次 log → 累加（append 模式）', async () => {

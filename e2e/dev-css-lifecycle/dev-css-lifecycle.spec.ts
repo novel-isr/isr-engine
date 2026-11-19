@@ -169,6 +169,7 @@ test('CSS HMR replaces bytes without an unstyled frame or zero-owner mutation', 
 
   await page.goto('/');
   await waitForRoute(page, 'home');
+  await waitForNavigationReady(page);
   await resetTemporalHistory(page);
 
   try {
@@ -199,6 +200,7 @@ test('component prune and reimport commit the replacement stylesheet atomically'
 
   await page.goto('/');
   await waitForRoute(page, 'home');
+  await waitForNavigationReady(page);
   await resetTemporalHistory(page);
 
   try {
@@ -243,6 +245,7 @@ test('removing and restoring an imported stylesheet releases only the removed ow
 
   await page.goto('/');
   await waitForRoute(page, 'home');
+  await waitForNavigationReady(page);
   await resetTemporalHistory(page);
 
   try {

@@ -30,6 +30,7 @@
  *     }),
  *   });
  */
+import { trimTrailingSlashes } from '../../utils/trimTrailingSlashes';
 import { createCachedFetcher } from './createCachedFetcher';
 import type { IntlPayload, PageSeoMeta } from './seo-runtime';
 import type {
@@ -1006,7 +1007,7 @@ function resolveAdminUrl(
   if (/^(https?:)?\/\//i.test(filled)) return filled;
   const base = resolveRuntimeServiceBase(ctx, options.baseUrl);
   if (!base) return null;
-  return `${base.replace(/\/+$/, '')}/${filled.replace(/^\/+/, '')}`;
+  return `${trimTrailingSlashes(base)}/${filled.replace(/^\/+/, '')}`;
 }
 
 function resolveRuntimeServiceBase(
@@ -1041,7 +1042,7 @@ function hasRuntimeContentConfig(runtime: SiteRuntimeConfig): boolean {
 
 function normalizePathname(pathname: string): string {
   if (pathname === '/') return '/';
-  return pathname.replace(/\/+$/, '') || '/';
+  return trimTrailingSlashes(pathname) || '/';
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

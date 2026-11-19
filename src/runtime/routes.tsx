@@ -38,6 +38,7 @@
  * Engine 自动把 path params 注入 page 的 `params` 属性
  */
 
+import { trimTrailingSlashes } from '../utils/trimTrailingSlashes';
 import * as React from 'react';
 import type { PageSeoMeta } from '../defaults/runtime/seo-runtime';
 
@@ -158,7 +159,7 @@ function createRouteResolver(
   const NotFound = notFound ? resolveRouteComponent(notFound, '__not_found__') : undefined;
 
   return function resolveRoute({ pathname, searchParams }) {
-    const clean = pathname.replace(/\/+$/, '') || '/';
+    const clean = trimTrailingSlashes(pathname) || '/';
     for (const route of compiled) {
       const m = route.re.exec(clean);
       if (!m) continue;
@@ -198,7 +199,7 @@ function registerRouteManifest(config: RouteManifest): void {
 }
 
 export async function resolvePageSeoMeta(url: URL): Promise<PageSeoMeta | null> {
-  const pathname = url.pathname.replace(/\/+$/, '') || '/';
+  const pathname = trimTrailingSlashes(url.pathname) || '/';
   for (const manifest of getRouteRegistry()) {
     for (const route of manifest.routes) {
       const matched = matchRoute(pathname, route);

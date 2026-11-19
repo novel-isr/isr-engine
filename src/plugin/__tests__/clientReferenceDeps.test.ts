@@ -14,6 +14,24 @@ describe('detectClientReferenceDependencies', () => {
     );
   });
 
+  it.each([
+    ['\ufeff /* header */ \n // comment\n "use client"; export {}', true],
+    ['/* "use client" */ export {}', false],
+    ['// "use client"\nexport {}', false],
+    ['const marker = 1; "use client";', false],
+    ["'use client", false],
+    ['/* unterminated "use client"', false],
+  ])('recognizes the leading directive after comments: %s', async (source, expected) => {
+    const root = await mkdtemp(path.join(process.cwd(), '.tmp-client-reference-deps-'));
+    fixtureRoots.push(root);
+    await writeFile(
+      path.join(root, 'package.json'),
+      JSON.stringify({ dependencies: { 'client-pkg': '1' } })
+    );
+    await createPackage(root, 'client-pkg', source);
+    expect(detectClientReferenceDependencies(root)).toEqual(expected ? ['client-pkg'] : []);
+  });
+
   it('detects package entrypoints that declare use client', async () => {
     const root = await mkdtemp(path.join(process.cwd(), '.tmp-client-reference-deps-'));
     fixtureRoots.push(root);

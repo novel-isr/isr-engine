@@ -38,6 +38,8 @@ function listenerActive() {
     socket.once('error', error => {
       socket.destroy();
       if (error.code === 'ECONNREFUSED') resolve(false);
+      // A reset can race shutdown; only a refused connection proves the port is closed.
+      else if (error.code === 'ECONNRESET') resolve(true);
       else reject(error);
     });
   });

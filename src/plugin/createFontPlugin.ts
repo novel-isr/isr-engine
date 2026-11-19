@@ -16,6 +16,7 @@ import path from 'node:path';
 import { promises as fs } from 'node:fs';
 import { createHash } from 'node:crypto';
 import type { Plugin, ResolvedConfig } from 'vite';
+import { parse, walk } from 'css-tree';
 
 export interface FontPluginOptions {
   /** Google Fonts 家族名列表 —— 构建时下载到本地，避免运行时拉第三方 */
@@ -30,28 +31,12 @@ export interface FontPluginOptions {
   weights?: string[];
 }
 
-/** 匹配 @font-face 块的正则 —— 抓取整个块体用于字符串替换 */
-const FONT_FACE_RE = /@font-face\s*\{[^}]*\}/g;
-
-interface ParsedFace {
-  family?: string;
-  src?: string; // 第一个 url(...)，用于 preload
-  weight?: string;
-  style?: string;
-}
-
-function parseFontFace(block: string): ParsedFace {
-  const get = (re: RegExp) =>
-    block
-      .match(re)?.[1]
-      ?.trim()
-      .replace(/^['"]|['"]$/g, '');
-  return {
-    family: get(/font-family\s*:\s*([^;]+)/i),
-    src: get(/url\(['"]?([^'")]+)['"]?\)/i),
-    weight: get(/font-weight\s*:\s*([^;]+)/i),
-    style: get(/font-style\s*:\s*([^;]+)/i),
-  };
+function escapeHtmlAttribute(value: string): string {
+  return value
+    .replaceAll('&', '&amp;')
+    .replaceAll('"', '&quot;')
+    .replaceAll('<', '&lt;')
+    .replaceAll('>', '&gt;');
 }
 
 /** 字体格式 → preload 的 type 属性 */
@@ -100,17 +85,48 @@ export function createFontPlugin(options: FontPluginOptions = {}): Plugin {
     /** 任何 CSS 文件经过 transform：注入 swap + 收集 preload url */
     transform(code, id) {
       if (!/\.(css|scss|less|sass|styl)(\?|$)/.test(id)) return null;
-      let modified = false;
-      const out = code.replace(FONT_FACE_RE, block => {
-        const parsed = parseFontFace(block);
-        if (parsed.src && injectPreload) preloadUrls.add(parsed.src);
-        if (injectSwap && !/font-display\s*:/i.test(block)) {
-          modified = true;
-          return block.replace(/\}\s*$/, '  font-display: swap;\n}');
-        }
-        return block;
+      // Parse CSS structure once; comments, strings and escaped URLs retain their meaning.
+      // Edit only source offsets so formatting and syntax outside @font-face remain untouched.
+      let stylesheet;
+      try {
+        stylesheet = parse(code, { positions: true });
+      } catch {
+        return null;
+      }
+      const insertions: number[] = [];
+      walk(stylesheet, {
+        visit: 'Atrule',
+        enter(rule) {
+          if (rule.name.toLowerCase() !== 'font-face' || !rule.block) return;
+          let hasDisplay = false;
+          let firstUrl: string | undefined;
+          rule.block.children.forEach(declaration => {
+            if (declaration.type !== 'Declaration') return;
+            const property = declaration.property.toLowerCase();
+            if (property === 'font-display') hasDisplay = true;
+            if (property === 'src' && firstUrl === undefined) {
+              walk(declaration.value, {
+                visit: 'Url',
+                enter(url) {
+                  firstUrl ??= url.value;
+                },
+              });
+            }
+          });
+          if (firstUrl && injectPreload) preloadUrls.add(firstUrl);
+          const close = rule.block.loc ? rule.block.loc.end.offset - 1 : -1;
+          if (injectSwap && !hasDisplay && code[close] === '}') insertions.push(close);
+        },
       });
-      return modified ? { code: out, map: null } : null;
+      if (insertions.length === 0) return null;
+      const parts: string[] = [];
+      let cursor = 0;
+      for (const offset of insertions.sort((a, b) => a - b)) {
+        parts.push(code.slice(cursor, offset), ';  font-display: swap;\n');
+        cursor = offset;
+      }
+      parts.push(code.slice(cursor));
+      return { code: parts.join(''), map: null };
     },
 
     /** HTML 注入：preload 标签 + 自托管 google fonts 的 @font-face 块 */
@@ -148,7 +164,7 @@ export function createFontPlugin(options: FontPluginOptions = {}): Plugin {
         .map(
           t =>
             `<link ${Object.entries(t.attrs ?? {})
-              .map(([k, v]) => `${k}="${v}"`)
+              .map(([k, v]) => `${k}="${escapeHtmlAttribute(v)}"`)
               .join(' ')}>`
         )
         .join('\n    ');

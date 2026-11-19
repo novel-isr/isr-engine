@@ -151,11 +151,21 @@ function readOpsToken(
   }
 
   const authValue = req.headers.authorization;
-  if (typeof authValue === 'string') {
-    const match = authValue.match(/^Bearer\s+(.+)$/i);
-    if (match?.[1]) {
-      return match[1].trim();
+  if (typeof authValue === 'string' && authValue.slice(0, 6).toLowerCase() === 'bearer') {
+    let start = 6;
+    while (start < authValue.length && authValue[start].trim() === '') start++;
+    if (start === 6) return undefined;
+    const token = authValue.slice(start);
+    // The scheme separator accepts whitespace; token contents cannot contain line breaks.
+    if (
+      token.includes('\r') ||
+      token.includes('\n') ||
+      token.includes('\u2028') ||
+      token.includes('\u2029')
+    ) {
+      return undefined;
     }
+    return token.trim() || undefined;
   }
 
   return undefined;

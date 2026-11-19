@@ -3,6 +3,13 @@ import { describe, expect, it } from 'vitest';
 import { getCookieHeader, parseCookieHeader, readCookie } from '../cookie';
 
 describe('cookie utilities', () => {
+  it('treats prototype names as ordinary cookie names and never inherits absent cookies', () => {
+    expect(readCookie('uid=42', 'constructor')).toBeUndefined();
+    expect(readCookie('', 'toString')).toBeUndefined();
+    const cookies = parseCookieHeader('__proto__=value; constructor=own');
+    expect(cookies.__proto__).toBe('value');
+    expect(cookies.constructor).toBe('own');
+  });
   it('reads cookies from a Web Request', () => {
     const req = new Request('https://example.com', {
       headers: { cookie: 'uid=42; locale=zh-CN; theme=dark' },

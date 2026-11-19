@@ -23,8 +23,8 @@
  * 生产环境**不需要**这个命令 —— 用 nginx 的 error_page 即可。
  */
 import http from 'node:http';
-import { readFile, stat } from 'node:fs/promises';
-import { extname, join, resolve } from 'node:path';
+import { open, readFile } from 'node:fs/promises';
+import { extname, join, resolve, sep } from 'node:path';
 import { logger } from '@/logger';
 
 export interface FallbackProxyOptions {
@@ -95,16 +95,28 @@ async function serveStatic(
   res: http.ServerResponse,
   clientRoot: string
 ): Promise<void> {
-  const url = new URL(req.url || '/', 'http://x');
-  const filePath = join(clientRoot, decodeURIComponent(url.pathname));
-  if (!filePath.startsWith(clientRoot)) {
+  let pathname: string;
+  try {
+    pathname = decodeURIComponent(new URL(req.url || '/', 'http://x').pathname);
+  } catch {
+    sendError(res, 400, 'invalid request path');
+    return;
+  }
+  const filePath = join(clientRoot, pathname);
+  if (!filePath.startsWith(clientRoot + sep)) {
     sendError(res, 403, 'forbidden');
     return;
   }
   try {
-    const s = await stat(filePath);
-    if (!s.isFile()) throw new Error('not file');
-    const buf = await readFile(filePath);
+    const file = await open(filePath, 'r');
+    let buf: Buffer;
+    try {
+      const s = await file.stat();
+      if (!s.isFile()) throw new Error('not file');
+      buf = await file.readFile();
+    } finally {
+      await file.close();
+    }
     res.writeHead(200, {
       'content-type': MIME[extname(filePath)] || 'application/octet-stream',
     });
@@ -175,7 +187,7 @@ export function startFallbackProxy(options: FallbackProxyOptions): http.Server {
 
   const server = http.createServer(createFallbackRequestHandler(options));
 
-  server.listen(listenPort, () => {
+  server.listen(listenPort, '127.0.0.1', () => {
     logger.success('[CLI]', `本地 fallback proxy 已启动: http://localhost:${listenPort}`);
     logger.info('[CLI]', `  → SSR upstream  : http://127.0.0.1:${ssrPort}`);
     logger.info('[CLI]', `  → API upstream  : http://127.0.0.1:${apiPort}`);

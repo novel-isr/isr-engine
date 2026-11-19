@@ -1,6 +1,6 @@
 {
   "name": "@novel-isr/engine",
-  "version": "2.6.20",
+  "version": "2.6.21",
   "description": "ISR/SSG/Fallback rendering orchestration on Vite + React 19 RSC.",
   "license": "UNLICENSED",
   "repository": {
@@ -118,6 +118,7 @@
     "chalk": "^5.3.0",
     "commander": "^12.1.0",
     "compression": "^1.8.2",
+    "css-tree": "^3.2.1",
     "esbuild": "^0.28.2",
     "express": "^5.3.0",
     "helmet": "^7.1.0",
@@ -144,6 +145,7 @@
     "@eslint/js": "^9.15.0",
     "@playwright/test": "^1.62.1",
     "@types/compression": "^1.7.5",
+    "@types/css-tree": "^3.2.0",
     "@types/express": "^5.0.0",
     "@types/ioredis-mock": "^8.2.5",
     "@types/node": "^22.7.4",

@@ -30,7 +30,7 @@ export function readCookie(source: CookieHeaderSource, name: string): string | u
 }
 
 export function parseCookieHeader(header: string): Record<string, string> {
-  const cookies: Record<string, string> = {};
+  const cookies: Record<string, string> = Object.create(null);
   if (!header) return cookies;
 
   for (const part of header.split(';')) {
