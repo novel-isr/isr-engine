@@ -57,3 +57,17 @@ assert.equal(
   readFileSync('.github/workflows/publish.yml', 'utf8').includes('mirror-release'),
   false
 );
+
+// Exercise the same plugin loader used by the release CLI, including transitive resolution.
+const { loadPlugin } = await import('../node_modules/semantic-release/lib/plugins/utils.js');
+const loadedNpm = await loadPlugin({ cwd: process.cwd() }, '@semantic-release/npm', {});
+const configuredNpm = await import('@semantic-release/npm');
+assert.equal(
+  loadedNpm.verifyConditions,
+  configuredNpm.verifyConditions,
+  'Release CLI must load the configured OIDC-capable npm plugin'
+);
+
+assert.equal(readFileSync('.nvmrc', 'utf8').trim(), '24.15.0');
+assert.equal(pkg.engines.node, '>=24.15.0');
+await import('./check-release-history.mjs');

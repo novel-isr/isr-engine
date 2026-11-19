@@ -92,7 +92,7 @@ jobs:
         # Query the official advisory service; mirror registries may not expose it.
         run: pnpm run audit:security
 
-      - name: Verify release policy and registry mirror contracts
+      - name: Verify release policy, npm plugin and Git history contracts
         run: pnpm run test:release
 
       - name: Type check

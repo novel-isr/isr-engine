@@ -1,6 +1,6 @@
 {
   "name": "isr-engine",
-  "version": "2.6.21",
+  "version": "1.0.0",
   "description": "ISR/SSG/Fallback rendering orchestration on Vite + React 19 RSC.",
   "license": "UNLICENSED",
   "repository": {
@@ -111,7 +111,7 @@
     "test:release": "node scripts/check-release.mjs"
   },
   "engines": {
-    "node": ">=22.21.1"
+    "node": ">=24.15.0"
   },
   "packageManager": "pnpm@9.15.9",
   "dependencies": {
@@ -178,7 +178,7 @@
     "rimraf": "^6.1.4",
     "rsc-html-stream": "^0.0.7",
     "sass-embedded": "^1.79.4",
-    "semantic-release": "24.2.9",
+    "semantic-release": "25.0.9",
     "tsc-alias": "^1.8.17",
     "vite": "8.1.6",
     "vitest": "^4.1.12"
