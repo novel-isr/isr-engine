@@ -26,7 +26,7 @@ jobs:
       matrix:
         directory: ['.', bench/app]
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: pnpm/action-setup@v5
         with:
           run_install: false
@@ -54,7 +54,7 @@ jobs:
       actions: read
       security-events: write
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Initialize security analysis
         uses: github/codeql-action/init@v4
         with:
