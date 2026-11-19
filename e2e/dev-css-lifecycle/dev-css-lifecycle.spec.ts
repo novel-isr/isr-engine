@@ -425,11 +425,15 @@ function createDiagnostics(page: Page): Diagnostics {
         request.frame() === page.mainFrame()
     );
   });
+  page.on('framenavigated', frame => {
+    if (frame === page.mainFrame()) documents.commitMainDocument();
+  });
   page.on('console', (message: ConsoleMessage) => {
     if (message.type() === 'error') diagnostics.consoleErrors.push(message.text());
   });
   page.on('pageerror', error => diagnostics.pageErrors.push(error.stack ?? error.message));
   page.on('requestfailed', (request: Request) => {
+    documents.navigationFailed(request);
     diagnostics.requestFailures.push({
       url: request.url(),
       method: request.method(),
