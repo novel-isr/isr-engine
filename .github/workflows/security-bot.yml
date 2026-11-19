@@ -51,6 +51,9 @@ jobs:
     name: CodeQL JavaScript and TypeScript
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    env:
+      # Zero findings must describe the whole revision on PRs and on main.
+      CODEQL_ACTION_DIFF_INFORMED_QUERIES: 'false'
     permissions:
       contents: read
       actions: read
