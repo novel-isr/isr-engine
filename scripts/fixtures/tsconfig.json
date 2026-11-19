@@ -3,9 +3,9 @@
   "compilerOptions": {
     "noEmit": true,
     "paths": {
-      "@/*": ["./src/*"],
-      "isr-engine/runtime": ["./src/runtime/index.ts"],
-      "isr-engine/adapters/runtime": ["./src/adapters/runtime/index.ts"]
+      "@/*": ["../../src/*"],
+      "isr-engine/runtime": ["../../src/runtime/index.ts"],
+      "isr-engine/adapters/runtime": ["../../src/adapters/runtime/index.ts"]
     }
   },
   "include": ["./workers-runtime.ts", "../../src/runtime/scss.d.ts"]

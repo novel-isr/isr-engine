@@ -5,6 +5,7 @@
 ## 运行要求与安装
 
 - Node.js **24.15.0**；仓库使用 pnpm 9.15.9。
+- TypeScript **6.0.3**；`paths` 相对声明它的配置文件解析，不再设置 `baseUrl`。
 - Vite **8.1.6**；内置 `@vitejs/plugin-rsc` **0.5.34**，无需额外注册 React 插件。
 - `react`、`react-dom`、`react-server-dom-webpack` 必须同为 **19.3.0-canary-bd6ea412-20260824**。当前支持该精确 canary 组合。
 - `rsc-html-stream` peer 范围为 `^0.0.7`，仓库锁定版本为 **0.0.7**。
@@ -18,7 +19,7 @@ npm install --save-exact \
   react-dom@19.3.0-canary-bd6ea412-20260824 \
   react-server-dom-webpack@19.3.0-canary-bd6ea412-20260824 \
   rsc-html-stream@0.0.7
-npm install --save-dev --save-exact vite@8.1.6 typescript@5.9.3 \
+npm install --save-dev --save-exact vite@8.1.6 typescript@6.0.3 \
   @types/node@24.19.2 @types/react@19.2.15 @types/react-dom@19.2.3
 ```
 
@@ -132,6 +133,8 @@ TTL 与 SWR 单位为秒。`routes` 控制渲染策略；页面路由可使用 `
 - Server Component 使用 `cacheTag('site-content')` 声明依赖；数据更新成功后，在受业务鉴权保护的服务端代码中 `await revalidateTag('site-content')` 或 `await revalidatePath('/about')`，从 `isr-engine/rsc` 导入。
 
 请求期扩展可放在可选的 `src/entry.server.tsx`，默认导出 `defineAdminSiteHooks({ beforeRequest, onError })`（从 `isr-engine/site-hooks` 导入）。部署配置留在 `ssr.config.ts`；Server Component 用 `getRequestContext()` 读取 hooks 注入的上下文。
+
+`Logger.spin()` 返回 Ora 10 对象。`prefixText`、`suffixText` 可为字符串或生成函数；`color` 接受颜色名、`false` 或 `undefined`；自定义 spinner 的 `interval` 必须是正安全整数。
 
 ## 运维与部署
 
