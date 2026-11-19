@@ -99,8 +99,21 @@ try {
   git(working, 'commit', '--allow-empty', '-m', 'ci: maintain release artifact upload');
   git(working, 'push', '--follow-tags', 'origin', 'main');
   assert.equal(await dryRun(), false, 'Pure CI maintenance must not publish an extra version');
+  git(
+    working,
+    'commit',
+    '--allow-empty',
+    '-m',
+    'refactor: upgrade public spinner contract',
+    '-m',
+    'BREAKING CHANGE: Logger.spin returns generator-aware labels and stricter spinner options.'
+  );
+  git(working, 'push', '--follow-tags', 'origin', 'main');
+  const major = await dryRun();
+  assert.equal(major.nextRelease.version, '2.0.0');
+  assert.equal(major.nextRelease.gitTag, 'isr-engine-v2.0.0');
   console.log(
-    'Real Git release history verified: legacy v2 tags → 1.0.0 → 1.0.1; CI-only commits do not release.'
+    'Real Git release history verified: legacy v2 tags → 1.0.0 → 1.0.1 → 2.0.0; CI-only commits do not release.'
   );
 } finally {
   quiet.end();

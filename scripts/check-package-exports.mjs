@@ -90,7 +90,7 @@ try {
   if (response.status !== 200 || getEdgeContext(request)?.env !== env)
     throw new Error('Public Edge context unavailable after handler response');
   for (const [subpath, functions] of [
-    ['.', ['createCoherentCacheStore']],
+    ['.', ['createCoherentCacheStore', 'Logger']],
     [
       './auto-observability',
       ['createAutoServerHooks', 'composeAutoServerHooks', 'resolveSentryDsnFromEnv'],
@@ -123,7 +123,7 @@ try {
     `
     import { createAutoServerHooks, composeAutoServerHooks, resolveSentryDsnFromEnv,
       type AutoServerCtx, type AutoServerHooks } from 'isr-engine/auto-observability';
-    import { createCoherentCacheStore, type ResponseCacheBackend } from 'isr-engine';
+    import { createCoherentCacheStore, Logger, type ResponseCacheBackend } from 'isr-engine';
     import { getEdgeContext, type EdgeContext } from 'isr-engine/runtime';
     import { toCloudflareWorker } from 'isr-engine/adapters/runtime';
     interface WorkerBindings { token: string; }
@@ -141,9 +141,21 @@ try {
     const dsn: string | undefined = resolveSentryDsnFromEnv({});
     declare const backend: ResponseCacheBackend;
     const store = createCoherentCacheStore({ backend });
+    declare const spinner: ReturnType<ReturnType<typeof Logger.getInstance>['spin']>;
+    const prefix: string | (() => string) = spinner.prefixText;
+    const suffix: string | (() => string) = spinner.suffixText;
+    const labels: string[] = [prefix, suffix].map(text => typeof text === 'function' ? text() : text);
+    // @ts-expect-error generator labels must be resolved before treating them as strings
+    const unresolved: string = spinner.prefixText;
+    spinner.prefixText = () => 'prefix';
+    spinner.suffixText = () => 'suffix';
+    spinner.color = false;
+    spinner.color = undefined;
+    // @ts-expect-error Ora 10 does not accept true as a color
+    spinner.color = true;
     // @ts-expect-error timestamps are numeric in the public contract
     const invalid: AutoServerCtx = { traceId: 'trace', startedAt: 'yesterday' };
-    void [factory, ctx, hooks, dsn, store, invalid, edge, worker];
+    void [factory, ctx, hooks, dsn, store, invalid, edge, worker, labels, unresolved];
   `
   );
   const program = ts.createProgram([consumer], {
