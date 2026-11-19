@@ -15,6 +15,12 @@ import pkg from '../../package.json';
 
 import type { RenderModeType, RouteRule, RequestLimitsConfig } from '@/types';
 import { createRequestLimiter } from '../server/requestLimits';
+import {
+  createOpsAuthMiddleware,
+  getOpsRequestLimiter,
+  getRuntimeOpsConfig,
+  resolveOpsConfig,
+} from '../server/opsConfig';
 import type ISREngine from '@/engine/ISREngine';
 import type { Logger } from '@/logger/Logger';
 
@@ -39,21 +45,31 @@ export class ISRRoutes {
 
   setup(requestHandler: Express): void {
     const seoLimiter = createRequestLimiter('seo', this.requestLimits?.seo);
+    const opsConfig =
+      getRuntimeOpsConfig(requestHandler) ??
+      resolveOpsConfig(
+        {
+          server: { requestLimits: this.requestLimits },
+        } as never,
+        'development'
+      );
     // 健康检查
-    requestHandler.get(
-      '/health',
-      createRequestLimiter('ops', this.requestLimits?.ops),
-      (_req: Request, res: Response) => {
-        res.json({
-          status: 'healthy',
-          version: pkg.version,
-          mode: 'plugin-rsc',
-          defaultRenderMode: this.defaultMode,
-          routes: Object.keys(this.routes).length,
-          timestamp: new Date().toISOString(),
-        });
-      }
-    );
+    if (opsConfig.health.enabled)
+      requestHandler.get(
+        '/health',
+        getOpsRequestLimiter(opsConfig),
+        createOpsAuthMiddleware('health', opsConfig),
+        (_req: Request, res: Response) => {
+          res.json({
+            status: 'healthy',
+            version: pkg.version,
+            mode: 'plugin-rsc',
+            defaultRenderMode: this.defaultMode,
+            routes: Object.keys(this.routes).length,
+            timestamp: new Date().toISOString(),
+          });
+        }
+      );
 
     // 站点地图 —— 优先返回 SSG/public 已存在的文件，否则由 SEO 引擎动态生成
     requestHandler.get('/sitemap.xml', seoLimiter, async (_req: Request, res: Response) => {

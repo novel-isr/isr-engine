@@ -21,6 +21,16 @@ export interface ResolvedOpsConfig {
 }
 
 const opsLimiters = new WeakMap<ResolvedOpsConfig, RequestHandler>();
+const runtimeOpsConfigs = new WeakMap<object, ResolvedOpsConfig>();
+
+/** Carry one resolved policy from the Vite plugin into its owning Express runtime. */
+export function bindRuntimeOpsConfig(owner: object, resolved: ResolvedOpsConfig): void {
+  runtimeOpsConfigs.set(owner, resolved);
+}
+
+export function getRuntimeOpsConfig(owner: object): ResolvedOpsConfig | undefined {
+  return runtimeOpsConfigs.get(owner);
+}
 
 /** Share one ops admission budget across endpoint handlers owned by this runtime. */
 export function getOpsRequestLimiter(resolved: ResolvedOpsConfig): RequestHandler {

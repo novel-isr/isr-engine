@@ -7,17 +7,82 @@ import os from 'node:os';
 import path from 'node:path';
 import {
   BoundedRateLimitStore,
+  admitRequest,
   createRequestLimiter,
   resolveRequestLimitPolicy,
   validateRequestLimits,
 } from '../requestLimits';
-import { resolveOpsConfig } from '../opsConfig';
+import { bindRuntimeOpsConfig, getRuntimeOpsConfig, resolveOpsConfig } from '../opsConfig';
 import { createCacheInspectorMiddleware } from '../../plugin/createCacheInspectorMiddleware';
-import { createStaticHtmlMiddleware } from '../productionRuntime';
-import { createIsrCacheHandler } from '../../plugin/isrCacheMiddleware';
+import { createProductionRuntime, createStaticHtmlMiddleware } from '../productionRuntime';
+import { createIsrCacheHandler, createIsrCacheMiddleware } from '../../plugin/isrCacheMiddleware';
 import type { IsrCacheHandler } from '../../plugin/isrCacheMiddleware';
 import type { RequestLimitPolicy } from '../../types/ISRConfig';
 import { ISRRoutes } from '../../isr/ISRRoutes';
+import { normalizeEngineConfig } from '../../config/normalizeEngineConfig';
+import { generateStaticCspManifest } from '../../security/staticCspManifest';
+import type { Connect, ViteDevServer } from 'vite';
+
+async function productionFixture(options: {
+  files: Record<string, string>;
+  ssgRoutes?: string[];
+  staticHtml?: RequestLimitPolicy;
+  seo?: RequestLimitPolicy;
+}) {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'isr-limit-production-'));
+  try {
+    await fs.mkdir(path.join(root, 'dist/rsc'), { recursive: true });
+    await fs.mkdir(path.join(root, 'dist/client'), { recursive: true });
+    await fs.writeFile(path.join(root, 'package.json'), '{"type":"module"}');
+    await fs.writeFile(
+      path.join(root, 'dist/rsc/index.js'),
+      'export default { fetch: () => new Response("<html>origin fallback</html>", { headers: { "content-type": "text/html" } }) };'
+    );
+    for (const [file, body] of Object.entries(options.files)) {
+      const target = path.join(root, 'dist/client', file);
+      await fs.mkdir(path.dirname(target), { recursive: true });
+      await fs.writeFile(target, body);
+    }
+    await generateStaticCspManifest(path.join(root, 'dist'), {
+      ssgRoutes: options.ssgRoutes ?? [],
+    });
+    const config = normalizeEngineConfig({
+      renderMode: 'ssr',
+      revalidate: 3600,
+      routes: {},
+      server: {
+        port: 0,
+        host: '127.0.0.1',
+        requestLimits: {
+          staticHtml: options.staticHtml,
+          seo: options.seo,
+        },
+      },
+      ssg: { routes: options.ssgRoutes ?? [] },
+      runtime: {
+        site: 'https://example.com',
+        services: { api: undefined, telemetry: undefined },
+        redis: undefined,
+        experiments: {},
+        i18n: undefined,
+        seo: undefined,
+        telemetry: false,
+      },
+    } as never);
+    const runtime = await createProductionRuntime(config, { root });
+    return {
+      root,
+      runtime,
+      close: async () => {
+        await runtime.close();
+        await fs.rm(root, { recursive: true, force: true });
+      },
+    };
+  } catch (error) {
+    await fs.rm(root, { recursive: true, force: true });
+    throw error;
+  }
+}
 
 afterEach(() => vi.restoreAllMocks());
 
@@ -261,3 +326,232 @@ it('shares the SEO budget and rejects another request before filesystem probes o
     await fs.rm(root, { recursive: true, force: true });
   }
 });
+
+it('shares one file-read budget across cold SSG seeds and direct HTML, while allowing seeded HITs', async () => {
+  const fixture = await productionFixture({
+    files: {
+      'a/index.html': '<html>seed a</html>',
+      'b/index.html': '<html>seed b</html>',
+      'direct/index.html': '<html>direct static</html>',
+    },
+    ssgRoutes: ['/a', '/b'],
+    staticHtml: smallPolicy,
+  });
+  try {
+    const reads = vi.spyOn(fs, 'readFile');
+    const sends = vi.spyOn(express.response, 'sendFile');
+    await serve(fixture.runtime.app, async url => {
+      const seeded = await fetch(url + '/a');
+      expect(seeded.status).toBe(200);
+      expect(await seeded.text()).toContain('seed a');
+      const countReads = () =>
+        reads.mock.calls.filter(([target]) =>
+          String(target).startsWith(path.join(fixture.root, 'dist/client'))
+        ).length;
+      expect(countReads()).toBe(1);
+      for (let count = 0; count < 3; count++) {
+        const hit = await fetch(url + '/a');
+        expect(hit.status).toBe(200);
+        expect(hit.headers.get('x-cache-status')).toBe('HIT');
+      }
+      for (const route of ['/b', '/direct']) {
+        const blocked = await fetch(url + route);
+        expect(blocked.status).toBe(429);
+        expect(blocked.headers.get('cache-control')).toBe('no-store');
+        expect(await blocked.text()).not.toContain('origin fallback');
+      }
+      expect(countReads()).toBe(1);
+      expect(sends).not.toHaveBeenCalled();
+    });
+  } finally {
+    await fixture.close();
+  }
+});
+
+it.each([false, true])(
+  'reserves seed admission before concurrent followers and never falls through after denial: %j',
+  async exhausted => {
+    const limiter = createRequestLimiter('staticHtml', smallPolicy);
+    let release!: () => void;
+    const ready = new Promise<void>(resolve => {
+      release = resolve;
+    });
+    let arrivals = 0;
+    const admission = vi.fn(async (req: http.IncomingMessage, res: http.ServerResponse) => {
+      await ready;
+      return admitRequest(limiter, req, res);
+    });
+    const seed = vi.fn(async () => ({
+      body: Buffer.from('<html>one seed</html>'),
+      statusCode: 200,
+      contentType: 'text/html',
+      headers: { 'content-type': 'text/html' },
+      storedAt: Date.now(),
+      expiresAt: 0,
+      hardExpiresAt: 0,
+      tags: [],
+    }));
+    const cache = createIsrCacheHandler({ renderMode: 'ssg', revalidate: 3600 } as never, {
+      staticSeedInfo: () => ({ generatedAt: Date.now() }),
+      staticSeedAdmission: admission,
+      staticSeed: seed,
+    });
+    const origin = vi.fn();
+    const app = express();
+    app.get('/consume', limiter, (_req, res) => res.send('used'));
+    app.use((req, _res, next) => {
+      if (req.path === '/seed' && ++arrivals === 4) release();
+      next();
+    });
+    app.use(cache);
+    app.use((_req, res) => {
+      origin();
+      res.send('origin fallback');
+    });
+    try {
+      await serve(app, async url => {
+        if (exhausted) expect((await fetch(url + '/consume')).status).toBe(200);
+        const responses = await Promise.all(Array.from({ length: 4 }, () => fetch(url + '/seed')));
+        expect(responses.map(response => response.status)).toEqual(
+          Array(4).fill(exhausted ? 429 : 200)
+        );
+        for (const response of responses) {
+          expect(await response.text()).toContain(exhausted ? 'Too many requests' : 'one seed');
+        }
+        expect(seed).toHaveBeenCalledTimes(exhausted ? 0 : 1);
+        expect(admission).toHaveBeenCalledTimes(1);
+        expect(origin).not.toHaveBeenCalled();
+        if (!exhausted) {
+          expect((await fetch(url + '/seed')).status).toBe(200);
+          expect(admission).toHaveBeenCalledTimes(1);
+        }
+      });
+    } finally {
+      release();
+      await cache.destroy();
+    }
+  }
+);
+
+it('fails closed when seed admission raises an error', async () => {
+  const seed = vi.fn();
+  const origin = vi.fn();
+  const cache = createIsrCacheHandler({ renderMode: 'ssg', revalidate: 3600 } as never, {
+    staticSeed: seed,
+    staticSeedAdmission: async () => {
+      throw new Error('admission unavailable');
+    },
+  });
+  const app = express();
+  app.use(cache);
+  app.use((_req, res) => {
+    origin();
+    res.send('origin fallback');
+  });
+  try {
+    await serve(app, async url => {
+      const blocked = await fetch(url + '/seed');
+      expect(blocked.status).toBe(503);
+      expect(blocked.headers.get('cache-control')).toBe('no-store');
+      expect(seed).not.toHaveBeenCalled();
+      expect(origin).not.toHaveBeenCalled();
+    });
+  } finally {
+    await cache.destroy();
+  }
+});
+
+it('limits static SEO before asset I/O and preserves the built robots and sitemap content', async () => {
+  const fixture = await productionFixture({
+    files: {
+      'robots.txt': 'User-agent: *\nDisallow: /private\n',
+      'sitemap.xml': '<urlset><url><loc>https://example.com/built</loc></url></urlset>',
+    },
+    seo: { ...smallPolicy, maxRequests: 2 },
+  });
+  try {
+    const stat = vi.spyOn(fsSync, 'stat');
+    await serve(fixture.runtime.app, async url => {
+      const robots = await fetch(url + '/%72obots.txt');
+      expect(robots.status).toBe(200);
+      expect(await robots.text()).toContain('Disallow: /private');
+      const sitemap = await fetch(url + '/sitemap.xml');
+      expect(sitemap.status).toBe(200);
+      expect(await sitemap.text()).toContain('/built');
+      const before = stat.mock.calls.length;
+      expect(before).toBeGreaterThan(0);
+      const blocked = await fetch(url + '/robots.txt', { method: 'HEAD' });
+      expect(blocked.status).toBe(429);
+      expect(stat).toHaveBeenCalledTimes(before);
+    });
+  } finally {
+    await fixture.close();
+  }
+});
+
+it('charges generated SEO once at the same boundary as static SEO', async () => {
+  const fixture = await productionFixture({ files: {}, seo: { ...smallPolicy, maxRequests: 2 } });
+  try {
+    await serve(fixture.runtime.app, async url => {
+      const sitemap = await fetch(url + '/sitemap.xml');
+      expect(sitemap.status).toBe(200);
+      expect(await sitemap.text()).toContain('urlset');
+      const robots = await fetch(url + '/robots.txt');
+      expect(robots.status).toBe(200);
+      expect(await robots.text()).toContain('User-agent: *');
+      expect((await fetch(url + '/sitemap.xml')).status).toBe(429);
+    });
+  } finally {
+    await fixture.close();
+  }
+});
+
+it.each(['/health', '/metrics'])(
+  'shares the dev ops budget from Vite through Express after %s',
+  async first => {
+    const middleware: Connect.NextHandleFunction[] = [];
+    const plugin = createIsrCacheMiddleware({
+      renderMode: 'ssr',
+      revalidate: 60,
+      server: {
+        requestLimits: { ops: smallPolicy },
+        ops: {
+          health: { enabled: true, public: true },
+          metrics: { enabled: true, public: true },
+          inventory: { enabled: true, public: true },
+        },
+      },
+    } as never);
+    const vite = {
+      config: { root: '/unused' },
+      middlewares: {
+        use: (handler: Connect.NextHandleFunction) => {
+          middleware.push(handler);
+        },
+      },
+    } as unknown as ViteDevServer;
+    const configure = plugin.configureServer;
+    const close = plugin.closeBundle;
+    if (!configure || !close) throw new Error('Expected cache lifecycle hooks');
+    await (typeof configure === 'function' ? configure : configure.handler).call({} as never, vite);
+    try {
+      const app = express();
+      const shared = getRuntimeOpsConfig(vite);
+      expect(shared).toBeDefined();
+      bindRuntimeOpsConfig(app, shared!);
+      new ISRRoutes({} as never, { debug() {}, error() {} } as never, {
+        renderMode: 'ssr',
+        requestLimits: { ops: { maxRequests: 99 } },
+      }).setup(app);
+      for (const handler of middleware) app.use(handler as never);
+      await serve(app, async url => {
+        expect((await fetch(url + first)).status).toBe(200);
+        for (const route of ['/health', '/metrics', '/__isr/cache/inventory']) {
+          expect((await fetch(url + route)).status).toBe(429);
+        }
+      });
+    } finally {
+      await (typeof close === 'function' ? close : close.handler).call({} as never);
+    }
+  }
+);

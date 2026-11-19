@@ -437,7 +437,7 @@ export function createIsrCacheHandler(
   /** 后台重验证正在进行的 key 集合 —— 防止并发 STALE 请求重复触发多次 bg 拉取 */
   const revalidating = new Set<string>();
   const state = { invalidationGeneration: 0 };
-  const seeded = new Map<string, Promise<boolean>>();
+  const seeded = new Map<string, Promise<StaticSeedResult>>();
   const internalToken = randomBytes(24).toString('hex');
   const singleflightWaitMs = options.singleflightWaitMs ?? 5_000;
   const maxCachedBodyBytes = options.maxCachedBodyBytes ?? 5 * 1024 * 1024;
@@ -708,7 +708,7 @@ export function createIsrCacheMiddleware(
         }
 
         const opsConfig = resolveOpsConfig(resolvedConfig, 'development');
-        const { getOpsRequestLimiter } = await import('../server/opsConfig');
+        const { bindRuntimeOpsConfig, getOpsRequestLimiter } = await import('../server/opsConfig');
         const opsLimiter = getOpsRequestLimiter(opsConfig);
         const metricsAuth = createOpsAuthMiddleware('metrics', opsConfig);
         const nextHandler = createIsrCacheHandler(
@@ -751,6 +751,7 @@ export function createIsrCacheMiddleware(
               });
             } else nextHandler(req, res, next);
           });
+          bindRuntimeOpsConfig(server, opsConfig);
           mounted = true;
           if (inspector) logger.info('🔍 ISR cache inventory 已启用：GET /__isr/cache/inventory');
         } catch (error) {
@@ -793,7 +794,41 @@ interface HandleContext {
   staticSeed?: IsrCacheMiddlewareOptions['staticSeed'];
   staticSeedInfo?: IsrCacheMiddlewareOptions['staticSeedInfo'];
   staticSeedAdmission?: IsrCacheMiddlewareOptions['staticSeedAdmission'];
-  seeded: Map<string, Promise<boolean>>;
+  seeded: Map<string, Promise<StaticSeedResult>>;
+}
+
+interface StaticSeedDenial {
+  statusCode: number;
+  retryAfter?: string;
+}
+type StaticSeedResult = true | StaticSeedDenial;
+
+function seedDenial(res: ServerResponse): StaticSeedDenial {
+  const retryAfter = res.getHeader('Retry-After');
+  return {
+    statusCode: res.statusCode >= 400 && res.statusCode <= 599 ? res.statusCode : 503,
+    retryAfter:
+      typeof retryAfter === 'string' || typeof retryAfter === 'number'
+        ? String(retryAfter)
+        : undefined,
+  };
+}
+
+function sendSeedDenial(res: ServerResponse, denial: StaticSeedDenial): void {
+  if (res.destroyed || res.writableEnded) return;
+  if (res.headersSent) {
+    res.destroy();
+    return;
+  }
+  res.statusCode = denial.statusCode;
+  res.setHeader('Cache-Control', 'no-store');
+  res.setHeader('Content-Type', 'application/json; charset=utf-8');
+  if (denial.retryAfter) res.setHeader('Retry-After', denial.retryAfter);
+  res.end(
+    JSON.stringify({
+      error: denial.statusCode === 429 ? 'Too many requests' : 'Static seed admission unavailable',
+    })
+  );
 }
 
 /**
@@ -938,80 +973,81 @@ async function handleRequest(
     !ctx.variantIsolation &&
     !ctx.hostIsolation
   ) {
-    while (isActive() && ctx.state.invalidationGeneration === 0) {
-      let seedTask = ctx.seeded.get(cacheKey);
-      const leader = !seedTask;
-      if (!seedTask) {
-        // Reserve the task before admission yields, so followers never spend another quota.
-        seedTask = Promise.resolve().then(async () => {
-          try {
-            if (ctx.staticSeedAdmission && !(await ctx.staticSeedAdmission(req, res))) return false;
-          } catch (error) {
-            logger.warn('SSG seed admission failed; refusing origin fallback', error);
-            if (!res.headersSent && !res.writableEnded && !res.destroyed) {
-              res.statusCode = 503;
-              res.setHeader('Cache-Control', 'no-store');
-              res.end('Static seed admission unavailable');
-            }
-            return false;
+    let seedTask = ctx.seeded.get(cacheKey);
+    const leader = !seedTask;
+    if (!seedTask) {
+      // Reserve the task before admission yields, so followers never spend another quota.
+      seedTask = Promise.resolve().then<StaticSeedResult>(async () => {
+        try {
+          if (ctx.staticSeedAdmission && !(await ctx.staticSeedAdmission(req, res)))
+            return seedDenial(res);
+        } catch (error) {
+          logger.warn('SSG seed admission failed; refusing origin fallback', error);
+          if (!res.headersSent && !res.writableEnded && !res.destroyed) {
+            res.statusCode = 503;
+            res.setHeader('Cache-Control', 'no-store');
+            res.end('Static seed admission unavailable');
+          } else if (!res.writableEnded && !res.destroyed) {
+            res.destroy(error instanceof Error ? error : undefined);
           }
-          if (!isActive()) return false;
-          const generation = ctx.state.invalidationGeneration;
-          if (generation !== 0) return true;
-          const seed = await raceWithTimeout(
-            ctx.staticSeed!(
-              logicalPath,
-              String(res.getHeader('content-security-policy') || "default-src 'self'")
-            ),
-            ctx.l2ReadTimeoutMs
-          );
-          if (!seed) {
-            ctx.seeded.delete(cacheKey);
-            return true;
-          }
-          const lease = ctx.cache.coherence
-            ? await raceWithTimeout(ctx.cache.coherence.beginRender(), ctx.l2ReadTimeoutMs)
-            : undefined;
-          if (lease && lease.revision !== '0') return true;
-          if (generation !== ctx.state.invalidationGeneration) return true;
-          const ttl = resolved.ttlSeconds * 1000;
-          const seededEntry = {
-            ...seed,
-            tags: [...seed.tags, `${ctx.pathTagPrefix}__static_seed`],
-            expiresAt: seed.storedAt + ttl,
-            hardExpiresAt: seed.storedAt + ttl + resolved.swrSeconds * 1000,
-            pathTag: `${ctx.pathTagPrefix}${logicalPath}`,
-          };
-          if (Date.now() >= seededEntry.hardExpiresAt) return true;
-          if (ctx.cache.coherence) {
-            if (lease && ctx.cache.coherence.seed)
-              await raceWithTimeout(
-                ctx.cache.coherence.seed(cacheKey, seededEntry, lease),
-                ctx.l2ReadTimeoutMs
-              );
-          } else {
-            ctx.cache.set(cacheKey, seededEntry);
-          }
-          return true;
-        });
-        ctx.seeded.set(cacheKey, seedTask);
-      }
-      try {
-        if (!(await seedTask)) {
-          if (ctx.seeded.get(cacheKey) === seedTask) ctx.seeded.delete(cacheKey);
-          if (leader) return; // This response was denied or disconnected; never render origin.
-          // A denied leader did not read a file. A follower must obtain its own admission.
-          continue;
+          return seedDenial(res);
         }
-        if (!isActive()) return;
-        entry = ctx.cache.getAsync
-          ? await raceWithTimeout(ctx.cache.getAsync(cacheKey), ctx.l2ReadTimeoutMs)
-          : ctx.cache.get(cacheKey);
-      } catch (error) {
+        if (!isActive()) return seedDenial(res);
+        const generation = ctx.state.invalidationGeneration;
+        if (generation !== 0) return true;
+        const seed = await raceWithTimeout(
+          ctx.staticSeed!(
+            logicalPath,
+            String(res.getHeader('content-security-policy') || "default-src 'self'")
+          ),
+          ctx.l2ReadTimeoutMs
+        );
+        if (!seed) {
+          ctx.seeded.delete(cacheKey);
+          return true;
+        }
+        const lease = ctx.cache.coherence
+          ? await raceWithTimeout(ctx.cache.coherence.beginRender(), ctx.l2ReadTimeoutMs)
+          : undefined;
+        if (lease && lease.revision !== '0') return true;
+        if (generation !== ctx.state.invalidationGeneration) return true;
+        const ttl = resolved.ttlSeconds * 1000;
+        const seededEntry = {
+          ...seed,
+          tags: [...seed.tags, `${ctx.pathTagPrefix}__static_seed`],
+          expiresAt: seed.storedAt + ttl,
+          hardExpiresAt: seed.storedAt + ttl + resolved.swrSeconds * 1000,
+          pathTag: `${ctx.pathTagPrefix}${logicalPath}`,
+        };
+        if (Date.now() >= seededEntry.hardExpiresAt) return true;
+        if (ctx.cache.coherence) {
+          if (lease && ctx.cache.coherence.seed)
+            await raceWithTimeout(
+              ctx.cache.coherence.seed(cacheKey, seededEntry, lease),
+              ctx.l2ReadTimeoutMs
+            );
+        } else {
+          ctx.cache.set(cacheKey, seededEntry);
+        }
+        return true;
+      });
+      ctx.seeded.set(cacheKey, seedTask);
+    }
+    try {
+      const result = await seedTask;
+      if (result !== true) {
         if (ctx.seeded.get(cacheKey) === seedTask) ctx.seeded.delete(cacheKey);
-        logger.warn('SSG build seed unavailable; rendering origin', error);
+        // Fan out one bounded denial instead of making N followers retry N successive leaders.
+        if (!leader && isActive()) sendSeedDenial(res, result);
+        return;
       }
-      break;
+      if (!isActive()) return;
+      entry = ctx.cache.getAsync
+        ? await raceWithTimeout(ctx.cache.getAsync(cacheKey), ctx.l2ReadTimeoutMs)
+        : ctx.cache.get(cacheKey);
+    } catch (error) {
+      if (ctx.seeded.get(cacheKey) === seedTask) ctx.seeded.delete(cacheKey);
+      logger.warn('SSG build seed unavailable; rendering origin', error);
     }
   }
   if (!isActive()) return;

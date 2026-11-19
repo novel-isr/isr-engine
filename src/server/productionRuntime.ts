@@ -354,7 +354,10 @@ export async function createProductionRuntime(
 
     options.setupRoutes?.(app);
 
-    const staticHtmlLimiter = createRequestLimiter('staticHtml', config.server.requestLimits?.staticHtml);
+    const staticHtmlLimiter = createRequestLimiter(
+      'staticHtml',
+      config.server.requestLimits?.staticHtml
+    );
     const seoLimiter = createRequestLimiter('seo', config.server.requestLimits?.seo);
     // Protect file-backed SEO before generic asset serving, as well as generated responses.
     app.use((req, res, next) => {
@@ -366,7 +369,8 @@ export async function createProductionRuntime(
         res.status(400).end();
         return;
       }
-      if (pathname === '/sitemap.xml' || pathname === '/robots.txt') return seoLimiter(req, res, next);
+      if (pathname === '/sitemap.xml' || pathname === '/robots.txt')
+        return seoLimiter(req, res, next);
       next();
     });
 
@@ -724,7 +728,11 @@ export function createStaticHtmlMiddleware(
   index: StaticCspIndex,
   policy?: RequestLimitPolicy
 ): express.RequestHandler {
-  return createStaticHtmlMiddlewareWithLimiter(clientDir, index, createRequestLimiter('staticHtml', policy));
+  return createStaticHtmlMiddlewareWithLimiter(
+    clientDir,
+    index,
+    createRequestLimiter('staticHtml', policy)
+  );
 }
 
 function createStaticHtmlMiddlewareWithLimiter(
