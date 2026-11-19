@@ -84,7 +84,7 @@ jobs:
           ref: ${{ steps.revisions.outputs.base }}
           path: .bench-baseline
 
-      - uses: pnpm/action-setup@v5
+      - uses: pnpm/action-setup@v6
         with:
           run_install: false
       - uses: actions/setup-node@v5
