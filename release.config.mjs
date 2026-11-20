@@ -17,14 +17,17 @@ export default {
     ],
     '@semantic-release/release-notes-generator',
     ['@semantic-release/npm', { tarballDir: '.release' }],
-    ['@semantic-release/exec', { prepareCmd: `pnpm run test:package ${releaseArchive}` }],
+    [
+      '@semantic-release/exec',
+      { prepareCmd: `pnpm run test:package ${releaseArchive} && pnpm run audit:security` },
+    ],
   ],
   // Keep the npm plugin's OIDC check and packaging, then publish the checked archive.
   publish: [
     [
       '@semantic-release/exec',
       {
-        publishCmd: `pnpm run audit:security >&2 && npm publish ${releaseArchive} --tag latest --json`,
+        publishCmd: `npm publish ${releaseArchive} --tag latest --json`,
       },
     ],
   ],
