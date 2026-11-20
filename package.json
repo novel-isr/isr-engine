@@ -125,7 +125,7 @@
     "express-rate-limit": "8.7.5",
     "helmet": "^7.1.0",
     "ipaddr.js": "^2.5.0",
-    "lru-cache": "^10.4.3",
+    "lru-cache": "^11.5.3",
     "ora": "^10.0.0",
     "parse5": "^8.0.1",
     "pino": "10.4.0",
