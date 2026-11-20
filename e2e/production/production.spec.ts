@@ -153,6 +153,8 @@ test('client navigation from a 404 clears its title and robots directive', async
   baseURL,
 }) => {
   const page = await browser.newPage({ baseURL });
+  const errors: string[] = [];
+  page.on('pageerror', error => errors.push(error.message));
   try {
     const response = await page.goto('/en/nonexistent');
     expect(response?.status()).toBe(404);
@@ -166,6 +168,7 @@ test('client navigation from a 404 clears its title and robots directive', async
     await expect(page.getByRole('heading', { name: 'Home' })).toBeVisible();
     await expect(page).toHaveTitle('Production regression app');
     await expect(page.locator('meta[name="robots"]')).toHaveCount(0);
+    expect(errors).toEqual([]);
   } finally {
     await page.close();
   }

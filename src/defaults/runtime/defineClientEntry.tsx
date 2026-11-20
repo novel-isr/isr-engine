@@ -54,7 +54,12 @@ import {
 } from './navigation-history.client';
 import { installDevRenderInspector } from './dev-render-inspector';
 import { setClientI18n } from '../../runtime/i18n-store';
-import { applySeoToDocument, type IntlPayload, type PageSeoMeta } from './seo-runtime';
+import {
+  applySeoToDocument,
+  clearInjectedSeo,
+  type IntlPayload,
+  type PageSeoMeta,
+} from './seo-runtime';
 import {
   installBrowserObservability,
   type BrowserObservabilityHandle,
@@ -132,6 +137,15 @@ async function prepareFetchedDevStyles(
   generation: number | undefined
 ): Promise<void> {
   result.styleIds = await preparePayloadDevStyles(generation);
+}
+
+function transitionPayload(
+  setState: (state: DefaultRscPayloadState) => void,
+  state: DefaultRscPayloadState
+): void {
+  // App head nodes must be reconciled without the previous route's injected tags.
+  clearInjectedSeo();
+  React.startTransition(() => setState(state));
 }
 
 function PayloadRoot({ payload, generation, styleIds }: DefaultRscPayloadState): React.ReactNode {
@@ -354,7 +368,7 @@ async function main(hooks: ClientEntryHooks): Promise<void> {
       const [failed, setFailed] = React.useState(false);
 
       React.useEffect(() => {
-        setPayload = v => React.startTransition(() => setPayload_(v));
+        setPayload = state => transitionPayload(setPayload_, state);
       }, [setPayload_]);
 
       React.useEffect(() => {
@@ -461,7 +475,7 @@ async function main(hooks: ClientEntryHooks): Promise<void> {
   function BrowserRoot(): React.ReactNode {
     const [payloadState, setPayload_] = React.useState<DefaultRscPayloadState>(initialPayloadState);
     React.useEffect(() => {
-      setPayload = v => React.startTransition(() => setPayload_(v));
+      setPayload = state => transitionPayload(setPayload_, state);
     }, [setPayload_]);
     React.useEffect(() => {
       const onNavigation = import.meta.env.DEV
@@ -549,9 +563,9 @@ async function main(hooks: ClientEntryHooks): Promise<void> {
     </HydrationShell>
   );
 
-  // Release the injected title before React claims the app's head. PayloadRoot
-  // reapplies the page title after React commits, without removing its node.
-  document.head.querySelector('title[data-isr-seo]')?.remove();
+  // Reconcile the app's head without adopting injected nodes. PayloadRoot
+  // reapplies metadata after hydration.
+  clearInjectedSeo();
   hydrateRoot(document, browserRoot, { formState: initialPayload.formState });
   installInspector();
   schedulePostCommitInspectorInstall();

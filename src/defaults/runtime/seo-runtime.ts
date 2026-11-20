@@ -174,11 +174,15 @@ export function injectSeoMeta(
 
 const managedTitles = new WeakMap<HTMLTitleElement, { base: string; applied: string }>();
 
+export function clearInjectedSeo(): void {
+  document.head.querySelectorAll('[data-isr-seo]').forEach(el => el.remove());
+}
+
 /** Replace managed head metadata after the route commits. */
 export function applySeoToDocument(meta: PageSeoMeta | null | undefined, baseUrl?: string): void {
   if (typeof document === 'undefined' || !document.head) return;
   const head = document.head;
-  head.querySelectorAll('[data-isr-seo]').forEach(el => el.remove());
+  clearInjectedSeo();
 
   // React owns the app title node and may update or replace it at commit.
   const title = head.querySelector('title');
