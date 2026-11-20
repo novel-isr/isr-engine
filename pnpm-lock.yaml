@@ -53,8 +53,8 @@ importers:
         specifier: ^2.5.0
         version: 2.5.0
       lru-cache:
-        specifier: ^10.4.3
-        version: 10.4.3
+        specifier: ^11.5.3
+        version: 11.5.3
       ora:
         specifier: ^10.0.0
         version: 10.0.0
