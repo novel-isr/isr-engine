@@ -26,7 +26,7 @@ describe('renderPageSeoMeta', () => {
       description: 'desc',
       keywords: ['a', 'b'],
     });
-    expect(html).toContain('<title>Hello</title>');
+    expect(html).toContain('<title data-isr-seo>Hello</title>');
     expect(html).toContain('<meta data-isr-seo name="description" content="desc">');
     expect(html).toContain('<meta data-isr-seo name="keywords" content="a, b">');
   });
@@ -189,24 +189,30 @@ describe('injectSeoMeta', () => {
   it('在 <head> 之后立刻插入（单 chunk）—— 比用户 <title> 更靠前', async () => {
     const src = htmlStream(['<html><head><title>USER</title></head><body>hi</body></html>']);
     const out = await streamToString(injectSeoMeta(src, meta));
-    expect(out).toContain('<title>INJ</title>');
+    expect(out).toContain('<title data-isr-seo>INJ</title>');
     // 关键：注入 title 出现在用户 title 之前 → 浏览器用 INJ
-    expect(out.indexOf('<title>INJ</title>')).toBeLessThan(out.indexOf('<title>USER</title>'));
+    expect(out.indexOf('<title data-isr-seo>INJ</title>')).toBeLessThan(
+      out.indexOf('<title>USER</title>')
+    );
     expect(out).toContain('<body>hi</body>');
   });
 
   it('支持带属性的 <head> 标签', async () => {
     const src = htmlStream(['<html><head data-rsc="x"><body></body></html>']);
     const out = await streamToString(injectSeoMeta(src, meta));
-    expect(out).toContain('<title>INJ</title>');
-    expect(out.indexOf('<head data-rsc="x">')).toBeLessThan(out.indexOf('<title>INJ</title>'));
+    expect(out).toContain('<title data-isr-seo>INJ</title>');
+    expect(out.indexOf('<head data-rsc="x">')).toBeLessThan(
+      out.indexOf('<title data-isr-seo>INJ</title>')
+    );
   });
 
   it('跨 chunk 边界正确处理（分裂 <head>）', async () => {
     const src = htmlStream(['<html><he', 'ad>', '<title>USER</title></head><body></body></html>']);
     const out = await streamToString(injectSeoMeta(src, meta));
-    expect(out).toContain('<title>INJ</title>');
-    expect(out.indexOf('<title>INJ</title>')).toBeLessThan(out.indexOf('<title>USER</title>'));
+    expect(out).toContain('<title data-isr-seo>INJ</title>');
+    expect(out.indexOf('<title data-isr-seo>INJ</title>')).toBeLessThan(
+      out.indexOf('<title>USER</title>')
+    );
   });
 
   it('无 <head> 时原样输出，不抛错', async () => {
@@ -218,7 +224,7 @@ describe('injectSeoMeta', () => {
   it('只注入第一个 <head>', async () => {
     const src = htmlStream(['<head></head><head></head>']);
     const out = await streamToString(injectSeoMeta(src, meta));
-    expect(out.match(/<title>INJ<\/title>/g)?.length).toBe(1);
+    expect(out.match(/<title data-isr-seo>INJ<\/title>/g)?.length).toBe(1);
   });
 });
 
@@ -312,10 +318,13 @@ describe('applySeoToDocument', () => {
     expect(links[0]?.getAttribute('href')).toBe('https://novel.example.com/books/1');
   });
 
-  it('seoMeta 为 null / undefined 时 no-op（不抛错）', () => {
-    document.title = 'KEEP';
+  it('clears the previous page metadata and restores the app title when the next page has no SEO', () => {
+    document.title = 'App';
+    applySeoToDocument({ title: 'Not found', noindex: true });
+    expect(document.title).toBe('Not found');
+
     applySeoToDocument(null);
-    applySeoToDocument(undefined);
-    expect(document.title).toBe('KEEP');
+    expect(document.head.querySelector('[data-isr-seo]')).toBeNull();
+    expect(document.title).toBe('App');
   });
 });

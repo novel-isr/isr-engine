@@ -30,10 +30,12 @@ import type { ReactFormState } from 'react-dom/client';
 
 // @ts-expect-error - @app 别名在 createIsrPlugin 注入；指向用户的 src/app.tsx
 import { App } from '@app/_entry';
-// @app 别名在 createIsrPlugin 注入；评估用户 src/routes.tsx 以注册 page-level SEO
-import '@app/_routes';
+// @ts-expect-error - App route manifest resolved by createIsrPlugin.
+import * as appRoutes from '@app/_routes';
+// @ts-expect-error - Runtime config resolved by createIsrPlugin.
+import runtimeConfig from 'virtual:isr-engine/runtime-config';
 
-import { parseRenderRequest } from './request';
+import { parseRenderRequest, type RenderRequest } from './request';
 import {
   declareDevClientReferenceStyles,
   runWithDevStyleDeclarationCollection,
@@ -41,7 +43,9 @@ import {
 import { type IntlPayload, type PageSeoMeta, injectSeoMeta, mergePageSeoMeta } from './seo-runtime';
 import { injectHeadExtras } from './head-extras-runtime';
 import { runWithI18n } from './i18n-server';
-import { resolvePageSeoMeta } from '../../runtime/routes';
+import { resolvePageRoute, type ResolveRoute } from '../../runtime/routes';
+import { parseLocale, resolveI18nConfig, type I18nConfig } from '../../runtime/i18n';
+import type { RuntimeConfig } from '../../types/ISRConfig';
 import { getRequestContext } from '../../context/RequestContext';
 
 interface DefaultRscPayload {
@@ -111,6 +115,8 @@ export interface ServerEntryHooks<C extends ServerCtx = ServerCtx> {
    * 不要在这里返回 Response —— 兜底由 engine 处理
    */
   onError?: (error: unknown, request: Request, ctx: C) => void | Promise<void>;
+  /** URL locale settings exposed by site hooks. */
+  intl?: Partial<I18nConfig>;
   /**
    * 单页 i18n 数据加载器 —— 返回值经 RSC payload 序列化到客户端
    *
@@ -162,6 +168,9 @@ function genTraceId(): string {
 export function defineServerEntry<C extends ServerCtx = ServerCtx>(
   hooks: ServerEntryHooks<C> = {}
 ): ServerEntryModule {
+  const appRouteResolver = Reflect.get(appRoutes, 'routes') as ResolveRoute | undefined;
+  const configuredIntl = hooks.intl ?? (runtimeConfig as Partial<RuntimeConfig> | undefined)?.i18n;
+  const routeI18n = configuredIntl && resolveI18nConfig(configuredIntl);
   return {
     async fetch(request) {
       const requestStore = getRequestContext();
@@ -195,44 +204,31 @@ export function defineServerEntry<C extends ServerCtx = ServerCtx>(
           }
         }
 
-        const seoMeta = await runWithI18n(intl, async () => {
-          // 双 strip：
-          // 1) _.rsc 后缀（RSC 客户端导航 URL 携带）—— 不剥的话 /books/1_.rsc
-          //    永远 match 不到 /books/:id 路由 → seoMeta=null → applySeoToDocument
-          //    no-op，客户端导航后 head 不更新。
-          // 2) locale 前缀（i18n.prefixDefault=true 时所有 URL 都带）—— pages 注册的
-          //    route 是业务规范路径（'/'、'/books/:id'），不含 locale；不剥的话
-          //    /zh-CN/books/1 也匹配不到。
-          const url = new URL(request.url);
-          if (url.pathname.endsWith('_.rsc')) {
-            url.pathname = url.pathname.slice(0, -'_.rsc'.length);
-          }
-          let localePrefix = '';
-          if (intl?.locale) {
-            localePrefix = `/${intl.locale}`;
-            if (url.pathname === localePrefix) {
-              url.pathname = '/';
-            } else if (url.pathname.startsWith(`${localePrefix}/`)) {
-              url.pathname = url.pathname.slice(localePrefix.length);
-            }
-          }
-          const [pageSeoMeta, hookSeoMeta] = await Promise.all([
-            resolvePageSeoMeta(url),
+        const renderRequest = parseRenderRequest(request);
+        const url = new URL(renderRequest.url);
+        const localeConfig =
+          routeI18n ?? (intl?.locale && { locales: [intl.locale], defaultLocale: intl.locale });
+        const localized = localeConfig ? parseLocale(url.pathname, localeConfig) : undefined;
+        if (localized?.hasPrefix) url.pathname = localized.pathname;
+
+        const { seoMeta, notFound } = await runWithI18n(intl, async () => {
+          const [page, hookSeoMeta] = await Promise.all([
+            resolvePageRoute(url, appRouteResolver),
             hooks.loadSeoMeta
               ? Promise.resolve(hooks.loadSeoMeta(request, ctx))
               : Promise.resolve(null),
           ]);
-          const merged = mergePageSeoMeta(pageSeoMeta, hookSeoMeta);
-          // 多语言 canonical 修正：admin 存的 canonical 是规范路径（无 locale），
-          // 但页面真实 URL 含 locale 前缀。两个 locale 渲染同一个 canonical →
-          // Google 判跨语言 URL 互为重复，只索引根域那一份，其它 locale SEO 死。
-          // 这里把当前 locale 前缀重新加回相对 canonical 路径，让每个 locale 的
-          // 页面声明自己为 canonical（业界标准多语言 SEO 做法）。
-          if (merged && localePrefix && merged.canonical?.startsWith('/')) {
-            merged.canonical =
-              merged.canonical === '/' ? `${localePrefix}/` : `${localePrefix}${merged.canonical}`;
-          }
-          return merged;
+          const merged = mergePageSeoMeta(page.seoMeta, hookSeoMeta);
+          const canonical = merged?.canonical;
+          const seoMeta =
+            localized?.hasPrefix && canonical?.startsWith('/')
+              ? {
+                  ...merged,
+                  canonical:
+                    canonical === '/' ? `/${localized.locale}` : `/${localized.locale}${canonical}`,
+                }
+              : merged;
+          return { seoMeta, notFound: page.notFound };
         });
         if (seoMeta) (ctx as ServerCtx).seoMeta = seoMeta;
 
@@ -248,7 +244,8 @@ export function defineServerEntry<C extends ServerCtx = ServerCtx>(
         }
 
         const response = await runWithI18n(intl, () =>
-          runRscPipeline(request, {
+          runRscPipeline(renderRequest, {
+            routeStatus: notFound && !renderRequest.isAction ? 404 : undefined,
             intl,
             seoMeta,
             siteBaseUrl: hooks.siteBaseUrl,
@@ -282,6 +279,7 @@ export function defineServerEntry<C extends ServerCtx = ServerCtx>(
 }
 
 interface PipelineExtras {
+  routeStatus?: 404;
   intl: IntlPayload | null | undefined;
   seoMeta: PageSeoMeta | null | undefined;
   siteBaseUrl?: string;
@@ -291,9 +289,11 @@ interface PipelineExtras {
 }
 
 /** 内部固化的 RSC + SSR 协议流水线 —— 用户不可见 */
-async function runRscPipeline(request: Request, extras: PipelineExtras): Promise<Response> {
-  const renderRequest = parseRenderRequest(request);
-  request = renderRequest.request;
+async function runRscPipeline(
+  renderRequest: RenderRequest,
+  extras: PipelineExtras
+): Promise<Response> {
+  const { request } = renderRequest;
 
   let returnValue: DefaultRscPayload['returnValue'] | undefined;
   let formState: ReactFormState | undefined;
@@ -354,7 +354,7 @@ async function runRscPipeline(request: Request, extras: PipelineExtras): Promise
 
   if (renderRequest.isRsc) {
     return new Response(rscStream, {
-      status: actionStatus,
+      status: actionStatus ?? extras.routeStatus,
       headers: { 'content-type': 'text/x-component;charset=utf-8' },
     });
   }
@@ -415,7 +415,7 @@ async function runRscPipeline(request: Request, extras: PipelineExtras): Promise
   }
 
   return new Response(finalStream, {
-    status: ssrResult.status,
+    status: ssrResult.status ?? extras.routeStatus,
     headers: responseHeaders,
   });
 }

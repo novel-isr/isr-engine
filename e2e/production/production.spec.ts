@@ -132,7 +132,7 @@ for (const [locale, title] of [
     const html = await response.text();
     expect(html).toContain(`<h1>${title}</h1>`);
     expect.soft(response.status()).toBe(404);
-    expect.soft(html).toContain(`<title>${title}</title>`);
+    expect.soft(html).toContain(`<title data-isr-seo>${title}</title>`);
     expect.soft(html).toContain('name="robots" content="noindex, nofollow"');
 
     const flight = await request.get(`/${locale}/nonexistent_.rsc`);
@@ -147,6 +147,29 @@ for (const [locale, title] of [
     expect(matchedHtml).not.toContain('name="robots" content="noindex, nofollow"');
   });
 }
+
+test('client navigation from a 404 clears its title and robots directive', async ({
+  browser,
+  baseURL,
+}) => {
+  const page = await browser.newPage({ baseURL });
+  try {
+    const response = await page.goto('/en/nonexistent');
+    expect(response?.status()).toBe(404);
+    await expect(page).toHaveTitle('Page not found');
+    await expect(page.getByRole('button', { name: 'Count 0' })).toBeEnabled();
+    const navigation = page.waitForResponse(
+      response => new URL(response.url()).pathname === '/_.rsc'
+    );
+    await page.locator('[data-nav="route"]').click();
+    expect((await navigation).status()).toBe(200);
+    await expect(page.getByRole('heading', { name: 'Home' })).toBeVisible();
+    await expect(page).toHaveTitle('Production regression app');
+    await expect(page.locator('meta[name="robots"]')).toHaveCount(0);
+  } finally {
+    await page.close();
+  }
+});
 
 test('missing assets and malformed image input leave the production service healthy', async ({
   request,

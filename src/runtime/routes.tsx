@@ -43,7 +43,7 @@ import * as React from 'react';
 import type { PageSeoMeta } from '../defaults/runtime/seo-runtime';
 
 declare global {
-  var __ISR_ENGINE_ROUTE_MANIFESTS__: RouteManifest[] | undefined;
+  var __ISR_ENGINE_ROUTE_MANIFESTS__: Map<ResolveRoute, CompiledManifest> | undefined;
 }
 
 /** 路由匹配后传给 page 的 props */
@@ -77,7 +77,7 @@ export interface RouteEntry extends RouteModuleRef {
 
 export interface RouteManifest {
   routes: readonly RouteEntry[];
-  /** 没匹配到时渲染的 route module；不传 → 返回 null */
+  /** 路由未匹配时渲染此模块，使用其 seo 导出并返回 HTTP 404。 */
   notFound?: RouteModuleRef;
 }
 
@@ -98,10 +98,25 @@ export type PageSeoExport =
       ctx: PageSeoContext
     ) => PageSeoMeta | null | undefined | Promise<PageSeoMeta | null | undefined>);
 
-interface CompiledRoute extends RouteEntry {
+interface PreparedPage {
+  ref: RouteModuleRef;
+  Component: PageComponent;
+}
+
+interface CompiledRoute extends PreparedPage {
   re: RegExp;
   keys: string[];
-  Component: PageComponent;
+}
+
+interface CompiledManifest {
+  routes: CompiledRoute[];
+  notFound?: PreparedPage;
+}
+
+interface RouteMatch {
+  page: PreparedPage;
+  params: Record<string, string>;
+  notFound?: true;
 }
 
 function compile(path: string): { re: RegExp; keys: string[] } {
@@ -124,112 +139,99 @@ export type ResolveRoute = (ctx: {
   searchParams: URLSearchParams;
 }) => React.ReactNode;
 
-function resolveRouteComponent(
-  ref: RouteModuleRef,
-  label: string,
-  exportName = 'default',
-  fallbackExport?: string
-): PageComponent {
-  const requestedExport = ref.export ?? exportName;
-  return React.lazy(async () => {
-    const mod = await ref.load();
-    const exports = mod as Record<string, unknown>;
-    const component =
-      exports[requestedExport] ?? (fallbackExport ? exports[fallbackExport] : undefined);
-    if (!component) {
-      throw new Error(`Route component "${label}" does not export "${requestedExport}"`);
-    }
-    return { default: component as PageComponent };
-  });
-}
-
-function resolvePageComponent(route: RouteEntry): PageComponent {
-  return resolveRouteComponent(route, route.path);
-}
-
-function createRouteResolver(
-  routes: readonly RouteEntry[],
-  notFound?: RouteModuleRef
-): ResolveRoute {
-  const compiled: CompiledRoute[] = routes.map(r => ({
-    ...r,
-    Component: resolvePageComponent(r),
-    ...compile(r.path),
-  }));
-  const NotFound = notFound ? resolveRouteComponent(notFound, '__not_found__') : undefined;
-
-  return function resolveRoute({ pathname, searchParams }) {
-    const clean = trimTrailingSlashes(pathname) || '/';
-    for (const route of compiled) {
-      const m = route.re.exec(clean);
-      if (!m) continue;
-      const params: Record<string, string> = {};
-      route.keys.forEach((k, i) => {
-        params[k] = decodeURIComponent(m[i + 1] ?? '');
-      });
-      const Page = route.Component;
-      return <Page pathname={clean} searchParams={searchParams} params={params} />;
-    }
-    if (NotFound) {
-      return <NotFound pathname={clean} searchParams={searchParams} params={{}} />;
-    }
-    return null;
-  };
-}
-
-function createDefinedRoutes(config: RouteManifest): DefinedRoutes {
-  registerRouteManifest(config);
+function preparePage(ref: RouteModuleRef, label: string): PreparedPage {
+  const exportName = ref.export ?? 'default';
   return {
-    routes: createRouteResolver(config.routes, config.notFound),
+    ref,
+    Component: React.lazy(async () => {
+      const mod = (await ref.load()) as Record<string, unknown>;
+      const component = mod[exportName];
+      if (!component) {
+        throw new Error(`Route component "${label}" does not export "${exportName}"`);
+      }
+      return { default: component as PageComponent };
+    }),
   };
 }
 
-export function defineRoutes(config: RouteManifest): DefinedRoutes;
-export function defineRoutes(input: RouteManifest): DefinedRoutes {
-  return createDefinedRoutes(input);
+function matchRoute(manifest: CompiledManifest, pathname: string): RouteMatch | undefined {
+  for (const route of manifest.routes) {
+    const match = route.re.exec(pathname);
+    if (!match) continue;
+    const params = Object.fromEntries(
+      route.keys.map((key, index) => [key, decodeURIComponent(match[index + 1] ?? '')])
+    );
+    return { page: route, params };
+  }
+  if (manifest.notFound) return { page: manifest.notFound, params: {}, notFound: true };
 }
 
-function getRouteRegistry(): RouteManifest[] {
-  globalThis.__ISR_ENGINE_ROUTE_MANIFESTS__ ??= [];
-  return globalThis.__ISR_ENGINE_ROUTE_MANIFESTS__;
+function getRouteRegistry(): Map<ResolveRoute, CompiledManifest> {
+  return (globalThis.__ISR_ENGINE_ROUTE_MANIFESTS__ ??= new Map());
 }
 
-function registerRouteManifest(config: RouteManifest): void {
-  getRouteRegistry().push(config);
+export function defineRoutes(config: RouteManifest): DefinedRoutes {
+  const manifest: CompiledManifest = {
+    routes: config.routes.map(route => ({
+      ...compile(route.path),
+      ...preparePage(route, route.path),
+    })),
+    notFound: config.notFound && preparePage(config.notFound, '__not_found__'),
+  };
+  const routes: ResolveRoute = ({ pathname, searchParams }) => {
+    const clean = trimTrailingSlashes(pathname) || '/';
+    const match = matchRoute(manifest, clean);
+    if (!match) return null;
+    const { Component } = match.page;
+    return <Component pathname={clean} searchParams={searchParams} params={match.params} />;
+  };
+  getRouteRegistry().set(routes, manifest);
+  return { routes };
+}
+
+function matchRegisteredRoute(pathname: string, routes?: ResolveRoute): RouteMatch | undefined {
+  const registry = getRouteRegistry();
+  const manifest = routes && registry.get(routes);
+  if (manifest) return matchRoute(manifest, pathname);
+
+  // Legacy route modules need no named export. Ordinary matches keep their
+  // registration order, and only an unambiguous fallback determines a miss.
+  let fallback: RouteMatch | undefined;
+  let ambiguous = false;
+  for (const candidate of registry.values()) {
+    const matched = matchRoute(candidate, pathname);
+    if (!matched) continue;
+    if (!matched.notFound) return matched;
+    if (fallback) ambiguous = true;
+    else fallback = matched;
+  }
+  return ambiguous ? undefined : fallback;
+}
+
+export async function resolvePageRoute(
+  url: URL,
+  routes?: ResolveRoute
+): Promise<{ notFound: boolean; seoMeta: PageSeoMeta | null }> {
+  const pathname = trimTrailingSlashes(url.pathname) || '/';
+  const matched = matchRegisteredRoute(pathname, routes);
+  if (!matched) return { notFound: false, seoMeta: null };
+  const seoMeta = await loadPageSeo(matched.page.ref, {
+    url,
+    pathname,
+    searchParams: url.searchParams,
+    params: matched.params,
+  });
+  return { notFound: matched.notFound === true, seoMeta };
 }
 
 export async function resolvePageSeoMeta(url: URL): Promise<PageSeoMeta | null> {
-  const pathname = trimTrailingSlashes(url.pathname) || '/';
-  for (const manifest of getRouteRegistry()) {
-    for (const route of manifest.routes) {
-      const matched = matchRoute(pathname, route);
-      if (!matched) continue;
-      return await loadPageSeo(route, {
-        url,
-        pathname,
-        searchParams: url.searchParams,
-        params: matched.params,
-      });
-    }
-  }
-  return null;
+  return (await resolvePageRoute(url)).seoMeta;
 }
 
-function matchRoute(
-  pathname: string,
-  route: RouteEntry
-): { params: Record<string, string> } | null {
-  const compiled = compile(route.path);
-  const m = compiled.re.exec(pathname);
-  if (!m) return null;
-  const params: Record<string, string> = {};
-  compiled.keys.forEach((k, i) => {
-    params[k] = decodeURIComponent(m[i + 1] ?? '');
-  });
-  return { params };
-}
-
-async function loadPageSeo(route: RouteEntry, ctx: PageSeoContext): Promise<PageSeoMeta | null> {
+async function loadPageSeo(
+  route: RouteModuleRef,
+  ctx: PageSeoContext
+): Promise<PageSeoMeta | null> {
   const mod = await route.load();
   const exports = mod as Record<string, unknown>;
   const exported = exports.seo ?? exports.generateSeo;
