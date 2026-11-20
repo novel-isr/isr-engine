@@ -163,7 +163,7 @@ try {
         const body = await response.text();
         assert.ok(body.includes(expected), route);
         if (route === '/books/1') {
-          assert.ok(body.includes('<title>SEO books/1</title>'), 'dynamic SEO title missing: ' + body.slice(0, 300));
+          assert.ok(body.includes('<title data-isr-seo>SEO books/1</title>'), 'dynamic SEO title missing: ' + body.slice(0, 300));
         }
       }
       await revalidateTag('books');
