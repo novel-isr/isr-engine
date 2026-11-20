@@ -40,7 +40,12 @@ import type {
   RuntimeSeoConfig,
 } from '../../types';
 import { readCookie } from '../../utils/cookie';
-import { parseLocale, type I18nConfig } from '../../runtime/i18n';
+import {
+  negotiateLocale,
+  parseLocale,
+  resolveI18nConfig,
+  type I18nConfig,
+} from '../../runtime/i18n';
 
 export { getCookieHeader, parseCookieHeader, readCookie } from '../../utils/cookie';
 
@@ -153,7 +158,7 @@ export interface IntlConfig {
   ) => IntlPayload | null | undefined | Promise<IntlPayload | null | undefined>;
   /** 本地或自定义加载器；与 endpoint 互斥（优先级更高） */
   load?: (locale: string, ctx: SiteRuntimeContext) => Promise<IntlPayload | null>;
-  /** locale 检测（默认：cookie `locale` → Accept-Language 前缀 → defaultLocale） */
+  /** locale 检测（默认：URL locale → cookie `locale` → Accept-Language → defaultLocale） */
   detect?: (req: Request) => string;
   /** 缓存 TTL 毫秒，默认 60_000 */
   ttl?: number;
@@ -290,7 +295,7 @@ export function createAdminIntlLoader(
   return async (locale, ctx) => {
     const normalizedLocale =
       supportedLocales.length && defaultLocale
-        ? normalizeLocale(locale, supportedLocales, defaultLocale)
+        ? (matchConfiguredLocale(locale, supportedLocales) ?? defaultLocale)
         : locale;
     const remoteUrl = resolveAdminUrl(endpoint, { locale: normalizedLocale }, ctx);
     const remote = remoteUrl
@@ -560,8 +565,10 @@ function createSiteHooks(config: SiteHooksConfig, runtime: SiteRuntimeConfig): S
 
   // ─── i18n 缓存（一次创建，请求级复用）──────────────
   const intlCfg = config.intl ?? {};
-  const fallbackLocale = intlCfg.defaultLocale ?? 'zh-CN';
   const supportedLocales = intlCfg.locales?.length ? intlCfg.locales : undefined;
+  const negotiationConfig = supportedLocales
+    ? resolveI18nConfig(intlCfg)
+    : { locales: ['zh-CN', 'en'], defaultLocale: intlCfg.defaultLocale ?? 'zh-CN' };
   // 默认 detect 优先级（业界标准 i18n 顺序）：
   //   1. URL pathname 前缀  /en-US/... → 'en-US'    ← 显式路由意图，最高优先级
   //   2. locale cookie                              ← 用户手动切换过的偏好
@@ -595,15 +602,13 @@ function createSiteHooks(config: SiteHooksConfig, runtime: SiteRuntimeConfig): S
       // 2. cookie
       const localeCookie = readCookie(req, 'locale');
       if (localeCookie) {
-        return supportedLocales
-          ? normalizeLocale(localeCookie, supportedLocales, fallbackLocale)
+        const matchedCookie = supportedLocales
+          ? matchConfiguredLocale(localeCookie, supportedLocales)
           : localeCookie;
+        if (matchedCookie) return matchedCookie;
       }
       // 3. Accept-Language → 4. fallbackLocale
-      const accept = req.headers.get('accept-language') ?? '';
-      return supportedLocales
-        ? normalizeLocale(parseAcceptLanguage(accept), supportedLocales, fallbackLocale)
-        : inferLocaleFromAcceptLanguage(accept, fallbackLocale);
+      return negotiateLocale(req.headers.get('accept-language'), negotiationConfig);
     });
 
   const intlLoader = createCachedFetcher<string, IntlPayload>({
@@ -779,42 +784,15 @@ function rtlOf(locale: string): 'ltr' | 'rtl' {
   return /^(ar|he|fa|ur)/.test(locale) ? 'rtl' : 'ltr';
 }
 
-function parseAcceptLanguage(accept: string): string {
-  let best = '';
-  let bestQ = -1;
-  for (const part of accept.split(',')) {
-    const [rawLocale, ...attrs] = part.trim().split(';');
-    if (!rawLocale) continue;
-    const qAttr = attrs.find(attr => attr.trim().startsWith('q='));
-    const q = qAttr ? Number(qAttr.trim().slice(2)) : 1;
-    if (Number.isFinite(q) && q > bestQ) {
-      best = rawLocale;
-      bestQ = q;
-    }
-  }
-  return best;
-}
-
-function inferLocaleFromAcceptLanguage(accept: string, fallbackLocale: string): string {
-  const best = parseAcceptLanguage(accept);
-  if (!best) return fallbackLocale;
-  const primary = best.toLowerCase().split('-')[0];
-  if (primary === 'zh') return 'zh-CN';
-  if (primary === 'en') return 'en';
-  return fallbackLocale;
-}
-
-function normalizeLocale(
+function matchConfiguredLocale(
   value: string,
-  supportedLocales: readonly string[],
-  fallbackLocale: string
-): string {
+  supportedLocales: readonly string[]
+): string | undefined {
   const lower = value.toLowerCase();
   const exact = supportedLocales.find(locale => locale.toLowerCase() === lower);
   if (exact) return exact;
   const prefix = lower.split('-')[0];
-  const byPrefix = supportedLocales.find(locale => locale.toLowerCase().split('-')[0] === prefix);
-  return byPrefix ?? fallbackLocale;
+  return supportedLocales.find(locale => locale.toLowerCase().split('-')[0] === prefix);
 }
 
 function extractIntlMessages(data: unknown): Record<string, unknown> {

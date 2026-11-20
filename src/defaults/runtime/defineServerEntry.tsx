@@ -44,7 +44,12 @@ import { type IntlPayload, type PageSeoMeta, injectSeoMeta, mergePageSeoMeta } f
 import { injectHeadExtras } from './head-extras-runtime';
 import { runWithI18n } from './i18n-server';
 import { resolvePageRoute, type ResolveRoute } from '../../runtime/routes';
-import { parseLocale, resolveI18nConfig, type I18nConfig } from '../../runtime/i18n';
+import {
+  isNoAcceptableLocaleError,
+  parseLocale,
+  resolveI18nConfig,
+  type I18nConfig,
+} from '../../runtime/i18n';
 import type { RuntimeConfig } from '../../types/ISRConfig';
 import { getRequestContext } from '../../context/RequestContext';
 
@@ -269,6 +274,9 @@ export function defineServerEntry<C extends ServerCtx = ServerCtx>(
         }
         return response;
       } catch (err) {
+        if (isNoAcceptableLocaleError(err)) {
+          return new Response(null, { status: 406, headers: { vary: 'Accept-Language, Cookie' } });
+        }
         if (hooks.onError) {
           try {
             await hooks.onError(err, request, ctx);

@@ -30,6 +30,7 @@ import { startAppServer, shutdownServer, type ServerContext } from '@/server';
 import { ISRRoutes } from '@/isr/ISRRoutes';
 
 import { SEOEngine, resolveSeoConfig, type ResolvedSeoConfig } from './seo';
+import { resolveSitemapLastModified } from './seo/resolveSeoConfig';
 import { MiddlewareComposer, traceMiddleware, performanceMiddleware } from '../middlewares';
 
 import type { Express } from 'express';
@@ -121,7 +122,10 @@ export default class ISREngine {
     const robotsTxt = this.seoEngine.generateRobotsTxt();
     await fs.promises.writeFile(path.join(outputDir, 'robots.txt'), robotsTxt, 'utf-8');
 
-    const sitemapXml = await this.seoEngine.generateSitemap();
+    const sitemapXml = await this.seoEngine.generateSitemap(
+      undefined,
+      resolveSitemapLastModified(this.config)
+    );
     await fs.promises.writeFile(path.join(outputDir, 'sitemap.xml'), sitemapXml, 'utf-8');
   }
 

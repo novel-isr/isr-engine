@@ -27,11 +27,6 @@ export function installLocaleLinks() {
   let connected = false;
   let pending: string | undefined;
 
-  function navigate(href: string) {
-    if (!connected) pending = href;
-    else if (location.href !== href) pushLinkNavigation(href);
-  }
-
   function handleLink(event: Event) {
     if (!(event.target instanceof Element)) return;
     const link = event.target.closest<HTMLAnchorElement>(selector);
@@ -45,7 +40,8 @@ export function installLocaleLinks() {
       isPrimaryLinkClick(event)
     ) {
       event.preventDefault();
-      navigate(url.href);
+      if (!connected) pending = url.href;
+      else if (url.href !== location.href) pushLinkNavigation(url.href);
     }
   }
 
@@ -79,7 +75,7 @@ export function installLocaleLinks() {
         if (!connected || !pending) return;
         const href = pending;
         pending = undefined;
-        navigate(href);
+        if (location.href !== href) pushLinkNavigation(href);
       });
     },
     disconnect() {

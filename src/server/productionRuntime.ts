@@ -18,7 +18,7 @@ import { hasRuntimeRedisConnection, resolveRuntimeRedisConfig } from '@/config/r
 import { getTraceId, requestContext } from '@/context/RequestContext';
 import { applyAnonCookie, createServerRequestContext } from '@/context/createServerRequestContext';
 import { SEOEngine } from '@/engine/seo/SEOEngine';
-import { resolveSeoConfig } from '@/engine/seo/resolveSeoConfig';
+import { resolveSeoConfig, resolveSitemapLastModified } from '@/engine/seo/resolveSeoConfig';
 import { resolveExposureQueue, type ExposureQueueInstance } from '@/experiments/ExposureQueue';
 import { resolveManifestLoader, type ManifestLoaderInstance } from '@/experiments/ManifestLoader';
 import { promRegistry } from '@/metrics/PromMetrics';
@@ -530,11 +530,12 @@ export async function createProductionRuntime(
     // —— 生产必须在 ssr.config.ts 配置 runtime.site；dev 自动用 localhost。
     const seoCfg = resolveSeoConfig(config);
     const seo = SEOEngine.getInstance({ baseUrl: seoCfg.baseUrl });
+    const sitemapLastModified = resolveSitemapLastModified(config);
     cleanups.push(() => seo.shutdown());
     await seo.initialize();
     app.get('/sitemap.xml', async (_req, res) => {
       try {
-        const xml = await seo.generateSitemap(extractRoutesForSitemap(config));
+        const xml = await seo.generateSitemap(extractRoutesForSitemap(config), sitemapLastModified);
         res.set('content-type', 'application/xml; charset=utf-8');
         res.set('cache-control', 'public, max-age=3600');
         res.end(xml);

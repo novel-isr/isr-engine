@@ -50,18 +50,34 @@ function navigationEntryKey(): string | undefined {
 }
 
 export function pushLinkNavigation(href: string): void {
-  // Older engines lack NavigationHistoryEntry.key. Give engine links distinct entries there.
-  const state = navigationEntryKey()
-    ? null
-    : { [entryStateKey]: performance.timeOrigin + ':' + ++nextLegacyEntry };
-  window.history.pushState(state, '', href);
+  window.history.pushState(null, '', href);
 }
 
 type ScrollPosition = [x: number, y: number];
 export type HistoryChange = 'push' | 'replace' | 'traverse' | 'hash';
 
 function currentScrollEntry(): string {
-  return navigationEntryKey() ?? window.history.state?.[entryStateKey] ?? window.location.href;
+  return navigationEntryKey() ?? legacyEntryKey() ?? window.location.href;
+}
+
+function legacyEntryKey(): string | undefined {
+  const value: unknown = window.history.state?.[entryStateKey];
+  return typeof value === 'string' ? value : undefined;
+}
+
+export function historyStateWithScrollEntry(data: unknown, replace: boolean): unknown {
+  if (
+    navigationEntryKey() ||
+    (data != null && (typeof data !== 'object' || Object.getPrototypeOf(data) !== Object.prototype))
+  ) {
+    return data;
+  }
+  // Preserve application fields and use the browser's entry key wherever available.
+  return {
+    ...(data as Record<string, unknown> | null),
+    [entryStateKey]:
+      (replace ? legacyEntryKey() : undefined) ?? performance.timeOrigin + ':' + ++nextLegacyEntry,
+  };
 }
 
 function fragmentTarget(hash: string): HTMLElement | undefined {
@@ -82,60 +98,94 @@ export function createNavigationScroll() {
   const { history } = window;
   const previousRestoration = history.scrollRestoration;
   history.scrollRestoration = 'manual';
+  if (!navigationEntryKey() && !legacyEntryKey()) {
+    const existing = history.state;
+    const state = historyStateWithScrollEntry(existing, true);
+    if (state !== existing) history.replaceState(state, '');
+  }
 
   const positions = new Map<string, ScrollPosition>();
   let entry = currentScrollEntry();
   let pending: { restore?: ScrollPosition } | undefined;
-  let fragmentObserver: MutationObserver | undefined;
+  let stopWaiting: (() => void) | undefined;
+  let scheduledScroll: number | undefined;
 
   function save() {
     if (!pending) positions.set(entry, [window.scrollX, window.scrollY]);
   }
 
   function apply(restore?: ScrollPosition) {
-    fragmentObserver?.disconnect();
-    if (restore) {
-      window.scrollTo({ left: restore[0], top: restore[1], behavior: 'instant' });
-      return;
-    }
-
+    stopWaiting?.();
     const { hash } = window.location;
-    const target = hash ? fragmentTarget(hash) : undefined;
-    if (target) {
+    function tryScroll(): boolean {
+      if (restore) {
+        window.scrollTo({ left: restore[0], top: restore[1], behavior: 'instant' });
+        return (
+          Math.abs(window.scrollX - restore[0]) < 1 && Math.abs(window.scrollY - restore[1]) < 1
+        );
+      }
+      const target = hash ? fragmentTarget(hash) : undefined;
+      if (!target) return false;
       target.scrollIntoView({ behavior: 'instant' });
-      return;
+      return true;
     }
-    window.scrollTo({ left: 0, top: 0, behavior: 'instant' });
-    if (!hash || hash.toLowerCase() === '#top') return;
+    if (tryScroll()) return;
+    if (!restore) {
+      window.scrollTo({ left: 0, top: 0, behavior: 'instant' });
+      if (!hash || hash.toLowerCase() === '#top') return;
+    }
 
-    // An anchor inside a streamed Suspense boundary can arrive in a later commit.
-    const observer = new MutationObserver(() => {
-      const target = fragmentTarget(hash);
-      if (!target) return;
-      observer.disconnect();
-      target.scrollIntoView({ behavior: 'instant' });
-    });
-    fragmentObserver = observer;
-    observer.observe(document.body, {
+    // Streamed content can mount an anchor or make saved coordinates reachable later.
+    const waiting = new AbortController();
+    stopWaiting = () => waiting.abort();
+    const retry = () => {
+      if (tryScroll()) waiting.abort();
+    };
+    const mutations = new MutationObserver(retry);
+    mutations.observe(document.body, {
       childList: true,
       subtree: true,
-      attributes: true,
-      attributeFilter: ['id', 'name'],
+      attributes: !restore,
+      ...(restore ? {} : { attributeFilter: ['id', 'name'] }),
     });
+    const resize =
+      restore && typeof ResizeObserver !== 'undefined' ? new ResizeObserver(retry) : undefined;
+    resize?.observe(document.body);
+    waiting.signal.addEventListener(
+      'abort',
+      () => {
+        mutations.disconnect();
+        resize?.disconnect();
+        stopWaiting = undefined;
+      },
+      { once: true }
+    );
+    for (const type of ['pointerdown', 'wheel', 'keydown']) {
+      window.addEventListener(type, stopWaiting, { passive: true, signal: waiting.signal });
+    }
   }
 
   window.addEventListener('scroll', save, { passive: true });
   return {
     save,
     changed(kind: HistoryChange, needsPayload: boolean): (() => void) | undefined {
-      fragmentObserver?.disconnect();
       const nextEntry = currentScrollEntry();
       const restore = kind === 'traverse' ? positions.get(nextEntry) : undefined;
       const entryChanged = nextEntry !== entry;
+      if (entryChanged || needsPayload || kind === 'hash') {
+        stopWaiting?.();
+        if (scheduledScroll !== undefined) window.cancelAnimationFrame(scheduledScroll);
+        scheduledScroll = undefined;
+      }
       entry = nextEntry;
       if (!needsPayload) {
         if (pending && entryChanged) pending.restore = restore;
-        else if (kind === 'traverse' && entryChanged) apply(restore);
+        else if (entryChanged && restore) {
+          scheduledScroll = window.requestAnimationFrame(() => {
+            scheduledScroll = undefined;
+            if (!pending && currentScrollEntry() === nextEntry) apply(restore);
+          });
+        }
         return undefined;
       }
       const transition = { restore };
@@ -149,7 +199,8 @@ export function createNavigationScroll() {
     },
     dispose() {
       window.removeEventListener('scroll', save);
-      fragmentObserver?.disconnect();
+      stopWaiting?.();
+      if (scheduledScroll !== undefined) window.cancelAnimationFrame(scheduledScroll);
       pending = undefined;
       history.scrollRestoration = previousRestoration;
     },

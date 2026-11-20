@@ -65,6 +65,29 @@ describe('negotiateLocale', () => {
     // en has q=1, zh has q=0.5 → en wins
     expect(negotiateLocale('zh;q=0.5,en', cfg)).toBe('en');
   });
+
+  it.each(['en;q=0', 'en ; Q=0, *;q=0.5', 'de,en;q=0'])(
+    'skips the rejected default with Accept-Language %s',
+    acceptLanguage => {
+      expect(negotiateLocale(acceptLanguage, cfg)).toBe('zh');
+    }
+  );
+
+  it('keeps an explicitly accepted locale when the wildcard rejects the rest', () => {
+    expect(negotiateLocale('*;q=0,zh;q=0.5', cfg)).toBe('zh');
+  });
+
+  it('ranks a wildcard against specific ranges without changing a listed locale weight', () => {
+    expect(negotiateLocale('*;q=0.9,en;q=0.1', cfg)).toBe('zh');
+    expect(negotiateLocale('*;q=0.1,zh;q=0.9', cfg)).toBe('zh');
+  });
+
+  it.each(['*;q=0', 'en;q=0,zh;q=0', 'de,*;q=0'])(
+    'throws when Accept-Language %s rules out every supported locale',
+    acceptLanguage => {
+      expect(() => negotiateLocale(acceptLanguage, cfg)).toThrow(RangeError);
+    }
+  );
 });
 
 describe('negotiateLocale —— 主语言回退（地区码）', () => {
@@ -89,6 +112,18 @@ describe('negotiateLocale —— 主语言回退（地区码）', () => {
   it('still exact-matches regional locale code', () => {
     expect(negotiateLocale('en-au', regional)).toBe('en-au');
     expect(negotiateLocale('en-us', regional)).toBe('en-us');
+  });
+
+  it('skips a rejected locale during regional fallback', () => {
+    expect(negotiateLocale('en-GB,en-US;q=0', regional)).toBe('en-au');
+  });
+
+  it('allows a more specific range to override a broad rejection', () => {
+    expect(negotiateLocale('en;q=0,en-AU;q=0.5', regional)).toBe('en-au');
+  });
+
+  it('keeps a broad rejection when a different region would require fallback', () => {
+    expect(negotiateLocale('en-GB,en;q=0,*;q=0.5', regional)).toBe('zh-hans');
   });
 
   it('still matches bare locale via primary subtag', () => {

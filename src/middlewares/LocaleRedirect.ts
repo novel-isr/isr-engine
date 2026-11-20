@@ -2,10 +2,11 @@
  * Locale redirect 中间件 ——
  *
  * `runtime.i18n.prefixDefault: true` 时，根目录 / 业务路径裸 URL（无 locale 前缀）
- * 一律 302 到 `/{negotiated}/path`。negotiated 来源优先级：
+ * 302 到 `/{negotiated}/path`。negotiated 来源优先级：
  *   1. cookie 'locale'（用户上次切过的）
- *   2. Accept-Language 头协商（RFC 4647 lookup → 命中 i18n.locales 之一）
- *   3. i18n.defaultLocale
+ *   2. Accept-Language 头协商（按权重匹配 i18n.locales）
+ *   3. i18n.defaultLocale 或首个未被拒绝的 locale
+ * 所有 locale 都被 Accept-Language 明确拒绝时返回 406。
  *
  * 命中条件外的请求一概放行：
  *   - 已带 locale 前缀的 URL（/zh-CN/books 等）
@@ -18,7 +19,7 @@
  */
 import type { Request, Response, NextFunction } from 'express';
 import type { I18nConfig } from '../runtime/i18n';
-import { negotiateLocale } from '../runtime/i18n';
+import { selectAcceptableLocale } from '../runtime/i18n';
 import { readRedirectQuery, redirectLocal } from '../server/safeRedirect';
 
 export interface CreateLocaleRedirectOptions {
@@ -117,11 +118,15 @@ export function createLocaleRedirectMiddleware(
     const cookieLocale = readCookieLocale(cookieHeader);
     const target =
       (cookieLocale && localePrefixes.has(cookieLocale) ? cookieLocale : null) ||
-      negotiateLocale(
+      selectAcceptableLocale(
         typeof req.headers['accept-language'] === 'string' ? req.headers['accept-language'] : null,
         i18n
       );
 
+    if (target === null) {
+      res.vary('Accept-Language').vary('Cookie').status(406).end();
+      return;
+    }
     const prefix = localePrefixes.get(target);
     if (!prefix) {
       res.status(400).end();

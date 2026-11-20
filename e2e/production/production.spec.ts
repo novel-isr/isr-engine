@@ -125,6 +125,13 @@ test('hash navigation preserves hydrated state without fetching an RSC payload',
   await page.locator('[data-nav="hash"]').click();
   await expect(page).toHaveURL(/#details$/);
   await expect(page.getByRole('button', { name: 'Count 1' })).toBeVisible();
+  const beforeMissingAnchor = await page.evaluate(() => window.scrollY);
+  expect(beforeMissingAnchor).toBeGreaterThan(0);
+  await page.evaluate(() => {
+    location.hash = '#missing-anchor';
+  });
+  await expect(page).toHaveURL(/#missing-anchor$/);
+  expect(await page.evaluate(() => window.scrollY)).toBe(beforeMissingAnchor);
   expect(requests.filter(url => /[?&]__rsc|[?&]_rsc|\.rsc(?:\?|$)/.test(url))).toEqual([]);
 });
 
@@ -159,43 +166,64 @@ test('locale links accept a click before React hydration and retain query and fr
     .toBeLessThan(1);
 });
 
-test('RSC commits position anchors and restore distinct scroll positions on history traversal', async ({
-  page,
-}) => {
-  await page.goto('/');
-  await expect(page.getByRole('button', { name: 'Count 0' })).toBeEnabled();
-  const scrollY = () => page.evaluate(() => window.scrollY);
-  const routeLink = page.locator('[data-nav="route"]');
-  await page.evaluate(() => window.scrollTo(0, 320));
-  await routeLink.evaluate((link: HTMLAnchorElement) => link.click());
-  await expect(page.getByRole('heading', { name: 'Article' })).toBeVisible();
-  await expect.poll(scrollY).toBe(0);
+for (const legacy of [false, true]) {
+  test(
+    'RSC commits position anchors and restore distinct history entries (' +
+      (legacy ? 'classic' : 'Navigation API') +
+      ')',
+    async ({ page }) => {
+      if (legacy) {
+        await page.addInitScript(() =>
+          Object.defineProperty(window, 'navigation', { value: undefined })
+        );
+      }
+      await page.goto('/');
+      await expect(page.getByRole('button', { name: 'Count 0' })).toBeEnabled();
+      const scrollY = () => page.evaluate(() => window.scrollY);
+      const routeLink = page.locator('[data-nav="route"]');
+      await page.evaluate(() => window.scrollTo(0, 320));
+      await routeLink.evaluate((link: HTMLAnchorElement) => link.click());
+      await expect(page.getByRole('heading', { name: 'Article' })).toBeVisible();
+      await expect.poll(scrollY).toBe(0);
 
-  await page.evaluate(() => window.scrollTo(0, 440));
-  await routeLink.evaluate((link: HTMLAnchorElement) => link.click());
-  await expect(page.getByRole('heading', { name: 'Home' })).toBeVisible();
-  await expect.poll(scrollY).toBe(0);
-  await page.evaluate(() => window.scrollTo(0, 210));
-  await page.evaluate(() => history.pushState(null, '', '/article?section=1#details'));
-  await expect(page.getByRole('heading', { name: 'Article' })).toBeVisible();
-  await expect
-    .poll(() =>
-      page.locator('#details').evaluate(element => Math.abs(element.getBoundingClientRect().top))
-    )
-    .toBeLessThan(1);
+      await page.evaluate(() => window.scrollTo(0, 440));
+      await page.evaluate(() => history.pushState({ selection: 'home' }, '', '/'));
+      await expect(page.getByRole('heading', { name: 'Home' })).toBeVisible();
+      await expect.poll(scrollY).toBe(0);
+      await page.evaluate(() => window.scrollTo(0, 210));
+      await page.evaluate(() => history.pushState(null, '', '/article?section=1#details'));
+      await expect(page.getByRole('heading', { name: 'Article' })).toBeVisible();
+      await expect
+        .poll(() =>
+          page
+            .locator('#details')
+            .evaluate(element => Math.abs(element.getBoundingClientRect().top))
+        )
+        .toBeLessThan(1);
 
-  await page.goBack();
-  await expect(page.getByRole('heading', { name: 'Home' })).toBeVisible();
-  await expect.poll(scrollY).toBe(210);
-  await page.goBack();
-  await expect(page.getByRole('heading', { name: 'Article' })).toBeVisible();
-  await expect.poll(scrollY).toBe(440);
-  await page.goBack();
-  await expect(page.getByRole('heading', { name: 'Home' })).toBeVisible();
-  await expect.poll(scrollY).toBe(320);
-  await page.goForward();
-  await expect(page.getByRole('heading', { name: 'Article' })).toBeVisible();
-  await expect.poll(scrollY).toBe(440);
+      await page.goBack();
+      await expect(page.getByRole('heading', { name: 'Home' })).toBeVisible();
+      await expect.poll(scrollY).toBe(210);
+      expect(await page.evaluate(() => history.state.selection)).toBe('home');
+      await page.goBack();
+      await expect(page.getByRole('heading', { name: 'Article' })).toBeVisible();
+      await expect.poll(scrollY).toBe(440);
+      await page.goBack();
+      await expect(page.getByRole('heading', { name: 'Home' })).toBeVisible();
+      await expect.poll(scrollY).toBe(320);
+      await page.goForward();
+      await expect(page.getByRole('heading', { name: 'Article' })).toBeVisible();
+      await expect.poll(scrollY).toBe(440);
+    }
+  );
+}
+
+test('language negotiation returns 406 when every locale is rejected', async ({ request }) => {
+  const headers = { 'accept-language': '*;q=0' };
+  const unacceptable = await request.get('/article', { headers });
+  expect(unacceptable.status()).toBe(406);
+  expect(unacceptable.headers().vary).toMatch(/Accept-Language/i);
+  expect((await request.get('/en/article', { headers })).status()).toBe(200);
 });
 
 for (const [locale, title] of [

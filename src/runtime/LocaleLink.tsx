@@ -3,7 +3,7 @@ import type { I18nConfig } from './i18n';
 
 export type LocaleLinkProps = Omit<
   ComponentPropsWithoutRef<'a'>,
-  'href' | 'hrefLang' | 'role' | 'aria-disabled' | 'download'
+  'href' | 'hrefLang' | 'role' | 'aria-disabled' | 'download' | 'onClick' | 'onClickCapture'
 > & {
   locale: string;
   config: I18nConfig;

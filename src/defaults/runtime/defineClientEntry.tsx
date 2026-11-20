@@ -51,6 +51,7 @@ import { getOrCreateDevStyleRegistry } from './dev-style-registry.client';
 import { observeDevRscResponse } from './dev-rsc-response.client';
 import {
   createNavigationScroll,
+  historyStateWithScrollEntry,
   isInternalNavigationHistoryMutation,
   pushLinkNavigation,
   syncBrowserUrlToFinalRedirect,
@@ -347,8 +348,21 @@ async function main(hooks: ClientEntryHooks): Promise<void> {
   }
 
   const navigationRequests = createNavigationRequestLifecycle();
+  let finishPendingNavigation: (() => void) | undefined;
   function startNavigation(onNavigation: (finishNavigation?: () => void) => void): () => void {
-    const stop = listenNavigation(onNavigation, hooks.onNavigate, observability, hookContext);
+    const stop = listenNavigation(
+      finish => {
+        const commit = () => {
+          if (finishPendingNavigation === commit) finishPendingNavigation = undefined;
+          finish?.();
+        };
+        finishPendingNavigation = commit;
+        onNavigation(commit);
+      },
+      hooks.onNavigate,
+      observability,
+      hookContext
+    );
     localeLinks.connect();
     return () => {
       localeLinks.disconnect();
@@ -593,7 +607,7 @@ async function main(hooks: ClientEntryHooks): Promise<void> {
 
   if (import.meta.hot) {
     import.meta.hot.on('rsc:update', () => {
-      observeDevNavigationFailure(fetchRscPayload());
+      observeDevNavigationFailure(fetchRscPayload(finishPendingNavigation));
     });
   }
 }
@@ -661,6 +675,7 @@ function listenNavigation(
   const oldPushState = window.history.pushState;
   window.history.pushState = function (...args) {
     scroll.save();
+    args[0] = historyStateWithScrollEntry(args[0], false);
     const res = oldPushState.apply(this, args);
     if (isInternalNavigationHistoryMutation()) previousUrl = window.location.href;
     else fire('push');
@@ -670,6 +685,7 @@ function listenNavigation(
   const oldReplaceState = window.history.replaceState;
   window.history.replaceState = function (...args) {
     scroll.save();
+    args[0] = historyStateWithScrollEntry(args[0], true);
     const res = oldReplaceState.apply(this, args);
     if (isInternalNavigationHistoryMutation()) {
       previousUrl = window.location.href;
