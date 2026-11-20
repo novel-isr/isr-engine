@@ -7,7 +7,7 @@ import type { IsrCacheMiddlewareOptions } from '../plugin/isrCacheMiddleware';
 
 import { createIsrCacheHandler } from '../plugin/isrCacheMiddleware';
 import { createHybridCacheStore } from '../plugin/isrCacheStore';
-import { revalidatePath, revalidateTag } from '../rsc/revalidate';
+import { revalidateContent, revalidatePath, revalidateTag } from '../rsc/revalidate';
 
 async function fixture(
   render: (req: http.IncomingMessage, res: http.ServerResponse) => void,
@@ -78,6 +78,46 @@ it('path invalidation clears GET and HEAD representations', async () => {
     await revalidatePath('/page');
     expect(f.handler.getCacheInspection().size).toBe(0);
   } finally {
+    await f.close();
+  }
+});
+it('locale-only publication fences an in-progress render while preserving warm responses', async () => {
+  let version = 'before publication';
+  let started!: () => void;
+  const rendering = new Promise<void>(resolve => {
+    started = resolve;
+  });
+  let finish!: () => void;
+  const release = new Promise<void>(resolve => {
+    finish = resolve;
+  });
+  const f = await fixture((req, res) => {
+    const body = version;
+    res.setHeader('content-type', 'text/html');
+    if (req.url === '/page' && body === 'before publication') {
+      started();
+      void release.then(() => res.end(body));
+    } else {
+      res.end(body);
+    }
+  });
+  try {
+    expect(await (await fetch(f.url + '/warm')).text()).toBe('before publication');
+    const inProgress = fetch(f.url + '/page');
+    await rendering;
+    version = 'after publication';
+    await revalidateContent({ locales: ['en'] });
+    finish();
+    expect(await (await inProgress).text()).toBe('before publication');
+
+    const regenerated = await fetch(f.url + '/page');
+    expect(regenerated.headers.get('x-cache-status')).toBe('MISS');
+    expect(await regenerated.text()).toBe('after publication');
+    const warm = await fetch(f.url + '/warm');
+    expect(warm.headers.get('x-cache-status')).toBe('HIT');
+    expect(await warm.text()).toBe('before publication');
+  } finally {
+    finish();
     await f.close();
   }
 });

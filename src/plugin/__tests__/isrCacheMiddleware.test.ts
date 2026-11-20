@@ -71,7 +71,8 @@ async function teardown(fx: TestFixture): Promise<void> {
 /** 简单 HTTP GET helper —— 返回 body + 关键响应头 */
 async function httpGet(
   url: string,
-  headers?: Record<string, string>
+  headers?: Record<string, string>,
+  rawPath?: string
 ): Promise<{
   status: number;
   body: string;
@@ -81,7 +82,7 @@ async function httpGet(
   setCookie: string[] | undefined;
 }> {
   return new Promise((resolve, reject) => {
-    const req = http.get(url, { headers: headers ?? {} }, res => {
+    const req = http.get(url, { headers: headers ?? {}, path: rawPath }, res => {
       const chunks: Buffer[] = [];
       res.on('data', chunk => chunks.push(chunk));
       res.on('end', () => {
@@ -104,6 +105,79 @@ function header(v: string | string[] | undefined): string | undefined {
   if (v === undefined) return undefined;
   return Array.isArray(v) ? v[0] : v;
 }
+
+describe('locale preference cache admission', () => {
+  it.each(['/zh-CN', '/zh-CN_.rsc', '/zh-CN/books?from=home'])(
+    'keeps %s cacheable when its locale is fixed by the URL',
+    async path => {
+      const fx = await startFixture(
+        {},
+        {
+          renderMode: 'isr',
+          runtime: {
+            i18n: { locales: ['en', 'zh-CN'], prefixDefault: true, rememberLocale: true },
+          },
+        }
+      );
+      try {
+        const url = fx.baseUrl + path;
+        expect((await httpGet(url)).cacheStatus).toBe('MISS');
+        expect((await httpGet(url, { cookie: 'anon=id; isr_locale=en' })).cacheStatus).toBe('HIT');
+        expect((await httpGet(url, { cookie: 'isr_locale=en; session=private' })).cacheStatus).toBe(
+          'BYPASS'
+        );
+        expect((await httpGet(url, { cookie: 'isr_locale=en; locale=zh-CN' })).cacheStatus).toBe(
+          'BYPASS'
+        );
+      } finally {
+        await teardown(fx);
+      }
+    }
+  );
+
+  it.each([
+    { path: '/', prefixDefault: true, rememberLocale: true, cookie: 'isr_locale=zh-CN' },
+    { path: '/zh-CN', prefixDefault: true, rememberLocale: false, cookie: 'isr_locale=en' },
+    { path: '/zh-CN', prefixDefault: false, rememberLocale: true, cookie: 'isr_locale=en' },
+    { path: '/zh-CN', prefixDefault: true, rememberLocale: true, cookie: 'isr_locale=unknown' },
+  ])(
+    'bypasses caching for $path with $cookie (prefixDefault=$prefixDefault, rememberLocale=$rememberLocale)',
+    async ({ path, prefixDefault, rememberLocale, cookie }) => {
+      const fx = await startFixture(
+        {},
+        {
+          renderMode: 'isr',
+          runtime: { i18n: { locales: ['en', 'zh-CN'], prefixDefault, rememberLocale } },
+        }
+      );
+      try {
+        const url = fx.baseUrl + path;
+        expect((await httpGet(url)).cacheStatus).toBe('MISS');
+        expect((await httpGet(url, { cookie })).cacheStatus).toBe('BYPASS');
+      } finally {
+        await teardown(fx);
+      }
+    }
+  );
+
+  it('keeps a raw path that normalizes to the unprefixed root private', async () => {
+    const fx = await startFixture(
+      {},
+      {
+        renderMode: 'isr',
+        runtime: { i18n: { locales: ['en', 'zh-CN'], prefixDefault: true, rememberLocale: true } },
+      }
+    );
+    try {
+      expect((await httpGet(fx.baseUrl, {}, '/en/..')).cacheStatus).toBe('MISS');
+      expect(
+        (await httpGet(fx.baseUrl, { cookie: 'isr_locale=zh-CN' }, '/en/..')).cacheStatus
+      ).toBe('BYPASS');
+    } finally {
+      await teardown(fx);
+    }
+  });
+});
 
 async function waitFor(predicate: () => boolean, timeoutMs = 500, intervalMs = 10): Promise<void> {
   const startedAt = Date.now();

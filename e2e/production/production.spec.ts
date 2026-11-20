@@ -1,3 +1,5 @@
+import { fork } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
 import { expect, test } from '@playwright/test';
 import express from 'express';
 import { createCspNonceMiddleware, createSecurityMiddleware } from '../../src/server/middleware';
@@ -11,6 +13,36 @@ test.beforeEach(async ({ page }) => {
   });
 });
 test.afterEach(() => expect(browserErrors).toEqual([]));
+
+function startProgrammaticApp(env: NodeJS.ProcessEnv) {
+  const child = fork(fileURLToPath(new URL('./programmatic-server.mjs', import.meta.url)), [], {
+    cwd: fileURLToPath(new URL('.', import.meta.url)),
+    env: { ...process.env, ...env },
+    stdio: ['ignore', 'pipe', 'pipe', 'ipc'],
+  });
+  let output = '';
+  child.stdout!.on('data', chunk => (output += String(chunk)));
+  child.stderr!.on('data', chunk => (output += String(chunk)));
+  const ready = new Promise<string>((resolve, reject) => {
+    child.once('message', message => resolve((message as { ready: string }).ready));
+    child.once('error', reject);
+    child.once('exit', code => reject(new Error(`Production app exited ${code}: ${output}`)));
+  });
+  const exited = new Promise<{ code: number | null; signal: string | null }>(resolve => {
+    child.once('exit', (code, signal) => resolve({ code, signal }));
+  });
+  return {
+    child,
+    ready,
+    exited,
+    get output() {
+      return output;
+    },
+    kill() {
+      if (child.exitCode === null && child.signalCode === null) child.kill('SIGKILL');
+    },
+  };
+}
 
 test('data and Blob images load under both development and production image policies', async ({
   page,
@@ -135,35 +167,71 @@ test('hash navigation preserves hydrated state without fetching an RSC payload',
   expect(requests.filter(url => /[?&]__rsc|[?&]_rsc|\.rsc(?:\?|$)/.test(url))).toEqual([]);
 });
 
-test('locale links accept a click before React hydration and retain query and fragment', async ({
-  page,
-}) => {
-  await page.addInitScript(() => {
-    if (location.pathname !== '/article') return;
-    const observer = new MutationObserver(() => {
-      const link = document.querySelector<HTMLAnchorElement>('a[data-isr-locale-link][href]');
-      const count = document.querySelector('main button');
-      if (!link || !count) return;
-      observer.disconnect();
-      Reflect.set(window, 'earlyLocaleClick', count.hasAttribute('disabled'));
-      link.click();
+test('locale links remember an early selection and retain query and fragment', async ({ page }) => {
+  const app = startProgrammaticApp({
+    PLAYWRIGHT_REMEMBER_LOCALE: '1',
+    ISR_CACHE_NAMESPACE: `locale-preference-${Date.now()}`,
+  });
+  try {
+    const origin = await app.ready;
+    await page.addInitScript(() => {
+      if (
+        location.pathname !== '/en/article' ||
+        new URLSearchParams(location.search).get('from') !== 'share'
+      )
+        return;
+      const observer = new MutationObserver(() => {
+        const link = document.querySelector<HTMLAnchorElement>('a[data-isr-locale-link][href]');
+        const count = document.querySelector('main button');
+        if (!link || !count) return;
+        observer.disconnect();
+        Reflect.set(window, 'earlyLocaleClick', count.hasAttribute('disabled'));
+        link.click();
+      });
+      observer.observe(document, { childList: true, subtree: true, attributes: true });
     });
-    observer.observe(document, { childList: true, subtree: true, attributes: true });
-  });
-  const flight = page.waitForResponse(response => {
-    const url = new URL(response.url());
-    return url.pathname === '/zh-CN/article_.rsc' && url.search === '?from=share&tag=a%2Fb';
-  });
-  await page.goto('/article?from=share&tag=a%2Fb#details');
-  expect((await flight).status()).toBe(200);
-  await expect(page).toHaveURL(/\/zh-CN\/article\?from=share&tag=a%2Fb#details$/);
-  expect(await page.evaluate(() => Reflect.get(window, 'earlyLocaleClick'))).toBe(true);
-  await expect(page.locator('html')).toHaveAttribute('lang', 'zh-CN');
-  await expect
-    .poll(() =>
-      page.locator('#details').evaluate(element => Math.abs(element.getBoundingClientRect().top))
-    )
-    .toBeLessThan(1);
+    const flight = page.waitForResponse(response => {
+      const url = new URL(response.url());
+      return url.pathname === '/zh-CN/article_.rsc' && url.search === '?from=share&tag=a%2Fb';
+    });
+    await page.goto(`${origin}/en/article?from=share&tag=a%2Fb#details`);
+    const switched = await flight;
+    expect(switched.status()).toBe(200);
+    expect((await switched.request().allHeaders()).cookie).toContain('isr_locale=zh-CN');
+    await expect(page).toHaveURL(`${origin}/zh-CN/article?from=share&tag=a%2Fb#details`);
+    expect(await page.evaluate(() => Reflect.get(window, 'earlyLocaleClick'))).toBe(true);
+    await expect(page.locator('html')).toHaveAttribute('lang', 'zh-CN');
+    await expect
+      .poll(() =>
+        page.locator('#details').evaluate(element => Math.abs(element.getBoundingClientRect().top))
+      )
+      .toBeLessThan(1);
+
+    await page.goto(`${origin}/en/article`);
+    await expect(page).toHaveURL(`${origin}/en/article`);
+    await expect(page.locator('html')).toHaveAttribute('lang', 'en');
+    for (const path of ['/en/cached', '/en/cached_.rsc']) {
+      expect((await page.request.get(origin + path)).headers()['x-cache-status']).toBe('MISS');
+      const cached = await page.request.get(origin + path);
+      expect(cached.headers()['x-cache-status']).toBe('HIT');
+      expect(cached.headers()['content-language']).toBe('en');
+    }
+
+    const root = await page.request.get(`${origin}/?from=return`, {
+      headers: { 'accept-language': 'en' },
+      maxRedirects: 0,
+    });
+    expect(root.status()).toBe(302);
+    expect(root.headers().location).toBe('/zh-CN?from=return');
+    expect(root.headers()['cache-control']).toMatch(/\bno-store\b/);
+    await page.goto(`${origin}/?from=return`);
+    await expect(page).toHaveURL(`${origin}/zh-CN?from=return`);
+    await expect(page.locator('html')).toHaveAttribute('lang', 'zh-CN');
+    app.child.send('shutdown');
+    expect(await app.exited, app.output).toEqual({ code: 0, signal: null });
+  } finally {
+    app.kill();
+  }
 });
 
 for (const legacy of [false, true]) {
@@ -223,6 +291,7 @@ test('language negotiation returns 406 when every locale is rejected', async ({ 
   const unacceptable = await request.get('/article', { headers });
   expect(unacceptable.status()).toBe(406);
   expect(unacceptable.headers().vary).toMatch(/Accept-Language/i);
+  expect(unacceptable.headers()['cache-control']).toBe('no-store');
   expect((await request.get('/en/article', { headers })).status()).toBe(200);
 });
 
@@ -314,7 +383,6 @@ test('missing assets and malformed image input leave the production service heal
 
 test('production CLI exits successfully after SIGTERM', async () => {
   const { spawn } = await import('node:child_process');
-  const { fileURLToPath } = await import('node:url');
   const { createServer } = await import('node:net');
   const probe = createServer();
   await new Promise<void>(resolve => probe.listen(0, '127.0.0.1', resolve));
@@ -412,7 +480,6 @@ test('custom HTML executes under parser-derived CSP and the manifest stays outsi
 
 test('production startup rejects a corrupt manifest before loading application code', async () => {
   const { spawn } = await import('node:child_process');
-  const { fileURLToPath } = await import('node:url');
   const fs = await import('node:fs/promises');
   const root = await fs.mkdtemp('/tmp/isr-csp-startup-');
   try {
@@ -518,28 +585,12 @@ test('published programmatic app renders, hydrates, invalidates ISR and shuts do
   page,
   request,
 }) => {
-  const { fork } = await import('node:child_process');
   const fs = await import('node:fs/promises');
   const source = new URL('./ssg-source.txt', import.meta.url);
-  const { fileURLToPath } = await import('node:url');
-  const child = fork(fileURLToPath(new URL('./programmatic-server.mjs', import.meta.url)), [], {
-    cwd: fileURLToPath(new URL('.', import.meta.url)),
-    env: { ...process.env, ISR_CACHE_NAMESPACE: `programmatic-${Date.now()}` },
-    stdio: ['ignore', 'pipe', 'pipe', 'ipc'],
-  });
-  let output = '';
-  child.stdout!.on('data', chunk => (output += String(chunk)));
-  child.stderr!.on('data', chunk => (output += String(chunk)));
-  const exited = new Promise<{ code: number | null; signal: string | null }>(resolve => {
-    child.once('exit', (code, signal) => resolve({ code, signal }));
-  });
+  const app = startProgrammaticApp({ ISR_CACHE_NAMESPACE: `programmatic-${Date.now()}` });
+  const { child } = app;
   try {
-    const url = await new Promise<string>((resolve, reject) => {
-      child.once('message', message => resolve((message as { ready: string }).ready));
-      child.once('exit', code =>
-        reject(new Error(`Programmatic startup exited ${code}: ${output}`))
-      );
-    });
+    const url = await app.ready;
     const response = await page.goto(`${url}/static?search=a.b`);
     expect(response?.headers()['x-served-by']).toBe('ssg-runtime');
     await page.getByRole('button', { name: 'Count 0' }).click();
@@ -597,11 +648,11 @@ test('published programmatic app renders, hydrates, invalidates ISR and shuts do
     await page.getByRole('button', { name: 'Count 0' }).click();
     await expect(page.getByRole('button', { name: 'Count 1' })).toBeVisible();
     child.send('shutdown');
-    expect(await exited, output).toEqual({ code: 0, signal: null });
+    expect(await app.exited, app.output).toEqual({ code: 0, signal: null });
     await expect(fetch(`${url}/health`)).rejects.toThrow();
   } finally {
     await fs.rm(source, { force: true });
-    if (child.exitCode === null && child.signalCode === null) child.kill('SIGKILL');
+    app.kill();
   }
 });
 

@@ -10,6 +10,7 @@
 import { Logger } from '../../logger/Logger';
 import { isDev } from '../../config/getStatus';
 import type { ISRConfig } from '../../types';
+import { SEOEngine } from './SEOEngine';
 
 const logger = Logger.getInstance();
 
@@ -60,4 +61,16 @@ export function resolveSitemapLastModified(config: ISRConfig): ReadonlyMap<strin
     }
   }
   return timestamps;
+}
+
+export function resolveSitemapLoader(config: ISRConfig, engine?: SEOEngine) {
+  const seo = config.runtime?.seo;
+  const source = seo?.sitemap;
+  if (!source) return;
+  const sitemap = engine ?? SEOEngine.getInstance({ baseUrl: resolveSeoConfig(config).baseUrl });
+  return {
+    ttl: source.ttl ?? seo.ttl,
+    load: async () =>
+      sitemap.generatePublishedSitemap(await source.load({ services: config.runtime.services })),
+  };
 }

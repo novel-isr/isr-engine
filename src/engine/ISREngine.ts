@@ -30,7 +30,7 @@ import { startAppServer, shutdownServer, type ServerContext } from '@/server';
 import { ISRRoutes } from '@/isr/ISRRoutes';
 
 import { SEOEngine, resolveSeoConfig, type ResolvedSeoConfig } from './seo';
-import { resolveSitemapLastModified } from './seo/resolveSeoConfig';
+import { resolveSitemapLastModified, resolveSitemapLoader } from './seo/resolveSeoConfig';
 import { MiddlewareComposer, traceMiddleware, performanceMiddleware } from '../middlewares';
 
 import type { Express } from 'express';
@@ -97,6 +97,7 @@ export default class ISREngine {
         renderMode: this.config.renderMode,
         routes: this.config.routes,
         requestLimits: this.config.server.requestLimits,
+        seoAlreadyLimited: Boolean(this.config.runtime.seo?.sitemap),
       });
       routes.setup(requestHandler);
     });
@@ -122,10 +123,9 @@ export default class ISREngine {
     const robotsTxt = this.seoEngine.generateRobotsTxt();
     await fs.promises.writeFile(path.join(outputDir, 'robots.txt'), robotsTxt, 'utf-8');
 
-    const sitemapXml = await this.seoEngine.generateSitemap(
-      undefined,
-      resolveSitemapLastModified(this.config)
-    );
+    const sitemap = resolveSitemapLoader(this.config, this.seoEngine);
+    const sitemapXml = await (sitemap?.load() ??
+      this.seoEngine.generateSitemap(undefined, resolveSitemapLastModified(this.config)));
     await fs.promises.writeFile(path.join(outputDir, 'sitemap.xml'), sitemapXml, 'utf-8');
   }
 

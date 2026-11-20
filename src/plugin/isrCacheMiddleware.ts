@@ -53,7 +53,22 @@ import type { IncomingMessage, ServerResponse } from 'node:http';
 
 import type { ISRConfig, RenderModeType, RouteRule } from '../types';
 import { Logger } from '../logger/Logger';
-import { registerInvalidator } from '@/rsc/revalidate';
+import {
+  contentResponseTargets,
+  registerInvalidator,
+  type RevalidateTarget,
+} from '@/rsc/revalidate';
+import {
+  invalidateContentCaches,
+  type ContentPublication,
+} from '@/defaults/runtime/contentRevalidation';
+import {
+  contentPathname,
+  normalizePath,
+  RSC_URL_POSTFIX,
+  stripQuery,
+  stripRscSuffix,
+} from '@/utils/isrPath';
 import { collectTags, runWithTagStore, isUncacheable } from '@/rsc/cacheTag';
 import { loadConfig } from '../config/loadConfig';
 import {
@@ -66,10 +81,15 @@ import { stripRscClientReferenceCacheSuffix } from './devAssetRequestMiddleware'
 import { createAutoCacheStore } from '@/cache/createAutoCacheStore';
 import { RedisInvalidationBus } from '@/cache/RedisInvalidationBus';
 import { hasRuntimeRedisConnection, resolveRuntimeRedisConfig } from '@/config/resolveRuntimeRedis';
-import { readCookie, parseCookieHeader } from '@/utils/cookie';
+import { getCookieHeader, readCookie, parseCookieHeader } from '@/utils/cookie';
 import { ANON_COOKIE_NAME } from '@/context/createServerRequestContext';
 import { getRequestContext } from '@/context/RequestContext';
 import { fnv1a32Base36 } from '@/utils/hash';
+import { parseLocale, type I18nConfig } from '@/runtime/i18n';
+import {
+  isSupportedLocalePreference,
+  LOCALE_PREFERENCE_COOKIE_NAME,
+} from '@/runtime/localePreference';
 
 const logger = Logger.getInstance();
 
@@ -230,17 +250,19 @@ export interface IsrCacheMiddlewareOptions {
 const ENGINE_CACHE_KEY_VERSION = 'e3';
 
 export type IsrInvalidationTarget =
-  | { kind: 'path'; value: string; protocol?: 'response-v1' }
-  | { kind: 'tag'; value: string; protocol?: 'response-v1' };
+  | (RevalidateTarget & { protocol?: 'response-v1' })
+  | {
+      kind: 'content';
+      value: ContentPublication['id'];
+      scopes: ContentPublication['scopes'];
+      protocol?: 'response-v1';
+    };
 
 export interface IsrInvalidationBus {
   publish(target: IsrInvalidationTarget): Promise<void> | void;
   subscribe(listener: (target: IsrInvalidationTarget) => Promise<void> | void): () => void;
   destroy?(): Promise<void> | void;
 }
-
-/** RSC 流响应的子路径后缀（与站点 framework/request.tsx 约定一致） */
-const RSC_URL_POSTFIX = '_.rsc';
 
 /** 后台重验证请求的 sentinel 头，避免循环 */
 const BG_REVALIDATE_HEADER = 'x-isr-background-revalidate';
@@ -442,7 +464,28 @@ export function createIsrCacheHandler(
 
   /** 后台重验证正在进行的 key 集合 —— 防止并发 STALE 请求重复触发多次 bg 拉取 */
   const revalidating = new Set<string>();
-  const state = { invalidationGeneration: 0 };
+  let appliedPublication: string | undefined;
+  let observedPublication: string | undefined;
+  let observedIncarnation: string | undefined;
+  const state = {
+    invalidationGeneration: 0,
+    reconcileContent(lease: CacheRenderLease) {
+      const { incarnation, contentRevision, previousContentRevision, contentPublication } = lease;
+      if (incarnation === observedIncarnation && contentRevision === observedPublication) return;
+      // The exact scopes suffice only when the notification covered the whole gap.
+      if (
+        (observedIncarnation !== undefined && observedIncarnation !== incarnation) ||
+        (contentRevision !== undefined &&
+          (!contentPublication ||
+            contentPublication !== appliedPublication ||
+            previousContentRevision !== observedPublication))
+      ) {
+        invalidateContentCaches();
+      }
+      observedIncarnation = incarnation;
+      observedPublication = contentRevision;
+    },
+  };
   const seeded = new Map<string, Promise<StaticSeedResult>>();
   const internalToken = randomBytes(24).toString('hex');
   const singleflightWaitMs = options.singleflightWaitMs ?? 5_000;
@@ -475,9 +518,9 @@ export function createIsrCacheHandler(
    */
   const invalidationLog = new LRUCache<string, number>({ max: INVALIDATION_LOG_MAX });
 
-  const invalidateLocal = async (target: IsrInvalidationTarget, durable = true): Promise<void> => {
+  const prepareInvalidation = (target: RevalidateTarget, durable: boolean): RevalidateTarget => {
     if (target.kind === 'path') {
-      const pathname = stripRscSuffix(normalizePath(stripQuery(target.value)));
+      const pathname = contentPathname(target.value);
       target = { ...target, value: options.resolveInvalidationPath?.(pathname) ?? pathname };
     }
     // 不论清了多少条，都更新 invalidationLog —— inventory 端点能回答
@@ -485,17 +528,25 @@ export function createIsrCacheHandler(
     // （比如刚启动 / 或 entry 已经被 LRU 淘汰）。
     if (durable || !cache.coherence) state.invalidationGeneration++;
     invalidationLog.set(`${target.kind}:${target.value}`, Date.now());
+    return target;
+  };
 
-    const seedTag = `__isr_path:${cacheNamespace}:__static_seed`;
-    if (options.staticSeed) {
-      if (!durable && cache.evictByTag) cache.evictByTag(seedTag);
-      else if (cache.invalidateByTag) await cache.invalidateByTag(seedTag);
+  const staticSeedTag = options.staticSeed
+    ? `__isr_path:${cacheNamespace}:__static_seed`
+    : undefined;
+  const responseTag = (target: RevalidateTarget) =>
+    target.kind === 'path'
+      ? `__isr_path:${cacheNamespace}:${stripRscSuffix(normalizePath(target.value))}`
+      : target.value;
+
+  const invalidateLocal = async (target: RevalidateTarget, durable = true): Promise<void> => {
+    target = prepareInvalidation(target, durable);
+    if (staticSeedTag) {
+      if (!durable && cache.evictByTag) cache.evictByTag(staticSeedTag);
+      else if (cache.invalidateByTag) await cache.invalidateByTag(staticSeedTag);
     }
 
-    const tag =
-      target.kind === 'path'
-        ? `__isr_path:${cacheNamespace}:${stripRscSuffix(normalizePath(target.value))}`
-        : target.value;
+    const tag = responseTag(target);
     if (!durable && cache.evictByTag) {
       cache.evictByTag(tag);
       return;
@@ -539,16 +590,61 @@ export function createIsrCacheHandler(
     }
   };
 
-  // 注册 invalidator —— Server Action 调用 revalidatePath/Tag 时触发
-  const unregisterInvalidator = registerInvalidator(async target => {
-    await invalidateLocal(target);
-    await options.invalidationBus?.publish(
-      cache.coherence ? { ...target, protocol: 'response-v1' } : target
+  async function invalidatePublication(
+    { id, scopes }: ContentPublication,
+    durable = true
+  ): Promise<void> {
+    const targets = contentResponseTargets(scopes);
+    if (!targets.length && !scopes.locales.length) return;
+    appliedPublication = id;
+    if (!targets.length) {
+      // Dictionary changes also fence running renders that could have used old messages.
+      if (durable || !cache.coherence) {
+        state.invalidationGeneration++;
+        if (durable) await cache.invalidateTags?.([], id);
+      }
+      return;
+    }
+    if (durable && cache.invalidateTags) {
+      const tags = targets.map(target => responseTag(prepareInvalidation(target, durable)));
+      if (staticSeedTag) tags.push(staticSeedTag);
+      await cache.invalidateTags(tags, id);
+      return;
+    }
+    const results = await Promise.allSettled(
+      targets.map(target => invalidateLocal(target, durable))
     );
-  });
+    const failures = results.flatMap(result =>
+      result.status === 'rejected' ? [result.reason] : []
+    );
+    if (failures.length) throw new AggregateError(failures, 'Content response invalidation failed');
+  }
+
+  const protocol = cache.coherence ? 'response-v1' : undefined;
+  const unregisterInvalidator = registerInvalidator(
+    async target => {
+      await invalidateLocal(target);
+      await options.invalidationBus?.publish(protocol ? { ...target, protocol } : target);
+    },
+    async publication => {
+      await invalidatePublication(publication);
+      await options.invalidationBus?.publish({
+        kind: 'content',
+        value: publication.id,
+        scopes: publication.scopes,
+        ...(protocol && { protocol }),
+      });
+    }
+  );
 
   const unsubscribeBus = options.invalidationBus?.subscribe(async target => {
-    await invalidateLocal(target, target.protocol !== 'response-v1');
+    const durable = target.protocol !== 'response-v1';
+    if (target.kind === 'content') {
+      invalidateContentCaches(target.scopes);
+      await invalidatePublication({ id: target.value, scopes: target.scopes }, durable);
+    } else {
+      await invalidateLocal(target, durable);
+    }
   });
 
   const handler = ((req: IncomingMessage, res: ServerResponse, next: Connect.NextFunction) => {
@@ -560,6 +656,7 @@ export function createIsrCacheHandler(
       bgTimeoutMs,
       variantIsolation,
       variantCookieName,
+      i18n: config?.runtime?.i18n,
       hostIsolation,
       cacheKeyPrefix,
       inflightRegens,
@@ -782,6 +879,7 @@ interface HandleContext {
   bgTimeoutMs: number;
   variantIsolation: boolean;
   variantCookieName: string;
+  i18n?: I18nConfig;
   hostIsolation: boolean;
   cacheKeyPrefix: string;
   inflightRegens: Map<string, { promise: Promise<void>; resolve: () => void }>;
@@ -793,7 +891,7 @@ interface HandleContext {
   /** bg revalidate 失败 cache key → 失败时间戳；STALE 路径计算 X-Cache-Stale-Reason 用 */
   bgRevalidateFailures: LRUCache<string, number>;
   development: boolean;
-  state: { invalidationGeneration: number };
+  state: { invalidationGeneration: number; reconcileContent(lease: CacheRenderLease): void };
   internalToken: string;
   pathTagPrefix: string;
   staticSeed?: IsrCacheMiddlewareOptions['staticSeed'];
@@ -907,11 +1005,12 @@ async function handleRequest(
   }
 
   const requestDirectives = parseCacheDirectives(req.headers['cache-control']);
+  const logicalPath = stripRscSuffix(stripQuery(url));
   const pragmaNoCache =
     req.headers['cache-control'] === undefined &&
     parseCacheDirectives(req.headers.pragma).has('no-cache');
   if (
-    hasPrivateRequest(req, ctx.variantCookieName) ||
+    hasPrivateRequest(req, ctx.variantCookieName, ctx.i18n, logicalPath) ||
     requestDirectives.has('no-store') ||
     requestDirectives.has('no-cache') ||
     pragmaNoCache
@@ -921,7 +1020,6 @@ async function handleRequest(
     return;
   }
 
-  const logicalPath = stripRscSuffix(stripQuery(url));
   let resolved = matchRouteRule(logicalPath, ctx.rules);
 
   // 运行时模式覆盖：?mode=isr|ssr|ssg
@@ -1219,6 +1317,7 @@ async function runMissPath(
   }
   if (!isActive()) return;
   if (ctx.cache.coherence && !renderLease) res.setHeader('X-Cache-Status', 'BYPASS');
+  if (renderLease) ctx.state.reconcileContent(renderLease);
 
   const renderGeneration = ctx.state.invalidationGeneration;
   runWithTagStore(() => {
@@ -1695,11 +1794,6 @@ function isBypassPath(url: string): boolean {
   return false;
 }
 
-function stripQuery(url: string): string {
-  const i = url.indexOf('?');
-  return i === -1 ? url : url.slice(0, i);
-}
-
 /**
  * 从 URL 查询字符串解析 `mode=isr|ssr|ssg` 开发调试覆盖
  * csr 不在用户级 mode 列表（是 server 崩溃时的内部 fallback）
@@ -1713,21 +1807,6 @@ function parseModeOverride(url: string): RenderModeType | undefined {
     return mode;
   }
   return undefined;
-}
-
-function stripRscSuffix(path: string): string {
-  if (path.endsWith(`/${RSC_URL_POSTFIX}`)) {
-    return path.slice(0, -(RSC_URL_POSTFIX.length + 1)) || '/';
-  }
-  if (path.endsWith(RSC_URL_POSTFIX)) {
-    return path.slice(0, -RSC_URL_POSTFIX.length) || '/';
-  }
-  return path;
-}
-
-function normalizePath(path: string): string {
-  if (!path.startsWith('/')) return `/${path}`;
-  return path;
 }
 
 function setHeaderOnce(res: ServerResponse, name: string, value: string): void {
@@ -1932,10 +2011,26 @@ function parseCacheDirectives(
   return directives;
 }
 
-function hasPrivateRequest(req: IncomingMessage, variantCookieName: string): boolean {
+function hasPrivateRequest(
+  req: IncomingMessage,
+  variantCookieName: string,
+  i18n: I18nConfig | undefined,
+  logicalPath: string
+): boolean {
   if (req.headers.authorization || req.headers.range) return true;
-  const cookies = parseCookieHeader(String(req.headers.cookie || ''));
-  return Object.keys(cookies).some(name => name !== ANON_COOKIE_NAME && name !== variantCookieName);
+  const cookies = parseCookieHeader(getCookieHeader(req));
+  const ignoreLocalePreference =
+    i18n &&
+    isSupportedLocalePreference(cookies[LOCALE_PREFERENCE_COOKIE_NAME], i18n) &&
+    parseLocale(logicalPath, i18n).hasPrefix &&
+    // The request adapter normalizes dot segments and backslashes before rendering.
+    URL.parse(`http://localhost${logicalPath}`)?.pathname === logicalPath;
+  return Object.keys(cookies).some(
+    name =>
+      name !== ANON_COOKIE_NAME &&
+      name !== variantCookieName &&
+      !(name === LOCALE_PREFERENCE_COOKIE_NAME && ignoreLocalePreference)
+  );
 }
 
 function hasPrivateResponse(headers: Record<string, string | number | string[]>): boolean {

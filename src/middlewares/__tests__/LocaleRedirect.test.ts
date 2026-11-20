@@ -26,18 +26,26 @@ it('keeps negotiated and case-folded redirects on-origin and preserves query byt
       ['//external?keep=yes', 302, '/en//external?keep=yes'],
       ['/books\\unsafe', 400, undefined],
     ] as const) {
-      const result = await new Promise<{ status?: number; location?: string }>(
-        (resolve, reject) => {
-          const req = http.get(base, { path: rawPath, headers: { host: 'spoof.invalid' } }, res => {
-            res.resume();
-            res.once('end', () =>
-              resolve({ status: res.statusCode, location: res.headers.location })
-            );
-          });
-          req.once('error', reject);
-        }
-      );
-      expect(result).toEqual({ status, location });
+      const result = await new Promise<{
+        status?: number;
+        location?: string;
+        cacheControl?: string;
+      }>((resolve, reject) => {
+        const req = http.get(base, { path: rawPath, headers: { host: 'spoof.invalid' } }, res => {
+          res.resume();
+          res.once('end', () =>
+            resolve({
+              status: res.statusCode,
+              location: res.headers.location,
+              cacheControl: res.headers['cache-control'],
+            })
+          );
+        });
+        req.once('error', reject);
+      });
+      expect(result).toMatchObject({ status, location });
+      if (status === 302) expect(result.cacheControl).toBe('no-store');
+      if (status === 308) expect(result.cacheControl).toBeUndefined();
       if (result.location) expect(new URL(result.location, base).origin).toBe(base);
     }
   } finally {
@@ -68,6 +76,7 @@ it('redirects to an acceptable locale or returns 406 when all are rejected', asy
       });
       expect(result.status).toBe(status);
       expect(result.headers.get('location')).toBe(location);
+      expect(result.headers.get('cache-control')).toBe('no-store');
       await result.body?.cancel();
     }
   } finally {
@@ -75,3 +84,46 @@ it('redirects to an acceptable locale or returns 406 when all are rejected', asy
     await new Promise<void>(resolve => server.close(() => resolve()));
   }
 });
+
+it.each([false, true])(
+  'uses a saved preference for the root when enabled (%s)',
+  async rememberLocale => {
+    const app = express();
+    app.use(
+      createLocaleRedirectMiddleware({
+        i18n: {
+          locales: ['en', 'zh-CN'],
+          defaultLocale: 'en',
+          prefixDefault: true,
+          rememberLocale,
+        },
+      })!
+    );
+    app.use((_req, res) => res.send('accepted'));
+    const server = app.listen(0, '127.0.0.1');
+    await new Promise<void>(resolve => server.once('listening', resolve));
+    const base = `http://127.0.0.1:${(server.address() as { port: number }).port}`;
+    const root = rememberLocale ? '/zh-CN' : '/en';
+    try {
+      for (const [path, location, cookie = 'isr_locale=zh-CN'] of [
+        ['/?query=a%2Fb', `${root}?query=a%2Fb`],
+        ['/_.rsc?query=a%2Fb', `${root}_.rsc?query=a%2Fb`],
+        ['/books', '/en/books'],
+        ['/books', '/zh-CN/books', 'locale=zh-CN; locale=en'],
+        ['/en/books', null],
+      ] as const) {
+        const result = await fetch(new URL(path, base), {
+          method: 'HEAD',
+          headers: { cookie, 'accept-language': 'en' },
+          redirect: 'manual',
+        });
+        expect(result.status).toBe(location ? 302 : 200);
+        expect(result.headers.get('location')).toBe(location);
+        expect(result.headers.get('cache-control')).toBe(location ? 'no-store' : null);
+      }
+    } finally {
+      server.closeAllConnections();
+      await new Promise<void>(resolve => server.close(() => resolve()));
+    }
+  }
+);

@@ -36,6 +36,7 @@ import {
   getOpsRequestLimiter,
 } from '@/server/opsConfig';
 import { admitRequest, createRequestLimiter, validateRequestLimits } from './requestLimits';
+import { createPublishedSitemap } from './publishedSitemap';
 import { readRedirectQuery, redirectLocal } from './safeRedirect';
 import {
   assertDistinctHtmlRouteIdentities,
@@ -284,6 +285,19 @@ export async function createProductionRuntime(
       requestContext.run(data, () => next());
     });
 
+    const seoCfg = resolveSeoConfig(config);
+    const seo = SEOEngine.getInstance({ baseUrl: seoCfg.baseUrl });
+    const publishedSitemap = createPublishedSitemap(config, seo);
+    if (publishedSitemap) cleanups.push(publishedSitemap.close);
+    cleanups.push(() => seo.shutdown());
+    await seo.initialize();
+    const seoRequests = createSeoRequestMiddleware(
+      config.server.requestLimits?.seo,
+      publishedSitemap
+    );
+    // A configured catalog takes precedence over localized aliases and built sitemap assets.
+    if (publishedSitemap) app.use(seoRequests);
+
     // Locale redirect —— runtime.i18n.prefixDefault=true 时，无 locale 前缀的 URL
     // 一律 302 到 /{negotiated}/path（cookie > Accept-Language > defaultLocale）。
     // 必须早于 ISR 缓存 / 静态托管 —— 否则 /books 命中缓存的 default-locale 渲染，
@@ -359,27 +373,12 @@ export async function createProductionRuntime(
       );
     }
 
-    options.setupRoutes?.(app);
-
     const staticHtmlLimiter = createRequestLimiter(
       'staticHtml',
       config.server.requestLimits?.staticHtml
     );
-    const seoLimiter = createRequestLimiter('seo', config.server.requestLimits?.seo);
-    // Protect file-backed SEO before generic asset serving, as well as generated responses.
-    app.use((req, res, next) => {
-      if (req.method !== 'GET' && req.method !== 'HEAD') return next();
-      let pathname: string;
-      try {
-        pathname = normalizeStaticAssetPathname(req.path).toLowerCase().replace(/\/$/, '');
-      } catch {
-        res.status(400).end();
-        return;
-      }
-      if (pathname === '/sitemap.xml' || pathname === '/robots.txt')
-        return seoLimiter(req, res, next);
-      next();
-    });
+    options.setupRoutes?.(app);
+    if (!publishedSitemap) app.use(seoRequests);
 
     // Immutable SSG HTML seeds the response cache below; it must not bypass invalidation.
 
@@ -528,24 +527,25 @@ export async function createProductionRuntime(
 
     // SEO 端点：sitemap.xml + robots.txt（基于 SEOEngine 自动生成）
     // —— 生产必须在 ssr.config.ts 配置 runtime.site；dev 自动用 localhost。
-    const seoCfg = resolveSeoConfig(config);
-    const seo = SEOEngine.getInstance({ baseUrl: seoCfg.baseUrl });
-    const sitemapLastModified = resolveSitemapLastModified(config);
-    cleanups.push(() => seo.shutdown());
-    await seo.initialize();
-    app.get('/sitemap.xml', async (_req, res) => {
-      try {
-        const xml = await seo.generateSitemap(extractRoutesForSitemap(config), sitemapLastModified);
-        res.set('content-type', 'application/xml; charset=utf-8');
-        res.set('cache-control', 'public, max-age=3600');
-        res.end(xml);
-      } catch (err) {
-        res
-          .status(500)
-          .type('text/plain')
-          .end(`sitemap error: ${String(err)}`);
-      }
-    });
+    if (!publishedSitemap) {
+      const sitemapLastModified = resolveSitemapLastModified(config);
+      app.get('/sitemap.xml', async (_req, res) => {
+        try {
+          const xml = await seo.generateSitemap(
+            extractRoutesForSitemap(config),
+            sitemapLastModified
+          );
+          res.set('content-type', 'application/xml; charset=utf-8');
+          res.set('cache-control', 'public, max-age=3600');
+          res.end(xml);
+        } catch (err) {
+          res
+            .status(500)
+            .type('text/plain')
+            .end(`sitemap error: ${String(err)}`);
+        }
+      });
+    }
     app.get('/robots.txt', (_req, res) => {
       res.set('content-type', 'text/plain; charset=utf-8');
       res.set('cache-control', 'public, max-age=3600');
@@ -787,6 +787,29 @@ function normalizeStaticAssetPathname(pathname: string): string {
   return path.posix.normalize(
     decodeURIComponent(new URL(`http://localhost${pathname}`).pathname).replaceAll('\\', '/')
   );
+}
+
+export function createSeoRequestMiddleware(
+  policy?: RequestLimitPolicy,
+  publishedSitemap?: ReturnType<typeof createPublishedSitemap>
+): express.RequestHandler {
+  const limiter = createRequestLimiter('seo', policy);
+  return async (req, res, next) => {
+    if (req.method !== 'GET' && req.method !== 'HEAD') return next();
+    let pathname: string;
+    try {
+      pathname = normalizeStaticAssetPathname(req.path).toLowerCase().replace(/\/$/, '');
+    } catch {
+      res.status(400).end();
+      return;
+    }
+    if (pathname === '/sitemap.xml' && publishedSitemap) {
+      if (await admitRequest(limiter, req, res)) await publishedSitemap.serve(res);
+      return;
+    }
+    if (pathname === '/sitemap.xml' || pathname === '/robots.txt') return limiter(req, res, next);
+    next();
+  };
 }
 
 export function createStaticAssetMiddleware(clientDir: string): express.RequestHandler {

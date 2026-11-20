@@ -28,36 +28,46 @@
  *   - 若未注册 invalidator（例如脱离 engine 的纯 RSC 场景），调用静默为 no-op
  */
 
+import { randomUUID } from 'node:crypto';
 import { runtimeLogger as logger } from '../logger/runtimeLogger';
+import {
+  invalidateContentCaches,
+  normalizeContentScopes,
+  type ContentPublication,
+  type ContentRevalidationOptions,
+} from '../defaults/runtime/contentRevalidation';
 import { recordRevalidationMetric } from './revalidationMetrics';
 
 /** Invalidator 签名：接收失效目标描述 */
 export interface RevalidateInvalidator {
-  (target: { kind: 'path'; value: string } | { kind: 'tag'; value: string }): Promise<void> | void;
+  (target: RevalidateTarget): Promise<void> | void;
 }
+
+type ContentResponseInvalidator = (publication: ContentPublication) => Promise<void> | void;
 
 /** 全局单例 key（Symbol.for 保证跨模块图复用同一注册表） */
 const REGISTRY_KEY = Symbol.for('isr-engine:revalidate-registry');
+type Registry = Map<RevalidateInvalidator, ContentResponseInvalidator | undefined>;
 
 type GlobalWithRegistry = typeof globalThis & {
-  [REGISTRY_KEY]?: Set<RevalidateInvalidator>;
+  [REGISTRY_KEY]?: Registry;
 };
 
-function getRegistry(): Set<RevalidateInvalidator> {
+function getRegistry(): Registry {
   const g = globalThis as GlobalWithRegistry;
-  if (!g[REGISTRY_KEY]) {
-    g[REGISTRY_KEY] = new Set<RevalidateInvalidator>();
-  }
-  return g[REGISTRY_KEY];
+  return (g[REGISTRY_KEY] ??= new Map());
 }
 
 /**
  * 注册一个 invalidator 实例（通常由 ISR 缓存中间件 / ISREngine 调用）
  * 返回取消注册的函数
  */
-export function registerInvalidator(fn: RevalidateInvalidator): () => void {
+export function registerInvalidator(
+  fn: RevalidateInvalidator,
+  invalidatePublication?: ContentResponseInvalidator
+): () => void {
   const registry = getRegistry();
-  registry.add(fn);
+  registry.set(fn, invalidatePublication);
   return () => {
     registry.delete(fn);
   };
@@ -98,7 +108,14 @@ export class RevalidationError extends Error {
   }
 }
 
-type RevalidateTarget = { kind: 'path'; value: string } | { kind: 'tag'; value: string };
+export type RevalidateTarget = { kind: 'path'; value: string } | { kind: 'tag'; value: string };
+
+export function contentResponseTargets(scopes: ContentPublication['scopes']): RevalidateTarget[] {
+  return [
+    ...scopes.paths.map(value => ({ kind: 'path' as const, value })),
+    ...scopes.tags.map(value => ({ kind: 'tag' as const, value })),
+  ];
+}
 
 /**
  * 内部统一分发：跑所有 invalidator，把失败聚合成 RevalidationError 抛出。
@@ -107,19 +124,29 @@ type RevalidateTarget = { kind: 'path'; value: string } | { kind: 'tag'; value: 
  * 这样即使 Redis 回源失败，进程内 LRU 至少能清干净；进程内 LRU 失败也不会拖累 Redis。
  */
 async function dispatch(target: RevalidateTarget): Promise<void> {
-  const registry = getRegistry();
   const targetLabel = `${target.kind}:${target.value}`;
-  if (registry.size === 0) {
+  await runInvalidators(
+    targetLabel,
+    Array.from(getRegistry().keys(), invalidate => () => invalidate(target)),
+    target
+  );
+}
+
+async function runInvalidators(
+  targetLabel: string,
+  invalidators: Array<() => Promise<void> | void>,
+  target?: RevalidateTarget
+): Promise<void> {
+  if (invalidators.length === 0) {
     logger.debug(`revalidate(${targetLabel}) —— 无 invalidator 注册，忽略`);
     return;
   }
 
-  recordRevalidationMetric('run', target.kind, target.value);
+  if (target) recordRevalidationMetric('run', target.kind, target.value);
 
   // 包一层 async 函数：把同步抛错也转成 Promise rejection，让 allSettled 能统一处理
   // （直接 `fn(target)` 在 fn 同步抛错时会在 `.map` 里 escape，allSettled 收不到）
-  const invalidators = Array.from(registry);
-  const results = await Promise.allSettled(invalidators.map(async fn => fn(target)));
+  const results = await Promise.allSettled(invalidators.map(async fn => fn()));
 
   const causes: Error[] = [];
   let successCount = 0;
@@ -133,7 +160,7 @@ async function dispatch(target: RevalidateTarget): Promise<void> {
     failureCount++;
     const err = r.reason instanceof Error ? r.reason : new Error(String(r.reason));
     causes.push(err);
-    recordRevalidationMetric('failure', target.kind, target.value);
+    if (target) recordRevalidationMetric('failure', target.kind, target.value);
     // 单独 log 每个失败，方便从 stack 定位是哪个 invalidator
     logger.error(`[revalidate] invalidator #${idx} failed for ${targetLabel}: ${err.message}`, err);
   });
@@ -143,7 +170,7 @@ async function dispatch(target: RevalidateTarget): Promise<void> {
   }
 
   logger.debug(
-    `✅ revalidate(${targetLabel}) —— 已分发到 ${registry.size} 个 invalidator（全部成功）`
+    `✅ revalidate(${targetLabel}) —— 已分发到 ${invalidators.length} 个 invalidator（全部成功）`
   );
 }
 
@@ -166,3 +193,21 @@ export async function revalidatePath(path: string): Promise<void> {
 export async function revalidateTag(tag: string): Promise<void> {
   await dispatch({ kind: 'tag', value: tag });
 }
+
+/** Invalidate managed metadata before invalidating the affected rendered responses. */
+export async function revalidateContent(options: ContentRevalidationOptions): Promise<void> {
+  const scopes = normalizeContentScopes(options);
+  const targets = contentResponseTargets(scopes);
+  if (!targets.length && !scopes.locales.length && !scopes.sitemap) return;
+  invalidateContentCaches(scopes);
+  const publication = { id: randomUUID(), scopes };
+  const invalidators = Array.from(getRegistry()).flatMap(([invalidate, invalidatePublication]) =>
+    invalidatePublication
+      ? [() => invalidatePublication(publication)]
+      : targets.map(target => () => invalidate(target))
+  );
+  await runInvalidators('content', invalidators);
+}
+
+export { registerContentInvalidator } from '../defaults/runtime/contentRevalidation';
+export type { ContentRevalidationOptions } from '../defaults/runtime/contentRevalidation';

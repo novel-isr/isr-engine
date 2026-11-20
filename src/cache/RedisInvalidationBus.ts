@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { Logger } from '../logger/Logger';
+import { normalizeContentScopes } from '../defaults/runtime/contentRevalidation';
 import type { IsrInvalidationBus, IsrInvalidationTarget } from '../plugin/isrCacheMiddleware';
 
 export interface RedisInvalidationBusConfig {
@@ -35,17 +36,16 @@ type RedisCtor = new (...args: unknown[]) => RedisClient;
 
 function normalizeTarget(target: unknown): IsrInvalidationTarget | null {
   if (!target || typeof target !== 'object') return null;
-  const candidate = target as { kind?: unknown; value?: unknown; protocol?: unknown };
-  if (
-    (candidate.kind !== 'path' && candidate.kind !== 'tag') ||
-    typeof candidate.value !== 'string'
-  )
+  const { kind, value, protocol, scopes } = target as Record<string, unknown>;
+  if (typeof value !== 'string') return null;
+  const transport = protocol === 'response-v1' ? { protocol: 'response-v1' as const } : {};
+  if (kind === 'path' || kind === 'tag') return { kind, value, ...transport };
+  if (kind !== 'content' || !value) return null;
+  try {
+    return { kind, value, scopes: normalizeContentScopes(scopes), ...transport };
+  } catch {
     return null;
-  return {
-    kind: candidate.kind,
-    value: candidate.value,
-    ...(candidate.protocol === 'response-v1' ? { protocol: 'response-v1' as const } : {}),
-  };
+  }
 }
 
 export class RedisInvalidationBus implements IsrInvalidationBus {

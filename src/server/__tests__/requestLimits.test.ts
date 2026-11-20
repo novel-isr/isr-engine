@@ -17,7 +17,8 @@ import { createCacheInspectorMiddleware } from '../../plugin/createCacheInspecto
 import { createProductionRuntime, createStaticHtmlMiddleware } from '../productionRuntime';
 import { createIsrCacheHandler, createIsrCacheMiddleware } from '../../plugin/isrCacheMiddleware';
 import type { IsrCacheHandler } from '../../plugin/isrCacheMiddleware';
-import type { RequestLimitPolicy } from '../../types/ISRConfig';
+import type { RequestLimitPolicy, RuntimeSitemapConfig } from '../../types/ISRConfig';
+import { revalidateContent } from '../../rsc/revalidate';
 import { ISRRoutes } from '../../isr/ISRRoutes';
 import { normalizeEngineConfig } from '../../config/normalizeEngineConfig';
 import { generateStaticCspManifest } from '../../security/staticCspManifest';
@@ -28,6 +29,7 @@ async function productionFixture(options: {
   ssgRoutes?: string[];
   staticHtml?: RequestLimitPolicy;
   seo?: RequestLimitPolicy;
+  sitemap?: RuntimeSitemapConfig;
 }) {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), 'isr-limit-production-'));
   try {
@@ -65,7 +67,14 @@ async function productionFixture(options: {
         redis: undefined,
         experiments: {},
         i18n: undefined,
-        seo: undefined,
+        seo: options.sitemap && {
+          endpoint: undefined,
+          fallbackLocal: undefined,
+          ttl: 60_000,
+          timeoutMs: 1200,
+          dynamicResolvers: undefined,
+          sitemap: options.sitemap,
+        },
         telemetry: false,
       },
     } as never);
@@ -500,6 +509,118 @@ it('charges generated SEO once at the same boundary as static SEO', async () => 
       expect(robots.status).toBe(200);
       expect(await robots.text()).toContain('User-agent: *');
       expect((await fetch(url + '/sitemap.xml')).status).toBe(429);
+    });
+  } finally {
+    await fixture.close();
+  }
+});
+
+it('serves only published, indexable sitemap URLs from a single bulk load', async () => {
+  const load = vi.fn<RuntimeSitemapConfig['load']>(() => [
+    { path: '/published', status: 'published', modifiedTime: '2024-05-13T10:00:00Z' },
+    { path: '/not-indexed', status: 'published', noindex: true },
+    { path: '/draft', status: 'draft' },
+    { path: 'https://other.example.com/page', status: 'published' },
+    { path: '/%61pi/page', status: 'published' },
+    { path: '/invalid-date', status: 'published', modifiedTime: '2024-02-30' },
+  ]);
+  const fixture = await productionFixture({
+    files: { 'sitemap.xml': '<urlset><url><loc>https://example.com/built</loc></url></urlset>' },
+    sitemap: { load },
+  });
+  try {
+    await serve(fixture.runtime.app, async url => {
+      const responses = await Promise.all([
+        fetch(url + '/sitemap.xml'),
+        fetch(url + '/s%69temap.xml'),
+      ]);
+      for (const response of responses) {
+        expect(response.status).toBe(200);
+        expect(response.headers.get('cache-control')).toBe('no-cache');
+        const xml = await response.text();
+        expect(xml.match(/<loc>[^<]+<\/loc>/g)).toEqual([
+          '<loc>https://example.com/published</loc>',
+          '<loc>https://example.com/invalid-date</loc>',
+        ]);
+        expect(xml.match(/<lastmod>[^<]+<\/lastmod>/g)).toEqual([
+          '<lastmod>2024-05-13T10:00:00.000Z</lastmod>',
+        ]);
+      }
+      expect(load).toHaveBeenCalledTimes(1);
+    });
+  } finally {
+    await fixture.close();
+  }
+});
+
+it('refreshes the publication sitemap after an event and leaves an empty catalog empty', async () => {
+  const load = vi.fn<RuntimeSitemapConfig['load']>();
+  load.mockReturnValueOnce([{ path: '/removed', status: 'published' }]).mockReturnValue([]);
+  const fixture = await productionFixture({ files: {}, sitemap: { load } });
+  try {
+    await serve(fixture.runtime.app, async url => {
+      const first = await fetch(url + '/sitemap.xml');
+      expect(await first.text()).toContain('/removed</loc>');
+      await revalidateContent({ sitemap: true });
+      const fresh = await fetch(url + '/sitemap.xml');
+      expect(fresh.status).toBe(200);
+      const xml = await fresh.text();
+      expect(xml).toContain('<urlset');
+      expect(xml).not.toContain('<loc>');
+    });
+  } finally {
+    await fixture.close();
+  }
+});
+
+it('refreshes an in-flight publication sitemap that was invalidated before delivery', async () => {
+  let release!: () => void;
+  let signalStarted!: () => void;
+  const pending = new Promise<void>(resolve => {
+    release = resolve;
+  });
+  const started = new Promise<void>(resolve => {
+    signalStarted = resolve;
+  });
+  const load = vi.fn<RuntimeSitemapConfig['load']>();
+  load
+    .mockImplementationOnce(async () => {
+      signalStarted();
+      await pending;
+      return [{ path: '/superseded', status: 'published' }];
+    })
+    .mockReturnValue([{ path: '/current', status: 'published' }]);
+  const fixture = await productionFixture({ files: {}, sitemap: { load } });
+  try {
+    await serve(fixture.runtime.app, async url => {
+      const waiting = fetch(url + '/sitemap.xml');
+      await started;
+      await revalidateContent({ sitemap: true });
+      release();
+      const response = await waiting;
+      expect(response.status).toBe(200);
+      expect((await response.text()).match(/<loc>[^<]+<\/loc>/g)).toEqual([
+        '<loc>https://example.com/current</loc>',
+      ]);
+    });
+  } finally {
+    await fixture.close();
+  }
+});
+
+it('returns a retryable error when the publication sitemap source fails', async () => {
+  const load = vi.fn<RuntimeSitemapConfig['load']>();
+  load.mockRejectedValueOnce(new Error('upstream unavailable')).mockReturnValue([]);
+  const fixture = await productionFixture({ files: {}, sitemap: { load } });
+  try {
+    await serve(fixture.runtime.app, async url => {
+      const failed = await fetch(url + '/sitemap.xml');
+      expect(failed.status).toBe(503);
+      expect(failed.headers.get('cache-control')).toBe('no-store');
+      expect(await failed.text()).not.toContain('upstream unavailable');
+      const recovered = await fetch(url + '/sitemap.xml');
+      expect(recovered.status).toBe(200);
+      expect(await recovered.text()).toContain('<urlset');
     });
   } finally {
     await fixture.close();

@@ -11,7 +11,7 @@ export type LocaleLinkProps = Omit<
 
 /** Switch the current route's locale through the engine's browser navigation. */
 export function LocaleLink({ locale, config, ...props }: LocaleLinkProps) {
-  const { locales, defaultLocale, prefixDefault } = config;
+  const { locales, defaultLocale, prefixDefault, rememberLocale } = config;
   return (
     <a
       {...props}
@@ -19,7 +19,13 @@ export function LocaleLink({ locale, config, ...props }: LocaleLinkProps) {
       hrefLang={locale}
       data-prefetch='false'
       aria-disabled='true'
-      data-isr-locale-link={JSON.stringify({ locale, locales, defaultLocale, prefixDefault })}
+      data-isr-locale-link={JSON.stringify({
+        locale,
+        locales,
+        defaultLocale,
+        prefixDefault,
+        rememberLocale,
+      })}
       suppressHydrationWarning
     />
   );

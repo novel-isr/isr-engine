@@ -7,6 +7,9 @@
  * inert outside the RSC/server runtime.
  */
 
+import type { ContentRevalidationOptions } from '../defaults/runtime/contentRevalidation';
+export type { ContentRevalidationOptions } from '../defaults/runtime/contentRevalidation';
+
 export class RevalidationError extends Error {}
 
 export type RevalidateInvalidator = (
@@ -42,6 +45,10 @@ export async function revalidatePath(): Promise<void> {
 }
 
 export async function revalidateTag(): Promise<void> {
+  await Promise.resolve();
+}
+
+export async function revalidateContent(_options: ContentRevalidationOptions): Promise<void> {
   await Promise.resolve();
 }
 

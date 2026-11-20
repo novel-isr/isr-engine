@@ -2,6 +2,10 @@
 export interface CacheRenderLease {
   incarnation: string;
   revision: string;
+  /** Durable revisions at the two latest publications, if the backend tracks them. */
+  contentRevision?: string;
+  previousContentRevision?: string;
+  contentPublication?: string;
 }
 
 export interface ResponseCacheSnapshot {
@@ -31,6 +35,8 @@ export interface ResponseCacheBackend {
     ttlMs: number
   ): Promise<boolean>;
   invalidateTag(tag: string): Promise<void>;
+  /** Atomically invalidate a publication's response tags and advance its content revision. */
+  invalidateTags?(tags: readonly string[], publicationId: string): Promise<void>;
   remove(key: string): Promise<void>;
   clear(): Promise<void>;
   inspect?(

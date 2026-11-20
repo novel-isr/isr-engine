@@ -66,6 +66,34 @@ describe('createCachedFetcher', () => {
     expect(await p3).toBe(42);
   });
 
+  it('detaches an invalidated in-flight load without disturbing other keys', async () => {
+    const pending: Array<(value: string) => void> = [];
+    let frenchLoads = 0;
+    const load = createCachedFetcher({
+      key: (locale: string) => locale,
+      fetch: async locale => {
+        if (locale === 'fr') return `bonjour ${++frenchLoads}`;
+        return new Promise<string>(resolve => pending.push(resolve));
+      },
+    });
+
+    expect(await load('fr')).toBe('bonjour 1');
+    const beforePublication = load('en');
+    load.invalidate(locale => locale === 'en');
+    const afterPublication = load('en');
+
+    pending[0]('old');
+    expect(await beforePublication).toBe('old');
+    const follower = load('en');
+    expect(pending).toHaveLength(2);
+    pending[1]('new');
+
+    expect(await afterPublication).toBe('new');
+    expect(await follower).toBe('new');
+    expect(await load('en')).toBe('new');
+    expect(await load('fr')).toBe('bonjour 1');
+  });
+
   it('TTL 过期后重新拉取', async () => {
     const fetcher = vi.fn(async () => Date.now());
     const load = createCachedFetcher({

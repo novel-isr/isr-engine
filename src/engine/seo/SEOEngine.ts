@@ -8,13 +8,23 @@
  * - Open Graph / Twitter Cards
  */
 
-import { SitemapStream, streamToPromise } from 'sitemap';
+import { Readable, Writable } from 'node:stream';
+import { pipeline } from 'node:stream/promises';
+import { LIMITS, SitemapStream } from 'sitemap';
 import { Logger } from '../../logger/Logger';
+import type { RuntimeSitemapEntry } from '../../types';
+import { htmlRouteIdentity } from '../../utils/htmlPathname';
 import type { SEOConfig, SEOPageData, DeepPartial } from './types';
 import { DEFAULT_SEO_CONFIG, mergeSEOConfig } from './config';
 
 const SITEMAP_DATE =
   /^\d{4}-\d{2}-\d{2}(?:T\d{2}:\d{2}(?::\d{2}(?:\.\d+)?)?(?:Z|[+-]\d{2}:\d{2}))?$/;
+const SITEMAP_BYTE_LIMIT = 50 * 1024 * 1024;
+
+interface SitemapEntry {
+  url: string;
+  lastmod?: string;
+}
 
 function validLastModified(value: string | undefined): string | undefined {
   if (!value || !SITEMAP_DATE.test(value) || !Number.isFinite(Date.parse(value))) return;
@@ -96,7 +106,6 @@ export class SEOEngine {
     lastModifiedByUrl?: ReadonlyMap<string, string>
   ): Promise<string> {
     const urls = routes ?? Array.from(this.pageDataCache.keys());
-    // 兜底：未传入路由 + 无 pageData 缓存时，至少把首页写入，避免 EmptySitemap 报错
     const entries = (urls.length > 0 ? urls : ['/'])
       .filter(url => !this.shouldExcludeUrl(url))
       .map(url => ({ url, lastmod: validLastModified(lastModifiedByUrl?.get(url)) }));
@@ -108,28 +117,86 @@ export class SEOEngine {
     ) {
       return this.sitemapCache.xml;
     }
+    const xml = await this.renderSitemap(entries);
+    this.sitemapCache = { key, xml, generatedAt: now };
+    return xml;
+  }
 
+  async generatePublishedSitemap(catalog: readonly RuntimeSitemapEntry[]): Promise<string> {
+    if (!Array.isArray(catalog)) throw new TypeError('Sitemap source must return an array');
+    const entries: SitemapEntry[] = [];
+    const seen = new Set<string>();
+    for (const { path, status, noindex, modifiedTime } of catalog) {
+      let identity: string;
+      try {
+        identity = htmlRouteIdentity(path);
+      } catch {
+        continue;
+      }
+      if (seen.has(identity)) throw new TypeError(`Duplicate sitemap path: ${path}`);
+      seen.add(identity);
+      if (
+        status !== 'published' ||
+        (noindex !== undefined && noindex !== false) ||
+        identity.startsWith('/__') ||
+        identity === '/api' ||
+        identity.startsWith('/api/') ||
+        this.shouldExcludeUrl(identity)
+      ) {
+        continue;
+      }
+      if (entries.length >= LIMITS.MAX_SITEMAP_ITEM_LIMIT) {
+        throw new RangeError(`Publication sitemap exceeds ${LIMITS.MAX_SITEMAP_ITEM_LIMIT} URLs`);
+      }
+      entries.push({ url: path, lastmod: validLastModified(modifiedTime) });
+    }
+    return this.renderSitemap(entries, { enforceLimits: true });
+  }
+
+  private async renderSitemap(
+    entries: readonly SitemapEntry[],
+    { enforceLimits = false } = {}
+  ): Promise<string> {
     // SEO 必须显式配置 baseUrl，禁止静默降级到占位域名
-    if (!this.config.baseUrl) {
+    const hostname = this.config.baseUrl;
+    if (!hostname) {
       throw new Error('SEO baseUrl 未配置，无法生成 sitemap。请设置 ssr.config.ts runtime.site。');
     }
-    const sitemap = new SitemapStream({ hostname: this.config.baseUrl });
-
-    for (const { url, lastmod } of entries) {
-      sitemap.write({
+    const items = entries.map(({ url, lastmod }) => {
+      if (enforceLimits && new URL(url, hostname).href.length >= LIMITS.MAX_URL_LENGTH) {
+        throw new RangeError(
+          `Publication sitemap URL must be shorter than ${LIMITS.MAX_URL_LENGTH} characters`
+        );
+      }
+      return {
         url,
         priority: this.getUrlPriority(url),
         changefreq: this.getUrlChangeFreq(url),
         lastmod,
-      });
-    }
-
-    sitemap.end();
-    const xml = (await streamToPromise(sitemap)).toString();
-    this.sitemapCache = { key, xml, generatedAt: now };
+      };
+    });
+    const chunks: Buffer[] = [];
+    let bytes = 0;
+    await pipeline(
+      Readable.from(items),
+      new SitemapStream({ hostname }),
+      new Writable({
+        write(chunk: Buffer, _encoding, done) {
+          bytes += chunk.length;
+          if (enforceLimits && bytes > SITEMAP_BYTE_LIMIT) {
+            done(
+              new RangeError(`Publication sitemap exceeds ${SITEMAP_BYTE_LIMIT} uncompressed bytes`)
+            );
+            return;
+          }
+          chunks.push(chunk);
+          done();
+        },
+      })
+    );
 
     this.logger.info(`✅ 站点地图已生成: ${entries.length} 个页面`);
-    return xml;
+    return Buffer.concat(chunks, bytes).toString();
   }
 
   /** 生成 Robots.txt */

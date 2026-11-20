@@ -142,6 +142,7 @@ export type {
 export {
   revalidatePath,
   revalidateTag,
+  revalidateContent,
   cacheTag,
   collectTags,
   runWithTagStore,
@@ -157,6 +158,7 @@ export {
 } from './rsc';
 export type {
   RevalidateInvalidator,
+  ContentRevalidationOptions,
   ServerActionMetadata,
   ServerActionHandler,
   I18nParams,

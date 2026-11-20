@@ -26,12 +26,26 @@ test('import and require share the public Node module instances', async () => {
 test('the installed engine builds and serves the documented app', async () => {
   process.env.NODE_ENV = 'production';
   const { createISRApp, invalidatorRunsTotal, loadConfig } = await import('isr-engine');
-  const { revalidateTag } = require('isr-engine/rsc');
+  const { revalidateContent, revalidateTag } = require('isr-engine/rsc');
   const { Logger } = require('isr-engine');
   Logger.getInstance({ verbose: true }).debug('CommonJS consumer logging');
   const config = await loadConfig();
   config.server.host = '127.0.0.1';
   config.server.port = 0;
+  let sitemapEntries = [
+    { path: '/about', status: 'published', modifiedTime: '2026-10-01T08:00:00Z' },
+    { path: '/guides/rendering', status: 'unpublished' },
+  ];
+  let sitemapLoads = 0;
+  config.runtime.seo = {
+    ...config.runtime.seo,
+    sitemap: {
+      load: async () => {
+        sitemapLoads++;
+        return sitemapEntries;
+      },
+    },
+  };
   const app = await createISRApp(config);
   try {
     const { url } = await app.start();
@@ -74,6 +88,30 @@ test('the installed engine builds and serves the documented app', async () => {
         ?.value,
       1
     );
+
+    const readSitemap = async () => {
+      const response = await fetch(url + '/sitemap.xml', { signal: AbortSignal.timeout(10_000) });
+      assert.equal(response.status, 200);
+      assert.equal(response.headers.get('cache-control'), 'no-cache');
+      return response.text();
+    };
+    const initial = await readSitemap();
+    assert.ok(initial.includes(new URL('/about', config.runtime.site).href));
+    assert.ok(initial.includes('<lastmod>2026-10-01T08:00:00.000Z</lastmod>'));
+    assert.ok(!initial.includes('/guides/rendering'));
+
+    sitemapEntries = [
+      { path: '/about', status: 'published', noindex: true },
+      { path: '/guides/rendering', status: 'published' },
+    ];
+    assert.equal(await readSitemap(), initial);
+    assert.equal(sitemapLoads, 1);
+    await revalidateContent({ paths: ['/about', '/guides/rendering'], sitemap: true });
+    const updated = await readSitemap();
+    assert.ok(!updated.includes('/about'));
+    assert.ok(!updated.includes('<lastmod>'));
+    assert.ok(updated.includes(new URL('/guides/rendering', config.runtime.site).href));
+    assert.equal(sitemapLoads, 2);
   } finally {
     await app.shutdown();
   }
