@@ -51,6 +51,15 @@ test('the installed engine builds and serves the documented app', async () => {
         html.includes(`<title data-isr-seo>${title}</title>`),
         `Missing SEO title for ${route}`
       );
+      const canonical = new URL(route, config.runtime.site).href;
+      assert.ok(
+        html.includes(`<link data-isr-seo rel="canonical" href="${canonical}">`),
+        'Missing canonical URL for ' + route
+      );
+      assert.ok(
+        html.includes(`<link data-isr-seo rel="alternate" hreflang="en" href="${canonical}">`),
+        'Missing English alternate URL for ' + route
+      );
       if (route === '/guides/rendering') {
         assert.match(
           response.headers.get('server-timing') ?? '',
