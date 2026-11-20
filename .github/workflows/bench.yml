@@ -84,13 +84,7 @@ jobs:
           ref: ${{ steps.revisions.outputs.base }}
           path: .bench-baseline
 
-      - uses: actions/setup-node@v7
-        with:
-          node-version-file: '.nvmrc'
-          package-manager-cache: false
-      - uses: pnpm/action-setup@v6
-        with:
-          run_install: false
+      - uses: ./.github/actions/setup-toolchain
 
       - name: Build both engines with the same benchmark fixture
         run: |
