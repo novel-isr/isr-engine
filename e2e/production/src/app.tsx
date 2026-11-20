@@ -1,6 +1,6 @@
 import fs from 'node:fs/promises';
 import { cacheTag } from 'isr-engine';
-import { parseLocale } from 'isr-engine/runtime';
+import { LocaleLink, parseLocale } from 'isr-engine/runtime';
 import config from '../ssr.config';
 import { routes } from './routes';
 
@@ -18,6 +18,9 @@ export async function App({ url }: { url: URL }) {
         <title>Production regression app</title>
       </head>
       <body>
+        <LocaleLink locale='zh-CN' config={config.runtime.i18n}>
+          中文
+        </LocaleLink>
         {source && <p data-ssg-source>{source}</p>}
         {routes({ pathname, searchParams: url.searchParams })}
       </body>

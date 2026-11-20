@@ -2,7 +2,7 @@
  * LocaleProvider / useLocale —— 客户端 locale context（极小）
  *
  * 不内置消息字典；只暴露当前 locale + I18nConfig 给组件
- * 切换语言用 withLocale + <a href> 触发整页导航即可（SSR 重新分派）
+ * 切换当前页面的语言使用 LocaleLink。
  */
 'use client';
 

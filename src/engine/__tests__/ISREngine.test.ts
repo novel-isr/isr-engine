@@ -160,5 +160,27 @@ describe('ISREngine —— 生命周期', () => {
     const sitemap = await fs.promises.readFile(path.join(outDir, 'sitemap.xml'), 'utf-8');
     expect(robots).toContain('User-agent');
     expect(sitemap).toContain('<urlset');
+    expect(sitemap).not.toContain('<lastmod>');
+  });
+
+  it('写入首页 SEO 声明的更新时间', async () => {
+    const config = baseConfig();
+    config.runtime.site = 'https://example.com';
+    config.runtime.seo = {
+      endpoint: undefined,
+      fallbackLocal: [{ path: '/', modifiedTime: '2024-06-12T15:35:00+02:00' }],
+      ttl: 60_000,
+      timeoutMs: 1200,
+      dynamicResolvers: undefined,
+    };
+    const engine = new ISREngine(config);
+    await engine.generateSeo();
+
+    const sitemap = await fs.promises.readFile(
+      path.join(workdir, '.isr-hyou/ssg/sitemap.xml'),
+      'utf-8'
+    );
+    expect(sitemap).toContain('<loc>https://example.com/</loc>');
+    expect(sitemap).toContain('<lastmod>2024-06-12T13:35:00.000Z</lastmod>');
   });
 });

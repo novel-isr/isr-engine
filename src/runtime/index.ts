@@ -26,6 +26,7 @@ export {
   type Translate,
 } from './i18n-store';
 export { LocaleProvider, useLocale } from './LocaleContext';
+export { LocaleLink, type LocaleLinkProps } from './LocaleLink';
 export {
   capture,
   flushTelemetry,

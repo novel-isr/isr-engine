@@ -167,7 +167,7 @@ export interface DynamicSeoResolver {
 export interface RuntimeSeoConfig {
   /** 远端 SEO 端点；支持 {pathname} */
   endpoint: string | undefined;
-  /** 本地兜底 SEO 路由表；配置 API 不可用时使用 */
+  /** 本地兜底 SEO 路由表。可为已知更新时间的 sitemap URL 声明 ISO 8601 modifiedTime。 */
   fallbackLocal: readonly Record<string, unknown>[] | undefined;
   /** SEO 元数据缓存 TTL（毫秒） */
   ttl: number;

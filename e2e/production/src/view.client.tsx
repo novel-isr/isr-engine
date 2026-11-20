@@ -17,7 +17,9 @@ export default function ProductionView({ route }: { route: string }) {
       <a href='#details' data-nav='hash'>
         Details
       </a>
-      <section id='details'>Page details</section>
+      <section id='details' style={{ marginTop: '120vh', paddingBottom: '100vh' }}>
+        Page details
+      </section>
     </main>
   );
 }

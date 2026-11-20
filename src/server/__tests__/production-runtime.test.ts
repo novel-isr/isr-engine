@@ -47,7 +47,7 @@ it('programmatic production serves the built Fetch handler, preserves actions an
   const config = normalizeEngineConfig({
     renderMode: 'isr',
     revalidate: 3600,
-    routes: { '/prebuilt/custom.html': 'ssr' },
+    routes: { '/prebuilt/custom.html': 'ssr', '/undated': 'ssr', '/invalid-date': 'ssr' },
     ssg: {
       routes: async () => {
         throw new Error('build-only CMS discovery must never run at startup');
@@ -60,7 +60,16 @@ it('programmatic production serves the built Fetch handler, preserves actions an
       redis: undefined,
       experiments: {},
       i18n: undefined,
-      seo: undefined,
+      seo: {
+        endpoint: undefined,
+        fallbackLocal: [
+          { path: '/prebuilt/custom.html', modifiedTime: '2024-07-02T17:20:00Z' },
+          { path: '/invalid-date', modifiedTime: '2024-02-30T00:00:00Z' },
+        ],
+        ttl: 60_000,
+        timeoutMs: 1200,
+        dynamicResolvers: undefined,
+      },
       telemetry: false,
     },
   } as never);
@@ -73,6 +82,16 @@ it('programmatic production serves the built Fetch handler, preserves actions an
   expect(ctx.requestHandler.get('trust proxy')).toBe(false);
   expect(ctx.manifest).toEqual({ entry: { file: 'assets/main.js' } });
   expect(await (await fetch(`${ctx.url}/custom`)).text()).toBe('custom route');
+  const sitemapResponse = await fetch(`${ctx.url}/sitemap.xml`);
+  expect(sitemapResponse.status).toBe(200);
+  const sitemap = await sitemapResponse.text();
+  const datedEntry = sitemap
+    .split('</url>')
+    .find(entry => entry.includes('<loc>https://example.com/prebuilt/custom.html</loc>'));
+  expect(datedEntry).toContain('<lastmod>2024-07-02T17:20:00.000Z</lastmod>');
+  expect(sitemap).toContain('<loc>https://example.com/undated</loc>');
+  expect(sitemap).toContain('<loc>https://example.com/invalid-date</loc>');
+  expect(sitemap.match(/<lastmod>/g)).toHaveLength(1);
   for (const [alias, canonical] of [
     ['/prebuilt/', '/prebuilt'],
     ['/prebuilt/index.html', '/prebuilt'],

@@ -45,3 +45,33 @@ it('keeps negotiated and case-folded redirects on-origin and preserves query byt
     await new Promise<void>(resolve => server.close(() => resolve()));
   }
 });
+
+it('redirects to an acceptable locale or returns 406 when all are rejected', async () => {
+  const app = express();
+  app.use(
+    createLocaleRedirectMiddleware({
+      i18n: { locales: ['en-US', 'en-AU', 'zh-CN'], defaultLocale: 'en-US', prefixDefault: true },
+    })!
+  );
+  const server = app.listen(0, '127.0.0.1');
+  await new Promise<void>(resolve => server.once('listening', resolve));
+  const url = `http://127.0.0.1:${(server.address() as { port: number }).port}/books`;
+  try {
+    for (const [acceptLanguage, status, location] of [
+      ['en-GB,en-US;q=0', 302, '/en-AU/books'],
+      ['en-US;q=0,*;q=0.5', 302, '/en-AU/books'],
+      ['*;q=0', 406, null],
+    ] as const) {
+      const result = await fetch(url, {
+        headers: { 'accept-language': acceptLanguage },
+        redirect: 'manual',
+      });
+      expect(result.status).toBe(status);
+      expect(result.headers.get('location')).toBe(location);
+      await result.body?.cancel();
+    }
+  } finally {
+    server.closeAllConnections();
+    await new Promise<void>(resolve => server.close(() => resolve()));
+  }
+});

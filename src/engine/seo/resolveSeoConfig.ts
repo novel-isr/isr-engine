@@ -50,3 +50,14 @@ export function resolveSeoConfig(config: ISRConfig): ResolvedSeoConfig {
 
   return { baseUrl, baseUrlSource: source };
 }
+
+/** 取本地 SEO 条目明确声明的内容更新时间，仅用于完全匹配的 sitemap URL。 */
+export function resolveSitemapLastModified(config: ISRConfig): ReadonlyMap<string, string> {
+  const timestamps = new Map<string, string>();
+  for (const { path, modifiedTime } of config.runtime?.seo?.fallbackLocal ?? []) {
+    if (typeof path === 'string' && typeof modifiedTime === 'string' && !timestamps.has(path)) {
+      timestamps.set(path, modifiedTime);
+    }
+  }
+  return timestamps;
+}

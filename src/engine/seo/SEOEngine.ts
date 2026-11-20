@@ -13,6 +13,17 @@ import { Logger } from '../../logger/Logger';
 import type { SEOConfig, SEOPageData, DeepPartial } from './types';
 import { DEFAULT_SEO_CONFIG, mergeSEOConfig } from './config';
 
+const SITEMAP_DATE =
+  /^\d{4}-\d{2}-\d{2}(?:T\d{2}:\d{2}(?::\d{2}(?:\.\d+)?)?(?:Z|[+-]\d{2}:\d{2}))?$/;
+
+function validLastModified(value: string | undefined): string | undefined {
+  if (!value || !SITEMAP_DATE.test(value) || !Number.isFinite(Date.parse(value))) return;
+
+  // Date.parse can roll an impossible calendar day into the next month.
+  const day = value.slice(0, 10);
+  if (new Date(day).toISOString().slice(0, 10) === day) return value;
+}
+
 export class SEOEngine {
   private static instance: SEOEngine | null = null;
   private readonly logger = Logger.getInstance();
@@ -21,8 +32,7 @@ export class SEOEngine {
 
   // 缓存
   private pageDataCache = new Map<string, SEOPageData>();
-  private sitemapCache: string | null = null;
-  private sitemapLastGenerated = 0;
+  private sitemapCache: { key: string; xml: string; generatedAt: number } | null = null;
 
   private constructor(config?: DeepPartial<SEOConfig>) {
     this.config = config ? mergeSEOConfig(DEFAULT_SEO_CONFIG, config) : { ...DEFAULT_SEO_CONFIG };
@@ -80,14 +90,23 @@ export class SEOEngine {
     };
   }
 
-  /** 生成站点地图 */
-  async generateSitemap(routes?: string[]): Promise<string> {
+  /** 生成站点地图；lastModifiedByUrl 只接受已知的页面内容更新时间。 */
+  async generateSitemap(
+    routes?: readonly string[],
+    lastModifiedByUrl?: ReadonlyMap<string, string>
+  ): Promise<string> {
+    const urls = routes ?? Array.from(this.pageDataCache.keys());
+    // 兜底：未传入路由 + 无 pageData 缓存时，至少把首页写入，避免 EmptySitemap 报错
+    const entries = (urls.length > 0 ? urls : ['/'])
+      .filter(url => !this.shouldExcludeUrl(url))
+      .map(url => ({ url, lastmod: validLastModified(lastModifiedByUrl?.get(url)) }));
+    const key = JSON.stringify(entries);
     const now = Date.now();
     if (
-      this.sitemapCache &&
-      now - this.sitemapLastGenerated < this.config.sitemap.cacheTimeout * 1000
+      this.sitemapCache?.key === key &&
+      now - this.sitemapCache.generatedAt < this.config.sitemap.cacheTimeout * 1000
     ) {
-      return this.sitemapCache;
+      return this.sitemapCache.xml;
     }
 
     // SEO 必须显式配置 baseUrl，禁止静默降级到占位域名
@@ -95,27 +114,22 @@ export class SEOEngine {
       throw new Error('SEO baseUrl 未配置，无法生成 sitemap。请设置 ssr.config.ts runtime.site。');
     }
     const sitemap = new SitemapStream({ hostname: this.config.baseUrl });
-    const urls = routes || Array.from(this.pageDataCache.keys());
-    // 兜底：未传入路由 + 无 pageData 缓存时，至少把首页写入，避免 EmptySitemap 报错
-    const finalUrls = urls.length > 0 ? urls : ['/'];
 
-    for (const url of finalUrls) {
-      if (this.shouldExcludeUrl(url)) continue;
-
+    for (const { url, lastmod } of entries) {
       sitemap.write({
         url,
         priority: this.getUrlPriority(url),
         changefreq: this.getUrlChangeFreq(url),
-        lastmod: new Date().toISOString(),
+        lastmod,
       });
     }
 
     sitemap.end();
-    this.sitemapCache = (await streamToPromise(sitemap)).toString();
-    this.sitemapLastGenerated = now;
+    const xml = (await streamToPromise(sitemap)).toString();
+    this.sitemapCache = { key, xml, generatedAt: now };
 
-    this.logger.info(`✅ 站点地图已生成: ${urls.length} 个页面`);
-    return this.sitemapCache;
+    this.logger.info(`✅ 站点地图已生成: ${entries.length} 个页面`);
+    return xml;
   }
 
   /** 生成 Robots.txt */
@@ -134,7 +148,6 @@ export class SEOEngine {
   clearCache(): void {
     this.pageDataCache.clear();
     this.sitemapCache = null;
-    this.sitemapLastGenerated = 0;
   }
 
   /** 关闭引擎 */

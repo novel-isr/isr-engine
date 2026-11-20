@@ -33,6 +33,7 @@ import { GlobalErrorBoundary } from './error-boundary';
 import { createNavigationRequestLifecycle } from './navigation-request.client';
 import {
   createPrefetcher,
+  isPrimaryLinkClick,
   isRscNavigation,
   shouldPrefetch as canPrefetch,
   type PrefetchConnection,
@@ -49,9 +50,14 @@ import {
 import { getOrCreateDevStyleRegistry } from './dev-style-registry.client';
 import { observeDevRscResponse } from './dev-rsc-response.client';
 import {
+  createNavigationScroll,
+  historyStateWithScrollEntry,
   isInternalNavigationHistoryMutation,
+  pushLinkNavigation,
   syncBrowserUrlToFinalRedirect,
+  type HistoryChange,
 } from './navigation-history.client';
+import { installLocaleLinks } from './locale-links.client';
 import { installDevRenderInspector } from './dev-render-inspector';
 import { setClientI18n } from '../../runtime/i18n-store';
 import {
@@ -81,6 +87,7 @@ interface DefaultRscPayloadState {
   payload: DefaultRscPayload;
   generation: number | undefined;
   styleIds: string[];
+  finishNavigation?: () => void;
 }
 
 async function preparePayloadDevStyles(generation: number | undefined): Promise<string[]> {
@@ -91,9 +98,10 @@ async function preparePayloadDevStyles(generation: number | undefined): Promise<
 function createPayloadState(
   payload: DefaultRscPayload,
   generation: number | undefined,
-  styleIds: string[] = []
+  styleIds: string[] = [],
+  finishNavigation?: () => void
 ): DefaultRscPayloadState {
-  return { payload, generation, styleIds };
+  return { payload, generation, styleIds, finishNavigation };
 }
 
 type TemporaryReferences = ReturnType<typeof createTemporaryReferenceSet>;
@@ -149,10 +157,18 @@ function transitionPayload(
   React.startTransition(() => setState(state));
 }
 
-function PayloadRoot({ payload, generation, styleIds }: DefaultRscPayloadState): React.ReactNode {
+function PayloadRoot({
+  payload,
+  generation,
+  styleIds,
+  finishNavigation,
+}: DefaultRscPayloadState): React.ReactNode {
   React.useLayoutEffect(() => {
     applySeoToDocument(payload.seoMeta, payload.siteBaseUrl ?? undefined, payload.routeStatus);
   }, [payload]);
+  React.useLayoutEffect(() => {
+    finishNavigation?.();
+  }, [finishNavigation]);
   if (!import.meta.env.DEV || generation === undefined) return payload.root;
   return (
     <DevStyleCommitBoundary key={generation} generation={generation} styleIds={styleIds}>
@@ -286,6 +302,7 @@ export function defineClientEntry(hooks: ClientEntryHooks = {}): void {
 }
 
 async function main(hooks: ClientEntryHooks): Promise<void> {
+  const localeLinks = installLocaleLinks();
   if (import.meta.env.DEV) {
     const registry = getOrCreateDevStyleRegistry(document, {
       onRscCommit: completeDevStyleNavigation,
@@ -331,6 +348,27 @@ async function main(hooks: ClientEntryHooks): Promise<void> {
   }
 
   const navigationRequests = createNavigationRequestLifecycle();
+  let finishPendingNavigation: (() => void) | undefined;
+  function startNavigation(onNavigation: (finishNavigation?: () => void) => void): () => void {
+    const stop = listenNavigation(
+      finish => {
+        const commit = () => {
+          if (finishPendingNavigation === commit) finishPendingNavigation = undefined;
+          finish?.();
+        };
+        finishPendingNavigation = commit;
+        onNavigation(commit);
+      },
+      hooks.onNavigate,
+      observability,
+      hookContext
+    );
+    localeLinks.connect();
+    return () => {
+      localeLinks.disconnect();
+      stop();
+    };
+  }
 
   function mountRscShellFallback(): void {
     document.body.classList.remove('csr-shell-body');
@@ -338,7 +376,7 @@ async function main(hooks: ClientEntryHooks): Promise<void> {
 
     let setPayload: (v: DefaultRscPayloadState) => void = () => {};
 
-    async function fetchRscPayload(): Promise<void> {
+    async function fetchRscPayload(finishNavigation?: () => void): Promise<void> {
       await navigationRequests.run(async signal => {
         await runWithDevStyleNavigation(
           async generation => {
@@ -353,7 +391,7 @@ async function main(hooks: ClientEntryHooks): Promise<void> {
             signal.throwIfAborted();
             syncBrowserUrlToFinalRedirect(response, requestedUrl);
             setClientI18n(payload.intl);
-            setPayload(createPayloadState(payload, generation, styleIds));
+            setPayload(createPayloadState(payload, generation, styleIds, finishNavigation));
           },
           async (result, generation) => {
             signal.throwIfAborted();
@@ -374,15 +412,10 @@ async function main(hooks: ClientEntryHooks): Promise<void> {
 
       React.useEffect(() => {
         fetchRscPayload().catch(() => setFailed(true));
-        return listenNavigation(
-          () => {
-            setFailed(false);
-            fetchRscPayload().catch(() => setFailed(true));
-          },
-          hooks.onNavigate,
-          observability,
-          hookContext
-        );
+        return startNavigation(finishNavigation => {
+          setFailed(false);
+          fetchRscPayload(finishNavigation).catch(() => setFailed(true));
+        });
       }, []);
 
       if (failed) return React.createElement(CsrShellFallback);
@@ -480,20 +513,21 @@ async function main(hooks: ClientEntryHooks): Promise<void> {
     }, [setPayload_]);
     React.useEffect(() => {
       const onNavigation = import.meta.env.DEV
-        ? () => observeDevNavigationFailure(fetchRscPayload())
-        : () => {
+        ? (finishNavigation?: () => void) =>
+            observeDevNavigationFailure(fetchRscPayload(finishNavigation))
+        : (finishNavigation?: () => void) => {
             const requestedUrl = window.location.href;
-            void fetchRscPayload().catch(error => {
+            void fetchRscPayload(finishNavigation).catch(error => {
               console.error('RSC navigation failed; falling back to document navigation', error);
               if (window.location.href === requestedUrl) window.location.assign(requestedUrl);
             });
           };
-      return listenNavigation(onNavigation, hooks.onNavigate, observability, hookContext);
+      return startNavigation(onNavigation);
     }, []);
     return <PayloadRoot {...payloadState} />;
   }
 
-  async function fetchRscPayload(): Promise<void> {
+  async function fetchRscPayload(finishNavigation?: () => void): Promise<void> {
     await navigationRequests.run(async signal => {
       await runWithDevStyleNavigation(
         async generation => {
@@ -509,7 +543,7 @@ async function main(hooks: ClientEntryHooks): Promise<void> {
           signal.throwIfAborted();
           syncBrowserUrlToFinalRedirect(response, requestedUrl);
           setClientI18n(payload.intl);
-          setPayload(createPayloadState(payload, generation, styleIds));
+          setPayload(createPayloadState(payload, generation, styleIds, finishNavigation));
         },
         async (result, generation) => {
           signal.throwIfAborted();
@@ -573,7 +607,7 @@ async function main(hooks: ClientEntryHooks): Promise<void> {
 
   if (import.meta.hot) {
     import.meta.hot.on('rsc:update', () => {
-      observeDevNavigationFailure(fetchRscPayload());
+      observeDevNavigationFailure(fetchRscPayload(finishPendingNavigation));
     });
   }
 }
@@ -599,18 +633,20 @@ function captureActionError(
 }
 
 function listenNavigation(
-  onNavigation: () => void,
+  onNavigation: (finishNavigation?: () => void) => void,
   onNavigateHook?: (url: URL, ctx: ClientEntryHookContext) => void,
   observability?: BrowserObservabilityHandle | null,
   hookContext: ClientEntryHookContext = createHookContext(null)
 ): () => void {
+  const scroll = createNavigationScroll();
   let previousUrl = window.location.href;
-  const fire = () => {
+  const fire = (kind: HistoryChange) => {
     const nextUrl = window.location.href;
     const needsPayload = isRscNavigation(nextUrl, previousUrl);
     previousUrl = nextUrl;
+    const finishNavigation = scroll.changed(kind, needsPayload);
     if (!needsPayload) return;
-    onNavigation();
+    onNavigation(finishNavigation);
     const url = new URL(window.location.href);
     try {
       observability?.page(url);
@@ -626,21 +662,35 @@ function listenNavigation(
     }
   };
 
-  window.addEventListener('popstate', fire);
+  function onPopState() {
+    scroll.save();
+    fire('traverse');
+  }
+  function onHashChange() {
+    if (previousUrl !== window.location.href) fire('hash');
+  }
+  window.addEventListener('popstate', onPopState);
+  window.addEventListener('hashchange', onHashChange);
 
   const oldPushState = window.history.pushState;
   window.history.pushState = function (...args) {
+    scroll.save();
+    args[0] = historyStateWithScrollEntry(args[0], false);
     const res = oldPushState.apply(this, args);
     if (isInternalNavigationHistoryMutation()) previousUrl = window.location.href;
-    else fire();
+    else fire('push');
     return res;
   };
 
   const oldReplaceState = window.history.replaceState;
   window.history.replaceState = function (...args) {
+    scroll.save();
+    args[0] = historyStateWithScrollEntry(args[0], true);
     const res = oldReplaceState.apply(this, args);
-    if (isInternalNavigationHistoryMutation()) previousUrl = window.location.href;
-    else fire();
+    if (isInternalNavigationHistoryMutation()) {
+      previousUrl = window.location.href;
+      scroll.changed('replace', false);
+    } else fire('replace');
     return res;
   };
 
@@ -658,20 +708,11 @@ function listenNavigation(
     const target = e.target;
     if (!(target instanceof Element)) return;
     const link = target.closest('a');
-    if (
-      link &&
-      link instanceof HTMLAnchorElement &&
-      isInternalLink(link) &&
-      e.button === 0 &&
-      !e.metaKey &&
-      !e.ctrlKey &&
-      !e.altKey &&
-      !e.shiftKey &&
-      !e.defaultPrevented
-    ) {
-      e.preventDefault();
-      history.pushState(null, '', link.href);
-    }
+    if (!(link instanceof HTMLAnchorElement) || !isPrimaryLinkClick(e)) return;
+    scroll.save();
+    if (!isInternalLink(link)) return;
+    e.preventDefault();
+    pushLinkNavigation(link.href);
   }
   document.addEventListener('click', onClick);
 
@@ -752,7 +793,9 @@ function listenNavigation(
     document.removeEventListener('focusin', onPointerEnter);
     observer?.disconnect();
     mutationObserver?.disconnect();
-    window.removeEventListener('popstate', fire);
+    window.removeEventListener('popstate', onPopState);
+    window.removeEventListener('hashchange', onHashChange);
+    scroll.dispose();
     window.history.pushState = oldPushState;
     window.history.replaceState = oldReplaceState;
   };

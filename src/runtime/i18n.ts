@@ -90,7 +90,7 @@ export function withLocale(pathname: string, locale: string, config: I18nConfig)
 }
 
 /**
- * Accept-Language 协商 —— RFC 4647 lookup（含主语言回退）
+ * 按权重协商 Accept-Language（支持主语言回退和通配符）
  *
  * negotiateLocale('zh-CN,en;q=0.9', { locales: ['zh','en'], defaultLocale: 'en' })
  *   → 'zh'   （'zh-CN' 命中 'zh'）
@@ -99,39 +99,87 @@ export function withLocale(pathname: string, locale: string, config: I18nConfig)
  *   → 'en-us'   （'en-GB' 主语言 'en' 回退到第一个 en-*）
  *
  * negotiateLocale(null, ...) → defaultLocale
+ *
+ * @throws {RangeError} When the header explicitly rejects every available locale.
  */
 export function negotiateLocale(
   acceptLanguage: string | null | undefined,
   config: I18nConfig
 ): string {
+  const locale = selectAcceptableLocale(acceptLanguage, config);
+  if (locale !== null) return locale;
+  const error = new RangeError('[i18n] no supported locale is acceptable');
+  Object.defineProperty(error, NO_ACCEPTABLE_LOCALE, { value: true });
+  throw error;
+}
+
+// The server entry and SiteHooks can load separately bundled copies of this module.
+const NO_ACCEPTABLE_LOCALE = Symbol.for('isr-engine.no-acceptable-locale');
+
+export function isNoAcceptableLocaleError(error: unknown): boolean {
+  return error instanceof RangeError && NO_ACCEPTABLE_LOCALE in error;
+}
+
+/** Returns null when the header explicitly rejects every available locale. */
+export function selectAcceptableLocale(
+  acceptLanguage: string | null | undefined,
+  config: I18nConfig
+): string | null {
   if (!acceptLanguage) return config.defaultLocale;
   const ranked = acceptLanguage
     .split(',')
-    .map(part => {
-      const [tag, ...params] = part.trim().split(';');
-      const q = params.find(p => p.startsWith('q='));
-      return { tag: tag.toLowerCase(), q: q ? Number(q.slice(2)) || 0 : 1 };
+    .flatMap(part => {
+      const [rawTag, ...params] = part.split(';');
+      const tag = rawTag.trim().toLowerCase();
+      const weight = params
+        .map(param => param.trim())
+        .find(param => /^q=/i.test(param))
+        ?.slice(2)
+        .trim();
+      const q = weight === undefined ? 1 : Number(weight);
+      return tag && weight !== '' && q >= 0 && q <= 1 ? [{ tag, q }] : [];
     })
     .sort((a, b) => b.q - a.q);
 
-  const supported = config.locales.map(l => l.toLowerCase());
-  for (const { tag } of ranked) {
-    // 1) 完整 code 精确匹配（'en-us' === 'en-us'）
-    const exact = supported.indexOf(tag);
-    if (exact >= 0) return config.locales[exact];
+  // Apply the most specific range to each available tag before lookup or fallback.
+  const bySpecificity = [...ranked].sort(
+    (a, b) => rangeSpecificity(b.tag) - rangeSpecificity(a.tag) || a.q - b.q
+  );
+  const matchingRange = (locale: string) =>
+    bySpecificity.find(({ tag }) => tag === '*' || locale === tag || locale.startsWith(tag + '-'));
+  const defaultRange = matchingRange(config.defaultLocale.toLowerCase());
+  const supported = config.locales
+    .map(locale => {
+      const tag = locale.toLowerCase();
+      return { locale, tag, range: matchingRange(tag) };
+    })
+    .filter(({ range }) => range?.q !== 0);
 
+  for (const preferred of ranked) {
+    const { tag, q } = preferred;
+    if (q === 0) continue;
+    if (tag === '*') {
+      if (defaultRange?.tag === '*' && defaultRange.q > 0) return config.defaultLocale;
+      const match = supported.find(locale => locale.range?.tag === '*');
+      if (match) return match.locale;
+      continue;
+    }
     const primary = tag.split('-')[0];
-
-    // 2) 主语言精确匹配（'ja' === 'ja'，针对无地区后缀的 locale 如 ja/fr/tr）
-    const sub = supported.indexOf(primary);
-    if (sub >= 0) return config.locales[sub];
-
-    // 3) 主语言回退（'en' / 'en-GB' → 第一个 en-*；'zh' / 'zh-CN' → zh-hans）
-    //    解决「浏览器只发 en / en-GB，而 locales 是 en-us/en-au」这类地区码不匹配问题。
-    const primaryPrefix = supported.findIndex(l => l.startsWith(primary + '-'));
-    if (primaryPrefix >= 0) return config.locales[primaryPrefix];
+    const candidates = supported.filter(
+      ({ range }) => !range || range.tag === '*' || range === preferred
+    );
+    const match =
+      candidates.find(locale => locale.tag === tag) ??
+      candidates.find(locale => locale.tag === primary) ??
+      candidates.find(locale => locale.tag.startsWith(primary + '-'));
+    if (match) return match.locale;
   }
-  return config.defaultLocale;
+
+  return defaultRange?.q === 0 ? (supported[0]?.locale ?? null) : config.defaultLocale;
+}
+
+function rangeSpecificity(tag: string): number {
+  return tag === '*' ? 0 : tag.length;
 }
 
 /**
