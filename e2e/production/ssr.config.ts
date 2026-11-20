@@ -24,7 +24,20 @@ export default {
         }
       : undefined,
     experiments: {},
-    i18n: undefined,
+    i18n: {
+      locales: ['en', 'zh-CN'],
+      defaultLocale: 'en',
+      prefixDefault: false,
+      endpoint: undefined,
+      fallbackLocal: {
+        en: { notFoundTitle: 'Page not found' },
+        'zh-CN': { notFoundTitle: '页面未找到' },
+      },
+      ttl: 60_000,
+      timeoutMs: 1000,
+      remoteSource: 'remote',
+      fallbackSource: 'local',
+    },
     seo: undefined,
     telemetry: false,
   },
