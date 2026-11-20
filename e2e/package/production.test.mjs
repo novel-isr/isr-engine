@@ -8,7 +8,7 @@ test('import and require share the public Node module instances', async () => {
   for (const [specifier, names] of [
     ['isr-engine', ['createCoherentCacheStore', 'Logger']],
     ['isr-engine/adapters/runtime', ['toCloudflareWorker']],
-    ['isr-engine/config', ['defineIsrConfig', 'defineRuntimeConfig']],
+    ['isr-engine/config', ['defineIsrConfig', 'defineRuntimeConfig', 'withLocale', 'alternates']],
     [
       'isr-engine/auto-observability',
       ['createAutoServerHooks', 'composeAutoServerHooks', 'resolveSentryDsnFromEnv'],
@@ -50,6 +50,15 @@ test('the installed engine builds and serves the documented app', async () => {
       assert.ok(
         html.includes(`<title data-isr-seo>${title}</title>`),
         `Missing SEO title for ${route}`
+      );
+      const canonical = new URL(route, config.runtime.site).href;
+      assert.ok(
+        html.includes(`<link data-isr-seo rel="canonical" href="${canonical}">`),
+        'Missing canonical URL for ' + route
+      );
+      assert.ok(
+        html.includes(`<link data-isr-seo rel="alternate" hreflang="en" href="${canonical}">`),
+        'Missing English alternate URL for ' + route
       );
       if (route === '/guides/rendering') {
         assert.match(

@@ -1,5 +1,7 @@
 import type { ISRConfig, RuntimeConfig } from '../types';
 
+export { alternates, withLocale, type I18nConfig } from '../runtime/i18n';
+
 type ExactTopLevel<T, Shape> = T & Record<Exclude<keyof T, keyof Shape>, never>;
 type IsrServerConfig = ISRConfig['server'];
 type IsrOpsConfig = IsrServerConfig['ops'];
