@@ -61,6 +61,7 @@ interface DefaultRscPayload {
   seoMeta?: PageSeoMeta | null;
   /** 客户端 applySeoToDocument 用来把 canonical / og:image 转绝对 URL */
   siteBaseUrl?: string | null;
+  routeStatus?: 404;
   returnValue?: { ok: boolean; data: unknown };
   formState?: ReactFormState;
 }
@@ -248,7 +249,7 @@ export function defineServerEntry<C extends ServerCtx = ServerCtx>(
 
         const response = await runWithI18n(intl, () =>
           runRscPipeline(renderRequest, {
-            routeStatus: notFound && !renderRequest.isAction ? 404 : undefined,
+            routeStatus: notFound ? 404 : undefined,
             intl,
             seoMeta,
             siteBaseUrl: hooks.siteBaseUrl,
@@ -297,6 +298,7 @@ async function runRscPipeline(
   extras: PipelineExtras
 ): Promise<Response> {
   const { request } = renderRequest;
+  const responseRouteStatus = renderRequest.isAction ? undefined : extras.routeStatus;
 
   let returnValue: DefaultRscPayload['returnValue'] | undefined;
   let formState: ReactFormState | undefined;
@@ -337,6 +339,7 @@ async function runRscPipeline(
     intl: extras.intl ?? null,
     seoMeta: extras.seoMeta ?? null,
     siteBaseUrl: extras.siteBaseUrl ?? null,
+    routeStatus: extras.routeStatus,
     formState,
     returnValue,
   };
@@ -357,7 +360,7 @@ async function runRscPipeline(
 
   if (renderRequest.isRsc) {
     return new Response(rscStream, {
-      status: actionStatus ?? extras.routeStatus,
+      status: actionStatus ?? responseRouteStatus,
       headers: { 'content-type': 'text/x-component;charset=utf-8' },
     });
   }
@@ -410,7 +413,12 @@ async function runRscPipeline(
   let finalStream = ssrResult.stream;
   if (!ssrResult.csrShellFallback) {
     if (extras.seoMeta) {
-      finalStream = injectSeoMeta(finalStream, extras.seoMeta, extras.siteBaseUrl);
+      finalStream = injectSeoMeta(
+        finalStream,
+        extras.seoMeta,
+        extras.siteBaseUrl,
+        extras.routeStatus
+      );
     }
     if (extras.headExtras) {
       finalStream = injectHeadExtras(finalStream, extras.headExtras);
@@ -418,7 +426,7 @@ async function runRscPipeline(
   }
 
   return new Response(finalStream, {
-    status: ssrResult.status ?? extras.routeStatus,
+    status: ssrResult.status ?? responseRouteStatus,
     headers: responseHeaders,
   });
 }

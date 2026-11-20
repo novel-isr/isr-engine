@@ -70,7 +70,16 @@ function toAbsolute(href: string, baseUrl?: string): string {
   }
 }
 
-export function renderPageSeoMeta(meta: PageSeoMeta, baseUrl?: string): string {
+function resolveCanonical(
+  meta: PageSeoMeta,
+  baseUrl?: string,
+  routeStatus?: 404
+): string | undefined {
+  if (meta.canonical) return toAbsolute(meta.canonical, baseUrl);
+  return routeStatus === 404 ? undefined : baseUrl;
+}
+
+export function renderPageSeoMeta(meta: PageSeoMeta, baseUrl?: string, routeStatus?: 404): string {
   const tags: string[] = [];
   const esc = (s: string) =>
     s.replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
@@ -86,10 +95,8 @@ export function renderPageSeoMeta(meta: PageSeoMeta, baseUrl?: string): string {
   if (meta.noindex) {
     tags.push(`<meta data-isr-seo name="robots" content="noindex, nofollow">`);
   }
-  if (meta.canonical || baseUrl) {
-    const href = toAbsolute(meta.canonical || '', baseUrl) || baseUrl || '';
-    if (href) tags.push(`<link data-isr-seo rel="canonical" href="${esc(href)}">`);
-  }
+  const canonical = resolveCanonical(meta, baseUrl, routeStatus);
+  if (canonical) tags.push(`<link data-isr-seo rel="canonical" href="${esc(canonical)}">`);
   if (meta.alternates?.length) {
     for (const a of meta.alternates) {
       tags.push(
@@ -129,11 +136,12 @@ const HEAD_OPEN_RE = /<head\b[^>]*>/i;
 export function injectSeoMeta(
   source: ReadableStream<Uint8Array>,
   meta: PageSeoMeta,
-  baseUrl?: string
+  baseUrl?: string,
+  routeStatus?: 404
 ): ReadableStream<Uint8Array> {
   const encoder = new TextEncoder();
   const decoder = new TextDecoder('utf-8', { fatal: false });
-  const injection = '\n    ' + renderPageSeoMeta(meta, baseUrl) + '\n';
+  const injection = '\n    ' + renderPageSeoMeta(meta, baseUrl, routeStatus) + '\n';
 
   let buffer = '';
   let injected = false;
@@ -179,7 +187,11 @@ export function clearInjectedSeo(): void {
 }
 
 /** Replace managed head metadata after the route commits. */
-export function applySeoToDocument(meta: PageSeoMeta | null | undefined, baseUrl?: string): void {
+export function applySeoToDocument(
+  meta: PageSeoMeta | null | undefined,
+  baseUrl?: string,
+  routeStatus?: 404
+): void {
   if (typeof document === 'undefined' || !document.head) return;
   const head = document.head;
   clearInjectedSeo();
@@ -215,10 +227,8 @@ export function applySeoToDocument(meta: PageSeoMeta | null | undefined, baseUrl
   if (meta.noindex) {
     fragments.push(tag('meta', { name: 'robots', content: 'noindex, nofollow' }));
   }
-  if (meta.canonical || baseUrl) {
-    const href = toAbsolute(meta.canonical || '', baseUrl) || baseUrl || '';
-    if (href) fragments.push(tag('link', { rel: 'canonical', href }));
-  }
+  const canonical = resolveCanonical(meta, baseUrl, routeStatus);
+  if (canonical) fragments.push(tag('link', { rel: 'canonical', href: canonical }));
   if (meta.alternates?.length) {
     for (const a of meta.alternates) {
       fragments.push(

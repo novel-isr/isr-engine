@@ -137,6 +137,7 @@ for (const [locale, title] of [
     expect.soft(response.status()).toBe(404);
     expect.soft(html).toContain(`<title data-isr-seo>${title}</title>`);
     expect.soft(html).toContain('name="robots" content="noindex, nofollow"');
+    expect.soft(html).not.toContain('rel="canonical"');
 
     const flight = await request.get(`/${locale}/nonexistent_.rsc`);
     expect.soft(flight.status()).toBe(404);
@@ -151,7 +152,7 @@ for (const [locale, title] of [
   });
 }
 
-test('client navigation from a 404 clears its title and robots directive', async ({
+test('client navigation clears canonical on a 404 and restores it on a regular page', async ({
   browser,
   baseURL,
 }) => {
@@ -163,14 +164,31 @@ test('client navigation from a 404 clears its title and robots directive', async
     expect(response?.status()).toBe(404);
     await expect(page.getByRole('button', { name: 'Count 0' })).toBeEnabled();
     await expect(page).toHaveTitle('Page not found');
-    const navigation = page.waitForResponse(
-      response => new URL(response.url()).pathname === '/_.rsc'
+    const canonical = page.locator('head link[rel="canonical"]');
+    await expect.soft(canonical).toHaveCount(0);
+
+    const toArticle = page.waitForResponse(
+      response => new URL(response.url()).pathname === '/article_.rsc'
     );
-    await page.locator('[data-nav="route"]').click();
-    expect((await navigation).status()).toBe(200);
-    await expect(page.getByRole('heading', { name: 'Home' })).toBeVisible();
+    await page.evaluate(() => history.pushState(null, '', '/article'));
+    expect((await toArticle).status()).toBe(200);
+    await expect(page.getByRole('heading', { name: 'Article' })).toBeVisible();
     await expect(page).toHaveTitle('Production regression app');
     await expect(page.locator('meta[name="robots"]')).toHaveCount(0);
+    await expect(canonical).toHaveAttribute('href', /\/article$/);
+
+    const toMissing = page.waitForResponse(
+      response => new URL(response.url()).pathname === '/zh-CN/nonexistent_.rsc'
+    );
+    await page.evaluate(() => history.pushState(null, '', '/zh-CN/nonexistent'));
+    expect((await toMissing).status()).toBe(404);
+    await expect(page.getByRole('heading', { name: '页面未找到' })).toBeVisible();
+    await expect(page).toHaveTitle('页面未找到');
+    await expect(page.locator('meta[name="robots"]')).toHaveAttribute(
+      'content',
+      'noindex, nofollow'
+    );
+    await expect(canonical).toHaveCount(0);
     expect(errors).toEqual([]);
   } finally {
     await page.close();
