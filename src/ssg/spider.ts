@@ -218,7 +218,7 @@ async function fetchWithTimeout(
     const response = await handler.fetch(new Request(url, { method: 'GET', signal: ctrl.signal }));
     if (ctrl.signal.aborted) {
       // Handlers may ignore abort and resolve later. Dispose of that body as well.
-      void response.body?.cancel(ctrl.signal.reason).catch(() => {});
+      void response.body?.cancel(ctrl.signal.reason).catch(() => undefined);
       throw ctrl.signal.reason;
     }
     reader = response.body?.getReader();
@@ -242,7 +242,7 @@ async function fetchWithTimeout(
     // Do not await sources that ignore abort or whose cancel promise never settles.
     rejectAbort(reason);
     ctrl.abort(reason);
-    void reader?.cancel(reason).catch(() => {});
+    void reader?.cancel(reason).catch(() => undefined);
   };
   const onBatchAbort = () => abort(batchSignal.reason);
   batchSignal.addEventListener('abort', onBatchAbort, { once: true });

@@ -195,20 +195,21 @@ function validateManifest(value: unknown): asserts value is StaticCspManifest {
   const manifest = value as Partial<StaticCspManifest>;
   if (manifest.schemaVersion !== SCHEMA_VERSION && manifest.schemaVersion !== 2)
     throw new Error('Unsupported static CSP manifest schema');
+  const { ssgRoutes } = manifest;
   if (
     manifest.schemaVersion >= 3 &&
-    (!Array.isArray(manifest.ssgRoutes) ||
-      manifest.ssgRoutes.some(
+    (!Array.isArray(ssgRoutes) ||
+      ssgRoutes.some(
         (route, index) =>
           typeof route !== 'string' ||
           !route.startsWith('/') ||
           route.includes('?') ||
           route.includes('#') ||
-          (index > 0 && route <= manifest.ssgRoutes![index - 1])
+          (index > 0 && route <= ssgRoutes[index - 1])
       ))
   )
     throw new Error('Invalid static CSP manifest SSG routes');
-  if (manifest.ssgRoutes) assertDistinctHtmlRouteIdentities(manifest.ssgRoutes);
+  if (ssgRoutes) assertDistinctHtmlRouteIdentities(ssgRoutes);
   const digest = /^[a-f0-9]{64}$/;
   if (
     !Array.isArray(manifest.deploymentFiles) ||
@@ -247,7 +248,9 @@ function validateManifest(value: unknown): asserts value is StaticCspManifest {
       typeof file.sha256 !== 'string' ||
       !digest.test(file.sha256) ||
       (manifest.schemaVersion === 3 &&
-        (!Number.isSafeInteger(file.generatedAt) || file.generatedAt! < 0)) ||
+        (typeof file.generatedAt !== 'number' ||
+          !Number.isSafeInteger(file.generatedAt) ||
+          file.generatedAt < 0)) ||
       !Array.isArray(file.scriptHashes) ||
       !file.scriptHashes.every(
         hash => typeof hash === 'string' && /^'sha256-[A-Za-z0-9+/]{43}='$/.test(hash)

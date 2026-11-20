@@ -42,6 +42,7 @@ import { assertCacheDuration, resolveCacheDurations } from '../utils/cacheDurati
 import { LRUCache } from 'lru-cache';
 import { createMemoryCacheStore, type IsrCacheStore, type IsrCachedEntry } from './isrCacheStore';
 import {
+  promRegistry,
   recordHttpRequest,
   cacheEntriesGauge,
   cacheRevalidatingGauge,
@@ -55,7 +56,12 @@ import { Logger } from '../logger/Logger';
 import { registerInvalidator } from '@/rsc/revalidate';
 import { collectTags, runWithTagStore, isUncacheable } from '@/rsc/cacheTag';
 import { loadConfig } from '../config/loadConfig';
-import { resolveOpsConfig, createOpsAuthMiddleware } from '@/server/opsConfig';
+import {
+  bindRuntimeOpsConfig,
+  createOpsAuthMiddleware,
+  getOpsRequestLimiter,
+  resolveOpsConfig,
+} from '@/server/opsConfig';
 import { stripRscClientReferenceCacheSuffix } from './devAssetRequestMiddleware';
 import { createAutoCacheStore } from '@/cache/createAutoCacheStore';
 import { RedisInvalidationBus } from '@/cache/RedisInvalidationBus';
@@ -708,7 +714,6 @@ export function createIsrCacheMiddleware(
         }
 
         const opsConfig = resolveOpsConfig(resolvedConfig, 'development');
-        const { bindRuntimeOpsConfig, getOpsRequestLimiter } = await import('../server/opsConfig');
         const opsLimiter = getOpsRequestLimiter(opsConfig);
         const metricsAuth = createOpsAuthMiddleware('metrics', opsConfig);
         const nextHandler = createIsrCacheHandler(
@@ -730,9 +735,9 @@ export function createIsrCacheMiddleware(
               opsLimiter(req as never, res as never, error => {
                 if (error) return next(error);
                 metricsAuth(req as never, res as never, () => {
-                  import('@/metrics/PromMetrics')
-                    .then(async ({ promRegistry }) => {
-                      const body = await promRegistry.metrics();
+                  promRegistry
+                    .metrics()
+                    .then(body => {
                       res.setHeader('content-type', promRegistry.contentType);
                       res.end(body);
                     })
@@ -962,11 +967,12 @@ async function handleRequest(
     }
   }
   if (!isActive()) return;
+  const staticSeed = ctx.staticSeed;
   if (
     !entry &&
     ctx.state.invalidationGeneration === 0 &&
     resolved.mode === 'ssg' &&
-    ctx.staticSeed &&
+    staticSeed &&
     (!ctx.staticSeedInfo || ctx.staticSeedInfo(logicalPath)) &&
     !url.includes('?') &&
     !url.endsWith(RSC_URL_POSTFIX) &&
@@ -996,7 +1002,7 @@ async function handleRequest(
         const generation = ctx.state.invalidationGeneration;
         if (generation !== 0) return true;
         const seed = await raceWithTimeout(
-          ctx.staticSeed!(
+          staticSeed(
             logicalPath,
             String(res.getHeader('content-security-policy') || "default-src 'self'")
           ),

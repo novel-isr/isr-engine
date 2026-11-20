@@ -47,9 +47,13 @@ jobs:
         with:
           node-version-file: '.nvmrc'
           package-manager-cache: false
-      - uses: pnpm/action-setup@v6
-        with:
-          run_install: false
+      - name: Install locked pnpm CLI
+        run: |
+          $prefix = Join-Path $env:RUNNER_TEMP 'pnpm'
+          $packageManager = npm pkg get packageManager | ConvertFrom-Json
+          npm install --global --prefix $prefix $packageManager
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $prefix | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
       - name: Test filesystem and policy contracts

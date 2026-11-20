@@ -29,7 +29,8 @@ export function resolveRequestLimitPolicy(
   const defaults = DEFAULT_REQUEST_LIMITS[category];
   const result = { ...defaults };
   for (const field of ['windowMs', 'maxRequests', 'globalMaxRequests', 'maxClients'] as const) {
-    const value = input?.[field] === undefined ? defaults[field] : input[field]!;
+    const configured = input?.[field];
+    const value = configured === undefined ? defaults[field] : configured;
     if (!Number.isSafeInteger(value) || value <= 0 || value >= Number.MAX_SAFE_INTEGER) {
       throw new TypeError(
         `server.requestLimits.${category}.${field} must be a positive safe integer`
