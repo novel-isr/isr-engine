@@ -82,7 +82,8 @@ async function httpGet(
   setCookie: string[] | undefined;
 }> {
   return new Promise((resolve, reject) => {
-    const req = http.get(url, { headers: headers ?? {}, path: rawPath }, res => {
+    const options = { headers, ...(rawPath === undefined ? {} : { path: rawPath }) };
+    const req = http.get(url, options, res => {
       const chunks: Buffer[] = [];
       res.on('data', chunk => chunks.push(chunk));
       res.on('end', () => {
