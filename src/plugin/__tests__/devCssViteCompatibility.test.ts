@@ -13,6 +13,7 @@ vi.mock('vite', async importOriginal => {
 import { resolveConfig } from 'vite';
 
 import { createDevCssLifecyclePlugins } from '../createDevCssHandoffPlugin';
+import packageJson from '../../../package.json';
 
 describe('development CSS Vite compatibility gate', () => {
   const defaultsDir = path.resolve(process.cwd(), 'src/defaults');
@@ -75,7 +76,7 @@ describe('development CSS Vite compatibility gate', () => {
         },
         'serve'
       )
-    ).rejects.toThrow(/requires Vite 8\.1\.6.*detected 8\.0\.15/i);
+    ).rejects.toThrow('requires Vite ' + packageJson.peerDependencies.vite + '; detected 8.0.15');
     expect(transform).not.toHaveBeenCalled();
   });
 });

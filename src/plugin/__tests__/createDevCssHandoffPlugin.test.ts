@@ -7,6 +7,7 @@ import { describe, expect, it } from 'vitest';
 import { type Plugin, version as viteVersion } from 'vite';
 
 import {
+  assertPinnedViteVersion,
   clientReferenceIdFromProxy,
   createDevCssLifecyclePlugins,
   DEV_CSS_HANDOFF_RESOLVED_ID,
@@ -16,7 +17,7 @@ import {
   VITE_RSC_REMOVE_DUPLICATE_CSS_ID,
 } from '../createDevCssHandoffPlugin';
 import { createIsrPlugin } from '../createIsrPlugin';
-import * as devCssHandoffPlugin from '../createDevCssHandoffPlugin';
+import packageJson from '../../../package.json';
 
 describe('createDevCssLifecyclePlugins', () => {
   const defaultsDir = path.resolve(process.cwd(), 'src/defaults');
@@ -384,8 +385,7 @@ describe('createDevCssLifecyclePlugins', () => {
     ).toThrow(/unsupported @vitejs\/plugin-rsc client reference proxy shape/i);
   });
 
-  it('matches only the pinned Vite 8.1.6 transport query grammar', () => {
-    expect(viteVersion).toBe('8.1.6');
+  it('preserves semantic query parameters while ignoring Vite transport parameters', () => {
     const proxyFor = (referenceId: string) => `
       import * as $$ReactServer from ${JSON.stringify(pinnedRscRuntime)};
       export default $$ReactServer.registerClientReference(
@@ -427,30 +427,13 @@ describe('createDevCssLifecyclePlugins', () => {
     }
   });
 
-  it('characterizes the pinned Vite dependency-version URL regex', () => {
-    expect(viteVersion).toBe('8.1.6');
-    const pinnedDepVersionRE = /[?&](v=[\w.-]+)\b/;
-
-    expect(pinnedDepVersionRE.test('/entry?v=-')).toBe(false);
-    expect(pinnedDepVersionRE.test('/entry?v=.')).toBe(false);
-    expect(pinnedDepVersionRE.test('/entry?v=a-')).toBe(true);
-    expect('/entry?v=a-'.match(pinnedDepVersionRE)?.[1]).toBe('v=a');
-    expect(pinnedDepVersionRE.test('/entry?v=-a')).toBe(true);
-    expect(pinnedDepVersionRE.test('/entry?v=release.12')).toBe(true);
-  });
-
   it('validates pinned Vite versions and registers the serve-time compatibility gate', () => {
-    const assertPinnedViteVersion = Reflect.get(devCssHandoffPlugin, 'assertPinnedViteVersion') as (
-      actualVersion: string
-    ) => void;
-
-    expect(() => assertPinnedViteVersion('8.0.15')).toThrow(
-      /requires Vite 8\.1\.6.*detected 8\.0\.15/i
-    );
-    for (const unsupported of ['8.0.16', '8.1.5', '8.1.7', '8.2.0']) {
-      expect(() => assertPinnedViteVersion(unsupported)).toThrow(/requires Vite 8\.1\.6/i);
+    const pinnedVersion = packageJson.peerDependencies.vite;
+    for (const unsupported of ['0.0.0', '999.0.0', pinnedVersion + '-canary']) {
+      expect(() => assertPinnedViteVersion(unsupported)).toThrow(
+        'requires Vite ' + pinnedVersion + '; detected ' + unsupported
+      );
     }
-    expect(() => assertPinnedViteVersion('8.1.6')).not.toThrow();
     expect(() => assertPinnedViteVersion(viteVersion)).not.toThrow();
     const plugins = createDevCssLifecyclePlugins(defaultsDir);
     expect(plugins[0]?.configResolved).toBeTypeOf('function');

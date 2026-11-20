@@ -128,10 +128,8 @@ export function createSecurityMiddleware(
   };
   return helmet({
     contentSecurityPolicy: { directives },
-    // dev 关掉 HSTS —— helmet 默认会发 Strict-Transport-Security: max-age=15552000，
-    // 浏览器对 localhost 也照吃，导致 dev 时 http:// 被强制升级到 https://。
-    // 生产留 helmet 默认（站点必须上 HTTPS）。
-    strictTransportSecurity: undefined,
+    // Keep the engine's 180-day HSTS policy independent of Helmet defaults.
+    strictTransportSecurity: { maxAge: 180 * 24 * 60 * 60 },
   });
 }
 

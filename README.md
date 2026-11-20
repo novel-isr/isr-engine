@@ -6,15 +6,15 @@
 
 - Node.js **24.15.0**；仓库使用 pnpm 9.15.9。
 - TypeScript **6.0.3**；`paths` 相对声明它的配置文件解析，不再设置 `baseUrl`。
-- Vite **8.1.6**；引擎内置 `@vitejs/plugin-rsc` **0.5.39** 及其 Flight 运行时。
+- Vite **8.3.8**；引擎内置 `@vitejs/plugin-rsc` **0.5.39** 及其 Flight 运行时。
 - React 与 React DOM 使用正式版 **19.3.1**。引擎管理 HTML 流传输依赖。
 
 在应用目录安装引擎和应用直接使用的 React、Vite：
 
 ```bash
 npm install --save-exact isr-engine react@19.3.1 react-dom@19.3.1
-npm install --save-dev --save-exact vite@8.1.6 typescript@6.0.3 \
-  @types/node@24.19.2 @types/react@19.2.15 @types/react-dom@19.2.3
+npm install --save-dev --save-exact vite@8.3.8 typescript@6.0.3 \
+  @types/node@24.19.2 @types/react@19.3.0 @types/react-dom@19.3.0
 ```
 
 应用 `package.json` 设置 `"type": "module"`，并保留锁文件以复现依赖组合。

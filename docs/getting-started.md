@@ -1,33 +1,14 @@
 # Getting Started
 
-从零搭一个 `@novel-isr/engine` 站，10 分钟。
+## 1. 安装
 
-## 1. 装依赖
-
-```bash
-mkdir my-app && cd my-app
-pnpm init
-# engine + RSC 流水线 peer 依赖
-pnpm add @novel-isr/engine@^2.6.2 \
-  react@19.3.0-canary-bd6ea412-20260824 \
-  react-dom@19.3.0-canary-bd6ea412-20260824 \
-  react-server-dom-webpack@19.3.0-canary-bd6ea412-20260824 \
-  rsc-html-stream
-pnpm add -D vite typescript @types/react @types/react-dom @types/node
-```
-
-> `react-server-dom-webpack` / `rsc-html-stream` 是 engine 的 raw subpath export（如 `@novel-isr/engine/server-entry`）和 `@vitejs/plugin-rsc` 共同消费的 peer dep —— 严格 pnpm 模式下必须显式装。
-
-> v2.6.0 要求 React 三件套严格同版。上面的精确构建包含 React 上游
-> CSS Flight hint `as=style` 修复；不要单独升降任何一个 React 包。
-
-> **不要再装 `@vitejs/plugin-react`** —— `@vitejs/plugin-rsc`（engine 内部用）已内置 React Refresh + JSX 处理；重复注册会报 `RefreshRuntime has already been declared`。
+按 [README 的运行要求与安装](../README.md#运行要求与安装) 安装 isr-engine、React 和 Vite。引擎自带 Flight 编译和 HTML 流传输依赖。
 
 ## 2. `vite.config.ts`
 
 ```ts
 import { defineConfig } from 'vite';
-import { createIsrPlugin } from '@novel-isr/engine';
+import { createIsrPlugin } from 'isr-engine';
 
 export default defineConfig({
   plugins: [...createIsrPlugin()],
@@ -39,9 +20,9 @@ export default defineConfig({
 ```jsonc
 {
   "scripts": {
-    "dev": "novel-isr dev",
+    "dev": "isr-engine dev",
     "build": "vite build",
-    "start": "NODE_ENV=production novel-isr start"
+    "start": "NODE_ENV=production isr-engine start"
   }
 }
 ```
@@ -55,7 +36,7 @@ export default defineConfig({
 ## 4. `src/routes.tsx` —— 业务唯一路由源
 
 ```tsx
-import { defineRoutes } from '@novel-isr/engine/runtime';
+import { defineRoutes } from 'isr-engine/runtime';
 
 export const { routes } = defineRoutes({
   notFound: { load: () => import('./pages/NotFoundPage') },
@@ -71,7 +52,7 @@ export const { routes } = defineRoutes({
 ## 5. `ssr.config.ts` —— 平台配置和渲染模式
 
 ```ts
-import { defineIsrConfig } from '@novel-isr/engine/config';
+import { defineIsrConfig } from 'isr-engine/config';
 import fallbackLocal from './src/config/site-fallback-local.json';
 
 export default defineIsrConfig({
@@ -173,7 +154,7 @@ export default defineIsrConfig({
 ## 6. `src/entry.server.ts` —— 请求期 SiteHooks
 
 ```ts
-import { defineAdminSiteHooks, readCookie } from '@novel-isr/engine/site-hooks';
+import { defineAdminSiteHooks, readCookie } from 'isr-engine/site-hooks';
 
 export default defineAdminSiteHooks({
   beforeRequest: req => ({
@@ -192,7 +173,7 @@ request context 和错误处理。`site` 和 `services` 只写在 `ssr.config.ts
 Server Component / server-side helper 读取：
 
 ```tsx
-import { getRequestContext } from '@novel-isr/engine/rsc';
+import { getRequestContext } from 'isr-engine/rsc';
 
 export default async function HomePage() {
   const ctx = getRequestContext();
@@ -216,7 +197,7 @@ A/B testing 不写在 `beforeRequest`。在 `ssr.config.ts runtime.experiments` 
 ## 7. `src/app.tsx` —— App shell
 
 ```tsx
-import { parseLocale, resolveI18nConfig } from '@novel-isr/engine/runtime';
+import { parseLocale, resolveI18nConfig } from 'isr-engine/runtime';
 import siteHooks from './entry.server';
 import { routes } from './routes';
 
@@ -265,7 +246,7 @@ export default {
 
 ```tsx
 // src/pages/HomePage.tsx —— Server Component（无指令 = SSR-only）
-import { cacheTag } from '@novel-isr/engine/rsc';
+import { cacheTag } from 'isr-engine/rsc';
 
 export default async function HomePage() {
   cacheTag('books');                                  // 声明依赖：revalidateTag('books') 时清除
@@ -277,7 +258,7 @@ export default async function HomePage() {
 ```tsx
 // src/actions/books.ts —— Server Action
 'use server';
-import { revalidateTag } from '@novel-isr/engine/rsc';
+import { revalidateTag } from 'isr-engine/rsc';
 
 export async function publishBook(data: FormData) {
   // ... write db
@@ -362,7 +343,7 @@ export const runtime = {
 页面模块可以声明默认 SEO，API 下发值会覆盖：
 
 ```tsx
-import { getI18n } from '@novel-isr/engine/runtime';
+import { getI18n } from 'isr-engine/runtime';
 
 export async function seo({ params }: { params: { id: string } }) {
   const book = await fetchBook(params.id);
@@ -377,7 +358,7 @@ export async function seo({ params }: { params: { id: string } }) {
 
 ```ts
 // ssr.config.ts
-import { defineIsrConfig } from '@novel-isr/engine/config';
+import { defineIsrConfig } from 'isr-engine/config';
 
 export default defineIsrConfig({
   renderMode: 'isr',

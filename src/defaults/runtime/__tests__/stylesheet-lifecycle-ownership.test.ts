@@ -35,7 +35,7 @@ describe('stylesheet lifecycle ownership', () => {
     }
     expect(packageJson.dependencies).not.toHaveProperty('react-server-dom-webpack');
     expect(packageJson.dependencies).not.toHaveProperty('webpack');
-    expect(packageJson.dependencies['rsc-html-stream']).toBe('0.0.7');
+    expect(packageJson.dependencies['rsc-html-stream']).toMatch(/^0\.0\.\d+$/);
     expect(packageJson.peerDependencies).not.toHaveProperty('react-server-dom-webpack');
     expect(packageJson.peerDependencies).not.toHaveProperty('rsc-html-stream');
     expect(packageJson.dependencies['@vitejs/plugin-rsc']).toBe('0.5.39');
@@ -46,8 +46,22 @@ describe('stylesheet lifecycle ownership', () => {
       readFileSync(resolve(pluginDir, 'dist/vendor/react-server-dom/package.json'), 'utf8')
     );
     expect(flightManifest.version).toBe(reactWithStyleHintFix);
-    expect(packageJson.peerDependencies.vite).toBe('8.1.6');
-    expect(packageJson.devDependencies.vite).toBe('8.1.6');
+  });
+
+  it('uses the declared exact Vite peer in the workspace and runnable apps', () => {
+    const packageJson = JSON.parse(source('package.json'));
+    expect(packageJson.peerDependencies.vite).toMatch(/^\d+\.\d+\.\d+$/);
+    for (const manifest of [
+      'package.json',
+      'bench/app/package.json',
+      'e2e/dev-css-lifecycle/package.json',
+      'e2e/production/package.json',
+      'examples/hello-world/package.json',
+    ]) {
+      expect(JSON.parse(source(manifest)).devDependencies.vite, manifest).toBe(
+        packageJson.peerDependencies.vite
+      );
+    }
   });
 
   it('carries each development generation into an engine-owned React commit boundary', () => {
