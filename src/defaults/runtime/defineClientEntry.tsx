@@ -134,11 +134,10 @@ async function prepareFetchedDevStyles(
   result.styleIds = await preparePayloadDevStyles(generation);
 }
 
-function renderPayloadRoot({
-  payload,
-  generation,
-  styleIds,
-}: DefaultRscPayloadState): React.ReactNode {
+function PayloadRoot({ payload, generation, styleIds }: DefaultRscPayloadState): React.ReactNode {
+  React.useLayoutEffect(() => {
+    applySeoToDocument(payload.seoMeta, payload.siteBaseUrl ?? undefined);
+  }, [payload]);
   if (!import.meta.env.DEV || generation === undefined) return payload.root;
   return (
     <DevStyleCommitBoundary key={generation} generation={generation} styleIds={styleIds}>
@@ -339,7 +338,6 @@ async function main(hooks: ClientEntryHooks): Promise<void> {
             signal.throwIfAborted();
             syncBrowserUrlToFinalRedirect(response, requestedUrl);
             setClientI18n(payload.intl);
-            applySeoToDocument(payload.seoMeta, payload.siteBaseUrl ?? undefined);
             setPayload(createPayloadState(payload, generation, styleIds));
           },
           async (result, generation) => {
@@ -384,7 +382,7 @@ async function main(hooks: ClientEntryHooks): Promise<void> {
           )
         );
       }
-      return renderPayloadRoot(payloadState);
+      return <PayloadRoot {...payloadState} />;
     }
 
     setServerCallback(async (id: string, args: unknown[]) => {
@@ -403,7 +401,6 @@ async function main(hooks: ClientEntryHooks): Promise<void> {
         },
         ({ payload, styleIds }, generation) => {
           setClientI18n(payload.intl);
-          applySeoToDocument(payload.seoMeta, payload.siteBaseUrl ?? undefined);
           setPayload(createPayloadState(payload, generation, styleIds));
           return payload;
         },
@@ -478,7 +475,7 @@ async function main(hooks: ClientEntryHooks): Promise<void> {
           };
       return listenNavigation(onNavigation, hooks.onNavigate, observability, hookContext);
     }, []);
-    return renderPayloadRoot(payloadState);
+    return <PayloadRoot {...payloadState} />;
   }
 
   async function fetchRscPayload(): Promise<void> {
@@ -497,7 +494,6 @@ async function main(hooks: ClientEntryHooks): Promise<void> {
           signal.throwIfAborted();
           syncBrowserUrlToFinalRedirect(response, requestedUrl);
           setClientI18n(payload.intl);
-          applySeoToDocument(payload.seoMeta, payload.siteBaseUrl ?? undefined);
           setPayload(createPayloadState(payload, generation, styleIds));
         },
         async (result, generation) => {
@@ -525,7 +521,6 @@ async function main(hooks: ClientEntryHooks): Promise<void> {
       },
       ({ payload, styleIds }, generation) => {
         setClientI18n(payload.intl);
-        applySeoToDocument(payload.seoMeta, payload.siteBaseUrl ?? undefined);
         setPayload(createPayloadState(payload, generation, styleIds));
         return payload;
       },
@@ -554,7 +549,9 @@ async function main(hooks: ClientEntryHooks): Promise<void> {
     </HydrationShell>
   );
 
-  // 注：csr-shell 路径已在 main 入口处早返回，这里只剩正常水合
+  // Release the injected title before React claims the app's head. PayloadRoot
+  // reapplies the page title after React commits, without removing its node.
+  document.head.querySelector('title[data-isr-seo]')?.remove();
   hydrateRoot(document, browserRoot, { formState: initialPayload.formState });
   installInspector();
   schedulePostCommitInspectorInstall();

@@ -156,8 +156,8 @@ test('client navigation from a 404 clears its title and robots directive', async
   try {
     const response = await page.goto('/en/nonexistent');
     expect(response?.status()).toBe(404);
-    await expect(page).toHaveTitle('Page not found');
     await expect(page.getByRole('button', { name: 'Count 0' })).toBeEnabled();
+    await expect(page).toHaveTitle('Page not found');
     const navigation = page.waitForResponse(
       response => new URL(response.url()).pathname === '/_.rsc'
     );

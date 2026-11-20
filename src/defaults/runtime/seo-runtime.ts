@@ -172,29 +172,36 @@ export function injectSeoMeta(
   return source.pipeThrough(transform);
 }
 
-/** Replace managed head nodes when a new Flight payload is applied. */
+const managedTitles = new WeakMap<HTMLTitleElement, { base: string; applied: string }>();
+
+/** Replace managed head metadata after the route commits. */
 export function applySeoToDocument(meta: PageSeoMeta | null | undefined, baseUrl?: string): void {
   if (typeof document === 'undefined' || !document.head) return;
   const head = document.head;
   head.querySelectorAll('[data-isr-seo]').forEach(el => el.remove());
+
+  // React owns the app title node and may update or replace it at commit.
+  const title = head.querySelector('title');
+  const previous = title ? managedTitles.get(title) : undefined;
+  const baseTitle = previous?.applied === document.title ? previous.base : document.title;
+  if (meta?.title) {
+    document.title = meta.title;
+    const active = head.querySelector('title');
+    if (active) managedTitles.set(active, { base: baseTitle, applied: meta.title });
+  } else if (title && previous) {
+    document.title = baseTitle;
+    managedTitles.delete(title);
+  }
   if (!meta) return;
 
   const fragments: HTMLElement[] = [];
-  const tag = (
-    name: 'title' | 'meta' | 'link' | 'script',
-    attrs: Record<string, string> = {}
-  ): HTMLElement => {
+  const tag = (name: 'meta' | 'link' | 'script', attrs: Record<string, string>): HTMLElement => {
     const el = document.createElement(name);
     el.setAttribute('data-isr-seo', '');
     for (const [key, value] of Object.entries(attrs)) el.setAttribute(key, value);
     return el;
   };
 
-  if (meta.title) {
-    const title = tag('title');
-    title.textContent = meta.title;
-    head.prepend(title);
-  }
   if (meta.description) {
     fragments.push(tag('meta', { name: 'description', content: meta.description }));
   }

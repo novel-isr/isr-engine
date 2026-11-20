@@ -168,9 +168,10 @@ function genTraceId(): string {
 export function defineServerEntry<C extends ServerCtx = ServerCtx>(
   hooks: ServerEntryHooks<C> = {}
 ): ServerEntryModule {
-  const appRouteResolver = Reflect.get(appRoutes, 'routes') as ResolveRoute | undefined;
-  const configuredIntl = hooks.intl ?? (runtimeConfig as Partial<RuntimeConfig> | undefined)?.i18n;
-  const routeI18n = configuredIntl && resolveI18nConfig(configuredIntl);
+  const configuredIntl = hooks.intl?.locales?.length
+    ? hooks.intl
+    : (runtimeConfig as Partial<RuntimeConfig> | undefined)?.i18n;
+  const routeI18n = configuredIntl?.locales?.length ? resolveI18nConfig(configuredIntl) : undefined;
   return {
     async fetch(request) {
       const requestStore = getRequestContext();
@@ -211,9 +212,11 @@ export function defineServerEntry<C extends ServerCtx = ServerCtx>(
         const localized = localeConfig ? parseLocale(url.pathname, localeConfig) : undefined;
         if (localized?.hasPrefix) url.pathname = localized.pathname;
 
+        const routeResolver = (Reflect.get(appRoutes, 'routes') ??
+          Reflect.get(appRoutes, 'default')) as ResolveRoute | undefined;
         const { seoMeta, notFound } = await runWithI18n(intl, async () => {
           const [page, hookSeoMeta] = await Promise.all([
-            resolvePageRoute(url, appRouteResolver),
+            resolvePageRoute(url, routeResolver),
             hooks.loadSeoMeta
               ? Promise.resolve(hooks.loadSeoMeta(request, ctx))
               : Promise.resolve(null),
@@ -221,7 +224,7 @@ export function defineServerEntry<C extends ServerCtx = ServerCtx>(
           const merged = mergePageSeoMeta(page.seoMeta, hookSeoMeta);
           const canonical = merged?.canonical;
           const seoMeta =
-            localized?.hasPrefix && canonical?.startsWith('/')
+            localized?.hasPrefix && canonical?.startsWith('/') && !canonical.startsWith('//')
               ? {
                   ...merged,
                   canonical:

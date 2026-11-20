@@ -43,7 +43,7 @@ import * as React from 'react';
 import type { PageSeoMeta } from '../defaults/runtime/seo-runtime';
 
 declare global {
-  var __ISR_ENGINE_ROUTE_MANIFESTS__: Map<ResolveRoute, CompiledManifest> | undefined;
+  var __ISR_ENGINE_COMPILED_ROUTE_MANIFESTS__: Map<ResolveRoute, CompiledManifest> | undefined;
 }
 
 /** 路由匹配后传给 page 的 props */
@@ -167,7 +167,7 @@ function matchRoute(manifest: CompiledManifest, pathname: string): RouteMatch | 
 }
 
 function getRouteRegistry(): Map<ResolveRoute, CompiledManifest> {
-  return (globalThis.__ISR_ENGINE_ROUTE_MANIFESTS__ ??= new Map());
+  return (globalThis.__ISR_ENGINE_COMPILED_ROUTE_MANIFESTS__ ??= new Map());
 }
 
 export function defineRoutes(config: RouteManifest): DefinedRoutes {
@@ -189,19 +189,24 @@ export function defineRoutes(config: RouteManifest): DefinedRoutes {
   return { routes };
 }
 
-function matchRegisteredRoute(pathname: string, routes?: ResolveRoute): RouteMatch | undefined {
+function matchRegisteredRoute(
+  pathname: string,
+  routes: ResolveRoute | undefined,
+  includeUnambiguousFallback: boolean
+): RouteMatch | undefined {
   const registry = getRouteRegistry();
   const manifest = routes && registry.get(routes);
   if (manifest) return matchRoute(manifest, pathname);
 
-  // Legacy route modules need no named export. Ordinary matches keep their
-  // registration order, and only an unambiguous fallback determines a miss.
+  // Registered tables can supply normal page SEO. Only the app's own resolver
+  // can establish its HTTP 404 when a nested router also registers a fallback.
   let fallback: RouteMatch | undefined;
   let ambiguous = false;
   for (const candidate of registry.values()) {
     const matched = matchRoute(candidate, pathname);
     if (!matched) continue;
     if (!matched.notFound) return matched;
+    if (!includeUnambiguousFallback) continue;
     if (fallback) ambiguous = true;
     else fallback = matched;
   }
@@ -210,10 +215,11 @@ function matchRegisteredRoute(pathname: string, routes?: ResolveRoute): RouteMat
 
 export async function resolvePageRoute(
   url: URL,
-  routes?: ResolveRoute
+  routes?: ResolveRoute,
+  includeUnambiguousFallback = false
 ): Promise<{ notFound: boolean; seoMeta: PageSeoMeta | null }> {
   const pathname = trimTrailingSlashes(url.pathname) || '/';
-  const matched = matchRegisteredRoute(pathname, routes);
+  const matched = matchRegisteredRoute(pathname, routes, includeUnambiguousFallback);
   if (!matched) return { notFound: false, seoMeta: null };
   const seoMeta = await loadPageSeo(matched.page.ref, {
     url,
@@ -225,7 +231,7 @@ export async function resolvePageRoute(
 }
 
 export async function resolvePageSeoMeta(url: URL): Promise<PageSeoMeta | null> {
-  return (await resolvePageRoute(url)).seoMeta;
+  return (await resolvePageRoute(url, undefined, true)).seoMeta;
 }
 
 async function loadPageSeo(
