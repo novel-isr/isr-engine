@@ -28,13 +28,7 @@ jobs:
         directory: ['.', bench/app]
     steps:
       - uses: actions/checkout@v7
-      - uses: actions/setup-node@v7
-        with:
-          node-version-file: '.nvmrc'
-          package-manager-cache: false
-      - uses: pnpm/action-setup@v6
-        with:
-          run_install: false
+      - uses: ./.github/actions/setup-toolchain
       - name: Audit the independent lockfile without installing packages
         working-directory: ${{ matrix.directory }}
         run: pnpm --ignore-workspace audit --registry=https://registry.npmjs.org --audit-level=low --json > "$RUNNER_TEMP/dependency-audit.json"

@@ -1,9 +1,5 @@
 name: CI
 
-# 触发：任何 push 到任何分支 + PR 到 main/develop
-# Node 版本由 package.json engines + .nvmrc 共同声明；CI 通过 setup-node
-# 读取 .nvmrc。corepack 接管 pnpm（packageManager 字段是 source of truth）。
-
 on:
   workflow_call:
   push:
@@ -23,13 +19,7 @@ jobs:
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v7
-      - uses: actions/setup-node@v7
-        with:
-          node-version-file: '.nvmrc'
-          package-manager-cache: false
-      - uses: pnpm/action-setup@v6
-        with:
-          run_install: false
+      - uses: ./.github/actions/setup-toolchain
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
       - name: Build package
@@ -43,17 +33,7 @@ jobs:
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v7
-      - uses: actions/setup-node@v7
-        with:
-          node-version-file: '.nvmrc'
-          package-manager-cache: false
-      - name: Install locked pnpm CLI
-        run: |
-          $prefix = Join-Path $env:RUNNER_TEMP 'pnpm'
-          $packageManager = npm pkg get packageManager | ConvertFrom-Json
-          npm install --global --prefix $prefix $packageManager
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          $prefix | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+      - uses: ./.github/actions/setup-toolchain
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
       - name: Test filesystem and policy contracts
@@ -71,14 +51,7 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
-      - uses: actions/setup-node@v7
-        with:
-          node-version-file: '.nvmrc'
-          package-manager-cache: false
-      - name: Set up pnpm
-        uses: pnpm/action-setup@v6
-        with:
-          run_install: false
+      - uses: ./.github/actions/setup-toolchain
 
       - name: Diagnostics
         run: |
@@ -131,14 +104,7 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
-      - uses: actions/setup-node@v7
-        with:
-          node-version-file: '.nvmrc'
-          package-manager-cache: false
-      - name: Set up pnpm
-        uses: pnpm/action-setup@v6
-        with:
-          run_install: false
+      - uses: ./.github/actions/setup-toolchain
 
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
@@ -166,13 +132,7 @@ jobs:
       PLAYWRIGHT_REDIS_URL: redis://redis:6379
     steps:
       - uses: actions/checkout@v7
-      - uses: actions/setup-node@v7
-        with:
-          node-version-file: '.nvmrc'
-          package-manager-cache: false
-      - uses: pnpm/action-setup@v6
-        with:
-          run_install: false
+      - uses: ./.github/actions/setup-toolchain
       - name: Install workspace dependencies
         run: pnpm install --frozen-lockfile
       - name: Test development navigation and styles
