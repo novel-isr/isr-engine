@@ -229,11 +229,11 @@ function parseFaces(
     const name = familyNode.children.first;
     if (name?.type !== 'String' || name.value !== family)
       invalid('family descriptor does not match the requested family');
-    const style = values.has('font-style')
-      ? generate(values.get('font-style')!).toLowerCase()
-      : 'normal';
+    const styleNode = values.get('font-style');
+    const style = styleNode ? generate(styleNode).toLowerCase() : 'normal';
     if (!['normal', 'italic', 'oblique'].includes(style)) invalid('style descriptor is invalid');
-    let weight = values.has('font-weight') ? generate(values.get('font-weight')!) : '400';
+    const weightNode = values.get('font-weight');
+    let weight = weightNode ? generate(weightNode) : '400';
     if (weight === 'normal') weight = '400';
     if (weight === 'bold') weight = '700';
     const weights = weight.split(/\s+/);
@@ -245,9 +245,8 @@ function parseFaces(
       (weights.length === 2 && Number(weights[0]) > Number(weights[1]))
     )
       invalid('weight descriptor is invalid');
-    const stretch = values.has('font-stretch')
-      ? generate(values.get('font-stretch')!).toLowerCase()
-      : undefined;
+    const stretchNode = values.get('font-stretch');
+    const stretch = stretchNode && generate(stretchNode).toLowerCase();
     if (
       stretch !== undefined &&
       !/^(?:normal|(?:ultra-|extra-|semi-)?(?:condensed|expanded)|\d{1,3}(?:\.\d+)?%(?: \d{1,3}(?:\.\d+)?%)?)$/.test(

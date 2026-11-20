@@ -37,24 +37,13 @@ try {
         }
       }
       runs++;
-      for (const result of run.results) {
-        findings++;
-        // Treat every result as blocking, even if previously dismissed or suppressed.
-        // JSON preserves one physical line and cannot emit workflow command annotations.
-        console.log(
-          JSON.stringify({
-            ruleId: result.ruleId,
-            level: result.level,
-            message: result.message,
-            locations: result.locations,
-          })
-        );
-      }
+      findings += run.results.length;
     }
   }
   console.log(`CodeQL: ${runs} analyzed run(s), ${findings} findings`);
   if (findings) process.exitCode = 1;
 } catch (error) {
-  console.error(JSON.stringify({ error: error instanceof Error ? error.message : String(error) }));
+  const detail = error instanceof Error ? error.message : String(error);
+  console.error(JSON.stringify({ error: detail }).replaceAll('#', '\\u0023'));
   process.exitCode = 1;
 }

@@ -5,7 +5,7 @@ import path from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 
 const temporary: string[] = [];
-const script = path.resolve('scripts/check-code-scanning.mjs');
+const script = path.resolve('.github/actions/codeql-gate/check-sarif.mjs');
 function directory(): string {
   const dir = mkdtempSync(path.join(tmpdir(), 'isr-code-scanning-'));
   temporary.push(dir);
@@ -67,8 +67,8 @@ describe('release code-scanning policy', () => {
       ]);
       const result = spawnSync(process.execPath, [script, dir], { encoding: 'utf8' });
       expect(result.status).toBe(1);
-      expect(result.stdout).toContain('"ruleId":"js/security"');
-      expect(result.stdout).not.toContain('\n::error::');
+      expect(result.stdout).toContain('1 findings');
+      expect(result.stdout).not.toContain('::error::');
     }
   );
 

@@ -77,7 +77,9 @@ jobs:
           category: /language:javascript-typescript
           output: ${{ runner.temp }}/codeql-results
       - name: Require complete analysis with zero findings
-        run: node scripts/check-code-scanning.mjs "${{ steps.analyze.outputs.sarif-output }}"
+        uses: ./.github/actions/codeql-gate
+        with:
+          sarif-directory: ${{ steps.analyze.outputs.sarif-output }}
       - name: Preserve code-scanning evidence including failures
         if: always()
         uses: actions/upload-artifact@v7

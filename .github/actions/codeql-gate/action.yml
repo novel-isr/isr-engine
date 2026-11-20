@@ -1,0 +1,13 @@
+name: Require complete CodeQL analysis
+description: Reject missing, incomplete or nonzero CodeQL SARIF results.
+inputs:
+  sarif-directory:
+    description: SARIF output directory from the CodeQL analyze action.
+    required: true
+runs:
+  using: composite
+  steps:
+    - shell: bash
+      env:
+        SARIF_DIRECTORY: ${{ inputs.sarif-directory }}
+      run: node "$GITHUB_ACTION_PATH/check-sarif.mjs" "$SARIF_DIRECTORY"

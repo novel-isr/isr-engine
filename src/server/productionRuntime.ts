@@ -10,6 +10,26 @@ import pkg from '../../package.json';
 import { logger } from '@/logger';
 import { routeToFilePath } from '@/ssg/spider';
 import { createIsrCacheHandler } from '@/plugin/isrCacheMiddleware';
+import { createImageMiddleware } from '@/plugin/createImagePlugin';
+import { createAutoCacheStore } from '@/cache/createAutoCacheStore';
+import { RedisInvalidationBus } from '@/cache/RedisInvalidationBus';
+import { resolveImageOptions } from '@/config/resolveImageOptions';
+import { hasRuntimeRedisConnection, resolveRuntimeRedisConfig } from '@/config/resolveRuntimeRedis';
+import { getTraceId, requestContext } from '@/context/RequestContext';
+import { applyAnonCookie, createServerRequestContext } from '@/context/createServerRequestContext';
+import { SEOEngine } from '@/engine/seo/SEOEngine';
+import { resolveSeoConfig } from '@/engine/seo/resolveSeoConfig';
+import { resolveExposureQueue, type ExposureQueueInstance } from '@/experiments/ExposureQueue';
+import { resolveManifestLoader, type ManifestLoaderInstance } from '@/experiments/ManifestLoader';
+import { promRegistry } from '@/metrics/PromMetrics';
+import { createABVariantMiddleware } from '@/middlewares/ABVariantMiddleware';
+import { createLocaleRedirectMiddleware } from '@/middlewares/LocaleRedirect';
+import { resolveI18nConfig } from '@/runtime/i18n';
+import {
+  createCompressionMiddleware,
+  createCspNonceMiddleware,
+  createSecurityMiddleware,
+} from './middleware';
 import {
   resolveOpsConfig,
   createOpsAuthMiddleware,
@@ -243,8 +263,6 @@ export async function createProductionRuntime(
     // nonce 同时透传到 req header，让下游 RSC handler 给 React 19 SSR 传 nonce 选项，
     // React 自动给所有内联 script (RSC payload / bootstrap) 打 nonce 属性。
     // CSP connect-src 自动加入用户配置的服务 origin（让 CSR-fallback / 业务 fetch 不被挡）
-    const { createSecurityMiddleware, createCompressionMiddleware, createCspNonceMiddleware } =
-      await import('@/server/middleware');
     app.use(createCspNonceMiddleware());
     app.use(createSecurityMiddleware(false, extraConnectSrc));
     app.use(createCompressionMiddleware());
@@ -259,9 +277,6 @@ export async function createProductionRuntime(
     // applyAnonCookie 在缺失时把 Set-Cookie 写到响应头（live 客户端可收到，cache 层
     // 在 captureAndStore 阶段会剥掉这一条 Set-Cookie 才入缓存，保证 cache entry
     // user-agnostic）。详见 src/context/createServerRequestContext.ts。
-    const { requestContext } = await import('@/context/RequestContext');
-    const { createServerRequestContext, applyAnonCookie } =
-      await import('@/context/createServerRequestContext');
     const cookieDomain = runtime?.cookieDomain;
     app.use((req, res, next) => {
       const { data, needsAnonCookie } = createServerRequestContext(req);
@@ -274,8 +289,6 @@ export async function createProductionRuntime(
     // 必须早于 ISR 缓存 / 静态托管 —— 否则 /books 命中缓存的 default-locale 渲染，
     // 永远拿不到 redirect 机会。
     if (runtime?.i18n?.prefixDefault) {
-      const { createLocaleRedirectMiddleware } = await import('@/middlewares/LocaleRedirect');
-      const { resolveI18nConfig } = await import('@/runtime/i18n');
       const middleware = createLocaleRedirectMiddleware({
         i18n: resolveI18nConfig(runtime.i18n),
       });
@@ -290,16 +303,10 @@ export async function createProductionRuntime(
     // 曝光上报：experimentTracking.endpoint 配上 → engine 异步 fire-and-forget POST
     const hasStaticExps = runtime?.experiments && Object.keys(runtime.experiments).length > 0;
     const hasManifest = !!runtime?.experimentManifest?.endpoint;
-    let manifestLoader:
-      import('@/experiments/ManifestLoader').ManifestLoaderInstance | null | undefined;
-    let exposureQueue:
-      import('@/experiments/ExposureQueue').ExposureQueueInstance | null | undefined;
+    let manifestLoader: ManifestLoaderInstance | null | undefined;
+    let exposureQueue: ExposureQueueInstance | null | undefined;
     if (hasStaticExps || hasManifest) {
       const baseOrigin = runtime?.services?.api;
-      const { createABVariantMiddleware } = await import('@/middlewares/ABVariantMiddleware');
-      const { resolveManifestLoader } = await import('@/experiments/ManifestLoader');
-      const { resolveExposureQueue } = await import('@/experiments/ExposureQueue');
-
       manifestLoader = resolveManifestLoader(
         runtime?.experimentManifest,
         runtime?.experiments ?? {},
@@ -388,15 +395,9 @@ export async function createProductionRuntime(
     });
 
     // 图片优化端点（/_/img）—— 与开发环境共享显式远程来源策略
-    const { createImageMiddleware } = await import('@/plugin/createImagePlugin');
-    const { resolveImageOptions } = await import('@/config/resolveImageOptions');
     app.use(createImageMiddleware(resolveImageOptions(config.runtime.images), {}, clientDir));
 
     // ISR 缓存：只读取 ssr.config.ts runtime.redis；环境变量需由业务配置显式注入。
-    const { createAutoCacheStore } = await import('@/cache/createAutoCacheStore');
-    const { RedisInvalidationBus } = await import('@/cache/RedisInvalidationBus');
-    const { hasRuntimeRedisConnection, resolveRuntimeRedisConfig } =
-      await import('@/config/resolveRuntimeRedis');
     const redisCfg = resolveRuntimeRedisConfig(runtime?.redis);
     const hasRedisConfig = hasRuntimeRedisConnection(runtime?.redis);
     const cacheRoutes = { ...config.routes };
@@ -506,7 +507,6 @@ export async function createProductionRuntime(
     });
 
     // Prometheus 抓取端点（prom-client 文本格式）
-    const { promRegistry } = await import('@/metrics/PromMetrics');
     if (opsConfig.metrics.enabled) {
       app.get(
         '/metrics',
@@ -528,8 +528,6 @@ export async function createProductionRuntime(
 
     // SEO 端点：sitemap.xml + robots.txt（基于 SEOEngine 自动生成）
     // —— 生产必须在 ssr.config.ts 配置 runtime.site；dev 自动用 localhost。
-    const { SEOEngine } = await import('@/engine/seo/SEOEngine');
-    const { resolveSeoConfig } = await import('@/engine/seo/resolveSeoConfig');
     const seoCfg = resolveSeoConfig(config);
     const seo = SEOEngine.getInstance({ baseUrl: seoCfg.baseUrl });
     cleanups.push(() => seo.shutdown());
@@ -555,7 +553,6 @@ export async function createProductionRuntime(
 
     // 根处理器：Express req → Web Request → handler → Response → Express res
     const { renderError500Html } = await import('@/defaults/runtime/error500-template');
-    const { getTraceId } = await import('@/context/RequestContext');
     app.all(
       /.*/,
       createProductionRequestHandler(rscHandler, (err, _req, res) => {
