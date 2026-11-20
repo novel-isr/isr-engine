@@ -1,0 +1,4 @@
+{
+  "extends": "../production/tsconfig.json",
+  "include": ["worker.ts", "../../src/runtime/scss.d.ts"]
+}

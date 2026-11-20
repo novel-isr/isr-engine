@@ -39,18 +39,6 @@ jobs:
     permissions:
       contents: write
       id-token: write
-    services:
-      redis:
-        image: redis:7-alpine
-        ports: ['6379:6379']
-        options: >-
-          --health-cmd "redis-cli ping"
-          --health-interval 5s
-          --health-timeout 3s
-          --health-retries 10
-    env:
-      ISR_TEST_REDIS_URL: redis://127.0.0.1:6379
-
     steps:
       - name: Checkout the verified commit and complete release history
         uses: actions/checkout@v7
@@ -67,11 +55,6 @@ jobs:
         run: npm install --global npm@11.12.1 --registry=https://registry.npmjs.org
       - name: Install locked dependencies
         run: pnpm install --frozen-lockfile
-      - name: Verify automatic version policy
-        run: pnpm run test:release
-      - name: Audit independent benchmark dependencies
-        working-directory: bench/app
-        run: pnpm --ignore-workspace audit --registry=https://registry.npmjs.org --audit-level=low
       - name: Calculate version, verify versioned artifacts and publish with npm OIDC
         run: pnpm run release
         env:

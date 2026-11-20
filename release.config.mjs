@@ -14,10 +14,10 @@ export default {
       },
     ],
     '@semantic-release/release-notes-generator',
+    ['@semantic-release/npm', { tarballDir: '.release' }],
     [
       '@semantic-release/exec',
-      { prepareCmd: 'node scripts/prepare-release.mjs ${nextRelease.version}' },
+      { prepareCmd: 'pnpm run test:package .release/isr-engine-${nextRelease.version}.tgz' },
     ],
-    ['@semantic-release/npm', { tarballDir: '.release' }],
   ],
 };
