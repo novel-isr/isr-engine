@@ -1,5 +1,4 @@
-import { defineIsrConfig } from 'isr-engine/config';
-import { alternates, withLocale, type I18nConfig } from 'isr-engine/runtime';
+import { alternates, defineIsrConfig, withLocale, type I18nConfig } from 'isr-engine/config';
 import { pageTitles } from './src/pages';
 
 const i18n = { locales: ['en'], defaultLocale: 'en' } satisfies I18nConfig;
@@ -39,10 +38,9 @@ export default defineIsrConfig({
       dynamicResolvers: [
         {
           pattern: '/*',
-          resolve: ({ params }) => {
+          resolve: ({ params, pathname }) => {
             const title = pageTitles.get(params.wildcard);
             if (!title) return null;
-            const pathname = '/' + params.wildcard;
             return {
               title,
               canonical: withLocale(pathname, i18n.defaultLocale, i18n),

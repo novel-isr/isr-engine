@@ -155,7 +155,7 @@ curl -fsS -H "x-isr-admin-token: $ISR_OPS_TOKEN" \
 | 导入路径 | 用途 |
 | --- | --- |
 | `isr-engine` | Vite 插件、Node 编排 API 与公共类型。 |
-| `isr-engine/config` | `defineIsrConfig`、`defineRuntimeConfig`。 |
+| `isr-engine/config` | `ssr.config.ts` 使用的 `defineIsrConfig`、`defineRuntimeConfig`、`withLocale`、`alternates`。 |
 | `isr-engine/rsc` | 缓存标签、失效、服务端请求上下文。 |
 | `isr-engine/runtime` | 页面路由、边界、i18n 与浏览器 telemetry。 |
 | `isr-engine/site-hooks` | 请求 hooks 工厂与 Cookie 工具。 |

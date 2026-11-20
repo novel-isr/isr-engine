@@ -8,7 +8,7 @@ test('import and require share the public Node module instances', async () => {
   for (const [specifier, names] of [
     ['isr-engine', ['createCoherentCacheStore', 'Logger']],
     ['isr-engine/adapters/runtime', ['toCloudflareWorker']],
-    ['isr-engine/config', ['defineIsrConfig', 'defineRuntimeConfig']],
+    ['isr-engine/config', ['defineIsrConfig', 'defineRuntimeConfig', 'withLocale', 'alternates']],
     [
       'isr-engine/auto-observability',
       ['createAutoServerHooks', 'composeAutoServerHooks', 'resolveSentryDsnFromEnv'],
