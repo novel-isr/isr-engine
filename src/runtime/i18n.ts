@@ -155,7 +155,8 @@ export function selectAcceptableLocale(
     })
     .filter(({ range }) => range?.q !== 0);
 
-  for (const { tag, q } of ranked) {
+  for (const preferred of ranked) {
+    const { tag, q } = preferred;
     if (q === 0) continue;
     if (tag === '*') {
       if (defaultRange?.tag === '*' && defaultRange.q > 0) return config.defaultLocale;
@@ -164,10 +165,13 @@ export function selectAcceptableLocale(
       continue;
     }
     const primary = tag.split('-')[0];
+    const candidates = supported.filter(
+      ({ range }) => !range || range.tag === '*' || range === preferred
+    );
     const match =
-      supported.find(locale => locale.tag === tag) ??
-      supported.find(locale => locale.tag === primary) ??
-      supported.find(locale => locale.tag.startsWith(primary + '-'));
+      candidates.find(locale => locale.tag === tag) ??
+      candidates.find(locale => locale.tag === primary) ??
+      candidates.find(locale => locale.tag.startsWith(primary + '-'));
     if (match) return match.locale;
   }
 

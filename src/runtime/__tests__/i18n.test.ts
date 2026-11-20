@@ -126,6 +126,11 @@ describe('negotiateLocale —— 主语言回退（地区码）', () => {
     expect(negotiateLocale('en-GB,en;q=0,*;q=0.5', regional)).toBe('zh-hans');
   });
 
+  it('honors specific weights when a broader language range also matches', () => {
+    const config = { locales: ['en-us', 'fr'], defaultLocale: 'en-us' };
+    expect(negotiateLocale('en;q=0.9,en-US;q=0.1,fr;q=0.8', config)).toBe('fr');
+  });
+
   it('still matches bare locale via primary subtag', () => {
     expect(negotiateLocale('ja-JP,ja;q=0.9', regional)).toBe('ja');
     expect(negotiateLocale('fr-FR', regional)).toBe('fr');
