@@ -167,6 +167,9 @@ curl -fsS -H "x-isr-admin-token: $ISR_OPS_TOKEN" \
 
 ## 文档与发布
 
+语言切换可从 `isr-engine/runtime` 使用 `<LocaleLink locale="ja" config={i18n}>日本語</LocaleLink>`。
+组件在引擎接管后可操作，沿用当前路径、查询参数和锚点。
+
 配置字段与默认行为见 [公共配置类型](./src/types/ISRConfig.ts) 和 [默认配置](./src/config/defaults.ts)。
 
 `main` 的自动发布流程通过验证后由 semantic-release 计算版本，以 npm OIDC 发布到 `registry.npmjs.org`；配置见 [发布工作流](./.github/workflows/publish.yml) 与 [release.config.mjs](./release.config.mjs)。npm 端需绑定对应仓库和工作流的 Trusted Publisher。

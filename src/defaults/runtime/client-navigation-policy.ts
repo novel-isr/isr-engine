@@ -3,6 +3,17 @@ export interface PrefetchConnection {
   effectiveType?: string;
 }
 
+export function isPrimaryLinkClick(event: MouseEvent): boolean {
+  return (
+    event.button === 0 &&
+    !event.defaultPrevented &&
+    !event.metaKey &&
+    !event.ctrlKey &&
+    !event.altKey &&
+    !event.shiftKey
+  );
+}
+
 export function isRscNavigation(href: string, current: string): boolean {
   try {
     const url = new URL(href, current);

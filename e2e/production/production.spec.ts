@@ -87,8 +87,12 @@ test('SSR controls become actionable only after their client modules hydrate', a
     await expect(button).toBeVisible();
     await moduleBlocked;
     expect(await button.isDisabled()).toBe(true);
+    const localeLink = page.getByRole('link', { name: '中文' });
+    await expect(localeLink).toBeDisabled();
+    expect(await localeLink.getAttribute('href')).toBeNull();
     releaseModules();
     await expect(button).toBeEnabled();
+    await expect(localeLink).toBeEnabled();
     await button.click();
     await expect(page.getByRole('button', { name: 'Count 1' })).toBeVisible();
   } finally {
@@ -122,6 +126,76 @@ test('hash navigation preserves hydrated state without fetching an RSC payload',
   await expect(page).toHaveURL(/#details$/);
   await expect(page.getByRole('button', { name: 'Count 1' })).toBeVisible();
   expect(requests.filter(url => /[?&]__rsc|[?&]_rsc|\.rsc(?:\?|$)/.test(url))).toEqual([]);
+});
+
+test('locale links accept a click before React hydration and retain query and fragment', async ({
+  page,
+}) => {
+  await page.addInitScript(() => {
+    if (location.pathname !== '/article') return;
+    const observer = new MutationObserver(() => {
+      const link = document.querySelector<HTMLAnchorElement>('a[data-isr-locale-link][href]');
+      const count = document.querySelector('main button');
+      if (!link || !count) return;
+      observer.disconnect();
+      Reflect.set(window, 'earlyLocaleClick', count.hasAttribute('disabled'));
+      link.click();
+    });
+    observer.observe(document, { childList: true, subtree: true, attributes: true });
+  });
+  const flight = page.waitForResponse(response => {
+    const url = new URL(response.url());
+    return url.pathname === '/zh-CN/article_.rsc' && url.search === '?from=share&tag=a%2Fb';
+  });
+  await page.goto('/article?from=share&tag=a%2Fb#details');
+  expect((await flight).status()).toBe(200);
+  await expect(page).toHaveURL(/\/zh-CN\/article\?from=share&tag=a%2Fb#details$/);
+  expect(await page.evaluate(() => Reflect.get(window, 'earlyLocaleClick'))).toBe(true);
+  await expect(page.locator('html')).toHaveAttribute('lang', 'zh-CN');
+  await expect
+    .poll(() =>
+      page.locator('#details').evaluate(element => Math.abs(element.getBoundingClientRect().top))
+    )
+    .toBeLessThan(1);
+});
+
+test('RSC commits position anchors and restore distinct scroll positions on history traversal', async ({
+  page,
+}) => {
+  await page.goto('/');
+  await expect(page.getByRole('button', { name: 'Count 0' })).toBeEnabled();
+  const scrollY = () => page.evaluate(() => window.scrollY);
+  const routeLink = page.locator('[data-nav="route"]');
+  await page.evaluate(() => window.scrollTo(0, 320));
+  await routeLink.evaluate((link: HTMLAnchorElement) => link.click());
+  await expect(page.getByRole('heading', { name: 'Article' })).toBeVisible();
+  await expect.poll(scrollY).toBe(0);
+
+  await page.evaluate(() => window.scrollTo(0, 440));
+  await routeLink.evaluate((link: HTMLAnchorElement) => link.click());
+  await expect(page.getByRole('heading', { name: 'Home' })).toBeVisible();
+  await expect.poll(scrollY).toBe(0);
+  await page.evaluate(() => window.scrollTo(0, 210));
+  await page.evaluate(() => history.pushState(null, '', '/article?section=1#details'));
+  await expect(page.getByRole('heading', { name: 'Article' })).toBeVisible();
+  await expect
+    .poll(() =>
+      page.locator('#details').evaluate(element => Math.abs(element.getBoundingClientRect().top))
+    )
+    .toBeLessThan(1);
+
+  await page.goBack();
+  await expect(page.getByRole('heading', { name: 'Home' })).toBeVisible();
+  await expect.poll(scrollY).toBe(210);
+  await page.goBack();
+  await expect(page.getByRole('heading', { name: 'Article' })).toBeVisible();
+  await expect.poll(scrollY).toBe(440);
+  await page.goBack();
+  await expect(page.getByRole('heading', { name: 'Home' })).toBeVisible();
+  await expect.poll(scrollY).toBe(320);
+  await page.goForward();
+  await expect(page.getByRole('heading', { name: 'Article' })).toBeVisible();
+  await expect.poll(scrollY).toBe(440);
 });
 
 for (const [locale, title] of [
