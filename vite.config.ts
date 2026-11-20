@@ -55,8 +55,9 @@ export default defineConfig({
         ),
         'defaults/auto-observability': resolve(__dirname, 'src/defaults/auto-observability.ts'),
       },
-      formats: ['es', 'cjs'],
-      fileName: (format, entryName) => `${entryName}.${format === 'es' ? 'js' : 'cjs'}`,
+      // Node 24.15 loads synchronous ESM through both import and require.
+      formats: ['es'],
+      fileName: (_format, entryName) => `${entryName}.js`,
     },
     rollupOptions: {
       external: [

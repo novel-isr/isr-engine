@@ -4,7 +4,7 @@ import { test } from 'node:test';
 
 const require = createRequire(import.meta.url);
 
-test('public Node exports resolve as ESM and CommonJS', async () => {
+test('import and require share the public Node module instances', async () => {
   for (const [specifier, names] of [
     ['isr-engine', ['createCoherentCacheStore', 'Logger']],
     ['isr-engine/adapters/runtime', ['toCloudflareWorker']],
@@ -13,11 +13,11 @@ test('public Node exports resolve as ESM and CommonJS', async () => {
       ['createAutoServerHooks', 'composeAutoServerHooks', 'resolveSentryDsnFromEnv'],
     ],
   ]) {
-    const esm = await import(specifier);
     const commonjs = require(specifier);
+    const esm = await import(specifier);
     for (const name of names) {
       assert.equal(typeof esm[name], 'function', specifier + ':' + name);
-      assert.equal(typeof commonjs[name], 'function', specifier + ':' + name);
+      assert.equal(commonjs[name], esm[name], specifier + ':' + name);
     }
   }
 });
@@ -25,7 +25,9 @@ test('public Node exports resolve as ESM and CommonJS', async () => {
 test('the installed engine builds and serves the documented app', async () => {
   process.env.NODE_ENV = 'production';
   const { createISRApp, invalidatorRunsTotal, loadConfig } = await import('isr-engine');
-  const { revalidateTag } = await import('isr-engine/rsc');
+  const { revalidateTag } = require('isr-engine/rsc');
+  const { Logger } = require('isr-engine');
+  Logger.getInstance({ verbose: true }).debug('CommonJS consumer logging');
   const config = await loadConfig();
   config.server.host = '127.0.0.1';
   config.server.port = 0;

@@ -1,6 +1,17 @@
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { access, cp, copyFile, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import {
+  access,
+  cp,
+  copyFile,
+  mkdir,
+  mkdtemp,
+  readFile,
+  rename,
+  rm,
+  symlink,
+  writeFile,
+} from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -61,6 +72,10 @@ try {
     /(^|\/)(?:__tests__\/|[^/]+\.(?:test|spec)\.[cm]?[jt]sx?$)/.test(file)
   );
   assert.deepEqual(tests, [], 'The archive must exclude repository tests');
+  assert.ok(
+    ![...files].some(file => /^dist\/.*\.cjs$/.test(file)),
+    'Publish a single module graph'
+  );
 
   const app = path.join(temporary, 'consumer app');
   const example = path.join(root, 'examples/hello-world');
@@ -106,7 +121,18 @@ try {
   assert.equal(run(pnpm, ['exec', 'isr-engine', '--version'], app, true).trim(), pack.version);
   run(pnpm, ['exec', 'tsc', '--noEmit'], app);
   run(pnpm, ['run', 'build'], app);
-  run([process.execPath], ['--test', 'production.test.mjs'], app);
+  // Launch the real build from a deployment path that needs file URL encoding.
+  const deploy = path.join(temporary, 'production #app');
+  await mkdir(deploy);
+  for (const entry of ['dist', 'src', 'package.json', 'ssr.config.ts']) {
+    await rename(path.join(app, entry), path.join(deploy, entry));
+  }
+  await symlink(
+    path.join(app, 'node_modules'),
+    path.join(deploy, 'node_modules'),
+    process.platform === 'win32' ? 'junction' : 'dir'
+  );
+  run([process.execPath], ['--test', path.join(app, 'production.test.mjs')], deploy);
 } finally {
   await rm(temporary, { recursive: true, force: true });
 }
