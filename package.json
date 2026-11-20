@@ -165,7 +165,7 @@
     "eslint-plugin-prettier": "^5.5.7",
     "eslint-plugin-react": "^7.37.2",
     "eslint-plugin-react-hooks": "^7.1.1",
-    "globals": "^15.9.0",
+    "globals": "^17.14.0",
     "happy-dom": "^21.0.4",
     "husky": "^9.1.7",
     "ioredis-mock": "^8.9.0",
