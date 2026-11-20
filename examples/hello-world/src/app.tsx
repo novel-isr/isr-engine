@@ -1,11 +1,12 @@
 import { cacheTag } from 'isr-engine/rsc';
+import { getI18nLocale } from 'isr-engine/runtime';
 import { pageTitles } from './pages';
 
 export function App({ url }: { url: URL }) {
   const page = url.pathname.slice(1);
   if (page === '') cacheTag('hello-home');
   return (
-    <html lang='en'>
+    <html lang={getI18nLocale('en')}>
       <head>
         <meta charSet='utf-8' />
       </head>

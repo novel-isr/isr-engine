@@ -71,6 +71,7 @@ export default {
         enabled: process.env.ENABLE_METRICS === '1',
         public: false,
       },
+      inventory: { enabled: false, public: false },
     },
   },
 } satisfies ISRConfig;

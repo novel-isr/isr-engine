@@ -7,6 +7,7 @@ const require = createRequire(import.meta.url);
 test('public Node exports resolve as ESM and CommonJS', async () => {
   for (const [specifier, names] of [
     ['isr-engine', ['createCoherentCacheStore', 'Logger']],
+    ['isr-engine/adapters/runtime', ['toCloudflareWorker']],
     [
       'isr-engine/auto-observability',
       ['createAutoServerHooks', 'composeAutoServerHooks', 'resolveSentryDsnFromEnv'],
@@ -36,11 +37,23 @@ test('the installed engine builds and serves the documented app', async () => {
       ['/about', 'About'],
       ['/guides/rendering', 'Rendering guide'],
     ]) {
-      const response = await fetch(url + route, { signal: AbortSignal.timeout(10_000) });
+      const response = await fetch(url + route, {
+        headers: { 'x-request-id': 'artifact-request' },
+        signal: AbortSignal.timeout(10_000),
+      });
       assert.equal(response.status, 200, route);
       const html = await response.text();
       assert.ok(html.includes(`<h1>${title}</h1>`), route);
-      assert.ok(html.includes(`<title>${title}</title>`), `Missing SEO title for ${route}`);
+      assert.ok(
+        html.includes(`<title data-isr-seo>${title}</title>`),
+        `Missing SEO title for ${route}`
+      );
+      if (route === '/guides/rendering') {
+        assert.match(
+          response.headers.get('server-timing') ?? '',
+          /^isr;dur=\d+;desc="artifact-request"$/
+        );
+      }
     }
     await revalidateTag('hello-home');
     const metric = await invalidatorRunsTotal.get();

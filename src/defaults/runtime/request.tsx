@@ -21,7 +21,7 @@ export type RenderRequest = {
   isAction: boolean;
   /** Server Action ID（仅 isAction 为 true 时有意义） */
   actionId?: string;
-  /** 已去除 `_.rsc` 后缀的规范化请求 */
+  /** 原始请求，供读取请求头与 Server Action 正文。 */
   request: Request;
   /** 已去除 `_.rsc` 后缀的规范化 URL */
   url: URL;
@@ -84,7 +84,7 @@ export function parseRenderRequest(request: Request): RenderRequest {
       isRsc: true,
       isAction,
       actionId,
-      request: new Request(url, request),
+      request,
       url,
       devStyleGeneration,
     };

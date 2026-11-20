@@ -54,7 +54,12 @@ import {
 } from './navigation-history.client';
 import { installDevRenderInspector } from './dev-render-inspector';
 import { setClientI18n } from '../../runtime/i18n-store';
-import { applySeoToDocument, type IntlPayload, type PageSeoMeta } from './seo-runtime';
+import {
+  applySeoToDocument,
+  clearInjectedSeo,
+  type IntlPayload,
+  type PageSeoMeta,
+} from './seo-runtime';
 import {
   installBrowserObservability,
   type BrowserObservabilityHandle,
@@ -134,11 +139,19 @@ async function prepareFetchedDevStyles(
   result.styleIds = await preparePayloadDevStyles(generation);
 }
 
-function renderPayloadRoot({
-  payload,
-  generation,
-  styleIds,
-}: DefaultRscPayloadState): React.ReactNode {
+function transitionPayload(
+  setState: (state: DefaultRscPayloadState) => void,
+  state: DefaultRscPayloadState
+): void {
+  // App head nodes must be reconciled without the previous route's injected tags.
+  clearInjectedSeo();
+  React.startTransition(() => setState(state));
+}
+
+function PayloadRoot({ payload, generation, styleIds }: DefaultRscPayloadState): React.ReactNode {
+  React.useLayoutEffect(() => {
+    applySeoToDocument(payload.seoMeta, payload.siteBaseUrl ?? undefined);
+  }, [payload]);
   if (!import.meta.env.DEV || generation === undefined) return payload.root;
   return (
     <DevStyleCommitBoundary key={generation} generation={generation} styleIds={styleIds}>
@@ -339,7 +352,6 @@ async function main(hooks: ClientEntryHooks): Promise<void> {
             signal.throwIfAborted();
             syncBrowserUrlToFinalRedirect(response, requestedUrl);
             setClientI18n(payload.intl);
-            applySeoToDocument(payload.seoMeta, payload.siteBaseUrl ?? undefined);
             setPayload(createPayloadState(payload, generation, styleIds));
           },
           async (result, generation) => {
@@ -356,7 +368,7 @@ async function main(hooks: ClientEntryHooks): Promise<void> {
       const [failed, setFailed] = React.useState(false);
 
       React.useEffect(() => {
-        setPayload = v => React.startTransition(() => setPayload_(v));
+        setPayload = state => transitionPayload(setPayload_, state);
       }, [setPayload_]);
 
       React.useEffect(() => {
@@ -384,7 +396,7 @@ async function main(hooks: ClientEntryHooks): Promise<void> {
           )
         );
       }
-      return renderPayloadRoot(payloadState);
+      return <PayloadRoot {...payloadState} />;
     }
 
     setServerCallback(async (id: string, args: unknown[]) => {
@@ -403,7 +415,6 @@ async function main(hooks: ClientEntryHooks): Promise<void> {
         },
         ({ payload, styleIds }, generation) => {
           setClientI18n(payload.intl);
-          applySeoToDocument(payload.seoMeta, payload.siteBaseUrl ?? undefined);
           setPayload(createPayloadState(payload, generation, styleIds));
           return payload;
         },
@@ -464,7 +475,7 @@ async function main(hooks: ClientEntryHooks): Promise<void> {
   function BrowserRoot(): React.ReactNode {
     const [payloadState, setPayload_] = React.useState<DefaultRscPayloadState>(initialPayloadState);
     React.useEffect(() => {
-      setPayload = v => React.startTransition(() => setPayload_(v));
+      setPayload = state => transitionPayload(setPayload_, state);
     }, [setPayload_]);
     React.useEffect(() => {
       const onNavigation = import.meta.env.DEV
@@ -478,7 +489,7 @@ async function main(hooks: ClientEntryHooks): Promise<void> {
           };
       return listenNavigation(onNavigation, hooks.onNavigate, observability, hookContext);
     }, []);
-    return renderPayloadRoot(payloadState);
+    return <PayloadRoot {...payloadState} />;
   }
 
   async function fetchRscPayload(): Promise<void> {
@@ -497,7 +508,6 @@ async function main(hooks: ClientEntryHooks): Promise<void> {
           signal.throwIfAborted();
           syncBrowserUrlToFinalRedirect(response, requestedUrl);
           setClientI18n(payload.intl);
-          applySeoToDocument(payload.seoMeta, payload.siteBaseUrl ?? undefined);
           setPayload(createPayloadState(payload, generation, styleIds));
         },
         async (result, generation) => {
@@ -525,7 +535,6 @@ async function main(hooks: ClientEntryHooks): Promise<void> {
       },
       ({ payload, styleIds }, generation) => {
         setClientI18n(payload.intl);
-        applySeoToDocument(payload.seoMeta, payload.siteBaseUrl ?? undefined);
         setPayload(createPayloadState(payload, generation, styleIds));
         return payload;
       },
@@ -554,7 +563,9 @@ async function main(hooks: ClientEntryHooks): Promise<void> {
     </HydrationShell>
   );
 
-  // 注：csr-shell 路径已在 main 入口处早返回，这里只剩正常水合
+  // Reconcile the app's head without adopting injected nodes. PayloadRoot
+  // reapplies metadata after hydration.
+  clearInjectedSeo();
   hydrateRoot(document, browserRoot, { formState: initialPayload.formState });
   installInspector();
   schedulePostCommitInspectorInstall();

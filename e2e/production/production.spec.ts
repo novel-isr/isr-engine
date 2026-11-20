@@ -121,6 +121,59 @@ test('hash navigation preserves hydrated state without fetching an RSC payload',
   expect(requests.filter(url => /[?&]__rsc|[?&]_rsc|\.rsc(?:\?|$)/.test(url))).toEqual([]);
 });
 
+for (const [locale, title] of [
+  ['en', 'Page not found'],
+  ['zh-CN', '页面未找到'],
+]) {
+  test(`localized missing routes return 404 and use the fallback module's SEO (${locale})`, async ({
+    request,
+  }) => {
+    const response = await request.get(`/${locale}/nonexistent`);
+    const html = await response.text();
+    expect(html).toContain(`<h1>${title}</h1>`);
+    expect.soft(response.status()).toBe(404);
+    expect.soft(html).toContain(`<title data-isr-seo>${title}</title>`);
+    expect.soft(html).toContain('name="robots" content="noindex, nofollow"');
+
+    const flight = await request.get(`/${locale}/nonexistent_.rsc`);
+    expect.soft(flight.status()).toBe(404);
+    expect(flight.headers()['content-type']).toContain('text/x-component');
+    expect.soft(await flight.text()).toContain(title);
+
+    const matched = await request.get(`/${locale}/article`);
+    expect(matched.status()).toBe(200);
+    const matchedHtml = await matched.text();
+    expect(matchedHtml).toContain('<h1>Article</h1>');
+    expect(matchedHtml).not.toContain('name="robots" content="noindex, nofollow"');
+  });
+}
+
+test('client navigation from a 404 clears its title and robots directive', async ({
+  browser,
+  baseURL,
+}) => {
+  const page = await browser.newPage({ baseURL });
+  const errors: string[] = [];
+  page.on('pageerror', error => errors.push(error.message));
+  try {
+    const response = await page.goto('/en/nonexistent');
+    expect(response?.status()).toBe(404);
+    await expect(page.getByRole('button', { name: 'Count 0' })).toBeEnabled();
+    await expect(page).toHaveTitle('Page not found');
+    const navigation = page.waitForResponse(
+      response => new URL(response.url()).pathname === '/_.rsc'
+    );
+    await page.locator('[data-nav="route"]').click();
+    expect((await navigation).status()).toBe(200);
+    await expect(page.getByRole('heading', { name: 'Home' })).toBeVisible();
+    await expect(page).toHaveTitle('Production regression app');
+    await expect(page.locator('meta[name="robots"]')).toHaveCount(0);
+    expect(errors).toEqual([]);
+  } finally {
+    await page.close();
+  }
+});
+
 test('missing assets and malformed image input leave the production service healthy', async ({
   request,
 }) => {

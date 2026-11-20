@@ -8,7 +8,7 @@
 | `/about` | SSG，构建时预渲染 |
 | `/guides/rendering` | SSR，每次请求渲染 |
 
-在示例目录使用 Node.js 24.15.0 安装并启动。
+使用 Node.js 24.15.0。在仓库根目录先运行 `pnpm install --frozen-lockfile && pnpm build`，再进入示例目录。
 
 ```bash
 npm install

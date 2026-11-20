@@ -6,6 +6,7 @@ import {
   type AutoServerHooks,
 } from 'isr-engine/auto-observability';
 import { createCoherentCacheStore, Logger, type ResponseCacheBackend } from 'isr-engine';
+import { getEdgeContext, type EdgeContext } from 'isr-engine/runtime';
 
 const factory: () => Promise<AutoServerHooks> = createAutoServerHooks;
 const ctx: AutoServerCtx = { traceId: 'trace', startedAt: 1 };
@@ -27,4 +28,9 @@ spinner.color = undefined;
 spinner.color = true;
 // @ts-expect-error Timestamps are numeric.
 const invalid: AutoServerCtx = { traceId: 'trace', startedAt: 'yesterday' };
-void [factory, ctx, hooks, dsn, store, invalid, labels, unresolved];
+const edge: EdgeContext<{ token: string }> | undefined = getEdgeContext<{ token: string }>(
+  new Request('https://consumer.test')
+);
+// @ts-expect-error Edge context lookup requires a Request.
+getEdgeContext();
+void [factory, ctx, hooks, dsn, store, invalid, labels, unresolved, edge];

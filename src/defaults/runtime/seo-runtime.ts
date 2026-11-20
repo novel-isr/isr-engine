@@ -75,10 +75,8 @@ export function renderPageSeoMeta(meta: PageSeoMeta, baseUrl?: string): string {
   const esc = (s: string) =>
     s.replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 
-  // 所有 engine 注入的 head 节点都打 data-isr-seo 标，客户端导航时按 marker 精准替换，
-  // 不动业务/插件自己加的 meta（详见 applySeoToDocument 注释）。
-  // <title> 是单值元素由 document.title 直接管理，不打标。
-  if (meta.title) tags.push(`<title>${esc(meta.title)}</title>`);
+  // Mark injected nodes so navigation can remove them without touching the app's head.
+  if (meta.title) tags.push(`<title data-isr-seo>${esc(meta.title)}</title>`);
   if (meta.description) {
     tags.push(`<meta data-isr-seo name="description" content="${esc(meta.description)}">`);
   }
@@ -174,39 +172,37 @@ export function injectSeoMeta(
   return source.pipeThrough(transform);
 }
 
-// ─── 客户端导航后同步 <head> ──────────────────────────────────────────────
-//
-// 首屏 SSR 走 injectSeoMeta（HTML 流注入 <title> / <meta>）。
-// 但 RSC 客户端导航（pushState + 拉新 RSC payload）只换 React 树，<head> 不会自动跟。
-// Next.js / Remix / Astro 同样的问题，做法都是把页面的 metadata 序列化进 RSC payload，
-// 客户端在每次 setPayload 之后把 metadata 应用到 document（title / meta / link / jsonLd）。
-//
-// 本函数只在浏览器调用：业务侧通常不直接 import，engine 客户端 entry 自动调用。
-//
-// 关键点：
-//   - 用 `data-isr-seo` 标记本函数管理的 <head> 节点，避免误删用户/插件加的 meta
-//   - 先按 `data-isr-seo` 抓出旧节点，再按 meta 重建写回（删→建，避免顺序漂移）
-//   - jsonLd 也一并管，按 data-isr-seo='jsonld' 标记 + 全删全建
-//   - 初次调用（即 SSR 注入的初始 head）首先把已有的 <title> / <meta> / <link> / 含
-//     SSR injection marker 的节点打 data-isr-seo 标，让后续导航能精准替换
+const managedTitles = new WeakMap<HTMLTitleElement, { base: string; applied: string }>();
+
+export function clearInjectedSeo(): void {
+  document.head.querySelectorAll('[data-isr-seo]').forEach(el => el.remove());
+}
+
+/** Replace managed head metadata after the route commits. */
 export function applySeoToDocument(meta: PageSeoMeta | null | undefined, baseUrl?: string): void {
-  if (typeof document === 'undefined') return;
-  if (!meta) return;
+  if (typeof document === 'undefined' || !document.head) return;
   const head = document.head;
-  if (!head) return;
+  clearInjectedSeo();
 
-  // 1. 删除上一次本函数写入的所有 SEO 节点（按 marker）
-  head.querySelectorAll('[data-isr-seo]').forEach(el => el.remove());
+  // React owns the app title node and may update or replace it at commit.
+  const title = head.querySelector('title');
+  const previous = title ? managedTitles.get(title) : undefined;
+  const baseTitle = previous?.applied === document.title ? previous.base : document.title;
+  if (meta?.title) {
+    document.title = meta.title;
+    const active = head.querySelector('title');
+    if (active) managedTitles.set(active, { base: baseTitle, applied: meta.title });
+  } else if (title && previous) {
+    document.title = baseTitle;
+    managedTitles.delete(title);
+  }
+  if (!meta) return;
 
-  // 2. title 单独管 —— 只用 document.title 赋值（不创建第二个 <title>）
-  if (meta.title) document.title = meta.title;
-
-  // 3. 用与 renderPageSeoMeta 相同的逻辑重建 head 节点（保持 SSR / 客户端语义一致）
   const fragments: HTMLElement[] = [];
   const tag = (name: 'meta' | 'link' | 'script', attrs: Record<string, string>): HTMLElement => {
     const el = document.createElement(name);
     el.setAttribute('data-isr-seo', '');
-    for (const [k, v] of Object.entries(attrs)) el.setAttribute(k, v);
+    for (const [key, value] of Object.entries(attrs)) el.setAttribute(key, value);
     return el;
   };
 
