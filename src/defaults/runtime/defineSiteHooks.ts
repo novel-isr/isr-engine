@@ -31,7 +31,9 @@
  *   });
  */
 import { trimTrailingSlashes } from '../../utils/trimTrailingSlashes';
+import { contentPathname, RSC_URL_POSTFIX } from '../../utils/isrPath';
 import { createCachedFetcher } from './createCachedFetcher';
+import { registerContentInvalidator } from './contentRevalidation';
 import type { IntlPayload, PageSeoMeta } from './seo-runtime';
 import type {
   DynamicSeoResolver,
@@ -46,10 +48,13 @@ import {
   resolveI18nConfig,
   type I18nConfig,
 } from '../../runtime/i18n';
+import { readLocalePreference } from '../../runtime/localePreference';
 
 export { getCookieHeader, parseCookieHeader, readCookie } from '../../utils/cookie';
 
 export type SiteRuntimeConfig = ISRConfig['runtime'];
+
+const CONTENT_INVALIDATOR = Symbol('contentInvalidator');
 
 export interface SiteRuntimeContext {
   runtime: SiteRuntimeConfig;
@@ -139,15 +144,7 @@ export interface DefineAdminSiteHooksOptions {
   headExtras?: SiteHooksConfig['headExtras'];
 }
 
-export interface IntlConfig {
-  // ─── URL 路由层（被 parseLocale / withLocale 等消费）───────────
-  /** 支持的 locale 列表，如 ['zh', 'en']；用于 URL 前缀解析 */
-  locales?: readonly string[];
-  /** 默认 locale —— 必须在 locales 内；同时作为 detect 失败的兜底 */
-  defaultLocale?: string;
-  /** 默认 locale 是否带 URL 前缀（默认 false：'/about'；true：'/zh/about'） */
-  prefixDefault?: boolean;
-
+export interface IntlConfig extends Partial<I18nConfig> {
   // ─── 翻译消息加载层（被 SEO/Header 等消费）─────────────────────
   /** 远程 endpoint；`{locale}` 占位符自动替换 */
   endpoint?: string;
@@ -251,8 +248,14 @@ interface CompiledSeoPattern {
   paramNames: string[];
 }
 
+interface SeoRouteRequest {
+  pathname: string;
+  locale: string;
+  params: Record<string, string>;
+}
+
 interface CompiledRoute extends CompiledSeoPattern {
-  resolver: (params: Record<string, string>) => Promise<PageSeoMeta | null> | PageSeoMeta | null;
+  resolver: (request: SeoRouteRequest) => Promise<PageSeoMeta | null> | PageSeoMeta | null;
 }
 
 function escapeSeoPatternLiteral(literal: string): string {
@@ -564,14 +567,18 @@ function createSiteHooks(config: SiteHooksConfig, runtime: SiteRuntimeConfig): S
   };
 
   // ─── i18n 缓存（一次创建，请求级复用）──────────────
-  const intlCfg = config.intl ?? {};
+  const runtimeLocale = runtime.i18n;
+  const rememberLocale = runtimeLocale?.prefixDefault && runtimeLocale.rememberLocale;
+  const intlCfg = rememberLocale
+    ? { ...config.intl, ...resolveI18nConfig(runtimeLocale) }
+    : (config.intl ?? {});
   const supportedLocales = intlCfg.locales?.length ? intlCfg.locales : undefined;
   const negotiationConfig = supportedLocales
     ? resolveI18nConfig(intlCfg)
     : { locales: ['zh-CN', 'en'], defaultLocale: intlCfg.defaultLocale ?? 'zh-CN' };
   // 默认 detect 优先级（业界标准 i18n 顺序）：
   //   1. URL pathname 前缀  /en-US/... → 'en-US'    ← 显式路由意图，最高优先级
-  //   2. locale cookie                              ← 用户手动切换过的偏好
+  //   2. engine locale preference on the unprefixed root / legacy locale cookie
   //   3. Accept-Language 头                          ← 浏览器系统语言
   //   4. defaultLocale                              ← 兜底
   //
@@ -595,6 +602,10 @@ function createSiteHooks(config: SiteHooksConfig, runtime: SiteRuntimeConfig): S
             : pathname;
           const first = cleanPath.split('/')[1];
           if (first && supportedLocales.includes(first)) return first;
+          if (cleanPath === '/' && rememberLocale && runtimeLocale) {
+            const preference = readLocalePreference(req, runtimeLocale);
+            if (preference) return preference;
+          }
         } catch {
           // 非法 URL（极少见，比如内部调用喂了相对路径）→ 继续后续策略
         }
@@ -645,57 +656,50 @@ function createSiteHooks(config: SiteHooksConfig, runtime: SiteRuntimeConfig): S
 
   // ─── SEO 路由表编译 + 远程 loader 缓存（每个 pattern 一份）─────
   const seoRoutes: CompiledRoute[] = [];
-  const remoteCaches = new Map<
-    string,
-    ReturnType<typeof createCachedFetcher<string, PageSeoMeta | null>>
-  >();
+  const seoCaches: Array<
+    ReturnType<typeof createCachedFetcher<SeoRouteRequest, PageSeoMeta | null>>
+  > = [];
+  const seoLocaleConfig = supportedLocales ? resolveI18nConfig(intlCfg) : undefined;
+  const seoPath = (pathname: string) =>
+    seoLocaleConfig ? parseLocale(pathname, seoLocaleConfig).pathname : pathname;
 
   for (const [pattern, value] of Object.entries(config.seo ?? {})) {
     const { re, paramNames } = compileSeoPattern(pattern);
 
     if (typeof value === 'function') {
       // 自定义 resolver
-      seoRoutes.push({ re, paramNames, resolver: value as CompiledRoute['resolver'] });
+      const resolve = value as (
+        params: Record<string, string>
+      ) => PageSeoMeta | null | Promise<PageSeoMeta | null>;
+      seoRoutes.push({ re, paramNames, resolver: ({ params }) => resolve(params) });
       continue;
     }
     if ('endpoint' in value && typeof (value as SeoRemoteEntry).endpoint === 'string') {
       const remote = value as SeoRemoteEntry;
-      const cache = createCachedFetcher<string, PageSeoMeta | null>({
-        key: paramKey => `seo:${pattern}:${paramKey}`,
+      const cache = createCachedFetcher<SeoRouteRequest, PageSeoMeta | null>({
+        key: request => JSON.stringify(request),
         ttl: remote.ttl ?? 300_000,
-        fetch: async paramKey => {
-          const params = JSON.parse(paramKey) as Record<string, string>;
+        fetch: async ({ params }) => {
           const data = await fetchJson(fillTemplate(remote.endpoint, params), services.api);
           if (data === null) return null;
-          return remote.transform(data, params);
+          return remote.transform(data, { ...params });
         },
         fallback: () => null,
       });
-      remoteCaches.set(pattern, cache);
-      seoRoutes.push({
-        re,
-        paramNames,
-        resolver: params => cache(JSON.stringify(params)),
-      });
+      seoCaches.push(cache);
+      seoRoutes.push({ re, paramNames, resolver: cache });
       continue;
     }
     if ('load' in value && typeof (value as SeoLocalEntry).load === 'function') {
       const local = value as SeoLocalEntry;
-      const cache = createCachedFetcher<string, PageSeoMeta | null>({
-        key: paramKey => `seo-local:${pattern}:${paramKey}`,
+      const cache = createCachedFetcher<SeoRouteRequest, PageSeoMeta | null>({
+        key: request => JSON.stringify(request),
         ttl: local.ttl ?? 300_000,
-        fetch: async paramKey => {
-          const params = JSON.parse(paramKey) as Record<string, string>;
-          return await local.load(params, runtimeCtx);
-        },
+        fetch: async ({ params }) => local.load({ ...params }, runtimeCtx),
         fallback: () => null,
       });
-      remoteCaches.set(pattern, cache);
-      seoRoutes.push({
-        re,
-        paramNames,
-        resolver: params => cache(JSON.stringify(params)),
-      });
+      seoCaches.push(cache);
+      seoRoutes.push({ re, paramNames, resolver: cache });
       continue;
     }
     // 静态 meta
@@ -721,7 +725,7 @@ function createSiteHooks(config: SiteHooksConfig, runtime: SiteRuntimeConfig): S
   const output: ServerHooksOutput = {
     siteBaseUrl: site || undefined,
     apiBaseUrl: api || undefined,
-    intl: config.intl,
+    intl: rememberLocale ? intlCfg : config.intl,
     headExtras: config.headExtras,
     async beforeRequest(req, _engineCtx) {
       const locale = detectLocale(req);
@@ -737,25 +741,15 @@ function createSiteHooks(config: SiteHooksConfig, runtime: SiteRuntimeConfig): S
       // 客户端 RSC 导航 fetch 的 URL 带 _.rsc 后缀（详见 defaults/runtime/request.tsx）。
       // 先剥后缀，否则 /zh-CN/books/1_.rsc 永远 match 不到 /books/:id route → seoMeta=null →
       // 客户端导航后 head 不更新。HTML 请求没这个后缀，原行为不变。
-      let pathForRouting = url.pathname;
-      if (pathForRouting.endsWith('_.rsc')) {
-        pathForRouting = pathForRouting.slice(0, -'_.rsc'.length) || '/';
-      }
       // SEO 表是按"业务规范路径"（'/' / '/books' / '/about'）入库的，
       // 不带 locale 前缀。请求 URL 是带前缀的（'/en-US/'、'/zh-CN/books'），
       // 直接喂给 admin 查不到。先用 parseLocale 把 locale 段剥掉，
       // 再去 seoRoutes 里匹配 + 调 admin endpoint。
-      // 同时 locale 单独传到 resolver params，让 endpoint 模板里 {locale}
-      // 占位符能填对应语言（之前那个 fix 留着，跟 strip 配合一起才完整）。
-      const intlConfig = config.intl;
-      const cleanPath =
-        intlConfig?.locales && intlConfig.locales.length > 0
-          ? parseLocale(pathForRouting, {
-              locales: intlConfig.locales,
-              defaultLocale: intlConfig.defaultLocale ?? intlConfig.locales[0]!,
-              prefixDefault: intlConfig.prefixDefault,
-            } satisfies I18nConfig).pathname
-          : pathForRouting;
+      // locale 单独传给 resolver，支持 endpoint 模板里的 {locale}。
+      const pathForRouting = url.pathname.endsWith(RSC_URL_POSTFIX)
+        ? url.pathname.slice(0, -RSC_URL_POSTFIX.length) || '/'
+        : url.pathname;
+      const cleanPath = seoPath(pathForRouting);
 
       for (const { re, paramNames, resolver } of seoRoutes) {
         const m = cleanPath.match(re);
@@ -765,13 +759,39 @@ function createSiteHooks(config: SiteHooksConfig, runtime: SiteRuntimeConfig): S
             locale,
           };
           paramNames.forEach((n, i) => (params[n] = m[i + 1] ?? ''));
-          return await resolver(params);
+          return await resolver({ pathname: cleanPath, locale, params });
         }
       }
       return null;
     },
     onError,
   };
+  const invalidate: Parameters<typeof registerContentInvalidator>[0] = scopes => {
+    const locales = new Set(scopes.locales);
+    if (scopes.allPageMetadata || locales.size) {
+      intlLoader.invalidate(
+        locale => !!scopes.allPageMetadata || locales.has(locale.toLowerCase())
+      );
+    }
+    if (scopes.allPageMetadata || scopes.tags.length) {
+      for (const cache of seoCaches) cache.invalidate();
+      return;
+    }
+    if (!scopes.paths.length && !locales.size) return;
+    const paths = new Set(
+      scopes.paths.map(pathname => trimTrailingSlashes(seoPath(contentPathname(pathname))))
+    );
+    for (const cache of seoCaches) {
+      cache.invalidate(
+        ({ pathname, locale }) =>
+          paths.has(trimTrailingSlashes(pathname)) || locales.has(locale.toLowerCase())
+      );
+    }
+  };
+  // Keep the weak listener alive when the runtime copies these hooks into a server entry.
+  Object.defineProperty(output.loadIntl, CONTENT_INVALIDATOR, { value: invalidate });
+  Object.defineProperty(output.loadSeoMeta, CONTENT_INVALIDATOR, { value: invalidate });
+  registerContentInvalidator(invalidate, { weak: true });
   Object.defineProperty(output, '__configureRuntime', {
     enumerable: false,
     configurable: true,

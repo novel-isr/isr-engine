@@ -1,5 +1,7 @@
 import type { ISRConfig } from 'isr-engine';
 
+const rememberLocale = process.env.PLAYWRIGHT_REMEMBER_LOCALE === '1';
+
 export default {
   renderMode: 'ssr',
   revalidate: 60,
@@ -8,6 +10,7 @@ export default {
     '/static': 'ssg',
     '/article': 'ssr',
     '/cached': 'isr',
+    ...(rememberLocale && { '/en/cached': 'isr' as const }),
     '/regenerated': { mode: 'ssg', ttl: 1, staleWhileRevalidate: 30 },
   },
   runtime: {
@@ -27,7 +30,8 @@ export default {
     i18n: {
       locales: ['en', 'zh-CN'],
       defaultLocale: 'en',
-      prefixDefault: false,
+      prefixDefault: rememberLocale,
+      rememberLocale,
       endpoint: undefined,
       fallbackLocal: {
         en: { notFoundTitle: 'Page not found' },

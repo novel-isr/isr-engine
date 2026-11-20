@@ -1,10 +1,13 @@
 import { parseLocale, withLocale, type I18nConfig } from '../../runtime/i18n';
+import { serializeLocalePreference } from '../../runtime/localePreference';
 import { isPrimaryLinkClick } from './client-navigation-policy';
 import { pushLinkNavigation } from './navigation-history.client';
 
 const selector = 'a[data-isr-locale-link]';
 
-function updateLink(link: HTMLAnchorElement): URL | undefined {
+function updateLink(
+  link: HTMLAnchorElement
+): { url: URL; locale: string; config: I18nConfig } | undefined {
   const data = link.dataset.isrLocaleLink;
   if (!data) return undefined;
   try {
@@ -14,7 +17,7 @@ function updateLink(link: HTMLAnchorElement): URL | undefined {
     url.pathname = withLocale(pathname, locale, config);
     link.href = url.href;
     link.removeAttribute('aria-disabled');
-    return url;
+    return { url, locale, config };
   } catch {
     link.removeAttribute('href');
     link.setAttribute('aria-disabled', 'true');
@@ -31,15 +34,22 @@ export function installLocaleLinks() {
     if (!(event.target instanceof Element)) return;
     const link = event.target.closest<HTMLAnchorElement>(selector);
     if (!link) return;
-    const url = updateLink(link);
+    const destination = updateLink(link);
     if (
-      url &&
+      destination &&
       event instanceof MouseEvent &&
       event.type === 'click' &&
       (!link.target || link.target === '_self') &&
       isPrimaryLinkClick(event)
     ) {
       event.preventDefault();
+      const { url, locale, config } = destination;
+      try {
+        const preference = serializeLocalePreference(locale, config, url.protocol === 'https:');
+        if (preference) document.cookie = preference;
+      } catch {
+        // A browser may block cookie access. Keep the link usable in that case.
+      }
       if (!connected) pending = url.href;
       else if (url.href !== location.href) pushLinkNavigation(url.href);
     }

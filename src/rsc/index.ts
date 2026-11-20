@@ -13,9 +13,11 @@
 export {
   revalidatePath,
   revalidateTag,
+  revalidateContent,
   registerInvalidator,
   RevalidationError,
   type RevalidateInvalidator,
+  type ContentRevalidationOptions,
 } from './revalidate';
 
 export {

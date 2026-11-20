@@ -275,7 +275,10 @@ export function defineServerEntry<C extends ServerCtx = ServerCtx>(
         return response;
       } catch (err) {
         if (isNoAcceptableLocaleError(err)) {
-          return new Response(null, { status: 406, headers: { vary: 'Accept-Language, Cookie' } });
+          return new Response(null, {
+            status: 406,
+            headers: { vary: 'Accept-Language, Cookie', 'cache-control': 'no-store' },
+          });
         }
         if (hooks.onError) {
           try {

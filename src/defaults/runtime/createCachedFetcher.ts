@@ -46,6 +46,12 @@ class TinyLRU<K, V> {
       if (oldest !== undefined) this.store.delete(oldest);
     }
   }
+
+  deleteWhere(matches: (value: V) => boolean): void {
+    for (const [key, value] of this.store) {
+      if (matches(value)) this.store.delete(key);
+    }
+  }
 }
 
 export interface CachedFetcherOptions<TArg, TValue> {
@@ -63,8 +69,9 @@ export interface CachedFetcherOptions<TArg, TValue> {
   fallback?: (arg: TArg, error: unknown) => TValue | Promise<TValue>;
 }
 
-interface Entry<T> {
-  value: T;
+interface Entry<TArg, TValue> {
+  arg: TArg;
+  value: TValue;
   expiresAt: number;
 }
 
@@ -72,24 +79,36 @@ export type CachedFetcher<TArg, TValue> = (arg: TArg) => Promise<TValue>;
 
 export function createCachedFetcher<TArg, TValue>(
   opts: CachedFetcherOptions<TArg, TValue>
-): CachedFetcher<TArg, TValue> {
+): CachedFetcher<TArg, TValue> & { invalidate(matches?: (arg: TArg) => boolean): void } {
   const ttl = opts.ttl ?? 60_000;
   const max = opts.max ?? 500;
-  const cache = new TinyLRU<string, Entry<TValue>>(max);
-  const inflight = new Map<string, Promise<TValue>>();
+  type Flight = { arg: TArg; promise?: Promise<TValue> };
+  const cache = new TinyLRU<string, Entry<TArg, TValue>>(max);
+  const inflight = new Map<string, Flight>();
 
-  async function load(arg: TArg): Promise<TValue> {
+  async function load(key: string, flight: Flight): Promise<TValue> {
     try {
-      const v = await opts.fetch(arg);
-      cache.set(opts.key(arg), { value: v, expiresAt: Date.now() + ttl });
-      return v;
+      const value = await opts.fetch(flight.arg);
+      if (inflight.get(key) === flight) {
+        cache.set(key, { arg: flight.arg, value, expiresAt: Date.now() + ttl });
+      }
+      return value;
     } catch (err) {
-      if (opts.fallback) return await opts.fallback(arg, err);
+      if (opts.fallback) return await opts.fallback(flight.arg, err);
       throw err;
     }
   }
 
-  return async function cachedFetcher(arg: TArg): Promise<TValue> {
+  function startLoad(key: string, arg: TArg): Promise<TValue> {
+    const flight: Flight = { arg };
+    inflight.set(key, flight);
+    flight.promise = load(key, flight).finally(() => {
+      if (inflight.get(key) === flight) inflight.delete(key);
+    });
+    return flight.promise;
+  }
+
+  async function cachedFetcher(arg: TArg): Promise<TValue> {
     const key = opts.key(arg);
     const entry = cache.get(key);
     const now = Date.now();
@@ -101,9 +120,7 @@ export function createCachedFetcher<TArg, TValue>(
     if (entry && opts.swr) {
       // SWR：返回旧值，后台刷新（不阻塞）；如已有 in-flight 则不重复触发
       if (!inflight.has(key)) {
-        const p = load(arg).finally(() => inflight.delete(key));
-        inflight.set(key, p);
-        p.catch(() => {
+        startLoad(key, arg).catch(() => {
           /* 后台刷新失败保留旧值 */
         });
       }
@@ -111,11 +128,15 @@ export function createCachedFetcher<TArg, TValue>(
     }
 
     // miss 或非 SWR 过期：合并并发到同一个 promise
-    const existing = inflight.get(key);
-    if (existing) return existing;
+    return inflight.get(key)?.promise ?? startLoad(key, arg);
+  }
 
-    const p = load(arg).finally(() => inflight.delete(key));
-    inflight.set(key, p);
-    return p;
+  cachedFetcher.invalidate = (matches: (arg: TArg) => boolean = () => true): void => {
+    cache.deleteWhere(entry => matches(entry.arg));
+    for (const [key, flight] of inflight) {
+      if (matches(flight.arg)) inflight.delete(key);
+    }
   };
+
+  return cachedFetcher;
 }

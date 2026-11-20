@@ -105,6 +105,8 @@ export interface RuntimeI18nConfig {
   defaultLocale: string;
   /** 默认 locale 是否带 URL 前缀 */
   prefixDefault: boolean;
+  /** Opt in to remembering LocaleLink selections for the unprefixed root in prefixDefault mode. */
+  rememberLocale?: boolean;
   /** 远端字典端点；相对路径会拼到 services.api 上 */
   endpoint: string | undefined;
   /** 本地兜底字典；配置 API 不可用时使用 */
@@ -164,6 +166,27 @@ export interface DynamicSeoResolver {
   }) => Promise<Record<string, unknown> | null> | Record<string, unknown> | null;
 }
 
+export interface RuntimeSitemapEntry {
+  /** Canonical, origin-relative, percent-encoded pathname. */
+  path: string;
+  status: 'published' | 'draft' | 'unpublished' | 'scheduled' | 'archived';
+  noindex?: boolean;
+  /** ISO 8601 timestamp of the last content change. */
+  modifiedTime?: string;
+}
+
+export interface RuntimeSitemapConfig {
+  /**
+   * Load the complete authoritative catalog in one operation. Each canonical path is unique.
+   * The emitted sitemap can contain up to 50,000 URLs and 50 MiB of uncompressed XML.
+   */
+  load: (input: {
+    services: RuntimeServicesConfig;
+  }) => readonly RuntimeSitemapEntry[] | Promise<readonly RuntimeSitemapEntry[]>;
+  /** Catalog cache TTL in milliseconds. Defaults to runtime.seo.ttl. */
+  ttl?: number;
+}
+
 export interface RuntimeSeoConfig {
   /** 远端 SEO 端点；支持 {pathname} */
   endpoint: string | undefined;
@@ -180,6 +203,8 @@ export interface RuntimeSeoConfig {
    * generateSeo。详见 DynamicSeoResolver 注释。
    */
   dynamicResolvers: readonly DynamicSeoResolver[] | undefined;
+  /** Optional authoritative sitemap catalog. */
+  sitemap?: RuntimeSitemapConfig;
 }
 
 export interface RuntimeServicesConfig {

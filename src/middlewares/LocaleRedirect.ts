@@ -3,9 +3,10 @@
  *
  * `runtime.i18n.prefixDefault: true` 时，根目录 / 业务路径裸 URL（无 locale 前缀）
  * 302 到 `/{negotiated}/path`。negotiated 来源优先级：
- *   1. cookie 'locale'（用户上次切过的）
- *   2. Accept-Language 头协商（按权重匹配 i18n.locales）
- *   3. i18n.defaultLocale 或首个未被拒绝的 locale
+ *   1. 根路径上启用的 LocaleLink 偏好
+ *   2. 应用提供的 `locale` cookie
+ *   3. Accept-Language 头协商（按权重匹配 i18n.locales）
+ *   4. i18n.defaultLocale 或首个未被拒绝的 locale
  * 所有 locale 都被 Accept-Language 明确拒绝时返回 406。
  *
  * 命中条件外的请求一概放行：
@@ -20,7 +21,10 @@
 import type { Request, Response, NextFunction } from 'express';
 import type { I18nConfig } from '../runtime/i18n';
 import { selectAcceptableLocale } from '../runtime/i18n';
+import { readLocalePreference } from '../runtime/localePreference';
 import { readRedirectQuery, redirectLocal } from '../server/safeRedirect';
+import { readCookie } from '../utils/cookie';
+import { RSC_URL_POSTFIX } from '../utils/isrPath';
 
 export interface CreateLocaleRedirectOptions {
   i18n: I18nConfig;
@@ -48,9 +52,6 @@ const FRAMEWORK_SKIP_EXACT = new Set([
   '/robots.txt',
   '/favicon.ico',
 ]);
-
-// 跟 defaults/runtime/request.tsx 保持一致 —— RSC client navigation 用这个后缀
-const RSC_POSTFIX = '_.rsc';
 
 export function createLocaleRedirectMiddleware(
   options: CreateLocaleRedirectOptions
@@ -91,9 +92,9 @@ export function createLocaleRedirectMiddleware(
     // 前缀，URL 永远跟 /zh-CN 不同步。剥后缀做路由判定，redirect 目标拼回去。
     let path = rawPath;
     let rscSuffix = '';
-    if (path.endsWith(RSC_POSTFIX)) {
-      rscSuffix = RSC_POSTFIX;
-      path = path.slice(0, -RSC_POSTFIX.length) || '/';
+    if (path.endsWith(RSC_URL_POSTFIX)) {
+      rscSuffix = RSC_URL_POSTFIX;
+      path = path.slice(0, -RSC_URL_POSTFIX.length) || '/';
     }
 
     // 真静态资源（含点号判定 —— /assets/foo.css、/logo.svg、/manifest.webmanifest）
@@ -113,9 +114,8 @@ export function createLocaleRedirectMiddleware(
       }
     }
 
-    // 决议目标 locale：cookie 'locale' → Accept-Language → defaultLocale
-    const cookieHeader = typeof req.headers['cookie'] === 'string' ? req.headers['cookie'] : '';
-    const cookieLocale = readCookieLocale(cookieHeader);
+    const preference = path === '/' ? readLocalePreference(req, i18n) : undefined;
+    const cookieLocale = preference ?? readCookie(req, 'locale', 'first');
     const target =
       (cookieLocale && localePrefixes.has(cookieLocale) ? cookieLocale : null) ||
       selectAcceptableLocale(
@@ -123,6 +123,7 @@ export function createLocaleRedirectMiddleware(
         i18n
       );
 
+    res.set('Cache-Control', 'no-store');
     if (target === null) {
       res.vary('Accept-Language').vary('Cookie').status(406).end();
       return;
@@ -134,21 +135,4 @@ export function createLocaleRedirectMiddleware(
     }
     redirectLocale(res, 302, prefix, path, rscSuffix, req.url);
   };
-}
-
-function readCookieLocale(header: string): string | null {
-  if (!header) return null;
-  for (const part of header.split(';')) {
-    const trimmed = part.trim();
-    const eq = trimmed.indexOf('=');
-    if (eq <= 0) continue;
-    if (trimmed.slice(0, eq).trim() === 'locale') {
-      try {
-        return decodeURIComponent(trimmed.slice(eq + 1).trim());
-      } catch {
-        return trimmed.slice(eq + 1).trim();
-      }
-    }
-  }
-  return null;
 }

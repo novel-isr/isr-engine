@@ -67,6 +67,8 @@ export interface IsrCacheStore {
   delete(key: string): boolean;
   /** Await durable invalidation, including entries evicted from L1. */
   invalidateByTag?(tag: string): Promise<void>;
+  /** Atomic response invalidation with durable content metadata fencing. */
+  invalidateTags?(tags: readonly string[], publicationId: string): Promise<void>;
   /** 清空（同步 L1 + 异步 L2）*/
   clear(): void;
   /** L1 中遍历 —— 用于 tag 失效与内部测试/诊断 */

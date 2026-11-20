@@ -14,6 +14,7 @@ import {
   type IsrInvalidationTarget,
 } from '../../plugin/isrCacheMiddleware';
 import { cacheTag } from '../../rsc/cacheTag';
+import { defineSiteHooks } from '../../defaults/runtime/defineSiteHooks';
 
 const url = process.env.ISR_TEST_REDIS_URL;
 
@@ -535,6 +536,43 @@ describe.skipIf(!url)('coherent response protocol against real Redis', () => {
     const next = await fetch(secondUrl + '/page');
     expect(await next.text()).toBe('new');
     expect(next.headers.get('x-cache-status')).toBe('HIT');
+  });
+
+  it('refreshes warm page metadata before rendering after a missed publication message', async () => {
+    const writer = pod();
+    const reader = pod();
+    let title = 'old title';
+    const hooks = defineSiteHooks({
+      seo: { '/page': { load: async () => ({ title }) } },
+    });
+    const base = await httpPod(reader, (req, res) => {
+      cacheTag('posts');
+      void hooks.loadSeoMeta(new Request('https://example.com' + req.url)).then(meta => {
+        res.setHeader('content-type', 'text/html');
+        res.end(meta?.title);
+      });
+    });
+    expect(await (await fetch(base + '/page')).text()).toBe('old title');
+    const warm = await fetch(base + '/page');
+    expect(warm.headers.get('x-cache-status')).toBe('HIT');
+    expect(await warm.text()).toBe('old title');
+
+    title = 'metadata-only publication';
+    await writer.store.invalidateTags!([], randomUUID());
+    expect(await (await fetch(base + '/page')).text()).toBe('old title');
+    const variant = await fetch(base + '/page?new');
+    expect(variant.headers.get('x-cache-status')).toBe('MISS');
+    expect(await variant.text()).toBe('metadata-only publication');
+
+    title = 'targeted publication';
+    await writer.store.invalidateTags!(['posts'], randomUUID());
+
+    const regenerated = await fetch(base + '/page');
+    expect(regenerated.headers.get('x-cache-status')).toBe('MISS');
+    expect(await regenerated.text()).toBe('targeted publication');
+    const replay = await fetch(base + '/page');
+    expect(replay.headers.get('x-cache-status')).toBe('HIT');
+    expect(await replay.text()).toBe('targeted publication');
   });
 
   it('keeps HTTP origin available without caching when render admission is disconnected', async () => {

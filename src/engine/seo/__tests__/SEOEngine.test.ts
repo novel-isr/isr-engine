@@ -17,3 +17,31 @@ it('regenerates cached sitemap entries when the supplied content timestamp chang
   expect(another).toContain('<loc>https://example.com/other</loc>');
   expect(another).not.toContain('<lastmod>');
 });
+
+it('rejects conflicting publication records for a single URL', async () => {
+  const seo = SEOEngine.getInstance({ baseUrl: 'https://example.com' });
+  await expect(
+    seo.generatePublishedSitemap([
+      { path: '/article', status: 'published' },
+      { path: '/%61rticle', status: 'unpublished' },
+    ])
+  ).rejects.toThrow('Duplicate sitemap path');
+});
+
+it('rejects a publication sitemap that would exceed the URL limit', async () => {
+  const seo = SEOEngine.getInstance({ baseUrl: 'https://example.com' });
+  const entries = Array.from({ length: 50_001 }, (_, index) => ({
+    path: `/articles/${index}`,
+    status: 'published' as const,
+  }));
+  await expect(seo.generatePublishedSitemap(entries)).rejects.toThrow('50000 URLs');
+});
+
+it('rejects a publication URL with 2048 characters including the site origin', async () => {
+  const baseUrl = 'https://example.com';
+  const seo = SEOEngine.getInstance({ baseUrl });
+  const path = '/' + 'a'.repeat(2048 - baseUrl.length - 1);
+  await expect(seo.generatePublishedSitemap([{ path, status: 'published' }])).rejects.toThrow(
+    'shorter than 2048 characters'
+  );
+});

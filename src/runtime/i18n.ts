@@ -33,6 +33,8 @@ export interface I18nConfig {
   defaultLocale: string;
   /** 是否给默认 locale 也加 URL 前缀（默认 false：'/about'；true：'/zh/about'） */
   prefixDefault?: boolean;
+  /** Remember deliberate LocaleLink selections for the unprefixed root in prefixDefault mode. */
+  rememberLocale?: boolean;
 }
 
 export interface ParsedLocale {
@@ -225,6 +227,7 @@ export function resolveI18nConfig(
     locales?: readonly string[];
     defaultLocale?: string;
     prefixDefault?: boolean;
+    rememberLocale?: boolean;
   } | null
 ): I18nConfig {
   const locales = intl?.locales && intl.locales.length > 0 ? intl.locales : ['en'];
@@ -233,5 +236,6 @@ export function resolveI18nConfig(
     locales,
     defaultLocale,
     prefixDefault: intl?.prefixDefault,
+    ...(intl?.rememberLocale && { rememberLocale: true }),
   };
 }

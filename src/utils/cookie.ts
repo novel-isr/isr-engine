@@ -23,13 +23,20 @@ export function getCookieHeader(source: CookieHeaderSource): string {
   return raw === undefined || raw === null ? '' : String(raw);
 }
 
-export function readCookie(source: CookieHeaderSource, name: string): string | undefined {
+export function readCookie(
+  source: CookieHeaderSource,
+  name: string,
+  duplicate: 'first' | 'last' = 'last'
+): string | undefined {
   if (!name) return undefined;
-  const cookies = parseCookieHeader(getCookieHeader(source));
+  const cookies = parseCookieHeader(getCookieHeader(source), duplicate);
   return cookies[name];
 }
 
-export function parseCookieHeader(header: string): Record<string, string> {
+export function parseCookieHeader(
+  header: string,
+  duplicate: 'first' | 'last' = 'last'
+): Record<string, string> {
   const entries = new Map<string, string>();
 
   for (const part of header.split(';')) {
@@ -40,7 +47,7 @@ export function parseCookieHeader(header: string): Record<string, string> {
     if (index <= 0) continue;
 
     const key = trimmed.slice(0, index).trim();
-    if (!key) continue;
+    if (!key || (duplicate === 'first' && entries.has(key))) continue;
 
     const rawValue = trimmed.slice(index + 1).trim();
     entries.set(key, safeDecodeCookieValue(rawValue));

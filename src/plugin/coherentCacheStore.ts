@@ -61,6 +61,13 @@ export function createCoherentCacheStore({
       if (snapshot.value.tags.includes(tag) || snapshot.value.pathTag === tag) local.delete(key);
     }
   }
+  function invalidate(tags: readonly string[], run: () => Promise<void>): Promise<void> {
+    if (destroyed) return Promise.reject(new Error('response cache is closed'));
+    const evict = () => tags.forEach(evictByTag);
+    evict();
+    return track(run().finally(evict));
+  }
+  const invalidateTags = backend.invalidateTags?.bind(backend);
   async function commitValue(
     key: string,
     entry: IsrCachedEntry,
@@ -136,10 +143,12 @@ export function createCoherentCacheStore({
     },
     evictByTag,
     invalidateByTag(tag) {
-      if (destroyed) return Promise.reject(new Error('response cache is closed'));
-      evictByTag(tag);
-      return track(backend.invalidateTag(tag).finally(() => evictByTag(tag)));
+      return invalidate([tag], () => backend.invalidateTag(tag));
     },
+    ...(invalidateTags && {
+      invalidateTags: (tags, publicationId) =>
+        invalidate(tags, () => invalidateTags(tags, publicationId)),
+    }),
     clear() {
       generation++;
       local.clear();

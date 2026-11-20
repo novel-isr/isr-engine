@@ -17,6 +17,7 @@ import {
   defineSiteHooks,
   type ServerHooksOutput,
 } from '../defaults/runtime/defineSiteHooks';
+import { resolveI18nConfig } from '../runtime/i18n';
 import type { ISRConfig } from '../types';
 
 const engineCtx = { traceId: 't', startedAt: 0 };
@@ -41,6 +42,23 @@ beforeEach(() => {
 });
 
 describe('defineSiteHooks: locale detection', () => {
+  it('uses the runtime preference and URL locales with a custom dictionary loader', async () => {
+    const routing = { locales: ['en', 'ja'], defaultLocale: 'en', prefixDefault: true };
+    const configured = runtime({ i18n: { ...routing, rememberLocale: true } });
+    const custom = defineSiteHooks({ intl: { load: async locale => ({ locale, messages: {} }) } });
+    for (const hooks of [defineAdminSiteHooks(), custom]) {
+      const runtimeHooks = applyRuntimeToServerHooks(hooks, configured);
+      expect(resolveI18nConfig(runtimeHooks.intl)).toEqual({
+        ...routing,
+        rememberLocale: true,
+      });
+      const headers = { cookie: 'isr_locale=ja', 'accept-language': 'ja' };
+      expect(
+        (await runtimeHooks.loadIntl(new Request('https://example.com/en', { headers })))?.locale
+      ).toBe('en');
+    }
+  });
+
   it('cookie locale 优先', async () => {
     const hooks = defineSiteHooks({});
     const req = new Request('http://x.com', { headers: { cookie: 'a=b; locale=fr; c=d' } });

@@ -126,6 +126,10 @@ TTL 与 SWR 单位为秒。`routes` 控制渲染策略；页面路由可使用 `
 - 授权头、普通业务 Cookie，以及 `private`/`no-store` 等响应会触发缓存保护；不要依赖这些保护代替路由策略。`anon` 与实验 Cookie 有专门的共享缓存规则。
 - Server Component 使用 `cacheTag('site-content')` 声明依赖；数据更新成功后，在受业务鉴权保护的服务端代码中 `await revalidateTag('site-content')` 或 `await revalidatePath('/about')`，从 `isr-engine/rsc` 导入。
 
+后台提交发布、撤稿或索引状态更新后，从 `isr-engine/rsc` 调用 `await revalidateContent({ paths: ['/about'], locales: ['en'], sitemap: true })`。按实际变化指定页面路径或标签、字典语言和 sitemap，引擎先失效相关元数据，再失效对应 ISR 响应。其他实例的进程内元数据通过 Redis 广播刷新，断连时可在重连回放或缓存到期后更新。
+
+`runtime.seo.sitemap.load({ services })` 从已提交的数据批量读取完整目录。每条包含站内绝对路径 `path`、`status`，可带 `noindex` 和真实内容更新时间 `modifiedTime`。引擎只输出已发布且可索引的条目，缺少更新时间时省略 `lastmod`。单份 sitemap 上限为 50,000 个 URL 和 50 MiB。
+
 请求期扩展可放在可选的 `src/entry.server.tsx`，默认导出 `defineAdminSiteHooks({ beforeRequest, onError })`（从 `isr-engine/site-hooks` 导入）。部署配置留在 `ssr.config.ts`；Server Component 用 `getRequestContext()` 读取 hooks 注入的上下文。
 
 `Logger.spin()` 返回 Ora 10 对象。`prefixText`、`suffixText` 可为字符串或生成函数；`color` 接受颜色名、`false` 或 `undefined`；自定义 spinner 的 `interval` 必须是正安全整数。
@@ -169,6 +173,7 @@ curl -fsS -H "x-isr-admin-token: $ISR_OPS_TOKEN" \
 
 语言切换可从 `isr-engine/runtime` 使用 `<LocaleLink locale="ja" config={i18n}>日本語</LocaleLink>`。
 组件在引擎接管后可操作，沿用当前路径、查询参数和锚点。
+使用 `runtime.i18n.prefixDefault: true` 的站点可选设 `rememberLocale: true`。`LocaleLink` 保存主动切换的语言，下次访问裸根路径时优先采用，带语言前缀的 URL 始终优先。语言协商跳转默认发送 `Cache-Control: no-store`。
 
 配置字段与默认行为见 [公共配置类型](./src/types/ISRConfig.ts) 和 [默认配置](./src/config/defaults.ts)。
 

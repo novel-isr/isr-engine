@@ -1,7 +1,13 @@
 'use client';
 import { useEffect, useState } from 'react';
 
-export default function ProductionView({ route }: { route: string }) {
+export default function ProductionView({
+  route,
+  destination,
+}: {
+  route: string;
+  destination: string;
+}) {
   const [count, setCount] = useState(0);
   const [hydrated, setHydrated] = useState(false);
   useEffect(() => setHydrated(true), []);
@@ -11,7 +17,7 @@ export default function ProductionView({ route }: { route: string }) {
       <button disabled={!hydrated} onClick={() => setCount(value => value + 1)}>
         Count {count}
       </button>
-      <a href={route === 'Home' ? '/article' : '/'} data-nav='route'>
+      <a href={destination} data-nav='route'>
         Navigate
       </a>
       <a href='#details' data-nav='hash'>

@@ -13,7 +13,12 @@ import { isDev } from '@/config/getStatus';
 import type { RouteSetupFn, ServerContext } from './types';
 import { createViteDevServer, closeViteDevServer } from './viteDevServer';
 import { applyBaseMiddlewaresWithOptions, mountViteOrStatic } from './middleware';
-import { createProductionRuntime, type ProductionRuntime } from './productionRuntime';
+import {
+  createProductionRuntime,
+  createSeoRequestMiddleware,
+  type ProductionRuntime,
+} from './productionRuntime';
+import { createPublishedSitemap } from './publishedSitemap';
 import { startServer, closeServer } from './httpServer';
 import { requestContext } from '@/context/RequestContext';
 import { createServerRequestContext, applyAnonCookie } from '@/context/createServerRequestContext';
@@ -115,6 +120,14 @@ async function initServerContext(config?: ISRConfig): Promise<ServerContext> {
     if (needsAnonCookie) applyAnonCookie(res, data.anonId, cookieDomain);
     requestContext.run(data, () => next());
   });
+
+  const publishedSitemap = config && createPublishedSitemap(config);
+  if (publishedSitemap) {
+    developmentCleanups.push(publishedSitemap.close);
+    serverContext.requestHandler.use(
+      createSeoRequestMiddleware(config?.server.requestLimits?.seo, publishedSitemap)
+    );
+  }
 
   // Locale redirect —— runtime.i18n.prefixDefault=true 时挂上，让裸 URL 302 到带前缀
   // 形式（详见 middlewares/LocaleRedirect）；必须早于 ISR cache / 静态。

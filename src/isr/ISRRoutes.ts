@@ -28,6 +28,7 @@ export class ISRRoutes {
   private readonly defaultMode: RenderModeType;
   private readonly routes: Record<string, RouteRule>;
   private readonly requestLimits: RequestLimitsConfig | undefined;
+  private readonly seoAlreadyLimited: boolean;
 
   constructor(
     private engine: ISREngine,
@@ -36,15 +37,19 @@ export class ISRRoutes {
       renderMode: RenderModeType;
       routes?: Record<string, RouteRule>;
       requestLimits?: RequestLimitsConfig;
+      seoAlreadyLimited?: boolean;
     }
   ) {
     this.defaultMode = config.renderMode;
     this.routes = config.routes || {};
     this.requestLimits = config.requestLimits;
+    this.seoAlreadyLimited = config.seoAlreadyLimited ?? false;
   }
 
   setup(requestHandler: Express): void {
-    const seoLimiter = createRequestLimiter('seo', this.requestLimits?.seo);
+    const seoLimiters = this.seoAlreadyLimited
+      ? []
+      : [createRequestLimiter('seo', this.requestLimits?.seo)];
     const opsConfig =
       getRuntimeOpsConfig(requestHandler) ??
       resolveOpsConfig(
@@ -72,7 +77,7 @@ export class ISRRoutes {
       );
 
     // 站点地图 —— 优先返回 SSG/public 已存在的文件，否则由 SEO 引擎动态生成
-    requestHandler.get('/sitemap.xml', seoLimiter, async (_req: Request, res: Response) => {
+    requestHandler.get('/sitemap.xml', ...seoLimiters, async (_req: Request, res: Response) => {
       try {
         const candidates = [
           path.resolve(process.cwd(), 'dist/client/sitemap.xml'),
@@ -108,7 +113,7 @@ export class ISRRoutes {
     });
 
     // Robots.txt
-    requestHandler.get('/robots.txt', seoLimiter, async (_req: Request, res: Response) => {
+    requestHandler.get('/robots.txt', ...seoLimiters, async (_req: Request, res: Response) => {
       try {
         const candidates = [
           path.resolve(process.cwd(), 'dist/client/robots.txt'),

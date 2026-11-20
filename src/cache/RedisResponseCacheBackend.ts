@@ -27,6 +27,7 @@ requireKind(KEYS[3], 'zset')
 if #KEYS == 4 then requireKind(KEYS[4], 'hash') end
 local function initialize(newIncarnation)
   redis.call('DEL', KEYS[2], KEYS[3])
+  redis.call('HDEL', KEYS[1], 'contentRevision', 'previousContentRevision', 'contentPublication')
   redis.call('HSET', KEYS[1], 'incarnation', newIncarnation, 'revision', '0')
   redis.call('HSET', KEYS[2], '__incarnation', newIncarnation)
   redis.call('ZADD', KEYS[3], '+inf', '__incarnation:' .. newIncarnation)
@@ -60,7 +61,17 @@ local clock = redis.call('TIME')
 local now = tonumber(clock[1]) * 1000 + math.floor(tonumber(clock[2]) / 1000)
 `;
 
-const CAPTURE = PRELUDE + `return {incarnation, revision}`;
+const CAPTURE =
+  PRELUDE +
+  `
+return {
+  incarnation,
+  revision,
+  redis.call('HGET', KEYS[1], 'contentRevision') or '',
+  redis.call('HGET', KEYS[1], 'previousContentRevision') or '',
+  redis.call('HGET', KEYS[1], 'contentPublication') or ''
+}
+`;
 const READ =
   PRELUDE +
   `
@@ -116,8 +127,10 @@ const INVALIDATE =
   `
 redis.call('HINCRBY', KEYS[1], 'revision', 1)
 revision = redis.call('HGET', KEYS[1], 'revision')
-redis.call('HSET', KEYS[2], ARGV[2], revision)
-redis.call('ZADD', KEYS[3], now + ${MAX_RESPONSE_TTL_MS}, ARGV[2])
+for _, field in ipairs(cjson.decode(ARGV[2])) do
+  redis.call('HSET', KEYS[2], field, revision)
+  redis.call('ZADD', KEYS[3], now + ${MAX_RESPONSE_TTL_MS}, field)
+end
 -- Each response lives at most maxTtl. Older tombstones can be reclaimed;
 -- global revision still fences every lease acquired before invalidation.
 local expired = redis.call('ZRANGEBYSCORE', KEYS[3], '-inf', now, 'LIMIT', 0, 128)
@@ -127,6 +140,11 @@ for _, field in ipairs(expired) do
 end
 redis.call('PEXPIRE', KEYS[2], ${MAX_RESPONSE_TTL_MS})
 redis.call('PEXPIRE', KEYS[3], ${MAX_RESPONSE_TTL_MS})
+if ARGV[3] and ARGV[3] ~= '' then
+  local previous = redis.call('HGET', KEYS[1], 'contentRevision') or ''
+  redis.call('HSET', KEYS[1], 'contentRevision', revision,
+    'previousContentRevision', previous, 'contentPublication', ARGV[3])
+end
 return {incarnation, revision}
 `;
 const CLEAR =
@@ -172,7 +190,13 @@ export class RedisResponseCacheBackend implements ResponseCacheBackend {
 
   async capture(): Promise<CacheRenderLease> {
     const result = (await this.execute(CAPTURE, undefined, [])) as string[];
-    return { incarnation: result[0], revision: result[1] };
+    return {
+      incarnation: result[0],
+      revision: result[1],
+      ...(result[2] && { contentRevision: result[2] }),
+      ...(result[3] && { previousContentRevision: result[3] }),
+      ...(result[4] && { contentPublication: result[4] }),
+    };
   }
 
   async read(key: string, cached?: ResponseCacheSnapshot): Promise<ResponseCacheSnapshot> {
@@ -228,7 +252,12 @@ export class RedisResponseCacheBackend implements ResponseCacheBackend {
   }
 
   async invalidateTag(tag: string): Promise<void> {
-    await this.execute(INVALIDATE, undefined, [this.digest(tag)]);
+    await this.invalidateTags([tag]);
+  }
+
+  async invalidateTags(tags: readonly string[], publicationId = ''): Promise<void> {
+    const fields = new Set(tags.map(tag => this.digest(tag)));
+    await this.execute(INVALIDATE, undefined, [JSON.stringify([...fields]), publicationId]);
   }
 
   async remove(key: string): Promise<void> {
