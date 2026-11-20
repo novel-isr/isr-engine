@@ -53,6 +53,19 @@ describe('renderPageSeoMeta', () => {
     expect(html).not.toContain('https://base.com/y');
   });
 
+  it('only suppresses the implicit canonical for a not-found route', () => {
+    const baseUrl = 'https://novel.example.com';
+    const meta: PageSeoMeta = { noindex: true, image: '/cover.jpg' };
+
+    const notFound = renderPageSeoMeta(meta, baseUrl, 404);
+    expect(notFound).not.toContain('rel="canonical"');
+    expect(notFound).toContain('og:image" content="https://novel.example.com/cover.jpg"');
+    expect(renderPageSeoMeta(meta, baseUrl)).toContain('rel="canonical" href="' + baseUrl + '"');
+    expect(renderPageSeoMeta({ ...meta, canonical: '/archive' }, baseUrl, 404)).toContain(
+      'rel="canonical" href="https://novel.example.com/archive"'
+    );
+  });
+
   it('相对 image 路径用 baseUrl 解析为绝对 URL（og 必须绝对）', () => {
     const html = renderPageSeoMeta({ image: '/covers/1.svg' }, 'https://novel.example.com');
     expect(html).toContain('og:image" content="https://novel.example.com/covers/1.svg"');

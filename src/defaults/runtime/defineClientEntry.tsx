@@ -72,6 +72,7 @@ interface DefaultRscPayload {
   seoMeta?: PageSeoMeta | null;
   /** canonical / og:image 转绝对 URL 用 */
   siteBaseUrl?: string | null;
+  routeStatus?: 404;
   formState?: import('react-dom/client').ReactFormState;
   returnValue?: { ok: boolean; data: unknown };
 }
@@ -150,7 +151,7 @@ function transitionPayload(
 
 function PayloadRoot({ payload, generation, styleIds }: DefaultRscPayloadState): React.ReactNode {
   React.useLayoutEffect(() => {
-    applySeoToDocument(payload.seoMeta, payload.siteBaseUrl ?? undefined);
+    applySeoToDocument(payload.seoMeta, payload.siteBaseUrl ?? undefined, payload.routeStatus);
   }, [payload]);
   if (!import.meta.env.DEV || generation === undefined) return payload.root;
   return (
