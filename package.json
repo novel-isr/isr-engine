@@ -14,7 +14,7 @@
     "registry": "https://registry.npmjs.org/"
   },
   "type": "module",
-  "main": "./dist/isr-engine.cjs",
+  "main": "./dist/isr-engine.js",
   "module": "./dist/isr-engine.js",
   "types": "./dist/index.d.ts",
   "bin": {
@@ -35,15 +35,13 @@
   ],
   "exports": {
     ".": {
-      "import": "./dist/isr-engine.js",
-      "require": "./dist/isr-engine.cjs",
-      "types": "./dist/index.d.ts"
+      "types": "./dist/index.d.ts",
+      "default": "./dist/isr-engine.js"
     },
     "./rsc": {
+      "types": "./dist/rsc/index.d.ts",
       "browser": "./dist/rsc/browser.js",
-      "import": "./dist/rsc/index.js",
-      "require": "./dist/rsc/index.cjs",
-      "types": "./dist/rsc/index.d.ts"
+      "default": "./dist/rsc/index.js"
     },
     "./server-entry": {
       "default": "./src/defaults/runtime/defineServerEntry.tsx"
@@ -53,33 +51,27 @@
     },
     "./auto-observability": {
       "types": "./dist/defaults/auto-observability.d.ts",
-      "import": "./dist/defaults/auto-observability.js",
-      "require": "./dist/defaults/auto-observability.cjs"
+      "default": "./dist/defaults/auto-observability.js"
     },
     "./site-hooks": {
       "types": "./dist/defaults/runtime/defineSiteHooks.d.ts",
-      "import": "./dist/defaults/runtime/defineSiteHooks.js",
-      "require": "./dist/defaults/runtime/defineSiteHooks.cjs"
+      "default": "./dist/defaults/runtime/defineSiteHooks.js"
     },
     "./config": {
       "types": "./dist/config/defineConfig.d.ts",
-      "import": "./dist/config/defineConfig.js",
-      "require": "./dist/config/defineConfig.cjs"
+      "default": "./dist/config/defineConfig.js"
     },
     "./adapters/observability": {
-      "import": "./dist/adapters/observability/index.js",
-      "require": "./dist/adapters/observability/index.cjs",
-      "types": "./dist/adapters/observability/index.d.ts"
+      "types": "./dist/adapters/observability/index.d.ts",
+      "default": "./dist/adapters/observability/index.js"
     },
     "./adapters/runtime": {
-      "import": "./dist/adapters/runtime/index.js",
-      "require": "./dist/adapters/runtime/index.cjs",
-      "types": "./dist/adapters/runtime/index.d.ts"
+      "types": "./dist/adapters/runtime/index.d.ts",
+      "default": "./dist/adapters/runtime/index.js"
     },
     "./image": {
-      "import": "./dist/image/index.js",
-      "require": "./dist/image/index.cjs",
-      "types": "./dist/runtime/Image.d.ts"
+      "types": "./dist/runtime/Image.d.ts",
+      "default": "./dist/image/index.js"
     },
     "./runtime": {
       "types": "./dist/runtime/index.d.ts",
@@ -88,7 +80,7 @@
     "./package.json": "./package.json"
   },
   "scripts": {
-    "build": "vite build && tsc -p tsconfig.build.json && tsc-alias -p tsconfig.build.json && chmod +x dist/cli/cli.js dist/cli/cli.cjs",
+    "build": "vite build && tsc -p tsconfig.build.json && tsc-alias -p tsconfig.build.json && chmod +x dist/cli/cli.js",
     "watch": "vite build --watch",
     "clean": "rimraf dist",
     "lint": "eslint . --ext .ts,.tsx,.js,.jsx",
@@ -102,13 +94,13 @@
     "bench": "node bench/runner.mjs",
     "check": "pnpm run type-check && pnpm run lint && pnpm run test",
     "audit:security": "pnpm audit --registry=https://registry.npmjs.org --audit-level=low",
+    "version": "pnpm run build",
     "prepublishOnly": "pnpm run audit:security",
     "release": "semantic-release",
     "prepare": "husky",
-    "test:package": "node scripts/check-package-exports.mjs",
-    "test:package:installed": "node scripts/check-installed-package.mjs",
-    "test:workers": "tsc --noEmit -p scripts/fixtures/tsconfig.json && node scripts/check-workers-runtime.mjs",
-    "test:release": "node scripts/check-release.mjs"
+    "test:package": "node e2e/package/check.mjs",
+    "test:workers": "tsc -p e2e/workers && node --test e2e/workers/runtime.test.mjs",
+    "test:release": "node --test e2e/release-policy.test.mjs"
   },
   "engines": {
     "node": "24.15.0"

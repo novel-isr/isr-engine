@@ -2,7 +2,7 @@
   "name": "isr-engine-hello-world",
   "private": true,
   "version": "0.0.0",
-  "description": "最小化的 isr-engine 消费者示例 —— 演示 ISR/SSG/SSR 三种用户级渲染模式 + csr-shell fallback.",
+  "description": "Runnable ISR, SSG and SSR example.",
   "type": "module",
   "scripts": {
     "dev": "isr-engine dev",
@@ -15,6 +15,7 @@
     "react-dom": "19.3.1"
   },
   "devDependencies": {
+    "@types/node": "24.19.2",
     "@types/react": "^19.0.0",
     "@types/react-dom": "^19.0.0",
     "typescript": "6.0.3",

@@ -1,81 +1,22 @@
-# hello-world
+# Hello world
 
-最小化的 isr-engine 消费者示例。演示 **3 种用户级渲染模式**。
+可运行的 isr-engine 示例，使用同一份页面目录生成标题和动态 SEO。
 
-| 路径 | 触发 | 演示路由 |
-|---|---|---|
-| **ISR** (cached + 后台 revalidate) | 默认全局，高读路径首选 | `/` (TTL 60s) |
-| **SSG** (build-time 静态 HTML) | 内容低频 + SEO 强依赖 | `/about` |
-| **SSR** (每次请求渲染) | 实时数据，不缓存 | `/health` |
-
-`csr-shell` 是 server 崩溃时的内部 fallback（自动兜底，非用户配置项）。它需要一份单独
-的 SPA bundle 配合（见 [docs/deployment/ssr-spa-failover.md](../../docs/deployment/ssr-spa-failover.md)），
-本最小示例不演示——按那篇文档单独跑一份 SPA build 即可。
-
-类型上：
-
-```ts
-// engine 公共类型
-type RenderModeType = 'ssg' | 'isr' | 'ssr';   // ← 用户能选这 3 个
-
-// 每条 mode 都有内部 FallbackChain，末端永远是 csr-shell：
-//   isr → ['cached', 'regenerate', 'server', 'csr-shell']
-//   ssg → ['static',  'regenerate', 'server', 'csr-shell']
-//   ssr → ['server',  'csr-shell']
-```
-
-## 文件清单
-
-| 文件 | 作用 |
+| 路径 | 渲染 |
 |---|---|
-| `package.json` | deps: `@novel-isr/engine`（走 `file:../..` 直链；真实项目用语义版本号 `^2.2.0`） |
-| `vite.config.ts` | 把 `createIsrPlugin()` 挂进 vite，**唯一必须的接入点** |
-| `ssr.config.ts` | 路由级 mode（全局 ISR + `/about` SSG + `/health` SSR） |
-| `tsconfig.json` | 标配 TS |
-| `src/entry.server.tsx` | `defineSiteHooks` 服务端 hooks（本例只挂静态 SEO） |
-| `src/app.tsx` | 根 App = Server Component，用 `cacheTag` 注册 ISR 失效标签 |
+| `/` | ISR，缓存 60 秒 |
+| `/about` | SSG，构建时预渲染 |
+| `/guides/rendering` | SSR，每次请求渲染 |
 
-## 跑起来
+使用 Node.js 24.15.0。在仓库根目录先运行 `pnpm install --frozen-lockfile && pnpm build`，再进入示例目录。
 
 ```bash
-# 1. 装依赖
-pnpm install
-
-# 2. 开发 (热更新, dev mode)
-pnpm dev                          # → http://localhost:3000
-
-# 3. 生产构建 (输出 ISR + SSG 产物)
-pnpm build
-ls dist/                          # 看 client/ + rsc/ + ssr/
-
-# 4. 起生产
-pnpm start                        # → http://localhost:3000
+npm install
+npm run dev
+npm run build
+npm start
 ```
 
-## 验证 3 条路径都在工作
-
-```bash
-# ISR: 第 1 次 MISS, 第 2 次 HIT, 60s 后 STALE + 后台 revalidate
-curl -sI http://localhost:3000/        | grep x-cache-status   # MISS
-curl -sI http://localhost:3000/        | grep x-cache-status   # HIT
-
-# SSG: 不进 ISR cache, 直接走 express.static (磁盘 HTML)
-curl -sI http://localhost:3000/about   | grep x-cache-status   # BYPASS (磁盘静态)
-ls dist/client/about/index.html                                 # 构建产物在这
-
-# SSR: 永远 BYPASS, 每次响应都是新渲染
-curl -sI http://localhost:3000/health  | grep x-cache-status   # BYPASS
-```
-
-## 真实项目注意
-
-- `"@novel-isr/engine": "file:../.."` → 换成 `"@novel-isr/engine": "^2.2.0"`
-- 配 `.npmrc` 指向私有 npm registry（参考 isr-engine 仓的 `.npmrc.example`）
-- 部署前读 [docs/deployment.md](../../docs/deployment.md)（Origin 协议 / Edge runtime / 多 pod 失效广播）
-- 多 pod 部署接 Redis：[docs/caching.md](../../docs/caching.md)（L2 + Pub/Sub 失效广播）
-
-## 想看更复杂的
-
-- bench app（含动态 route + 多 path）：[bench/app/](../../bench/app/)
-- 全套接入指南：[docs/getting-started.md](../../docs/getting-started.md)
-- 每个 hook 怎么挂：[docs/site-hooks.md](../../docs/site-hooks.md)
+默认地址为 `http://localhost:3000`。独立使用时，将 `isr-engine` 的
+`file:../..` 换成 npmjs 版本。本仓库的 CI 会用待验证的 npm 压缩包安装本例，
+并验证生产路由和 HTML 标题。

@@ -1,65 +1,25 @@
-/**
- * 根 App —— 这是一个 Server Component (没有 'use client' 指令).
- *
- * cacheTag('hello-home') 注册 ISR 失效标签:
- *   - 启动后 60s 内访问 /, 走 cache HIT, 毫秒返回
- *   - 60s 后访问 /, STALE 路径, 立即返回旧内容 + 后台异步重渲
- *   - 任何位置调 revalidateTag('hello-home') 立刻失效
- *
- * 路由系统由 isr-engine 内部解析 (基于 ssr.config.ts + URL pattern).
- * 你想加 client interactivity, 单独写带 'use client' 的组件然后 import 进来.
- */
 import { cacheTag } from 'isr-engine/rsc';
+import { getI18nLocale } from 'isr-engine/runtime';
+import { pageTitles } from './pages';
 
-export interface AppProps {
-  url: URL;
-}
-
-export function App({ url }: AppProps) {
-  cacheTag('hello-home');
-  const path = url.pathname;
-
-  if (path === '/') {
-    return (
-      <main>
-        <h1>Hello, isr-engine</h1>
-        <p>This page is rendered as ISR (revalidate 60s).</p>
-        <p>Generated at: {new Date().toISOString()}</p>
-        <ul>
-          <li>
-            <a href='/about'>About (SSG)</a>
-          </li>
-          <li>
-            <a href='/health'>Health (SSR)</a>
-          </li>
-        </ul>
-      </main>
-    );
-  }
-
-  if (path === '/about') {
-    return (
-      <main>
-        <h1>About</h1>
-        <p>This page is built once at build time (SSG).</p>
-        <a href='/'>Back home</a>
-      </main>
-    );
-  }
-
-  if (path === '/health') {
-    return (
-      <main>
-        <h1>OK</h1>
-        <p>Rendered at {new Date().toISOString()} (no cache).</p>
-      </main>
-    );
-  }
-
+export function App({ url }: { url: URL }) {
+  const page = url.pathname.slice(1);
+  if (page === '') cacheTag('hello-home');
   return (
-    <main>
-      <h1>404</h1>
-      <a href='/'>Home</a>
-    </main>
+    <html lang={getI18nLocale('en')}>
+      <head>
+        <meta charSet='utf-8' />
+      </head>
+      <body>
+        <main>
+          <h1>{pageTitles.get(page) ?? 'Page not found'}</h1>
+          <nav>
+            <a href='/'>Home (ISR)</a> <a href='/about'>About (SSG)</a>{' '}
+            <a href='/guides/rendering'>Rendering guide (SSR)</a>
+          </nav>
+          <p>Rendered at {new Date().toISOString()}</p>
+        </main>
+      </body>
+    </html>
   );
 }

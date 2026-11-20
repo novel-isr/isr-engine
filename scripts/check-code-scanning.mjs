@@ -1,20 +1,13 @@
 import { readdir, readFile } from 'node:fs/promises';
 import path from 'node:path';
 
-async function sarifFiles(directory) {
-  const files = [];
-  for (const entry of await readdir(directory, { withFileTypes: true })) {
-    const filename = path.join(directory, entry.name);
-    if (entry.isDirectory()) files.push(...(await sarifFiles(filename)));
-    else if (entry.isFile() && entry.name.endsWith('.sarif')) files.push(filename);
-  }
-  return files;
-}
-
 try {
   const directory = process.argv[2];
   if (!directory) throw new Error('A CodeQL SARIF output directory is required');
-  const files = await sarifFiles(directory);
+  const entries = await readdir(directory, { recursive: true, withFileTypes: true });
+  const files = entries
+    .filter(entry => entry.isFile() && entry.name.endsWith('.sarif'))
+    .map(entry => path.join(entry.parentPath, entry.name));
   if (!files.length) throw new Error('No CodeQL SARIF evidence found');
   let findings = 0;
   let runs = 0;

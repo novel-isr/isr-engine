@@ -1,3 +1,5 @@
+const releaseArchive = '.release/isr-engine-${nextRelease.version}.tgz';
+
 export default {
   branches: ['main'],
   tagFormat: 'isr-engine-v${version}',
@@ -14,10 +16,19 @@ export default {
       },
     ],
     '@semantic-release/release-notes-generator',
+    ['@semantic-release/npm', { tarballDir: '.release' }],
     [
       '@semantic-release/exec',
-      { prepareCmd: 'node scripts/prepare-release.mjs ${nextRelease.version}' },
+      { prepareCmd: `pnpm run test:package ${releaseArchive} && pnpm run audit:security` },
     ],
-    ['@semantic-release/npm', { tarballDir: '.release' }],
+  ],
+  // Keep the npm plugin's OIDC check and packaging, then publish the checked archive.
+  publish: [
+    [
+      '@semantic-release/exec',
+      {
+        publishCmd: `npm publish ${releaseArchive} --tag latest --json`,
+      },
+    ],
   ],
 };

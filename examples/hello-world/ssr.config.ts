@@ -1,16 +1,5 @@
-/**
- * ssr.config.ts —— isr-engine production-style template
- *
- * Business apps describe product/deployment intent only:
- *   - render mode and page freshness
- *   - routes and SSG spider list
- *   - runtime services such as API/Redis/telemetry
- *   - minimal Node origin address and ops auth
- *
- * Engine-owned defaults such as HTTP listener details, port fallback, timeouts, compression,
- * sitemap/robots switches and cache backend are intentionally not public config.
- */
 import type { ISRConfig } from 'isr-engine';
+import { pageTitles } from './src/pages';
 
 export default {
   renderMode: 'isr',
@@ -18,9 +7,7 @@ export default {
 
   routes: {
     '/about': 'ssg',
-    '/health': 'ssr',
-    // '/posts/*': { mode: 'isr', ttl: 60, staleWhileRevalidate: 300 },
-    // '/admin/*': 'ssr',
+    '/guides/*': 'ssr',
   },
 
   runtime: {
@@ -41,7 +28,21 @@ export default {
       : undefined,
     experiments: {},
     i18n: undefined,
-    seo: undefined,
+    seo: {
+      endpoint: undefined,
+      fallbackLocal: undefined,
+      ttl: 60_000,
+      timeoutMs: 1200,
+      dynamicResolvers: [
+        {
+          pattern: '/*',
+          resolve: ({ params }) => {
+            const title = pageTitles.get(params.wildcard);
+            return title ? { title } : null;
+          },
+        },
+      ],
+    },
     telemetry: false,
   },
 
@@ -70,6 +71,7 @@ export default {
         enabled: process.env.ENABLE_METRICS === '1',
         public: false,
       },
+      inventory: { enabled: false, public: false },
     },
   },
 } satisfies ISRConfig;

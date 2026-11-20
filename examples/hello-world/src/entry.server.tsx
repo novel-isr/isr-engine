@@ -1,18 +1,14 @@
-/**
- * 服务端 entry —— defineSiteHooks 是 isr-engine 唯一必填的 server 配置点.
- *
- * 这里你可以挂请求期逻辑:
- *   - beforeRequest：解析 userId / tenantId / requestSegment
- *   - onError：补充业务日志或审计
- *   - seo/intl：只有在不使用 ssr.config.ts runtime 默认 loader 时才自定义
- *
- * 部署地址、Redis、telemetry、A/B 定义都放 ssr.config.ts runtime。
- */
-import { defineSiteHooks } from 'isr-engine/site-hooks';
+import type { AutoServerCtx } from 'isr-engine/auto-observability';
 
-export default defineSiteHooks({
-  seo: {
-    '/': { title: 'Hello, isr-engine', description: 'Minimal example' },
-    '/about': { title: 'About', description: 'Static page' },
+export default {
+  beforeRequest(_request: Request, { traceId }: AutoServerCtx) {
+    return { requestId: traceId };
   },
-});
+  onResponse(response: Response, { requestId }: { requestId: string }) {
+    const duration = response.headers.get('x-render-ms');
+    response.headers.set(
+      'server-timing',
+      `isr;dur=${duration};desc="${encodeURIComponent(requestId)}"`
+    );
+  },
+};
