@@ -369,49 +369,35 @@ describe('spiderSsgRoutes —— failBuildThreshold', () => {
     await fs.rm(outDir, { recursive: true, force: true });
   });
 
-  it('throws SsgBuildFailedError when failure rate > threshold', async () => {
-    const handler: FetchHandler = {
-      fetch: async req => {
-        if (new URL(req.url).pathname === '/bad') {
-          return new Response('nope', { status: 404 });
-        }
-        return htmlResponse('<html>ok</html>');
-      },
-    };
+  const routes = ['/a', '/b', '/c', '/bad'];
+  const handler: FetchHandler = {
+    fetch: async req =>
+      new URL(req.url).pathname === '/bad'
+        ? new Response('nope', { status: 404 })
+        : htmlResponse('<html>ok</html>'),
+  };
 
-    // 4 routes, 1 fails → 25% failure rate, > 5% threshold → throws
+  it('rejects a failure rate above the threshold', async () => {
     await expect(
       spiderSsgRoutes({
         handler,
-        routes: ['/a', '/b', '/c', '/bad'],
+        routes,
         outDir,
         options: { maxRetries: 0, failBuildThreshold: 0.05 },
       })
     ).rejects.toBeInstanceOf(SsgBuildFailedError);
   });
 
-  it('does NOT throw when failure rate ≤ threshold', async () => {
-    const handler: FetchHandler = {
-      fetch: async req => {
-        if (new URL(req.url).pathname === '/bad') {
-          return new Response('nope', { status: 404 });
-        }
-        return htmlResponse('<html>ok</html>');
-      },
-    };
-
-    // 100 routes, 1 fails → 1% < 5% → ok
-    const routes = Array.from({ length: 99 }, (_, i) => `/p${i}`);
-    routes.push('/bad');
+  it('accepts a failure rate equal to the threshold', async () => {
     const result = await spiderSsgRoutes({
       handler,
       routes,
       outDir,
-      options: { maxRetries: 0, failBuildThreshold: 0.05 },
+      options: { maxRetries: 0, failBuildThreshold: 0.25 },
     });
 
     expect(result.failed).toBe(1);
-    expect(result.failureRate).toBeLessThan(0.05);
+    expect(result.failureRate).toBe(0.25);
   });
 
   it('failBuildThreshold=1.0 disables the gate (legacy behavior)', async () => {
