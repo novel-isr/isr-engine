@@ -60,6 +60,10 @@ jobs:
       security-events: write
     steps:
       - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version-file: '.nvmrc'
+          package-manager-cache: false
       - name: Initialize security analysis
         uses: github/codeql-action/init@v4
         with:
@@ -73,42 +77,9 @@ jobs:
           category: /language:javascript-typescript
           output: ${{ runner.temp }}/codeql-results
       - name: Require complete analysis with zero findings
-        shell: bash
-        env:
-          SARIF_DIRECTORY: ${{ steps.analyze.outputs.sarif-output }}
-        run: |
-          shopt -s globstar nullglob dotglob
-          reports=("${SARIF_DIRECTORY:?Missing CodeQL output directory}"/**/*.sarif)
-          if (( ${#reports[@]} == 0 )); then
-            echo "No CodeQL SARIF reports found" >&2
-            exit 1
-          fi
-
-          jq --compact-output --slurp --exit-status '
-            def successful:
-              .executionSuccessful != false and
-              ((has("exitCode") | not) or .exitCode == 0) and
-              all([.toolExecutionNotifications, .toolConfigurationNotifications][] | select(. != null);
-                type == "array" and all(.[]; .level != "error"));
-
-            def complete_run:
-              .tool.driver.name == "CodeQL" and
-              (.results | type == "array") and
-              ((if has("invocations") then .invocations else [] end) |
-                type == "array" and all(.[]; successful));
-
-            if length == 0 or
-              any(.[]; (.version == "2.1.0" and
-                (.runs | type == "array" and length > 0 and all(.[]; complete_run))) | not)
-            then error("Missing or incomplete CodeQL analysis")
-            else
-              [.[].runs[]] as $runs |
-              [$runs[].results[]] as $findings |
-              {runs: ($runs | length), findings: ($findings | length)},
-              ($findings[] | {ruleId, level, message, locations}),
-              ($findings | length == 0)
-            end
-          ' "${reports[@]}"
+        uses: ./.github/actions/codeql-gate
+        with:
+          sarif-directory: ${{ steps.analyze.outputs.sarif-output }}
       - name: Preserve code-scanning evidence including failures
         if: always()
         uses: actions/upload-artifact@v7

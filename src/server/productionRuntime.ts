@@ -10,6 +10,7 @@ import pkg from '../../package.json';
 import { logger } from '@/logger';
 import { routeToFilePath } from '@/ssg/spider';
 import { createIsrCacheHandler } from '@/plugin/isrCacheMiddleware';
+import { createImageMiddleware } from '@/plugin/createImagePlugin';
 import { createAutoCacheStore } from '@/cache/createAutoCacheStore';
 import { RedisInvalidationBus } from '@/cache/RedisInvalidationBus';
 import { resolveImageOptions } from '@/config/resolveImageOptions';
@@ -394,7 +395,6 @@ export async function createProductionRuntime(
     });
 
     // 图片优化端点（/_/img）—— 与开发环境共享显式远程来源策略
-    const { createImageMiddleware } = await import('@/plugin/createImagePlugin');
     app.use(createImageMiddleware(resolveImageOptions(config.runtime.images), {}, clientDir));
 
     // ISR 缓存：只读取 ssr.config.ts runtime.redis；环境变量需由业务配置显式注入。

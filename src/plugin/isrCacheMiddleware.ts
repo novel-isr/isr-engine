@@ -1002,7 +1002,8 @@ async function handleRequest(
         const generation = ctx.state.invalidationGeneration;
         if (generation !== 0) return true;
         const seed = await raceWithTimeout(
-          staticSeed(
+          staticSeed.call(
+            ctx,
             logicalPath,
             String(res.getHeader('content-security-policy') || "default-src 'self'")
           ),
