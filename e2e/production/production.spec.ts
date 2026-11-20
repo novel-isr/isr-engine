@@ -31,7 +31,10 @@ test('data and Blob images load under both development and production image poli
     try {
       const address = server.address();
       if (!address || typeof address === 'string') throw new Error('Missing HTTP port');
-      await page.goto(`http://127.0.0.1:${address.port}/`);
+      const response = await page.goto(`http://127.0.0.1:${address.port}/`);
+      expect(response?.headers()['strict-transport-security']).toBe(
+        isDev ? undefined : 'max-age=15552000; includeSubDomains'
+      );
       const loaded = await page.evaluate(async () => {
         const base64 =
           'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aP1kAAAAASUVORK5CYII=';
