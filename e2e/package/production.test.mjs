@@ -85,6 +85,21 @@ test('the installed engine builds and serves the documented app', async () => {
         );
       }
     }
+    for (const [route, contentType] of [
+      ['/', 'text/html'],
+      ['/_.rsc', 'text/x-component'],
+    ]) {
+      for (let request = 0; request < 2; request++) {
+        const head = await fetch(url + route, {
+          method: 'HEAD',
+          signal: AbortSignal.timeout(10_000),
+        });
+        assert.equal(head.status, 200, route);
+        assert.ok(head.headers.get('content-type')?.startsWith(contentType), route);
+        assert.equal(head.headers.get('x-cache-status'), 'MISS', route);
+        assert.equal(await head.text(), '');
+      }
+    }
     const readSitemap = async () => {
       const response = await fetch(url + '/sitemap.xml', { signal: AbortSignal.timeout(10_000) });
       assert.equal(response.status, 200);

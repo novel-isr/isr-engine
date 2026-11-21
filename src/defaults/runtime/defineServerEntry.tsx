@@ -52,6 +52,7 @@ import {
 } from '../../runtime/i18n';
 import type { RuntimeConfig } from '../../types/ISRConfig';
 import { getRequestContext } from '../../context/RequestContext';
+import { markUncacheable } from '../../context/CacheTagContext';
 import { createRenderErrorHandler, isRenderCancellation } from './renderCancellation';
 
 interface DefaultRscPayload {
@@ -321,6 +322,8 @@ async function runRscPipeline(
       : 'text/html; charset=utf-8',
   });
   if (request.method === 'HEAD') {
+    // The header-only response has no dependency tags from the component tree.
+    markUncacheable();
     return new Response(null, { status: responseRouteStatus, headers: responseHeaders });
   }
 
