@@ -18,6 +18,8 @@ import {
   type ServerHooksOutput,
 } from '../defaults/runtime/defineSiteHooks';
 import { resolveI18nConfig } from '../runtime/i18n';
+import { invalidateContentCaches } from '../defaults/runtime/contentRevalidation';
+import { getCacheTagStorage } from '../context/CacheTagContext';
 import type { ISRConfig } from '../types';
 
 const engineCtx = { traceId: 't', startedAt: 0 };
@@ -41,7 +43,103 @@ beforeEach(() => {
   vi.restoreAllMocks();
 });
 
+describe('runtime language catalog', () => {
+  const locales = ['en', 'ja'];
+  const nativeNames = [
+    { locale: 'en', name: 'English' },
+    { locale: 'ja', name: '日本語' },
+  ];
+
+  it('uses native names without loading dictionaries when no endpoint is configured', async () => {
+    const fetchSpy = vi.spyOn(globalThis, 'fetch');
+    const hooks = applyRuntimeToServerHooks({}, runtime({ i18n: { locales } }));
+    expect(await hooks.loadLanguageCatalog?.()).toEqual(nativeNames);
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
+  it('retries an unavailable catalog, coalesces reads and refreshes on publication', async () => {
+    const fetchSpy = vi
+      .spyOn(globalThis, 'fetch')
+      .mockResolvedValueOnce(Response.json({ data: null }))
+      .mockResolvedValueOnce(
+        Response.json({
+          data: [
+            { locale: 'JA', name: ' 日本語版 ' },
+            { locale: 'fr', name: 'Français' },
+          ],
+        })
+      )
+      .mockResolvedValueOnce(Response.json([{ locale: 'ja', name: '日本語サイト' }]));
+    const hooks = applyRuntimeToServerHooks(
+      {},
+      runtime({
+        services: { api: 'https://api.example.com' },
+        i18n: { locales, catalog: { endpoint: '/languages' }, ttl: 60_000 },
+      })
+    );
+    expect(await hooks.loadLanguageCatalog?.()).toEqual(nativeNames);
+    const fresh = [
+      { locale: 'en', name: 'English' },
+      { locale: 'ja', name: '日本語版' },
+    ];
+    expect(
+      await Promise.all([hooks.loadLanguageCatalog?.(), hooks.loadLanguageCatalog?.()])
+    ).toEqual([fresh, fresh]);
+    expect(await hooks.loadLanguageCatalog?.()).toEqual(fresh);
+    expect(fetchSpy).toHaveBeenCalledTimes(2);
+    expect(fetchSpy).toHaveBeenCalledWith('https://api.example.com/languages', expect.any(Object));
+
+    invalidateContentCaches({ locales: ['ja'], paths: [], tags: [], sitemap: false });
+    expect(await hooks.loadLanguageCatalog?.()).toEqual([
+      { locale: 'en', name: 'English' },
+      { locale: 'ja', name: '日本語サイト' },
+    ]);
+    expect(fetchSpy).toHaveBeenCalledTimes(3);
+  });
+});
+
 describe('defineSiteHooks: locale detection', () => {
+  it('requests the configured language even when its local fallback is missing', async () => {
+    const fetchSpy = vi
+      .spyOn(globalThis, 'fetch')
+      .mockResolvedValue(Response.json({ strings: { title: '記事' } }));
+    const hooks = applyRuntimeToServerHooks<Partial<ServerHooksOutput>>(
+      {},
+      runtime({
+        services: { api: 'https://api.example.com' },
+        i18n: {
+          locales: ['en', 'ja'],
+          defaultLocale: 'en',
+          endpoint: '/i18n/{locale}',
+          fallbackLocal: { en: { title: 'Articles' } },
+        },
+      })
+    );
+    expect(await hooks.loadIntl?.(new Request('https://example.com/ja'))).toMatchObject({
+      locale: 'ja',
+      messages: { title: '記事' },
+    });
+    expect(fetchSpy).toHaveBeenCalledWith('https://api.example.com/i18n/ja', expect.any(Object));
+  });
+
+  it('leaves SEO-only responses cacheable when the optional default dictionary is absent', async () => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response(null, { status: 404 }));
+    const hooks = applyRuntimeToServerHooks<Partial<ServerHooksOutput>>(
+      {},
+      runtime({
+        services: { api: 'https://api.example.com' },
+        seo: { endpoint: '/seo' },
+      })
+    );
+    const cacheContext = { tags: new Set<string>(), uncacheable: false };
+    await getCacheTagStorage().run(cacheContext, async () => {
+      expect(await hooks.loadIntl?.(new Request('https://example.com'))).toMatchObject({
+        messages: {},
+      });
+    });
+    expect(cacheContext.uncacheable).toBe(false);
+  });
+
   it('uses the runtime preference and URL locales with a custom dictionary loader', async () => {
     const routing = { locales: ['en', 'ja'], defaultLocale: 'en', prefixDefault: true };
     const configured = runtime({ i18n: { ...routing, rememberLocale: true } });

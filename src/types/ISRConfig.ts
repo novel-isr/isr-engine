@@ -98,6 +98,18 @@ export interface RuntimeExperimentTrackingConfig {
   enabled: boolean | undefined;
 }
 
+export interface LanguageCatalogEntry {
+  readonly locale: string;
+  readonly name: string;
+}
+
+export interface RuntimeLanguageCatalogConfig {
+  /** Returns an array of locale/name entries, optionally wrapped in { data }. */
+  endpoint: string;
+  /** Catalog cache TTL in milliseconds. Defaults to the dictionary TTL. */
+  ttl?: number;
+}
+
 export interface RuntimeI18nConfig {
   /** 支持的 locale 列表，用于 URL locale 前缀解析和请求协商 */
   locales: readonly string[];
@@ -107,6 +119,8 @@ export interface RuntimeI18nConfig {
   prefixDefault: boolean;
   /** Opt in to remembering LocaleLink selections for the unprefixed root in prefixDefault mode. */
   rememberLocale?: boolean;
+  /** Optional bulk source for the display names of the configured locales. */
+  catalog?: RuntimeLanguageCatalogConfig;
   /** 远端字典端点；相对路径会拼到 services.api 上 */
   endpoint: string | undefined;
   /** 本地兜底字典；配置 API 不可用时使用 */
