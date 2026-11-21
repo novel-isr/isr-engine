@@ -38,6 +38,7 @@ import type { IntlPayload, PageSeoMeta } from './seo-runtime';
 import type {
   DynamicSeoResolver,
   ISRConfig,
+  LanguageCatalogEntry,
   RuntimeI18nConfig,
   RuntimeSeoConfig,
 } from '../../types';
@@ -304,10 +305,12 @@ export function createAdminIntlLoader(
         ? (matchConfiguredLocale(locale, supportedLocales) ?? defaultLocale)
         : locale;
     const remoteUrl = resolveAdminUrl(endpoint, { locale: normalizedLocale }, ctx);
-    const remote = remoteUrl
-      ? await fetchMetadataJson(remoteUrl, options.timeoutMs, ctx[MARK_METADATA_DEGRADED])
+    const remoteMessages = remoteUrl
+      ? extractIntlMessagesOrNull(
+          await fetchMetadataJson(remoteUrl, options.timeoutMs),
+          ctx[MARK_METADATA_DEGRADED]
+        )
       : null;
-    const remoteMessages = extractIntlMessagesOrNull(remote);
     const localMessages =
       fallbackMessages[normalizedLocale] ??
       (defaultLocale ? fallbackMessages[defaultLocale] : undefined) ??
@@ -469,6 +472,7 @@ export interface ServerHooksOutput {
     engineCtx: { traceId: string; startedAt: number }
   ) => Promise<Record<string, unknown>>;
   loadIntl: (req: Request) => Promise<IntlPayload | null>;
+  loadLanguageCatalog?: () => Promise<readonly LanguageCatalogEntry[]>;
   loadSeoMeta: (req: Request) => Promise<PageSeoMeta | null>;
   onError: (
     err: unknown,
@@ -487,7 +491,7 @@ export function defineSiteHooks(config: SiteHooksConfig): ServerHooksOutput {
 export function applyRuntimeToServerHooks<T extends object>(
   hooks: T,
   runtime: SiteRuntimeConfig
-): T {
+): T & Pick<ServerHooksOutput, 'loadLanguageCatalog'> {
   const maybeRuntimeAware = hooks as T & {
     __configureRuntime?: (runtime: SiteRuntimeConfig) => T;
   };
@@ -499,6 +503,7 @@ export function applyRuntimeToServerHooks<T extends object>(
     apiBaseUrl?: string;
     intl?: unknown;
     loadIntl?: unknown;
+    loadLanguageCatalog?: ServerHooksOutput['loadLanguageCatalog'];
     loadSeoMeta?: unknown;
     beforeRequest?: SiteHooksConfig['beforeRequest'];
     onError?: SiteHooksConfig['onError'];
@@ -526,6 +531,7 @@ export function applyRuntimeToServerHooks<T extends object>(
       intl: runtimeHooks.intl,
       beforeRequest: runtimeHooks.beforeRequest,
       loadIntl: runtimeHooks.loadIntl,
+      loadLanguageCatalog: runtimeHooks.loadLanguageCatalog,
       loadSeoMeta: runtimeHooks.loadSeoMeta,
       onError: runtimeHooks.onError,
     } as T;
@@ -545,6 +551,8 @@ export function applyRuntimeToServerHooks<T extends object>(
     ...hooks,
     siteBaseUrl,
     apiBaseUrl,
+    loadLanguageCatalog:
+      baseHooks.loadLanguageCatalog ?? createLanguageCatalog(runtime, runtime.i18n?.locales),
     ...(runtimeSeoHook && { loadSeoMeta: runtimeSeoHook }),
   } as T;
 }
@@ -633,20 +641,21 @@ function createSiteHooks(config: SiteHooksConfig, runtime: SiteRuntimeConfig): S
         return r ?? { locale, messages: {}, direction: rtlOf(locale) };
       }
       if (intlCfg.endpoint) {
-        const url = fillTemplate(intlCfg.endpoint, { locale });
-        const json = await fetchJson(url, markDegraded);
+        const url = resolveAdminUrl(intlCfg.endpoint, { locale }, runtimeCtx);
+        const json = url ? await fetchMetadataJson(url, null) : null;
         if (json !== null && intlCfg.transform) {
           const transformed = await intlCfg.transform(json, locale);
-          if (transformed) {
+          if (transformed && Object.keys(transformed.messages).length) {
             return {
               ...transformed,
               direction: transformed.direction ?? rtlOf(transformed.locale),
             };
           }
         }
+        const messages = extractIntlMessagesOrNull(json, url ? markDegraded : undefined);
         return {
           locale,
-          messages: extractIntlMessages(json),
+          messages: messages ?? {},
           direction: rtlOf(locale),
         };
       }
@@ -739,6 +748,7 @@ function createSiteHooks(config: SiteHooksConfig, runtime: SiteRuntimeConfig): S
     async loadIntl(req) {
       return intlLoader(detectLocale(req));
     },
+    loadLanguageCatalog: createLanguageCatalog(runtime, runtimeLocale?.locales ?? supportedLocales),
     async loadSeoMeta(req) {
       const url = new URL(req.url);
       const locale = detectLocale(req);
@@ -819,20 +829,73 @@ function matchConfiguredLocale(
   return supportedLocales.find(locale => locale.toLowerCase().split('-')[0] === prefix);
 }
 
-function extractIntlMessages(data: unknown): Record<string, unknown> {
-  return extractIntlMessagesOrNull(data) ?? {};
+function extractIntlMessagesOrNull(
+  data: unknown,
+  markDegraded?: () => void
+): Record<string, unknown> | null {
+  const body = isRecord(data) ? data : {};
+  const dataValue = body.data;
+  const candidate =
+    body.strings ??
+    body.messages ??
+    (isRecord(dataValue) && 'strings' in dataValue ? dataValue.strings : dataValue);
+  if (isRecord(candidate) && Object.keys(candidate).length) return normalizeMessages(candidate);
+  markDegraded?.();
+  return null;
 }
 
-function extractIntlMessagesOrNull(data: unknown): Record<string, unknown> | null {
-  if (!data || typeof data !== 'object') return null;
-  const raw = data as Record<string, unknown>;
-  const dataValue = raw.data;
-  const candidate =
-    raw.strings ??
-    raw.messages ??
-    (isRecord(dataValue) && 'strings' in dataValue ? dataValue.strings : dataValue);
-  if (!candidate || typeof candidate !== 'object') return null;
-  return normalizeMessages(candidate as Record<string, unknown>);
+function displayLanguageName(locale: string): string {
+  try {
+    return (
+      new Intl.DisplayNames([locale], { type: 'language', fallback: 'none' }).of(locale) ?? locale
+    );
+  } catch (error) {
+    if (error instanceof RangeError) return locale;
+    throw error;
+  }
+}
+
+function createLanguageCatalog(runtime: SiteRuntimeConfig, locales: readonly string[] = []) {
+  const defaults = locales.map(locale => ({ locale, name: displayLanguageName(locale) }));
+  const config = runtime.i18n?.catalog;
+  if (!config || !locales.length) return async () => defaults;
+
+  const ctx: SiteRuntimeContext = { runtime, services: resolveRuntimeServices(runtime) };
+  const url = resolveAdminUrl(config.endpoint, {}, ctx);
+  const load = createCachedFetcher<void, readonly LanguageCatalogEntry[]>({
+    key: () => 'language-catalog',
+    ttl: config.ttl ?? runtime.i18n?.ttl,
+    onDegraded: markUncacheable,
+    fallback: () => defaults,
+    fetch: async () => {
+      const json = url ? await fetchMetadataJson(url, runtime.i18n?.timeoutMs) : null;
+      const entries: unknown = isRecord(json) ? json.data : json;
+      if (!Array.isArray(entries)) throw new TypeError('Invalid language catalog response');
+
+      const names = new Map<string, string>();
+      for (const entry of entries as unknown[]) {
+        if (
+          !isRecord(entry) ||
+          typeof entry.locale !== 'string' ||
+          typeof entry.name !== 'string'
+        ) {
+          throw new TypeError('Invalid language catalog entry');
+        }
+        const name = entry.name.trim();
+        if (name) names.set(entry.locale.toLowerCase(), name);
+      }
+      return defaults.map(({ locale, name }) => ({
+        locale,
+        name: names.get(locale.toLowerCase()) ?? name,
+      }));
+    },
+  });
+  const invalidate: Parameters<typeof registerContentInvalidator>[0] = scopes => {
+    if (scopes.allPageMetadata || scopes.locales.length) load.invalidate();
+  };
+  Object.defineProperty(load, CONTENT_INVALIDATOR, { value: invalidate });
+  registerContentInvalidator(invalidate, { weak: true });
+  return load;
 }
 
 function normalizeMessages(messages: Record<string, unknown>): Record<string, unknown> {

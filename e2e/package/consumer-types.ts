@@ -5,8 +5,15 @@ import {
   type AutoServerCtx,
   type AutoServerHooks,
 } from 'isr-engine/auto-observability';
-import { createCoherentCacheStore, Logger, type ResponseCacheBackend } from 'isr-engine';
+import {
+  createCoherentCacheStore,
+  Logger,
+  type LanguageCatalogEntry,
+  type ResponseCacheBackend,
+  type RuntimeConfig,
+} from 'isr-engine';
 import { getEdgeContext, type EdgeContext } from 'isr-engine/runtime';
+import { applyRuntimeToServerHooks } from 'isr-engine/site-hooks';
 
 const factory: () => Promise<AutoServerHooks> = createAutoServerHooks;
 const ctx: AutoServerCtx = { traceId: 'trace', startedAt: 1 };
@@ -14,6 +21,11 @@ const hooks: AutoServerHooks = composeAutoServerHooks([]);
 const dsn: string | undefined = resolveSentryDsnFromEnv({});
 declare const backend: ResponseCacheBackend;
 const store = createCoherentCacheStore({ backend });
+declare const runtime: RuntimeConfig;
+const catalog: Promise<readonly LanguageCatalogEntry[]> | undefined = applyRuntimeToServerHooks(
+  {},
+  runtime
+).loadLanguageCatalog?.();
 declare const spinner: ReturnType<ReturnType<typeof Logger.getInstance>['spin']>;
 const prefix: string | (() => string) = spinner.prefixText;
 const suffix: string | (() => string) = spinner.suffixText;
@@ -33,4 +45,4 @@ const edge: EdgeContext<{ token: string }> | undefined = getEdgeContext<{ token:
 );
 // @ts-expect-error Edge context lookup requires a Request.
 getEdgeContext();
-void [factory, ctx, hooks, dsn, store, invalid, labels, unresolved, edge];
+void [factory, ctx, hooks, dsn, store, invalid, labels, unresolved, edge, catalog];

@@ -18,6 +18,7 @@ import {
   type ServerHooksOutput,
 } from '../defaults/runtime/defineSiteHooks';
 import { resolveI18nConfig } from '../runtime/i18n';
+import { invalidateContentCaches } from '../defaults/runtime/contentRevalidation';
 import type { ISRConfig } from '../types';
 
 const engineCtx = { traceId: 't', startedAt: 0 };
@@ -39,6 +40,61 @@ function runtime(overrides: Record<string, unknown> = {}): ISRConfig['runtime'] 
 
 beforeEach(() => {
   vi.restoreAllMocks();
+});
+
+describe('runtime language catalog', () => {
+  const locales = ['en', 'ja'];
+  const nativeNames = [
+    { locale: 'en', name: 'English' },
+    { locale: 'ja', name: '日本語' },
+  ];
+
+  it('uses native names without loading dictionaries when no endpoint is configured', async () => {
+    const fetchSpy = vi.spyOn(globalThis, 'fetch');
+    const hooks = applyRuntimeToServerHooks({}, runtime({ i18n: { locales } }));
+    expect(await hooks.loadLanguageCatalog?.()).toEqual(nativeNames);
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
+  it('retries an unavailable catalog, coalesces reads and refreshes on publication', async () => {
+    const fetchSpy = vi
+      .spyOn(globalThis, 'fetch')
+      .mockResolvedValueOnce(Response.json({ data: null }))
+      .mockResolvedValueOnce(
+        Response.json({
+          data: [
+            { locale: 'JA', name: ' 日本語版 ' },
+            { locale: 'fr', name: 'Français' },
+          ],
+        })
+      )
+      .mockResolvedValueOnce(Response.json([{ locale: 'ja', name: '日本語サイト' }]));
+    const hooks = applyRuntimeToServerHooks(
+      {},
+      runtime({
+        services: { api: 'https://api.example.com' },
+        i18n: { locales, catalog: { endpoint: '/languages' }, ttl: 60_000 },
+      })
+    );
+    expect(await hooks.loadLanguageCatalog?.()).toEqual(nativeNames);
+    const fresh = [
+      { locale: 'en', name: 'English' },
+      { locale: 'ja', name: '日本語版' },
+    ];
+    expect(
+      await Promise.all([hooks.loadLanguageCatalog?.(), hooks.loadLanguageCatalog?.()])
+    ).toEqual([fresh, fresh]);
+    expect(await hooks.loadLanguageCatalog?.()).toEqual(fresh);
+    expect(fetchSpy).toHaveBeenCalledTimes(2);
+    expect(fetchSpy).toHaveBeenCalledWith('https://api.example.com/languages', expect.any(Object));
+
+    invalidateContentCaches({ locales: ['ja'], paths: [], tags: [], sitemap: false });
+    expect(await hooks.loadLanguageCatalog?.()).toEqual([
+      { locale: 'en', name: 'English' },
+      { locale: 'ja', name: '日本語サイト' },
+    ]);
+    expect(fetchSpy).toHaveBeenCalledTimes(3);
+  });
 });
 
 describe('defineSiteHooks: locale detection', () => {
