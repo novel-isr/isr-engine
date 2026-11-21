@@ -85,14 +85,6 @@ test('the installed engine builds and serves the documented app', async () => {
         );
       }
     }
-    await revalidateTag('hello-home');
-    const metric = await invalidatorRunsTotal.get();
-    assert.equal(
-      metric.values.find(({ labels }) => labels.kind === 'tag' && labels.target === 'hello-home')
-        ?.value,
-      1
-    );
-
     const readSitemap = async () => {
       const response = await fetch(url + '/sitemap.xml', { signal: AbortSignal.timeout(10_000) });
       assert.equal(response.status, 200);
@@ -149,6 +141,14 @@ test('the installed engine builds and serves the documented app', async () => {
     assert.ok(!updated.includes('<lastmod>'));
     assert.ok(updated.includes(new URL('/guides/rendering', config.runtime.site).href));
     assert.equal(sitemapLoads, 2);
+
+    await revalidateTag('hello-home');
+    const metric = await invalidatorRunsTotal.get();
+    assert.equal(
+      metric.values.find(({ labels }) => labels.kind === 'tag' && labels.target === 'hello-home')
+        ?.value,
+      1
+    );
   } finally {
     await app.shutdown();
   }
