@@ -89,6 +89,8 @@ export type RuntimeServiceBase = string | ((ctx: SiteRuntimeContext) => string |
 export type IntlMessagesByLocale = Record<string, Record<string, unknown>>;
 
 export interface CreateAdminIntlLoaderOptions {
+  /** Supported routes, independent of which dictionaries are present in the local fallback. */
+  locales?: readonly string[];
   /** 远端字典端点；相对路径会用 runtime.services.api 拼接 */
   endpoint?: string;
   /** 本地兜底字典，通常来自 ssr.config.ts runtime.i18n.fallbackLocal */
@@ -297,7 +299,7 @@ export function createAdminIntlLoader(
   const endpoint = options.endpoint ?? '/api/i18n/{locale}/manifest';
   const fallbackMessages = options.fallbackMessages ?? {};
   const defaultLocale = options.defaultLocale;
-  const supportedLocales = Object.keys(fallbackMessages);
+  const supportedLocales = options.locales ?? Object.keys(fallbackMessages);
 
   return async (locale, ctx) => {
     const normalizedLocale =
@@ -305,10 +307,11 @@ export function createAdminIntlLoader(
         ? (matchConfiguredLocale(locale, supportedLocales) ?? defaultLocale)
         : locale;
     const remoteUrl = resolveAdminUrl(endpoint, { locale: normalizedLocale }, ctx);
+    const markDegraded = ctx[MARK_METADATA_DEGRADED];
     const remoteMessages = remoteUrl
       ? extractIntlMessagesOrNull(
-          await fetchMetadataJson(remoteUrl, options.timeoutMs),
-          ctx[MARK_METADATA_DEGRADED]
+          await fetchMetadataJson(remoteUrl, options.timeoutMs, markDegraded),
+          options.endpoint ? markDegraded : undefined
         )
       : null;
     const localMessages =
@@ -434,6 +437,7 @@ function createAdminSiteHooks(
         prefixDefault: i18n.prefixDefault ?? runtimeI18n.prefixDefault,
         detect: i18n.detect,
         load: createAdminIntlLoader({
+          locales,
           endpoint: i18n.endpoint ?? runtimeI18n.endpoint,
           fallbackMessages,
           defaultLocale,
@@ -645,7 +649,7 @@ function createSiteHooks(config: SiteHooksConfig, runtime: SiteRuntimeConfig): S
         const json = url ? await fetchMetadataJson(url, null) : null;
         if (json !== null && intlCfg.transform) {
           const transformed = await intlCfg.transform(json, locale);
-          if (transformed && Object.keys(transformed.messages).length) {
+          if (transformed && isUsableDictionary(transformed.messages)) {
             return {
               ...transformed,
               direction: transformed.direction ?? rtlOf(transformed.locale),
@@ -839,9 +843,19 @@ function extractIntlMessagesOrNull(
     body.strings ??
     body.messages ??
     (isRecord(dataValue) && 'strings' in dataValue ? dataValue.strings : dataValue);
-  if (isRecord(candidate) && Object.keys(candidate).length) return normalizeMessages(candidate);
+  if (body.status !== false && isUsableDictionary(candidate)) return normalizeMessages(candidate);
   markDegraded?.();
   return null;
+}
+
+function isUsableDictionary(value: unknown): value is Record<string, unknown> {
+  return isRecord(value) && Object.values(value).some(hasMessageValue);
+}
+
+function hasMessageValue(value: unknown): boolean {
+  if (typeof value === 'string') return value.trim().length > 0;
+  if (typeof value === 'boolean' || typeof value === 'number') return true;
+  return !!value && typeof value === 'object' && Object.values(value).some(hasMessageValue);
 }
 
 function displayLanguageName(locale: string): string {

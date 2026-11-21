@@ -86,16 +86,20 @@ it('path invalidation clears GET and HEAD representations', async () => {
   }
 });
 
-it.each(['i18n', 'seo'])(
-  'does not cache a render degraded by the %s endpoint',
-  async unavailable => {
+it.each([
+  { service: 'i18n', status: 503 },
+  { service: 'i18n', status: 200 },
+  { service: 'seo', status: 503 },
+])(
+  'does not cache a render degraded by a $status response from the $service endpoint',
+  async ({ service: unavailable, status }) => {
     let recovered = false;
     const upstream = await fixture((req, res) => {
       const service = req.url?.startsWith('/api/i18n/') ? 'i18n' : 'seo';
       res.setHeader('content-type', 'application/json');
       if (service === unavailable && !recovered) {
-        res.statusCode = 503;
-        res.end('{}');
+        res.statusCode = status;
+        res.end(JSON.stringify({ strings: {} }));
         return;
       }
       res.end(
@@ -106,7 +110,11 @@ it.each(['i18n', 'seo'])(
     });
     const hooks = applyRuntimeToServerHooks(
       defineAdminSiteHooks({
-        i18n: { locales: ['en'], fallbackLocal: { en: { title: 'snapshot dictionary' } } },
+        i18n: {
+          locales: ['en'],
+          endpoint: '/api/i18n/{locale}/manifest',
+          fallbackLocal: { en: { title: 'snapshot dictionary' } },
+        },
         seo: { fallbackLocal: [{ path: '/page', title: 'snapshot SEO' }] },
       }),
       {
@@ -147,7 +155,9 @@ it.each([
   { status: 200, body: JSON.stringify({ data: null }) },
   { status: 200, body: JSON.stringify({ data: { strings: {} } }) },
   { status: 200, body: JSON.stringify({ strings: ['invalid dictionary'] }) },
+  { status: 200, body: JSON.stringify({ strings: { page: { title: ' ', summary: null } } }) },
   { status: 204, body: '' },
+  { status: 404, body: '{}' },
 ])(
   'recovers when the dictionary endpoint initially returns $status $body',
   async ({ status, body }) => {
@@ -160,15 +170,18 @@ it.each([
       res.statusCode = available ? 200 : status;
       res.end(available ? JSON.stringify({ strings: { title: 'live dictionary' } }) : body);
     });
-    const hooks = applyRuntimeToServerHooks(defineAdminSiteHooks({ i18n: { locales: ['en'] } }), {
-      site: undefined,
-      services: { api: upstream.url, telemetry: undefined },
-      redis: undefined,
-      experiments: {},
-      i18n: undefined,
-      seo: undefined,
-      telemetry: false,
-    });
+    const hooks = applyRuntimeToServerHooks(
+      defineAdminSiteHooks({ i18n: { locales: ['en'], endpoint: '/i18n/{locale}' } }),
+      {
+        site: undefined,
+        services: { api: upstream.url, telemetry: undefined },
+        redis: undefined,
+        experiments: {},
+        i18n: undefined,
+        seo: undefined,
+        telemetry: false,
+      }
+    );
     const page = await fixture(async (req, res) => {
       const intl = await hooks.loadIntl(new Request(new URL(req.url!, page.url)));
       const title = intl?.messages.title;

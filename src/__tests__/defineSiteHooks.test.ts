@@ -19,6 +19,7 @@ import {
 } from '../defaults/runtime/defineSiteHooks';
 import { resolveI18nConfig } from '../runtime/i18n';
 import { invalidateContentCaches } from '../defaults/runtime/contentRevalidation';
+import { getCacheTagStorage } from '../context/CacheTagContext';
 import type { ISRConfig } from '../types';
 
 const engineCtx = { traceId: 't', startedAt: 0 };
@@ -98,6 +99,47 @@ describe('runtime language catalog', () => {
 });
 
 describe('defineSiteHooks: locale detection', () => {
+  it('requests the configured language even when its local fallback is missing', async () => {
+    const fetchSpy = vi
+      .spyOn(globalThis, 'fetch')
+      .mockResolvedValue(Response.json({ strings: { title: '記事' } }));
+    const hooks = applyRuntimeToServerHooks<Partial<ServerHooksOutput>>(
+      {},
+      runtime({
+        services: { api: 'https://api.example.com' },
+        i18n: {
+          locales: ['en', 'ja'],
+          defaultLocale: 'en',
+          endpoint: '/i18n/{locale}',
+          fallbackLocal: { en: { title: 'Articles' } },
+        },
+      })
+    );
+    expect(await hooks.loadIntl?.(new Request('https://example.com/ja'))).toMatchObject({
+      locale: 'ja',
+      messages: { title: '記事' },
+    });
+    expect(fetchSpy).toHaveBeenCalledWith('https://api.example.com/i18n/ja', expect.any(Object));
+  });
+
+  it('leaves SEO-only responses cacheable when the optional default dictionary is absent', async () => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response(null, { status: 404 }));
+    const hooks = applyRuntimeToServerHooks<Partial<ServerHooksOutput>>(
+      {},
+      runtime({
+        services: { api: 'https://api.example.com' },
+        seo: { endpoint: '/seo' },
+      })
+    );
+    const cacheContext = { tags: new Set<string>(), uncacheable: false };
+    await getCacheTagStorage().run(cacheContext, async () => {
+      expect(await hooks.loadIntl?.(new Request('https://example.com'))).toMatchObject({
+        messages: {},
+      });
+    });
+    expect(cacheContext.uncacheable).toBe(false);
+  });
+
   it('uses the runtime preference and URL locales with a custom dictionary loader', async () => {
     const routing = { locales: ['en', 'ja'], defaultLocale: 'en', prefixDefault: true };
     const configured = runtime({ i18n: { ...routing, rememberLocale: true } });
