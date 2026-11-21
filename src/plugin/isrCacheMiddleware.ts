@@ -634,7 +634,8 @@ export function createIsrCacheHandler(
         scopes: publication.scopes,
         ...(protocol && { protocol }),
       });
-    }
+    },
+    config?.runtime?.i18n
   );
 
   const unsubscribeBus = options.invalidationBus?.subscribe(async target => {

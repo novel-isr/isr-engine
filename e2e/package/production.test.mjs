@@ -29,9 +29,13 @@ test('the installed engine builds and serves the documented app', async () => {
   const { revalidateContent, revalidateTag } = require('isr-engine/rsc');
   const { Logger } = require('isr-engine');
   Logger.getInstance({ verbose: true }).debug('CommonJS consumer logging');
+  await assert.rejects(revalidateContent({ paths: ['/about'] }), /active ISR runtime/);
   const config = await loadConfig();
   config.server.host = '127.0.0.1';
   config.server.port = 0;
+  const publicationToken = crypto.randomUUID();
+  config.server.ops.contentRevalidation = true;
+  config.server.ops.authToken = publicationToken;
   let sitemapEntries = [
     { path: '/about', status: 'published', modifiedTime: '2026-10-01T08:00:00Z' },
     { path: '/guides/rendering', status: 'unpublished' },
@@ -81,14 +85,21 @@ test('the installed engine builds and serves the documented app', async () => {
         );
       }
     }
-    await revalidateTag('hello-home');
-    const metric = await invalidatorRunsTotal.get();
-    assert.equal(
-      metric.values.find(({ labels }) => labels.kind === 'tag' && labels.target === 'hello-home')
-        ?.value,
-      1
-    );
-
+    for (const [route, contentType] of [
+      ['/', 'text/html'],
+      ['/_.rsc', 'text/x-component'],
+    ]) {
+      for (let request = 0; request < 2; request++) {
+        const head = await fetch(url + route, {
+          method: 'HEAD',
+          signal: AbortSignal.timeout(10_000),
+        });
+        assert.equal(head.status, 200, route);
+        assert.ok(head.headers.get('content-type')?.startsWith(contentType), route);
+        assert.equal(head.headers.get('x-cache-status'), 'MISS', route);
+        assert.equal(await head.text(), '');
+      }
+    }
     const readSitemap = async () => {
       const response = await fetch(url + '/sitemap.xml', { signal: AbortSignal.timeout(10_000) });
       assert.equal(response.status, 200);
@@ -106,12 +117,53 @@ test('the installed engine builds and serves the documented app', async () => {
     ];
     assert.equal(await readSitemap(), initial);
     assert.equal(sitemapLoads, 1);
-    await revalidateContent({ paths: ['/about', '/guides/rendering'], sitemap: true });
+    const publish = (body, token) =>
+      fetch(url + '/__isr/content/revalidate', {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json',
+          ...(token && { authorization: `Bearer ${token}` }),
+        },
+        body,
+        signal: AbortSignal.timeout(10_000),
+      });
+    const publication = JSON.stringify({ paths: ['/about', '/guides/rendering'], sitemap: true });
+    for (const [token, expected] of [
+      [undefined, 401],
+      ['wrong-token', 403],
+    ]) {
+      const denied = await publish(publication, token);
+      assert.equal(denied.status, expected);
+      await denied.body?.cancel();
+    }
+    const invalid = await publish('{}', publicationToken);
+    assert.equal(invalid.status, 400);
+    await invalid.body?.cancel();
+    assert.equal(await readSitemap(), initial);
+
+    const warmPage = await fetch(url + '/about');
+    assert.equal(warmPage.headers.get('x-cache-status'), 'HIT');
+    await warmPage.text();
+
+    const applied = await publish(publication, publicationToken);
+    assert.equal(applied.status, 204);
+    assert.equal(applied.headers.get('cache-control'), 'no-store');
+    const refreshedPage = await fetch(url + '/about');
+    assert.equal(refreshedPage.headers.get('x-cache-status'), 'MISS');
+    await refreshedPage.text();
     const updated = await readSitemap();
     assert.ok(!updated.includes('/about'));
     assert.ok(!updated.includes('<lastmod>'));
     assert.ok(updated.includes(new URL('/guides/rendering', config.runtime.site).href));
     assert.equal(sitemapLoads, 2);
+
+    await revalidateTag('hello-home');
+    const metric = await invalidatorRunsTotal.get();
+    assert.equal(
+      metric.values.find(({ labels }) => labels.kind === 'tag' && labels.target === 'hello-home')
+        ?.value,
+      1
+    );
   } finally {
     await app.shutdown();
   }

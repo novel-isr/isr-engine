@@ -49,18 +49,21 @@ import {
   type I18nConfig,
 } from '../../runtime/i18n';
 import { readLocalePreference } from '../../runtime/localePreference';
+import { markUncacheable } from '../../context/CacheTagContext';
 
 export { getCookieHeader, parseCookieHeader, readCookie } from '../../utils/cookie';
 
 export type SiteRuntimeConfig = ISRConfig['runtime'];
 
 const CONTENT_INVALIDATOR = Symbol('contentInvalidator');
+const MARK_METADATA_DEGRADED = Symbol('markMetadataDegraded');
 
 export interface SiteRuntimeContext {
   runtime: SiteRuntimeConfig;
   services: RuntimeServices;
   telemetry?: string;
   site?: string;
+  [MARK_METADATA_DEGRADED]?: () => void;
 }
 
 export interface RuntimeServices {
@@ -302,7 +305,7 @@ export function createAdminIntlLoader(
         : locale;
     const remoteUrl = resolveAdminUrl(endpoint, { locale: normalizedLocale }, ctx);
     const remote = remoteUrl
-      ? await fetchJsonWithTimeout<unknown>(remoteUrl, options.timeoutMs)
+      ? await fetchMetadataJson(remoteUrl, options.timeoutMs, ctx[MARK_METADATA_DEGRADED])
       : null;
     const remoteMessages = extractIntlMessagesOrNull(remote);
     const localMessages =
@@ -339,7 +342,7 @@ export function createAdminSeoLoader(
     // 1. admin endpoint —— 运营在 dashboard 给具体 path 配过的覆盖优先级最高
     const remoteUrl = resolveAdminUrl(endpoint, { ...params, pathname }, ctx);
     const remote = remoteUrl
-      ? await fetchJsonWithTimeout<unknown>(remoteUrl, options.timeoutMs)
+      ? await fetchMetadataJson(remoteUrl, options.timeoutMs, ctx[MARK_METADATA_DEGRADED])
       : null;
     const remoteMeta = extractSeoMetaOrNull(remote);
     if (remoteMeta) return remoteMeta;
@@ -362,6 +365,7 @@ export function createAdminSeoLoader(
           });
           if (result) return result as PageSeoMeta;
         } catch (err) {
+          ctx[MARK_METADATA_DEGRADED]?.();
           // resolver 抛错不阻塞渲染：业务异常时把 SEO 当 null 处理
           console.warn('[seo] dynamic resolver threw, falling through to fallback', err);
         }
@@ -555,16 +559,12 @@ function createSiteHooks(config: SiteHooksConfig, runtime: SiteRuntimeConfig): S
     telemetry: services.telemetry,
     site: site || undefined,
   };
-  const fetchJson = async (path: string, baseUrl?: string): Promise<unknown> => {
-    try {
-      if (!baseUrl) return null;
-      const r = await fetch(baseUrl + path);
-      if (!r.ok) return null;
-      return await r.json();
-    } catch {
-      return null;
-    }
-  };
+  const metadataContext = (markDegraded?: () => void): SiteRuntimeContext => ({
+    ...runtimeCtx,
+    [MARK_METADATA_DEGRADED]: markDegraded,
+  });
+  const fetchJson = (path: string, markDegraded?: () => void) =>
+    api ? fetchMetadataJson(api + path, null, markDegraded) : Promise.resolve(null);
 
   // ─── i18n 缓存（一次创建，请求级复用）──────────────
   const runtimeLocale = runtime.i18n;
@@ -626,14 +626,15 @@ function createSiteHooks(config: SiteHooksConfig, runtime: SiteRuntimeConfig): S
     key: locale => `intl:${locale}`,
     ttl: intlCfg.ttl ?? 60_000,
     swr: true,
-    fetch: async locale => {
+    onDegraded: markUncacheable,
+    fetch: async (locale, markDegraded) => {
       if (intlCfg.load) {
-        const r = await intlCfg.load(locale, runtimeCtx);
+        const r = await intlCfg.load(locale, metadataContext(markDegraded));
         return r ?? { locale, messages: {}, direction: rtlOf(locale) };
       }
       if (intlCfg.endpoint) {
         const url = fillTemplate(intlCfg.endpoint, { locale });
-        const json = await fetchJson(url, services.api);
+        const json = await fetchJson(url, markDegraded);
         if (json !== null && intlCfg.transform) {
           const transformed = await intlCfg.transform(json, locale);
           if (transformed) {
@@ -679,8 +680,9 @@ function createSiteHooks(config: SiteHooksConfig, runtime: SiteRuntimeConfig): S
       const cache = createCachedFetcher<SeoRouteRequest, PageSeoMeta | null>({
         key: request => JSON.stringify(request),
         ttl: remote.ttl ?? 300_000,
-        fetch: async ({ params }) => {
-          const data = await fetchJson(fillTemplate(remote.endpoint, params), services.api);
+        onDegraded: markUncacheable,
+        fetch: async ({ params }, markDegraded) => {
+          const data = await fetchJson(fillTemplate(remote.endpoint, params), markDegraded);
           if (data === null) return null;
           return remote.transform(data, { ...params });
         },
@@ -695,7 +697,9 @@ function createSiteHooks(config: SiteHooksConfig, runtime: SiteRuntimeConfig): S
       const cache = createCachedFetcher<SeoRouteRequest, PageSeoMeta | null>({
         key: request => JSON.stringify(request),
         ttl: local.ttl ?? 300_000,
-        fetch: async ({ params }) => local.load({ ...params }, runtimeCtx),
+        onDegraded: markUncacheable,
+        fetch: async ({ params }, markDegraded) =>
+          local.load({ ...params }, metadataContext(markDegraded)),
         fallback: () => null,
       });
       seoCaches.push(cache);
@@ -991,15 +995,28 @@ function createServerReportId(): string | null {
   }
 }
 
-async function fetchJsonWithTimeout<T>(url: string, timeoutMs = 1200): Promise<T | null> {
+async function fetchMetadataJson(
+  url: string,
+  timeoutMs: number | null = 1200,
+  markDegraded?: () => void
+): Promise<unknown> {
   try {
-    const response = await fetch(url, {
-      headers: { Accept: 'application/json' },
-      signal: timeoutMs > 0 ? AbortSignal.timeout(timeoutMs) : undefined,
-    });
-    if (!response.ok) return null;
-    return (await response.json()) as T;
+    const response =
+      timeoutMs === null
+        ? await fetch(url)
+        : await fetch(url, {
+            headers: { Accept: 'application/json' },
+            signal: timeoutMs > 0 ? AbortSignal.timeout(timeoutMs) : undefined,
+          });
+    if (!response.ok) {
+      if (response.status !== 404) markDegraded?.();
+      void response.body?.cancel().catch(() => undefined);
+      return null;
+    }
+    if (response.status === 204) return null;
+    return await response.json();
   } catch {
+    markDegraded?.();
     return null;
   }
 }

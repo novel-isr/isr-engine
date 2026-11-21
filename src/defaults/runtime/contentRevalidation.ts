@@ -1,6 +1,9 @@
 /** Data and response cache scopes to invalidate after a content write commits. */
 export interface ContentRevalidationOptions {
+  /** Exact site paths, including any locale prefix. */
   paths?: readonly string[];
+  /** Business pathnames expanded using the runtime's routing config and the supplied locales. */
+  localizedPaths?: readonly string[];
   tags?: readonly string[];
   locales?: readonly string[];
   sitemap?: boolean;
@@ -8,7 +11,7 @@ export interface ContentRevalidationOptions {
 
 export interface ContentPublication {
   id: string;
-  scopes: Readonly<Required<ContentRevalidationOptions>>;
+  scopes: Readonly<Omit<Required<ContentRevalidationOptions>, 'localizedPaths'>>;
 }
 
 type ContentInvalidation = ContentPublication['scopes'] & { allPageMetadata?: true };
@@ -63,11 +66,13 @@ export function invalidateContentCaches(
   if (errors.length) throw new AggregateError(errors, 'Content metadata invalidation failed');
 }
 
-export function normalizeContentScopes(input: unknown): ContentPublication['scopes'] {
+export function normalizeContentScopes(
+  input: unknown
+): ContentPublication['scopes'] & Pick<ContentRevalidationOptions, 'localizedPaths'> {
   if (!input || typeof input !== 'object' || Array.isArray(input)) {
     throw new TypeError('Invalid content revalidation scopes');
   }
-  const { paths, tags, locales, sitemap } = input as ContentRevalidationOptions;
+  const { paths, localizedPaths, tags, locales, sitemap } = input as ContentRevalidationOptions;
   function read(values: unknown): string[] {
     if (values === undefined) return [];
     if (
@@ -83,6 +88,7 @@ export function normalizeContentScopes(input: unknown): ContentPublication['scop
   }
   return {
     paths: [...new Set(read(paths))],
+    ...(localizedPaths !== undefined && { localizedPaths: [...new Set(read(localizedPaths))] }),
     tags: [...new Set(read(tags))],
     locales: [...new Set(read(locales).map(locale => locale.trim().toLowerCase()))],
     sitemap: sitemap ?? false,

@@ -126,9 +126,13 @@ TTL 与 SWR 单位为秒。`routes` 控制渲染策略；页面路由可使用 `
 - 授权头、普通业务 Cookie，以及 `private`/`no-store` 等响应会触发缓存保护；不要依赖这些保护代替路由策略。`anon` 与实验 Cookie 有专门的共享缓存规则。
 - Server Component 使用 `cacheTag('site-content')` 声明依赖；数据更新成功后，在受业务鉴权保护的服务端代码中 `await revalidateTag('site-content')` 或 `await revalidatePath('/about')`，从 `isr-engine/rsc` 导入。
 
-后台提交发布、撤稿或索引状态更新后，从 `isr-engine/rsc` 调用 `await revalidateContent({ paths: ['/about'], locales: ['en'], sitemap: true })`。按实际变化指定页面路径或标签、字典语言和 sitemap，引擎先失效相关元数据，再失效对应 ISR 响应。其他实例的进程内元数据通过 Redis 广播刷新，断连时可在重连回放或缓存到期后更新。
+发布、撤稿或索引状态更新提交后，在站点引擎进程中调用 `isr-engine/rsc` 的 `revalidateContent()`。调用缺少活动引擎时会抛错。独立后台可在 Node 生产站点启用 `server.ops.contentRevalidation: true` 并配置 `server.ops.authToken`，向 `POST /__isr/content/revalidate` 发送相同 JSON 参数。请求携带 Bearer 运维令牌，失效完成后返回 `204`。
+
+`paths` 使用实际页面路径，`tags` 失效声明了对应标签的页面，`locales` 指定字典语言，`sitemap: true` 刷新站点地图。使用 `{ localizedPaths: ['/work/arcane'], locales: ['ja'] }` 可按站点语言配置将业务路径展开为 `/ja/work/arcane`，同时保留其他语言的 ISR 页面缓存。引擎先刷新元数据，再失效页面响应。其他实例的进程内元数据通过 Redis 广播刷新，断连后可在回放或缓存到期时更新。
 
 `runtime.seo.sitemap.load({ services })` 从已提交的数据批量读取完整目录。每条包含站内绝对路径 `path`、`status`，可带 `noindex` 和真实内容更新时间 `modifiedTime`。引擎只输出已发布且可索引的条目，缺少更新时间时省略 `lastmod`。单份 sitemap 上限为 50,000 个 URL 和 50 MiB。
+
+临时降级或使用过期字典及 SEO 数据的响应跳过 ISR 写入。动态 sitemap 刷新失败时，默认可在目录过期后的 5 分钟内沿用上一份有效结果，可用 `runtime.seo.sitemap.staleIfErrorMs` 调整。发布事件会丢弃旧目录，缺少可用目录时返回 `503`。
 
 请求期扩展可放在可选的 `src/entry.server.tsx`，默认导出 `defineAdminSiteHooks({ beforeRequest, onError })`（从 `isr-engine/site-hooks` 导入）。部署配置留在 `ssr.config.ts`；Server Component 用 `getRequestContext()` 读取 hooks 注入的上下文。
 

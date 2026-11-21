@@ -36,6 +36,7 @@ import {
   getOpsRequestLimiter,
 } from '@/server/opsConfig';
 import { admitRequest, createRequestLimiter, validateRequestLimits } from './requestLimits';
+import { mountContentRevalidationRoute } from './contentRevalidationRoute';
 import { createPublishedSitemap } from './publishedSitemap';
 import { readRedirectQuery, redirectLocal } from './safeRedirect';
 import {
@@ -254,7 +255,6 @@ export async function createProductionRuntime(
     app.disable('x-powered-by');
     // Forwarded headers are authoritative only for explicitly trusted deployment proxies.
     app.set('trust proxy', config.server.trustProxy ?? false);
-    app.use(createProductionJsonMiddleware()); // 防 JSON 炸弹
     const opsConfig = resolveOpsConfig(config, 'production');
     for (const warning of opsConfig.warnings) {
       logger.warn(`[Ops] ${warning}`);
@@ -267,6 +267,8 @@ export async function createProductionRuntime(
     app.use(createCspNonceMiddleware());
     app.use(createSecurityMiddleware(false, extraConnectSrc));
     app.use(createCompressionMiddleware());
+    mountContentRevalidationRoute(app, opsConfig);
+    app.use(createProductionJsonMiddleware());
     if (extraConnectSrc.length > 0) {
       logger.info(`🔒 CSP connect-src 加入：${extraConnectSrc.join(', ')}`);
     }

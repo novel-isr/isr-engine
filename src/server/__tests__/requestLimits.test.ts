@@ -627,6 +627,46 @@ it('returns a retryable error when the publication sitemap source fails', async 
   }
 });
 
+it('serves the last valid sitemap during a bounded outage and discards it on publication', async () => {
+  let now = Date.now();
+  vi.spyOn(Date, 'now').mockImplementation(() => now);
+  const load = vi.fn<RuntimeSitemapConfig['load']>();
+  load.mockReturnValueOnce([{ path: '/previous', status: 'published' }]);
+  load.mockRejectedValue(new Error('upstream unavailable'));
+  const fixture = await productionFixture({
+    files: {},
+    sitemap: { load, ttl: 100, staleIfErrorMs: 200 },
+  });
+  try {
+    await serve(fixture.runtime.app, async url => {
+      const request = () => fetch(url + '/sitemap.xml');
+      const initial = await request();
+      expect(initial.status).toBe(200);
+      const oldXml = await initial.text();
+      expect(oldXml).toContain('/previous</loc>');
+      now += 101;
+      const fallback = await request();
+      expect(fallback.status).toBe(200);
+      expect(fallback.headers.get('cache-control')).toBe('no-cache');
+      expect(await fallback.text()).toBe(oldXml);
+
+      now += 199;
+      const expired = await request();
+      expect(expired.status).toBe(503);
+      await expired.body?.cancel();
+
+      load.mockReturnValueOnce([{ path: '/updated', status: 'published' }]);
+      expect(await (await request()).text()).toContain('/updated</loc>');
+      await revalidateContent({ sitemap: true });
+      const afterPublication = await request();
+      expect(afterPublication.status).toBe(503);
+      expect(await afterPublication.text()).not.toContain('/updated</loc>');
+    });
+  } finally {
+    await fixture.close();
+  }
+});
+
 it.each(['/health', '/metrics'])(
   'shares the dev ops budget from Vite through Express after %s',
   async first => {

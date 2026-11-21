@@ -49,7 +49,7 @@ export async function revalidateTag(): Promise<void> {
 }
 
 export async function revalidateContent(_options: ContentRevalidationOptions): Promise<void> {
-  await Promise.resolve();
+  throw new Error('revalidateContent requires an active ISR runtime');
 }
 
 export function registerInvalidator(): () => void {

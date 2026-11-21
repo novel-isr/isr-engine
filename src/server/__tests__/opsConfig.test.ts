@@ -3,6 +3,7 @@ import { createOpsAuthMiddleware, resolveOpsConfig } from '../opsConfig';
 
 type PartialOpsConfig = {
   authToken?: string;
+  contentRevalidation?: boolean;
   tokenHeader?: string;
   health?: { enabled?: boolean; public?: boolean };
   metrics?: { enabled?: boolean; public?: boolean };
@@ -47,6 +48,21 @@ describe('resolveOpsConfig', () => {
     expect(resolved.health.enabled).toBe(true);
     expect(resolved.health.public).toBe(true);
     expect(resolved.metrics.enabled).toBe(false);
+  });
+
+  it('enables publication only on an explicitly configured production runtime with a token', () => {
+    for (const [environment, requested, authToken, enabled] of [
+      ['production', false, 'token', false],
+      ['production', true, undefined, false],
+      ['production', true, 'token', true],
+      ['development', true, 'token', false],
+    ] as const) {
+      const ops = resolveOpsConfig(
+        serverOpsConfig({ authToken, contentRevalidation: requested }),
+        environment
+      );
+      expect(ops.contentRevalidation).toEqual({ enabled, public: false });
+    }
   });
 
   it('production 未配置 authToken 时自动关闭受保护 metrics', () => {

@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Counter } from 'prom-client';
 import {
   registerInvalidator,
+  revalidateContent,
   revalidatePath,
   revalidateTag,
   RevalidationError,
@@ -53,6 +54,14 @@ describe('revalidate.ts —— Promise.allSettled + RevalidationError 语义', (
   it('无 invalidator 注册时静默 no-op，不报错', async () => {
     await expect(revalidatePath('/books')).resolves.toBeUndefined();
     await expect(revalidateTag('books')).resolves.toBeUndefined();
+  });
+
+  it('rejects publication from a process without an active runtime', async () => {
+    await expect(revalidateContent({ paths: ['/work/arcane'] })).rejects.toThrow(
+      'active ISR runtime'
+    );
+    await expect(revalidateContent({ locales: ['ja'] })).rejects.toThrow('active ISR runtime');
+    await expect(revalidateContent({ sitemap: true })).rejects.toThrow('active ISR runtime');
   });
 
   it('单个成功的 invalidator —— 调一次，无错', async () => {

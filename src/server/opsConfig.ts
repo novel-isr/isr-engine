@@ -3,7 +3,10 @@ import type { RequestHandler } from 'express';
 import type { ISRConfig, RequestLimitPolicy } from '@/types';
 import { createRequestLimiter, resolveRequestLimitPolicy } from './requestLimits';
 
-type OpsEndpointName = 'health' | 'metrics' | 'inventory';
+type ReadOpsEndpoint = 'health' | 'metrics' | 'inventory';
+type OpsEndpointName = ReadOpsEndpoint | 'contentRevalidation';
+
+export const CONTENT_REVALIDATION_PATH = '/__isr/content/revalidate';
 
 export interface ResolvedOpsEndpointConfig {
   enabled: boolean;
@@ -16,6 +19,7 @@ export interface ResolvedOpsConfig {
   health: ResolvedOpsEndpointConfig;
   metrics: ResolvedOpsEndpointConfig;
   inventory: ResolvedOpsEndpointConfig;
+  contentRevalidation: ResolvedOpsEndpointConfig;
   warnings: string[];
   requestLimit?: RequestLimitPolicy;
 }
@@ -42,7 +46,7 @@ export function getOpsRequestLimiter(resolved: ResolvedOpsConfig): RequestHandle
   return limiter;
 }
 
-const OPS_ENDPOINT_PATHS: Record<OpsEndpointName, string> = {
+const OPS_ENDPOINT_PATHS: Record<ReadOpsEndpoint, string> = {
   health: '/health',
   metrics: '/metrics',
   inventory: '/__isr/cache/inventory',
@@ -50,14 +54,14 @@ const OPS_ENDPOINT_PATHS: Record<OpsEndpointName, string> = {
 
 const DEFAULT_TOKEN_HEADER = 'x-isr-admin-token';
 
-const DEV_DEFAULTS: Record<OpsEndpointName, ResolvedOpsEndpointConfig> = {
+const DEV_DEFAULTS: Record<ReadOpsEndpoint, ResolvedOpsEndpointConfig> = {
   health: { enabled: true, public: true },
   metrics: { enabled: true, public: true },
   // dev 默认开放 inventory，方便本地排错；public=true 让 curl 不带 token 也能用
   inventory: { enabled: true, public: true },
 };
 
-const PROD_DEFAULTS: Record<OpsEndpointName, ResolvedOpsEndpointConfig> = {
+const PROD_DEFAULTS: Record<ReadOpsEndpoint, ResolvedOpsEndpointConfig> = {
   health: { enabled: true, public: true },
   metrics: { enabled: false, public: false },
   // 生产默认上线 + 强制 token —— 故障诊断工具事故来时才用，不能临时部署再开
@@ -72,7 +76,7 @@ function trimToUndefined(value: string | undefined): string | undefined {
 }
 
 function resolveEndpointConfig(
-  endpoint: OpsEndpointName,
+  endpoint: ReadOpsEndpoint,
   input: { enabled?: boolean; public?: boolean } | undefined,
   defaults: ResolvedOpsEndpointConfig,
   env: 'development' | 'production',
@@ -107,6 +111,10 @@ export function resolveOpsConfig(
   const defaults = env === 'production' ? PROD_DEFAULTS : DEV_DEFAULTS;
   const warnings: string[] = [];
   const authToken = trimToUndefined(ops?.authToken);
+  const publicationEnabled = env === 'production' && ops?.contentRevalidation === true;
+  if (publicationEnabled && !authToken) {
+    warnings.push(`${CONTENT_REVALIDATION_PATH} requires server.ops.authToken and was disabled.`);
+  }
 
   return {
     authToken,
@@ -129,6 +137,7 @@ export function resolveOpsConfig(
       authToken,
       warnings
     ),
+    contentRevalidation: { enabled: publicationEnabled && !!authToken, public: false },
     warnings,
   };
 }
@@ -197,7 +206,7 @@ function readOpsToken(
 }
 
 export function createOpsAuthMiddleware(
-  endpoint: 'health' | 'metrics' | 'inventory',
+  endpoint: OpsEndpointName,
   resolved: ResolvedOpsConfig
 ): RequestHandler {
   const policy = resolved[endpoint];
