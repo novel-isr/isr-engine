@@ -25,7 +25,7 @@
  *
  * 注意：
  *   - 本模块不持有任何缓存实现，纯做路由分发
- *   - 若未注册 invalidator（例如脱离 engine 的纯 RSC 场景），调用静默为 no-op
+ *   - revalidatePath 与 revalidateTag 在无注册时保留 no-op；发布要求活跃的引擎运行时
  */
 
 import { randomUUID } from 'node:crypto';
@@ -37,6 +37,8 @@ import {
   type ContentRevalidationOptions,
 } from '../defaults/runtime/contentRevalidation';
 import { recordRevalidationMetric } from './revalidationMetrics';
+import { withLocale, type I18nConfig } from '../runtime/i18n';
+import { htmlRouteIdentity } from '../utils/htmlPathname';
 
 /** Invalidator 签名：接收失效目标描述 */
 export interface RevalidateInvalidator {
@@ -47,7 +49,10 @@ type ContentResponseInvalidator = (publication: ContentPublication) => Promise<v
 
 /** 全局单例 key（Symbol.for 保证跨模块图复用同一注册表） */
 const REGISTRY_KEY = Symbol.for('isr-engine:revalidate-registry');
-type Registry = Map<RevalidateInvalidator, ContentResponseInvalidator | undefined>;
+type Registry = Map<
+  RevalidateInvalidator,
+  { publish: ContentResponseInvalidator; i18n?: I18nConfig } | undefined
+>;
 
 type GlobalWithRegistry = typeof globalThis & {
   [REGISTRY_KEY]?: Registry;
@@ -64,10 +69,11 @@ function getRegistry(): Registry {
  */
 export function registerInvalidator(
   fn: RevalidateInvalidator,
-  invalidatePublication?: ContentResponseInvalidator
+  invalidatePublication?: ContentResponseInvalidator,
+  i18n?: I18nConfig
 ): () => void {
   const registry = getRegistry();
-  registry.set(fn, invalidatePublication);
+  registry.set(fn, invalidatePublication && { publish: invalidatePublication, i18n });
   return () => {
     registry.delete(fn);
   };
@@ -196,17 +202,68 @@ export async function revalidateTag(tag: string): Promise<void> {
 
 /** Invalidate managed metadata before invalidating the affected rendered responses. */
 export async function revalidateContent(options: ContentRevalidationOptions): Promise<void> {
-  const scopes = normalizeContentScopes(options);
+  const { localizedPaths = [], ...scopes } = normalizeContentScopes(options);
   const targets = contentResponseTargets(scopes);
-  if (!targets.length && !scopes.locales.length && !scopes.sitemap) return;
+  if (!targets.length && !localizedPaths.length && !scopes.locales.length && !scopes.sitemap) {
+    throw new TypeError('Content revalidation requires at least one scope');
+  }
+  if (localizedPaths.length && !scopes.locales.length) {
+    throw new TypeError('localizedPaths requires locales');
+  }
+  const registry = Array.from(getRegistry());
+  if (
+    !registry.length ||
+    ((localizedPaths.length || scopes.locales.length || scopes.sitemap) &&
+      !registry.some(([, handler]) => handler))
+  ) {
+    throw new Error(
+      'revalidateContent requires an active ISR runtime. Deliver the publication to the site runtime.'
+    );
+  }
+  const id = randomUUID();
+  const invalidators = registry.flatMap(([invalidate, handler]) => {
+    if (!handler) return targets.map(target => () => invalidate(target));
+    const paths = localizedPaths.length
+      ? [
+          ...new Set([
+            ...scopes.paths,
+            ...expandLocalizedPaths(localizedPaths, scopes.locales, handler.i18n),
+          ]),
+        ]
+      : scopes.paths;
+    return [() => handler.publish({ id, scopes: { ...scopes, paths } })];
+  });
+  // Resolve every target before changing local metadata or shared caches.
   invalidateContentCaches(scopes);
-  const publication = { id: randomUUID(), scopes };
-  const invalidators = Array.from(getRegistry()).flatMap(([invalidate, invalidatePublication]) =>
-    invalidatePublication
-      ? [() => invalidatePublication(publication)]
-      : targets.map(target => () => invalidate(target))
-  );
   await runInvalidators('content', invalidators);
+}
+
+function expandLocalizedPaths(
+  paths: readonly string[],
+  locales: readonly string[],
+  i18n?: I18nConfig
+): string[] {
+  if (!i18n) throw new TypeError('localizedPaths requires runtime.i18n configuration');
+  const configured = new Map(i18n.locales.map(locale => [locale.toLowerCase(), locale]));
+  const requested = locales.map(locale => {
+    const match = configured.get(locale);
+    if (!match) throw new TypeError('Unknown publication locale');
+    return match;
+  });
+  return paths.flatMap(path => {
+    let identity: string;
+    try {
+      identity = htmlRouteIdentity(path);
+    } catch {
+      throw new TypeError(
+        'localizedPaths requires origin-relative pathnames without queries or fragments'
+      );
+    }
+    if (configured.has(identity.split('/')[1]?.toLowerCase() ?? '')) {
+      throw new TypeError('Use paths for page paths that already contain a locale prefix');
+    }
+    return requested.map(locale => withLocale(path, locale, i18n));
+  });
 }
 
 export { registerContentInvalidator } from '../defaults/runtime/contentRevalidation';

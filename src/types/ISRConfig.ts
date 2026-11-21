@@ -528,6 +528,8 @@ export interface ISRConfig {
         enabled: boolean;
         public: boolean;
       };
+      /** Enable the authenticated Node production publication endpoint. Defaults to false. */
+      contentRevalidation?: boolean;
     };
   };
 
