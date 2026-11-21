@@ -19,6 +19,7 @@ import { injectRSCPayload } from 'rsc-html-stream/server';
 import type { IntlPayload } from './runtime/seo-runtime';
 import { setClientI18n } from '../runtime/i18n-store';
 import { HydrationShell } from './runtime/hydration-shell';
+import { createRenderErrorHandler, isRenderCancellation } from './runtime/renderCancellation';
 // @ts-expect-error - 虚拟模块由 plugin-rsc 注入
 import assetsManifest from 'virtual:vite-rsc/assets-manifest';
 
@@ -138,6 +139,7 @@ const CSR_SHELL_STYLES = `
 export interface RenderHtmlOptions {
   formState?: ReactFormState;
   nonce?: string;
+  signal?: AbortSignal;
   /** true 时跳过 bootstrap 脚本和 RSC 内联 payload，模拟禁用 JS 场景 */
   debugNojs?: boolean;
   /** 强制走 csr-shell 兜底（调试用 —— ?__csr-shell=1 触发） */
@@ -157,6 +159,8 @@ export async function renderHTML(
   rscStream: ReadableStream<Uint8Array>,
   options: RenderHtmlOptions = {}
 ): Promise<RenderHtmlResult> {
+  const { signal } = options;
+  signal?.throwIfAborted();
   const [rscStream1, rscStream2] = rscStream.tee();
 
   let payload: Promise<DefaultRscPayload> | undefined;
@@ -173,6 +177,7 @@ export async function renderHTML(
   let htmlStream: ReadableStream<Uint8Array>;
   let status: number | undefined;
   let csrShellFallback = false;
+  const onError = createRenderErrorHandler(signal);
 
   try {
     if (options.forceCsrShell) throw new Error('forceCsrShell debug flag');
@@ -184,9 +189,12 @@ export async function renderHTML(
         bootstrapScriptContent: options.debugNojs ? undefined : bootstrapScriptContent,
         nonce: options.nonce,
         formState: options.formState,
+        signal,
+        onError,
       }
     );
   } catch (err) {
+    if (isRenderCancellation(signal, err)) throw err;
     // FallbackChain 末端 csr-shell：SSR 渲染抛异常 → 不出 5xx 白屏，
     // 改返回最小壳 HTML + self.__NO_HYDRATE=1，让浏览器走 createRoot 自救
     csrShellFallback = true;
@@ -241,6 +249,8 @@ export async function renderHTML(
           (options.apiBaseUrl ? `self.__API_BASE__=${JSON.stringify(options.apiBaseUrl)};` : '') +
           (options.debugNojs ? '' : bootstrapScriptContent),
         nonce: options.nonce,
+        signal,
+        onError,
       }
     );
   }

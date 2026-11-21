@@ -52,6 +52,7 @@ import {
 } from '../../runtime/i18n';
 import type { RuntimeConfig } from '../../types/ISRConfig';
 import { getRequestContext } from '../../context/RequestContext';
+import { createRenderErrorHandler, isRenderCancellation } from './renderCancellation';
 
 interface DefaultRscPayload {
   root: React.ReactNode;
@@ -194,6 +195,7 @@ export function defineServerEntry<C extends ServerCtx = ServerCtx>(
       let ctx: C = { ...(requestStore ?? {}), ...engineCtx } as C;
 
       try {
+        request.signal.throwIfAborted();
         if (hooks.beforeRequest) {
           const userExt = (await hooks.beforeRequest(request, engineCtx)) ?? {};
           ctx = { ...(requestStore ?? {}), ...engineCtx, ...userExt } as C;
@@ -274,6 +276,7 @@ export function defineServerEntry<C extends ServerCtx = ServerCtx>(
         }
         return response;
       } catch (err) {
+        if (isRenderCancellation(request.signal, err)) return new Response(null, { status: 204 });
         if (isNoAcceptableLocaleError(err)) {
           return new Response(null, {
             status: 406,
@@ -310,6 +313,16 @@ async function runRscPipeline(
 ): Promise<Response> {
   const { request } = renderRequest;
   const responseRouteStatus = renderRequest.isAction ? undefined : extras.routeStatus;
+  const signal = request.signal;
+  signal.throwIfAborted();
+  const responseHeaders = new Headers({
+    'content-type': renderRequest.isRsc
+      ? 'text/x-component;charset=utf-8'
+      : 'text/html; charset=utf-8',
+  });
+  if (request.method === 'HEAD') {
+    return new Response(null, { status: responseRouteStatus, headers: responseHeaders });
+  }
 
   let returnValue: DefaultRscPayload['returnValue'] | undefined;
   let formState: ReactFormState | undefined;
@@ -354,45 +367,28 @@ async function runRscPipeline(
     formState,
     returnValue,
   };
+  const renderOptions = { temporaryReferences, signal, onError: createRenderErrorHandler(signal) };
   const rscStream = import.meta.env.DEV
     ? runWithDevStyleDeclarationCollection(
         devStyleDeclarations!,
         () =>
-          renderToReadableStream<DefaultRscPayload>(
-            rscPayload,
-            { temporaryReferences },
-            {
-              onClientReference: declareDevClientReferenceStyles,
-            }
-          ),
+          renderToReadableStream<DefaultRscPayload>(rscPayload, renderOptions, {
+            onClientReference: declareDevClientReferenceStyles,
+          }),
         { transportGeneration: renderRequest.devStyleGeneration }
       )
-    : renderToReadableStream<DefaultRscPayload>(rscPayload, { temporaryReferences });
+    : renderToReadableStream<DefaultRscPayload>(rscPayload, renderOptions);
 
   if (renderRequest.isRsc) {
     return new Response(rscStream, {
       status: actionStatus ?? responseRouteStatus,
-      headers: { 'content-type': 'text/x-component;charset=utf-8' },
+      headers: responseHeaders,
     });
   }
 
-  interface SsrModule {
-    renderHTML: (
-      rscStream: ReadableStream<Uint8Array>,
-      options: {
-        formState?: ReactFormState;
-        nonce?: string;
-        debugNojs?: boolean;
-        forceCsrShell?: boolean;
-        apiBaseUrl?: string;
-      }
-    ) => Promise<{
-      stream: ReadableStream<Uint8Array>;
-      status?: number;
-      csrShellFallback?: boolean;
-    }>;
-  }
-  const ssrEntry = await import.meta.viteRsc.loadModule<SsrModule>('ssr', 'index');
+  const ssrEntry = await import.meta.viteRsc.loadModule<
+    Pick<typeof import('../entry.server.ssr'), 'renderHTML'>
+  >('ssr', 'index');
 
   // CSP nonce —— 由上游 createCspNonceMiddleware 生成并写到 req header 'x-csp-nonce'。
   // React 19 renderToReadableStream 接 nonce 选项后，自动给所有内联 script (RSC payload、
@@ -406,10 +402,9 @@ async function runRscPipeline(
     debugNojs: renderRequest.url.searchParams.has('__nojs'),
     forceCsrShell: renderRequest.url.searchParams.has('__csr-shell'),
     apiBaseUrl: extras.apiBaseUrl,
+    signal,
   });
 
-  const responseHeaders = new Headers();
-  responseHeaders.set('content-type', 'text/html; charset=utf-8');
   responseHeaders.set('x-render-strategy', ssrResult.csrShellFallback ? 'csr-shell' : 'rsc-ssr');
   responseHeaders.set('x-fallback-used', ssrResult.csrShellFallback ? 'true' : 'false');
   if (ssrResult.csrShellFallback) {

@@ -8,6 +8,10 @@ import type { IsrCacheMiddlewareOptions } from '../plugin/isrCacheMiddleware';
 import { createIsrCacheHandler } from '../plugin/isrCacheMiddleware';
 import { createHybridCacheStore } from '../plugin/isrCacheStore';
 import { revalidateContent, revalidatePath, revalidateTag } from '../rsc/revalidate';
+import {
+  applyRuntimeToServerHooks,
+  defineAdminSiteHooks,
+} from '../defaults/runtime/defineSiteHooks';
 
 async function fixture(
   render: (req: http.IncomingMessage, res: http.ServerResponse) => void,
@@ -81,6 +85,62 @@ it('path invalidation clears GET and HEAD representations', async () => {
     await f.close();
   }
 });
+
+it.each(['i18n', 'seo'])(
+  'does not cache a render degraded by the %s endpoint',
+  async unavailable => {
+    let recovered = false;
+    const upstream = await fixture((req, res) => {
+      const service = req.url?.startsWith('/api/i18n/') ? 'i18n' : 'seo';
+      res.setHeader('content-type', 'application/json');
+      if (service === unavailable && !recovered) {
+        res.statusCode = 503;
+        res.end('{}');
+        return;
+      }
+      res.end(
+        JSON.stringify(
+          service === 'i18n' ? { strings: { title: 'live dictionary' } } : { title: 'live SEO' }
+        )
+      );
+    });
+    const hooks = applyRuntimeToServerHooks(
+      defineAdminSiteHooks({
+        i18n: { locales: ['en'], fallbackLocal: { en: { title: 'snapshot dictionary' } } },
+        seo: { fallbackLocal: [{ path: '/page', title: 'snapshot SEO' }] },
+      }),
+      {
+        site: undefined,
+        services: { api: upstream.url, telemetry: undefined },
+        redis: undefined,
+        experiments: {},
+        i18n: undefined,
+        seo: undefined,
+        telemetry: false,
+      }
+    );
+    const page = await fixture(async (req, res) => {
+      const request = new Request(new URL(req.url!, page.url));
+      const [intl, seo] = await Promise.all([hooks.loadIntl(request), hooks.loadSeoMeta(request)]);
+      res.setHeader('content-type', 'text/html');
+      res.end(`${intl?.messages.title} / ${seo?.title}`);
+    });
+    try {
+      const degraded = await fetch(page.url + '/page');
+      expect(degraded.headers.get('x-cache-status')).toBe('MISS');
+      expect(await degraded.text()).toContain('snapshot');
+      recovered = true;
+      const fresh = await fetch(page.url + '/page');
+      expect(fresh.headers.get('x-cache-status')).toBe('MISS');
+      expect(await fresh.text()).toBe('live dictionary / live SEO');
+      const warm = await fetch(page.url + '/page');
+      expect(warm.headers.get('x-cache-status')).toBe('HIT');
+      expect(await warm.text()).toBe('live dictionary / live SEO');
+    } finally {
+      await Promise.all([page.close(), upstream.close()]);
+    }
+  }
+);
 it('locale-only publication fences an in-progress render while preserving warm responses', async () => {
   let version = 'before publication';
   let started!: () => void;

@@ -6,6 +6,7 @@ export async function App({ url }: { url: URL }) {
   if (Number.isFinite(delayMs) && delayMs > 0) {
     await new Promise(resolve => setTimeout(resolve, delayMs));
   }
+  if (url.searchParams.has('render-error')) throw new Error('development render failure');
 
   return (
     <html lang='en'>

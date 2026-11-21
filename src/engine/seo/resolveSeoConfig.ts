@@ -70,6 +70,7 @@ export function resolveSitemapLoader(config: ISRConfig, engine?: SEOEngine) {
   const sitemap = engine ?? SEOEngine.getInstance({ baseUrl: resolveSeoConfig(config).baseUrl });
   return {
     ttl: source.ttl ?? seo.ttl,
+    staleIfErrorMs: source.staleIfErrorMs ?? 300_000,
     load: async () =>
       sitemap.generatePublishedSitemap(await source.load({ services: config.runtime.services })),
   };
