@@ -121,6 +121,57 @@ it('locale-only publication fences an in-progress render while preserving warm r
     await f.close();
   }
 });
+
+it.each([true, false])('expands logical page paths with prefixDefault=%s', async prefixDefault => {
+  let version = 'before publication';
+  const f = await fixture(
+    (req, res) => {
+      res.setHeader('content-type', req.url?.endsWith('_.rsc') ? 'text/x-component' : 'text/html');
+      res.end(version);
+    },
+    {},
+    {
+      runtime: {
+        i18n: {
+          locales: ['en', 'ja'],
+          defaultLocale: 'en',
+          prefixDefault,
+          endpoint: undefined,
+          fallbackLocal: undefined,
+          ttl: 60_000,
+          timeoutMs: 1_000,
+          remoteSource: 'remote',
+          fallbackSource: 'local',
+        },
+      },
+    }
+  );
+  const affected = ['/ja/work/arcane', '/ja/work/arcane_.rsc'];
+  const english = prefixDefault ? '/en/work/arcane' : '/work/arcane';
+  const other = [english, english + '_.rsc', '/ja/work/other'];
+  async function read(route: string) {
+    const response = await fetch(f.url + route);
+    return [response.headers.get('x-cache-status'), await response.text()];
+  }
+  try {
+    for (const route of [...affected, ...other]) {
+      expect(await read(route)).toEqual(['MISS', version]);
+      expect(await read(route)).toEqual(['HIT', version]);
+    }
+    await expect(
+      revalidateContent({ localizedPaths: ['/work/arcane'], locales: ['fr'] })
+    ).rejects.toThrow('Unknown publication locale');
+    expect(await read(affected[0])).toEqual(['HIT', version]);
+    version = 'after publication';
+    await revalidateContent({ localizedPaths: ['/work/arcane'], locales: ['JA'] });
+    for (const route of affected) expect(await read(route)).toEqual(['MISS', version]);
+    for (const route of other) {
+      expect(await read(route)).toEqual(['HIT', 'before publication']);
+    }
+  } finally {
+    await f.close();
+  }
+});
 it('path and tag revalidation clear L2 entries after L1 eviction', async () => {
   const db = new Map<string, unknown>();
   const indexed = new Map<string, string[]>();
