@@ -13,8 +13,16 @@ export function createPublishedSitemap(config: ISRConfig, engine?: SEOEngine) {
   const cached = createCachedFetcher({
     key: () => 'sitemap',
     ttl: source.ttl,
+    staleIfErrorMs: source.staleIfErrorMs,
     max: 1,
-    fetch: source.load,
+    async fetch() {
+      try {
+        return await source.load();
+      } catch (error) {
+        logger.warn('[SEO] Publication sitemap refresh failed', error);
+        throw error;
+      }
+    },
   });
   let generation = 0;
   const close = registerContentInvalidator(({ sitemap }) => {
@@ -34,9 +42,8 @@ export function createPublishedSitemap(config: ISRConfig, engine?: SEOEngine) {
           const xml = await cached(undefined);
           if (current !== generation) continue;
           if (isOpen()) res.type('application/xml').set('Cache-Control', 'no-cache').end(xml);
-        } catch (error) {
+        } catch {
           if (current !== generation) continue;
-          logger.warn('[SEO] Publication sitemap unavailable', error);
           if (isOpen())
             res
               .status(503)

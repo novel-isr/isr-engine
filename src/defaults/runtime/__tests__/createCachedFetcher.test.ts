@@ -66,6 +66,29 @@ describe('createCachedFetcher', () => {
     expect(await p3).toBe(42);
   });
 
+  it('marks each consumer of a shared degraded result and refreshes once the source recovers', async () => {
+    const onDegraded = vi.fn();
+    let recovered = false;
+    const fetcher = vi.fn(async (_arg: string, markDegraded?: () => void) => {
+      if (!recovered) {
+        markDegraded?.();
+        return 'snapshot';
+      }
+      return 'current';
+    });
+    const load = createCachedFetcher({ key: locale => locale, fetch: fetcher, onDegraded });
+
+    expect(await Promise.all([load('en'), load('en')])).toEqual(['snapshot', 'snapshot']);
+    expect(fetcher).toHaveBeenCalledOnce();
+    expect(onDegraded).toHaveBeenCalledTimes(2);
+
+    recovered = true;
+    expect(await load('en')).toBe('current');
+    expect(await load('en')).toBe('current');
+    expect(fetcher).toHaveBeenCalledTimes(2);
+    expect(onDegraded).toHaveBeenCalledTimes(2);
+  });
+
   it('detaches an invalidated in-flight load without disturbing other keys', async () => {
     const pending: Array<(value: string) => void> = [];
     let frenchLoads = 0;
@@ -113,17 +136,20 @@ describe('createCachedFetcher', () => {
   it('SWR：过期立即返回旧值，后台异步刷新', async () => {
     let counter = 0;
     const fetcher = vi.fn(async () => ++counter);
+    const onDegraded = vi.fn();
     const load = createCachedFetcher({
       key: () => 'k',
       fetch: fetcher,
       ttl: 10,
       swr: true,
+      onDegraded,
     });
 
     expect(await load(0)).toBe(1);
     await new Promise(r => setTimeout(r, 25));
     // 过期：立即返回旧值
     expect(await load(0)).toBe(1);
+    expect(onDegraded).toHaveBeenCalledOnce();
     // 等后台刷新完成
     await new Promise(r => setTimeout(r, 20));
     expect(await load(0)).toBe(2);

@@ -90,7 +90,7 @@
     "test": "vitest run",
     "pretest:browser": "pnpm run build",
     "test:browser:production": "pnpm run build && playwright test --config playwright.production.config.ts",
-    "test:browser": "playwright test e2e/dev-css-lifecycle/dev-css-lifecycle.spec.ts",
+    "test:browser": "playwright test",
     "bench": "node bench/runner.mjs",
     "check": "pnpm run type-check && pnpm run lint && pnpm run test",
     "audit:security": "pnpm audit --registry=https://registry.npmjs.org --audit-level=low",

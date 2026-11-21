@@ -58,13 +58,17 @@ export interface CachedFetcherOptions<TArg, TValue> {
   /** 从入参生成缓存 key */
   key: (arg: TArg) => string;
   /** 实际加载逻辑（network / fs / dynamic import 都可） */
-  fetch: (arg: TArg) => Promise<TValue>;
+  fetch: (arg: TArg, markDegraded?: () => void) => Promise<TValue>;
   /** 缓存 TTL（毫秒），默认 60s */
   ttl?: number;
   /** LRU 容量，默认 500 */
   max?: number;
   /** 启用 stale-while-revalidate：过期仍返回旧值，后台异步刷新（默认 false） */
   swr?: boolean;
+  /** Maximum time after expiry to reuse the last successful value on refresh errors. */
+  staleIfErrorMs?: number;
+  /** Called in each consumer's context when it receives a stale or degraded result. */
+  onDegraded?: () => void;
   /** 拉取失败时的回退值（如不提供则抛错） */
   fallback?: (arg: TArg, error: unknown) => TValue | Promise<TValue>;
 }
@@ -75,6 +79,11 @@ interface Entry<TArg, TValue> {
   expiresAt: number;
 }
 
+interface LoadResult<TValue> {
+  value: TValue;
+  degraded: boolean;
+}
+
 export type CachedFetcher<TArg, TValue> = (arg: TArg) => Promise<TValue>;
 
 export function createCachedFetcher<TArg, TValue>(
@@ -82,27 +91,50 @@ export function createCachedFetcher<TArg, TValue>(
 ): CachedFetcher<TArg, TValue> & { invalidate(matches?: (arg: TArg) => boolean): void } {
   const ttl = opts.ttl ?? 60_000;
   const max = opts.max ?? 500;
-  type Flight = { arg: TArg; promise?: Promise<TValue> };
+  const staleIfErrorMs = opts.staleIfErrorMs ?? 0;
+  if (!Number.isSafeInteger(staleIfErrorMs) || staleIfErrorMs < 0) {
+    throw new RangeError('staleIfErrorMs must be a non-negative safe integer');
+  }
+  type Flight = { arg: TArg; promise?: Promise<LoadResult<TValue>> };
   const cache = new TinyLRU<string, Entry<TArg, TValue>>(max);
   const inflight = new Map<string, Flight>();
 
-  async function load(key: string, flight: Flight): Promise<TValue> {
+  async function load(
+    key: string,
+    flight: Flight,
+    previous?: Entry<TArg, TValue>
+  ): Promise<LoadResult<TValue>> {
     try {
-      const value = await opts.fetch(flight.arg);
-      if (inflight.get(key) === flight) {
+      let degraded = false;
+      const value = await opts.fetch(flight.arg, () => {
+        degraded = true;
+      });
+      if (!degraded && inflight.get(key) === flight) {
         cache.set(key, { arg: flight.arg, value, expiresAt: Date.now() + ttl });
       }
-      return value;
+      return { value, degraded };
     } catch (err) {
-      if (opts.fallback) return await opts.fallback(flight.arg, err);
+      if (
+        previous &&
+        staleIfErrorMs > 0 &&
+        inflight.get(key) === flight &&
+        Date.now() - previous.expiresAt < staleIfErrorMs
+      ) {
+        return { value: previous.value, degraded: true };
+      }
+      if (opts.fallback) return { value: await opts.fallback(flight.arg, err), degraded: true };
       throw err;
     }
   }
 
-  function startLoad(key: string, arg: TArg): Promise<TValue> {
+  function startLoad(
+    key: string,
+    arg: TArg,
+    previous?: Entry<TArg, TValue>
+  ): Promise<LoadResult<TValue>> {
     const flight: Flight = { arg };
     inflight.set(key, flight);
-    flight.promise = load(key, flight).finally(() => {
+    flight.promise = load(key, flight, previous).finally(() => {
       if (inflight.get(key) === flight) inflight.delete(key);
     });
     return flight.promise;
@@ -124,11 +156,14 @@ export function createCachedFetcher<TArg, TValue>(
           /* 后台刷新失败保留旧值 */
         });
       }
+      opts.onDegraded?.();
       return entry.value;
     }
 
     // miss 或非 SWR 过期：合并并发到同一个 promise
-    return inflight.get(key)?.promise ?? startLoad(key, arg);
+    const result = await (inflight.get(key)?.promise ?? startLoad(key, arg, entry));
+    if (result.degraded) opts.onDegraded?.();
+    return result.value;
   }
 
   cachedFetcher.invalidate = (matches: (arg: TArg) => boolean = () => true): void => {

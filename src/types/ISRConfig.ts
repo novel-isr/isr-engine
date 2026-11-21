@@ -185,6 +185,8 @@ export interface RuntimeSitemapConfig {
   }) => readonly RuntimeSitemapEntry[] | Promise<readonly RuntimeSitemapEntry[]>;
   /** Catalog cache TTL in milliseconds. Defaults to runtime.seo.ttl. */
   ttl?: number;
+  /** Reuse a successful catalog on refresh errors for at most this long after expiry. Default 300000. */
+  staleIfErrorMs?: number;
 }
 
 export interface RuntimeSeoConfig {

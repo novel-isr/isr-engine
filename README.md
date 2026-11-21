@@ -132,6 +132,8 @@ TTL 与 SWR 单位为秒。`routes` 控制渲染策略；页面路由可使用 `
 
 `runtime.seo.sitemap.load({ services })` 从已提交的数据批量读取完整目录。每条包含站内绝对路径 `path`、`status`，可带 `noindex` 和真实内容更新时间 `modifiedTime`。引擎只输出已发布且可索引的条目，缺少更新时间时省略 `lastmod`。单份 sitemap 上限为 50,000 个 URL 和 50 MiB。
 
+临时降级或使用过期字典及 SEO 数据的响应跳过 ISR 写入。动态 sitemap 刷新失败时，默认可在目录过期后的 5 分钟内沿用上一份有效结果，可用 `runtime.seo.sitemap.staleIfErrorMs` 调整。发布事件会丢弃旧目录，缺少可用目录时返回 `503`。
+
 请求期扩展可放在可选的 `src/entry.server.tsx`，默认导出 `defineAdminSiteHooks({ beforeRequest, onError })`（从 `isr-engine/site-hooks` 导入）。部署配置留在 `ssr.config.ts`；Server Component 用 `getRequestContext()` 读取 hooks 注入的上下文。
 
 `Logger.spin()` 返回 Ora 10 对象。`prefixText`、`suffixText` 可为字符串或生成函数；`color` 接受颜色名、`false` 或 `undefined`；自定义 spinner 的 `interval` 必须是正安全整数。
