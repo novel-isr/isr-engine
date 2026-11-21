@@ -49,7 +49,7 @@ import {
   type I18nConfig,
 } from '../../runtime/i18n';
 import { readLocalePreference } from '../../runtime/localePreference';
-import { markUncacheable } from '../../rsc/cacheTag';
+import { markUncacheable } from '../../context/CacheTagContext';
 
 export { getCookieHeader, parseCookieHeader, readCookie } from '../../utils/cookie';
 
