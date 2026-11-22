@@ -20,6 +20,13 @@ import { DEFAULT_SEO_CONFIG, mergeSEOConfig } from './config';
 const SITEMAP_DATE =
   /^\d{4}-\d{2}-\d{2}(?:T\d{2}:\d{2}(?::\d{2}(?:\.\d+)?)?(?:Z|[+-]\d{2}:\d{2}))?$/;
 const SITEMAP_BYTE_LIMIT = 50 * 1024 * 1024;
+const SITEMAP_STATUSES = new Set<RuntimeSitemapEntry['status']>([
+  'published',
+  'draft',
+  'unpublished',
+  'scheduled',
+  'archived',
+]);
 
 interface SitemapEntry {
   url: string;
@@ -122,15 +129,27 @@ export class SEOEngine {
     return xml;
   }
 
-  async generatePublishedSitemap(catalog: readonly RuntimeSitemapEntry[]): Promise<string> {
+  async generatePublishedSitemap(
+    catalog: readonly RuntimeSitemapEntry[],
+    { validateEntries = false } = {}
+  ): Promise<string> {
     if (!Array.isArray(catalog)) throw new TypeError('Sitemap source must return an array');
     const entries: SitemapEntry[] = [];
     const seen = new Set<string>();
     for (const { path, status, noindex, modifiedTime } of catalog) {
+      if (
+        validateEntries &&
+        (!SITEMAP_STATUSES.has(status) ||
+          (noindex !== undefined && typeof noindex !== 'boolean') ||
+          (modifiedTime !== undefined && typeof modifiedTime !== 'string'))
+      ) {
+        throw new TypeError('Invalid sitemap catalog entry');
+      }
       let identity: string;
       try {
         identity = htmlRouteIdentity(path);
       } catch {
+        if (validateEntries) throw new TypeError('Invalid sitemap catalog path');
         continue;
       }
       if (seen.has(identity)) throw new TypeError(`Duplicate sitemap path: ${path}`);

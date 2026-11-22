@@ -2,6 +2,7 @@
  * ISR 引擎类型定义
  *
  */
+import type { PageSeoMeta } from '../defaults/runtime/seo-runtime';
 
 /**
  * 渲染模式（用户级）—— 路由可选的**三种真实**缓存策略
@@ -154,7 +155,7 @@ export interface RuntimeI18nConfig {
  * 解析顺序（高 → 低）：
  *   1. admin endpoint 命中（运营在 dashboard 给具体 path 配过的覆盖）
  *   2. dynamicResolvers pattern 匹配（业务侧请求期数据驱动）
- *   3. fallbackLocal exact path 命中
+ *   3. fallbackLocal locale + path 命中，其次使用不指定 locale 的条目
  *   4. 都没 → null（前端 head 走默认）
  */
 export interface DynamicSeoResolver {
@@ -189,7 +190,14 @@ export interface RuntimeSitemapEntry {
   modifiedTime?: string;
 }
 
-export interface RuntimeSitemapConfig {
+interface SitemapCacheConfig {
+  /** Catalog cache TTL in milliseconds. Defaults to runtime.seo.ttl. */
+  ttl?: number;
+  /** Reuse a successful catalog on refresh errors for at most this long after expiry. Default 300000. */
+  staleIfErrorMs?: number;
+}
+
+export interface RuntimeSitemapConfig extends SitemapCacheConfig {
   /**
    * Load the complete authoritative catalog in one operation. Each canonical path is unique.
    * The emitted sitemap can contain up to 50,000 URLs and 50 MiB of uncompressed XML.
@@ -197,17 +205,32 @@ export interface RuntimeSitemapConfig {
   load: (input: {
     services: RuntimeServicesConfig;
   }) => readonly RuntimeSitemapEntry[] | Promise<readonly RuntimeSitemapEntry[]>;
-  /** Catalog cache TTL in milliseconds. Defaults to runtime.seo.ttl. */
-  ttl?: number;
-  /** Reuse a successful catalog on refresh errors for at most this long after expiry. Default 300000. */
-  staleIfErrorMs?: number;
+  endpoint?: never;
+}
+
+export interface RuntimeSitemapEndpointConfig extends SitemapCacheConfig {
+  /**
+   * Full catalog endpoint. Relative paths use runtime.services.api. Requests use
+   * runtime.seo.timeoutMs and accept an array or a { code: 0, data: [...] } response.
+   */
+  endpoint: string;
+  load?: never;
+}
+
+export interface RuntimeSeoFallbackEntry extends PageSeoMeta {
+  /** Business pathname with no locale prefix. */
+  path: string;
+  /** Omit to share this fallback across locales. */
+  locale?: string;
+  /** Known ISO 8601 content timestamp for the corresponding sitemap URL. */
+  modifiedTime?: string;
 }
 
 export interface RuntimeSeoConfig {
   /** 远端 SEO 端点；支持 {pathname} */
   endpoint: string | undefined;
   /** 本地兜底 SEO 路由表。可为已知更新时间的 sitemap URL 声明 ISO 8601 modifiedTime。 */
-  fallbackLocal: readonly Record<string, unknown>[] | undefined;
+  fallbackLocal: readonly (RuntimeSeoFallbackEntry | Record<string, unknown>)[] | undefined;
   /** SEO 元数据缓存 TTL（毫秒） */
   ttl: number;
   /** 远端请求超时（毫秒） */
@@ -220,7 +243,7 @@ export interface RuntimeSeoConfig {
    */
   dynamicResolvers: readonly DynamicSeoResolver[] | undefined;
   /** Optional authoritative sitemap catalog. */
-  sitemap?: RuntimeSitemapConfig;
+  sitemap?: RuntimeSitemapConfig | RuntimeSitemapEndpointConfig;
 }
 
 export interface RuntimeServicesConfig {

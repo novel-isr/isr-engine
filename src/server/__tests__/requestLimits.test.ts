@@ -17,7 +17,11 @@ import { createCacheInspectorMiddleware } from '../../plugin/createCacheInspecto
 import { createProductionRuntime, createStaticHtmlMiddleware } from '../productionRuntime';
 import { createIsrCacheHandler, createIsrCacheMiddleware } from '../../plugin/isrCacheMiddleware';
 import type { IsrCacheHandler } from '../../plugin/isrCacheMiddleware';
-import type { RequestLimitPolicy, RuntimeSitemapConfig } from '../../types/ISRConfig';
+import type {
+  RequestLimitPolicy,
+  RuntimeSeoConfig,
+  RuntimeSitemapConfig,
+} from '../../types/ISRConfig';
 import { revalidateContent } from '../../rsc/revalidate';
 import { ISRRoutes } from '../../isr/ISRRoutes';
 import { normalizeEngineConfig } from '../../config/normalizeEngineConfig';
@@ -29,7 +33,8 @@ async function productionFixture(options: {
   ssgRoutes?: string[];
   staticHtml?: RequestLimitPolicy;
   seo?: RequestLimitPolicy;
-  sitemap?: RuntimeSitemapConfig;
+  sitemap?: RuntimeSeoConfig['sitemap'];
+  api?: string;
 }) {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), 'isr-limit-production-'));
   try {
@@ -63,7 +68,7 @@ async function productionFixture(options: {
       ssg: { routes: options.ssgRoutes ?? [] },
       runtime: {
         site: 'https://example.com',
-        services: { api: undefined, telemetry: undefined },
+        services: { api: options.api, telemetry: undefined },
         redis: undefined,
         experiments: {},
         i18n: undefined,
@@ -627,44 +632,84 @@ it('returns a retryable error when the publication sitemap source fails', async 
   }
 });
 
-it('serves the last valid sitemap during a bounded outage and discards it on publication', async () => {
+it('refreshes a sitemap endpoint and serves stale XML only during a bounded outage', async () => {
   let now = Date.now();
   vi.spyOn(Date, 'now').mockImplementation(() => now);
-  const load = vi.fn<RuntimeSitemapConfig['load']>();
-  load.mockReturnValueOnce([{ path: '/previous', status: 'published' }]);
-  load.mockRejectedValue(new Error('upstream unavailable'));
-  const fixture = await productionFixture({
-    files: {},
-    sitemap: { load, ttl: 100, staleIfErrorMs: 200 },
+  const upstream = express();
+  const entries = [
+    { path: '/previous', status: 'published', modifiedTime: '2024-02-30' },
+    { path: '/draft', status: 'draft' },
+    { path: '/noindex', status: 'published', noindex: true },
+  ];
+  let catalog: unknown = { code: 0, data: entries };
+  let status = 200;
+  let requests = 0;
+  upstream.get('/catalog', (_req, res) => {
+    requests++;
+    res.status(status).json(catalog);
   });
-  try {
-    await serve(fixture.runtime.app, async url => {
-      const request = () => fetch(url + '/sitemap.xml');
-      const initial = await request();
-      expect(initial.status).toBe(200);
-      const oldXml = await initial.text();
-      expect(oldXml).toContain('/previous</loc>');
-      now += 101;
-      const fallback = await request();
-      expect(fallback.status).toBe(200);
-      expect(fallback.headers.get('cache-control')).toBe('no-cache');
-      expect(await fallback.text()).toBe(oldXml);
-
-      now += 199;
-      const expired = await request();
-      expect(expired.status).toBe(503);
-      await expired.body?.cancel();
-
-      load.mockReturnValueOnce([{ path: '/updated', status: 'published' }]);
-      expect(await (await request()).text()).toContain('/updated</loc>');
-      await revalidateContent({ sitemap: true });
-      const afterPublication = await request();
-      expect(afterPublication.status).toBe(503);
-      expect(await afterPublication.text()).not.toContain('/updated</loc>');
+  await serve(upstream, async api => {
+    const fixture = await productionFixture({
+      api,
+      files: {},
+      sitemap: { endpoint: '/catalog', ttl: 100, staleIfErrorMs: 200 },
     });
-  } finally {
-    await fixture.close();
-  }
+    try {
+      await serve(fixture.runtime.app, async url => {
+        const request = () => fetch(url + '/sitemap.xml');
+        const initial = await request();
+        expect(initial.status).toBe(200);
+        const oldXml = await initial.text();
+        expect(oldXml.match(/<loc>[^<]+<\/loc>/g)).toEqual([
+          '<loc>https://example.com/previous</loc>',
+        ]);
+        expect(oldXml).not.toContain('<lastmod>');
+        catalog = [{ path: '/partial', status: 'published' }, { path: '/missing-status' }];
+        expect(await (await request()).text()).toBe(oldXml);
+        expect(requests).toBe(1);
+
+        now += 101;
+        const fallback = await request();
+        expect(fallback.status).toBe(200);
+        expect(fallback.headers.get('cache-control')).toBe('no-cache');
+        expect(await fallback.text()).toBe(oldXml);
+        expect(requests).toBe(2);
+
+        for (const invalid of [
+          [{ path: 'https://other.example.com/page', status: 'published' }],
+          [{ status: 'published' }],
+          [{ path: '/unknown-status', status: 'pending' }],
+          [{ path: '/invalid-noindex', status: 'published', noindex: 'false' }],
+          [{ path: '/invalid-timestamp', status: 'published', modifiedTime: 2024 }],
+          { code: 1, data: [] },
+        ]) {
+          catalog = invalid;
+          expect(await (await request()).text()).toBe(oldXml);
+        }
+
+        now += 199;
+        const expired = await request();
+        expect(expired.status).toBe(503);
+        await expired.body?.cancel();
+
+        catalog = [{ path: '/updated', status: 'published' }];
+        expect(await (await request()).text()).toContain('/updated</loc>');
+        status = 502;
+        await revalidateContent({ sitemap: true });
+        const afterPublication = await request();
+        expect(afterPublication.status).toBe(503);
+        expect(await afterPublication.text()).toBe('Sitemap unavailable');
+
+        status = 200;
+        catalog = [];
+        const empty = await request();
+        expect(empty.status).toBe(200);
+        expect(await empty.text()).not.toContain('<loc>');
+      });
+    } finally {
+      await fixture.close();
+    }
+  });
 });
 
 it.each(['/health', '/metrics'])(

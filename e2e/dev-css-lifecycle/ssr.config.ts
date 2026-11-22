@@ -26,7 +26,7 @@ export default {
     failBuildThreshold: 0,
   },
   server: {
-    port: Number(process.env.PLAYWRIGHT_DEV_PORT ?? process.env.PORT ?? 43137),
+    port: Number(process.env.E2E_DEV_PORT ?? process.env.PORT ?? 43137),
     host: '127.0.0.1',
     strictPort: true,
     ops: {

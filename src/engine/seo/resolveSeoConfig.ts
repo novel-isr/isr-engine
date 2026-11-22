@@ -9,6 +9,8 @@
  */
 import { Logger } from '../../logger/Logger';
 import { isDev } from '../../config/getStatus';
+import { requestMetadataJson, resolveMetadataUrl } from '../../defaults/runtime/metadataTransport';
+import { resolveI18nConfig, withLocale } from '../../runtime/i18n';
 import type { ISRConfig } from '../../types';
 import { SEOEngine } from './SEOEngine';
 
@@ -55,10 +57,20 @@ export function resolveSeoConfig(config: ISRConfig): ResolvedSeoConfig {
 /** 取本地 SEO 条目明确声明的内容更新时间，仅用于完全匹配的 sitemap URL。 */
 export function resolveSitemapLastModified(config: ISRConfig): ReadonlyMap<string, string> {
   const timestamps = new Map<string, string>();
-  for (const { path, modifiedTime } of config.runtime?.seo?.fallbackLocal ?? []) {
-    if (typeof path === 'string' && typeof modifiedTime === 'string' && !timestamps.has(path)) {
-      timestamps.set(path, modifiedTime);
+  const localized = new Set<string>();
+  const i18n = config.runtime?.i18n && resolveI18nConfig(config.runtime.i18n);
+  for (const { path, locale, modifiedTime } of config.runtime?.seo?.fallbackLocal ?? []) {
+    if (typeof path !== 'string' || typeof modifiedTime !== 'string') continue;
+    if (typeof locale !== 'string') {
+      if (!timestamps.has(path)) timestamps.set(path, modifiedTime);
+      continue;
     }
+    const configuredLocale = i18n?.locales.find(tag => tag.toLowerCase() === locale.toLowerCase());
+    if (!i18n || !configuredLocale || !path.startsWith('/')) continue;
+    const url = withLocale(path, configuredLocale, i18n);
+    if (localized.has(url)) continue;
+    localized.add(url);
+    timestamps.set(url, modifiedTime);
   }
   return timestamps;
 }
@@ -68,10 +80,23 @@ export function resolveSitemapLoader(config: ISRConfig, engine?: SEOEngine) {
   const source = seo?.sitemap;
   if (!source) return;
   const sitemap = engine ?? SEOEngine.getInstance({ baseUrl: resolveSeoConfig(config).baseUrl });
+  const { services } = config.runtime;
   return {
     ttl: source.ttl ?? seo.ttl,
     staleIfErrorMs: source.staleIfErrorMs ?? 300_000,
-    load: async () =>
-      sitemap.generatePublishedSitemap(await source.load({ services: config.runtime.services })),
+    async load() {
+      if (source.load) return sitemap.generatePublishedSitemap(await source.load({ services }));
+
+      const url = source.endpoint && resolveMetadataUrl(source.endpoint, services.api);
+      if (!url)
+        throw new Error('Sitemap endpoint requires an absolute URL or runtime.services.api');
+      const body = await requestMetadataJson(url, seo.timeoutMs);
+      const entries =
+        body && typeof body === 'object' && 'code' in body && body.code === 0 && 'data' in body
+          ? body.data
+          : body;
+      if (!Array.isArray(entries)) throw new TypeError('Invalid sitemap catalog response');
+      return sitemap.generatePublishedSitemap(entries, { validateEntries: true });
+    },
   };
 }

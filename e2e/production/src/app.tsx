@@ -16,6 +16,10 @@ export async function App({ url }: { url: URL }) {
       <head>
         <meta charSet='utf-8' />
         <title>Production regression app</title>
+        <link
+          rel='icon'
+          href='data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aP1kAAAAASUVORK5CYII='
+        />
       </head>
       <body>
         <LocaleLink locale='zh-CN' config={config.runtime.i18n}>
