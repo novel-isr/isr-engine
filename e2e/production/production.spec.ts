@@ -1,18 +1,67 @@
 import { fork } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { expect, test } from '@playwright/test';
+import type { Page } from 'puppeteer-core';
+import { afterAll, beforeAll, expect, test } from 'vitest';
 import express from 'express';
 import { createCspNonceMiddleware, createSecurityMiddleware } from '../../src/server/middleware';
 
-const browserErrors: string[] = [];
-test.beforeEach(async ({ page }) => {
-  browserErrors.length = 0;
-  page.on('pageerror', error => browserErrors.push(error.message));
-  page.on('console', message => {
-    if (message.type() === 'error') browserErrors.push(message.text());
-  });
+import { browserTest, interceptRequests, startBrowserServer } from '../browser';
+
+let server: Awaited<ReturnType<typeof startBrowserServer>>;
+
+beforeAll(async () => {
+  server = await startBrowserServer('production');
 });
-test.afterEach(() => expect(browserErrors).toEqual([]));
+
+afterAll(async () => {
+  await server?.close();
+});
+
+function productionUrl(path: string) {
+  return new URL(path, server.origin).href;
+}
+
+function collectBrowserErrors(page: Page) {
+  const errors: string[] = [];
+  page.on('pageerror', error =>
+    errors.push(error instanceof Error ? error.message : String(error))
+  );
+  page.on('console', message => {
+    if (message.type() === 'error') {
+      const { url } = message.location();
+      errors.push(url ? `${message.text()} (${url})` : message.text());
+    }
+  });
+  return errors;
+}
+
+const checkedBrowserTest = browserTest.extend('checkedPage', ({ page }, { onCleanup }) => {
+  const errors = collectBrowserErrors(page);
+  onCleanup(() => expect(errors).toEqual([]));
+  return page;
+});
+
+const initialCount = '::-p-aria([name="Count 0"][role="button"])';
+const incrementedCount = '::-p-aria([name="Count 1"][role="button"])';
+const articleHeading = '::-p-aria([name="Article"][role="heading"])';
+const homeHeading = '::-p-aria([name="Home"][role="heading"])';
+
+async function waitForHydratedCounter(page: Page) {
+  await page.waitForFunction(
+    () => document.querySelector('main button:enabled')?.textContent === 'Count 0'
+  );
+}
+
+async function incrementCounter(page: Page) {
+  await page.locator(initialCount).click();
+  await page.waitForSelector(incrementedCount, { visible: true });
+}
+
+async function cacheStatus(url: string) {
+  const response = await fetch(url);
+  await response.arrayBuffer();
+  return response.headers.get('x-cache-status');
+}
 
 function startProgrammaticApp(env: NodeJS.ProcessEnv) {
   const child = fork(fileURLToPath(new URL('./programmatic-server.mjs', import.meta.url)), [], {
@@ -44,341 +93,366 @@ function startProgrammaticApp(env: NodeJS.ProcessEnv) {
   };
 }
 
-test('data and Blob images load under both development and production image policies', async ({
-  page,
-}) => {
-  for (const isDev of [true, false]) {
-    const app = express();
-    app.use(createCspNonceMiddleware(), createSecurityMiddleware(isDev));
-    app.get('/favicon.ico', (_req, res) => {
-      res.status(204).end();
-    });
-    app.get('/', (_req, res) => {
-      res
-        .type('html')
-        .send('<!doctype html><html><head><title>Image policy</title></head><body></body></html>');
-    });
-    const server = app.listen(0, '127.0.0.1');
-    await new Promise<void>(resolve => server.once('listening', resolve));
-    try {
-      const address = server.address();
-      if (!address || typeof address === 'string') throw new Error('Missing HTTP port');
-      const response = await page.goto(`http://127.0.0.1:${address.port}/`);
-      expect(response?.headers()['strict-transport-security']).toBe(
-        isDev ? undefined : 'max-age=15552000; includeSubDomains'
-      );
-      const loaded = await page.evaluate(async () => {
-        const base64 =
-          'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aP1kAAAAASUVORK5CYII=';
-        const bytes = Uint8Array.from(atob(base64), character => character.charCodeAt(0));
-        const blob = URL.createObjectURL(new Blob([bytes], { type: 'image/png' }));
-        try {
-          return await Promise.all(
-            [`data:image/png;base64,${base64}`, blob].map(
-              src =>
-                new Promise<boolean>(resolve => {
-                  const image = new Image();
-                  image.onload = () => resolve(true);
-                  image.onerror = () => resolve(false);
-                  image.src = src;
-                  document.body.append(image);
-                })
-            )
+checkedBrowserTest(
+  'data and Blob images load under both development and production image policies',
+  async ({ checkedPage: page }) => {
+    for (const isDev of [true, false]) {
+      const app = express();
+      app.use(createCspNonceMiddleware(), createSecurityMiddleware(isDev));
+      app.get('/favicon.ico', (_req, res) => {
+        res.status(204).end();
+      });
+      app.get('/', (_req, res) => {
+        res
+          .type('html')
+          .send(
+            '<!doctype html><html><head><title>Image policy</title></head><body></body></html>'
           );
-        } finally {
-          URL.revokeObjectURL(blob);
-        }
       });
-      expect(loaded).toEqual([true, true]);
+      const server = app.listen(0, '127.0.0.1');
+      await new Promise<void>(resolve => server.once('listening', resolve));
+      try {
+        const address = server.address();
+        if (!address || typeof address === 'string') throw new Error('Missing HTTP port');
+        const response = await page.goto(`http://127.0.0.1:${address.port}/`);
+        expect(response?.headers()['strict-transport-security']).toBe(
+          isDev ? undefined : 'max-age=15552000; includeSubDomains'
+        );
+        const loaded = await page.evaluate(async () => {
+          const base64 =
+            'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aP1kAAAAASUVORK5CYII=';
+          const bytes = Uint8Array.from(atob(base64), character => character.charCodeAt(0));
+          const blob = URL.createObjectURL(new Blob([bytes], { type: 'image/png' }));
+          try {
+            return await Promise.all(
+              [`data:image/png;base64,${base64}`, blob].map(
+                src =>
+                  new Promise<boolean>(resolve => {
+                    const image = new Image();
+                    image.onload = () => resolve(true);
+                    image.onerror = () => resolve(false);
+                    image.src = src;
+                    document.body.append(image);
+                  })
+              )
+            );
+          } finally {
+            URL.revokeObjectURL(blob);
+          }
+        });
+        expect(loaded).toEqual([true, true]);
+      } finally {
+        server.closeAllConnections();
+        await new Promise<void>((resolve, reject) =>
+          server.close(error => (error ? reject(error) : resolve()))
+        );
+      }
+    }
+  }
+);
+
+checkedBrowserTest(
+  'SSR controls become actionable only after their client modules hydrate',
+  async ({ checkedPage: page }) => {
+    let releaseModules!: () => void;
+    let reportBlockedModule!: () => void;
+    const modulesReady = new Promise<void>(resolve => {
+      releaseModules = resolve;
+    });
+    const moduleBlocked = new Promise<void>(resolve => {
+      reportBlockedModule = resolve;
+    });
+    const removeInterception = await interceptRequests(page, async request => {
+      if (/\/assets\/.*\.js(?:\?|$)/.test(request.url())) {
+        reportBlockedModule();
+        await modulesReady;
+        await request.continue();
+      }
+    });
+    const navigation = page.goto(productionUrl('/static?hydration-contract=1'));
+    const localeLink = '::-p-aria([name="中文"][role="link"])';
+    try {
+      await Promise.race([
+        moduleBlocked,
+        navigation.then(() => {
+          throw new Error('The page loaded without requesting a blocked client module');
+        }),
+      ]);
+      await page.waitForSelector(initialCount, { visible: true });
+      expect(await page.$eval(initialCount, button => button.hasAttribute('disabled'))).toBe(true);
+      await page.waitForSelector(localeLink, { visible: true });
+      expect(await page.$eval(localeLink, link => link.getAttribute('aria-disabled'))).toBe('true');
+      expect(await page.$eval(localeLink, link => link.getAttribute('href'))).toBeNull();
+      releaseModules();
+      await navigation;
+      await waitForHydratedCounter(page);
+      await expect
+        .poll(() => page.$eval(localeLink, link => link.getAttribute('aria-disabled')))
+        .toBeNull();
+      await incrementCounter(page);
     } finally {
-      server.closeAllConnections();
-      await new Promise<void>((resolve, reject) =>
-        server.close(error => (error ? reject(error) : resolve()))
-      );
+      releaseModules();
+      await removeInterception();
     }
   }
-});
+);
 
-test('SSR controls become actionable only after their client modules hydrate', async ({ page }) => {
-  let releaseModules!: () => void;
-  let reportBlockedModule!: () => void;
-  const modulesReady = new Promise<void>(resolve => {
-    releaseModules = resolve;
-  });
-  const moduleBlocked = new Promise<void>(resolve => {
-    reportBlockedModule = resolve;
-  });
-  await page.route(/\/assets\/.*\.js(?:\?|$)/, async route => {
-    reportBlockedModule();
-    await modulesReady;
-    await route.continue();
-  });
-  try {
-    await page.goto('/static?hydration-contract=1', { waitUntil: 'commit' });
-    const button = page.getByRole('button', { name: 'Count 0' });
-    await expect(button).toBeVisible();
-    await moduleBlocked;
-    expect(await button.isDisabled()).toBe(true);
-    const localeLink = page.getByRole('link', { name: '中文' });
-    await expect(localeLink).toBeDisabled();
-    expect(await localeLink.getAttribute('href')).toBeNull();
-    releaseModules();
-    await expect(button).toBeEnabled();
-    await expect(localeLink).toBeEnabled();
-    await button.click();
-    await expect(page.getByRole('button', { name: 'Count 1' })).toBeVisible();
-  } finally {
-    releaseModules();
-    await page.unrouteAll({ behavior: 'wait' });
+checkedBrowserTest(
+  'SSG with a query hydrates under its CSP and supports RSC navigation',
+  async ({ checkedPage: page }) => {
+    const response = await page.goto(productionUrl('/static?search=a.b'));
+    expect(response?.headers()['x-served-by']).toBe('ssg-runtime');
+    expect(response?.headers()['content-security-policy']).toContain("'nonce-");
+    await incrementCounter(page);
+    await Promise.all([
+      page.waitForResponse(
+        response => response.headers()['content-type']?.includes('text/x-component') === true
+      ),
+      page.locator('[data-nav="route"]').click(),
+    ]);
+    await page.waitForSelector(articleHeading, { visible: true });
   }
-});
+);
 
-test('SSG with a query hydrates under its CSP and supports RSC navigation', async ({ page }) => {
-  const response = await page.goto('/static?search=a.b');
-  expect(response?.headers()['x-served-by']).toBe('ssg-runtime');
-  expect(response?.headers()['content-security-policy']).toContain("'nonce-");
-  await page.getByRole('button', { name: 'Count 0' }).click();
-  await expect(page.getByRole('button', { name: 'Count 1' })).toBeVisible();
-  const navigation = page.waitForResponse(
-    response => response.headers()['content-type']?.includes('text/x-component') === true
-  );
-  await page.locator('[data-nav="route"]').click();
-  await navigation;
-  await expect(page.getByRole('heading', { name: 'Article' })).toBeVisible();
-});
+checkedBrowserTest(
+  'hash navigation preserves hydrated state without fetching an RSC payload',
+  async ({ checkedPage: page }) => {
+    await page.goto(productionUrl('/article'));
+    await page.locator(initialCount).click();
+    const requests: string[] = [];
+    page.on('request', request => requests.push(request.url()));
+    await page.locator('[data-nav="hash"]').click();
+    await expect.poll(() => page.url()).toMatch(/#details$/);
+    await page.waitForSelector(incrementedCount, { visible: true });
+    const beforeMissingAnchor = await page.evaluate(() => window.scrollY);
+    expect(beforeMissingAnchor).toBeGreaterThan(0);
+    await page.evaluate(
+      () =>
+        new Promise<void>(resolve => {
+          window.addEventListener('hashchange', () => resolve(), { once: true });
+          location.hash = '#missing-anchor';
+        })
+    );
+    await expect.poll(() => page.url()).toMatch(/#missing-anchor$/);
+    expect(await page.evaluate(() => window.scrollY)).toBe(beforeMissingAnchor);
+    expect(requests.filter(url => /[?&]__rsc|[?&]_rsc|\.rsc(?:\?|$)/.test(url))).toEqual([]);
+  }
+);
 
-test('hash navigation preserves hydrated state without fetching an RSC payload', async ({
-  page,
-}) => {
-  await page.goto('/article');
-  await page.getByRole('button', { name: 'Count 0' }).click();
-  const requests: string[] = [];
-  page.on('request', request => requests.push(request.url()));
-  await page.locator('[data-nav="hash"]').click();
-  await expect(page).toHaveURL(/#details$/);
-  await expect(page.getByRole('button', { name: 'Count 1' })).toBeVisible();
-  const beforeMissingAnchor = await page.evaluate(() => window.scrollY);
-  expect(beforeMissingAnchor).toBeGreaterThan(0);
-  await page.evaluate(() => {
-    location.hash = '#missing-anchor';
-  });
-  await expect(page).toHaveURL(/#missing-anchor$/);
-  expect(await page.evaluate(() => window.scrollY)).toBe(beforeMissingAnchor);
-  expect(requests.filter(url => /[?&]__rsc|[?&]_rsc|\.rsc(?:\?|$)/.test(url))).toEqual([]);
-});
-
-test('locale links remember an early selection and retain query and fragment', async ({ page }) => {
-  const app = startProgrammaticApp({
-    PLAYWRIGHT_REMEMBER_LOCALE: '1',
-    ISR_CACHE_NAMESPACE: `locale-preference-${Date.now()}`,
-  });
-  try {
-    const origin = await app.ready;
-    await page.addInitScript(() => {
-      if (
-        location.pathname !== '/en/article' ||
-        new URLSearchParams(location.search).get('from') !== 'share'
-      )
-        return;
-      const observer = new MutationObserver(() => {
-        const link = document.querySelector<HTMLAnchorElement>('a[data-isr-locale-link][href]');
-        const count = document.querySelector('main button');
-        if (!link || !count) return;
-        observer.disconnect();
-        Reflect.set(window, 'earlyLocaleClick', count.hasAttribute('disabled'));
-        link.click();
+checkedBrowserTest(
+  'locale links remember an early selection and retain query and fragment',
+  async ({ checkedPage: page }) => {
+    const app = startProgrammaticApp({
+      E2E_REMEMBER_LOCALE: '1',
+      ISR_CACHE_NAMESPACE: `locale-preference-${Date.now()}`,
+    });
+    try {
+      const origin = await app.ready;
+      await page.evaluateOnNewDocument(() => {
+        if (
+          location.pathname !== '/en/article' ||
+          new URLSearchParams(location.search).get('from') !== 'share'
+        )
+          return;
+        const observer = new MutationObserver(() => {
+          const link = document.querySelector<HTMLAnchorElement>('a[data-isr-locale-link][href]');
+          const count = document.querySelector('main button');
+          if (!link || !count) return;
+          observer.disconnect();
+          Reflect.set(window, 'earlyLocaleClick', count.hasAttribute('disabled'));
+          link.click();
+        });
+        observer.observe(document, { childList: true, subtree: true, attributes: true });
       });
-      observer.observe(document, { childList: true, subtree: true, attributes: true });
-    });
-    const flight = page.waitForResponse(response => {
-      const url = new URL(response.url());
-      return url.pathname === '/zh-CN/article_.rsc' && url.search === '?from=share&tag=a%2Fb';
-    });
-    await page.goto(`${origin}/en/article?from=share&tag=a%2Fb#details`);
-    const switched = await flight;
-    expect(switched.status()).toBe(200);
-    expect((await switched.request().allHeaders()).cookie).toContain('isr_locale=zh-CN');
-    await expect(page).toHaveURL(`${origin}/zh-CN/article?from=share&tag=a%2Fb#details`);
-    expect(await page.evaluate(() => Reflect.get(window, 'earlyLocaleClick'))).toBe(true);
-    await expect(page.locator('html')).toHaveAttribute('lang', 'zh-CN');
-    await expect
-      .poll(() =>
-        page.locator('#details').evaluate(element => Math.abs(element.getBoundingClientRect().top))
-      )
-      .toBeLessThan(1);
+      const [switched] = await Promise.all([
+        page.waitForResponse(response => {
+          const url = new URL(response.url());
+          return url.pathname === '/zh-CN/article_.rsc' && url.search === '?from=share&tag=a%2Fb';
+        }),
+        page.goto(`${origin}/en/article?from=share&tag=a%2Fb#details`),
+      ]);
+      expect(switched.status()).toBe(200);
+      const cookie = switched.request().headers().cookie;
+      expect(cookie).toContain('isr_locale=zh-CN');
+      await expect
+        .poll(() => page.url())
+        .toBe(`${origin}/zh-CN/article?from=share&tag=a%2Fb#details`);
+      expect(await page.evaluate(() => Reflect.get(window, 'earlyLocaleClick'))).toBe(true);
+      await expect.poll(() => page.$eval('html', html => html.lang)).toBe('zh-CN');
+      await expect
+        .poll(() =>
+          page.$eval('#details', element => Math.abs(element.getBoundingClientRect().top))
+        )
+        .toBeLessThan(1);
 
-    await page.goto(`${origin}/en/article`);
-    await expect(page).toHaveURL(`${origin}/en/article`);
-    await expect(page.locator('html')).toHaveAttribute('lang', 'en');
-    for (const path of ['/en/cached', '/en/cached_.rsc']) {
-      expect((await page.request.get(origin + path)).headers()['x-cache-status']).toBe('MISS');
-      const cached = await page.request.get(origin + path);
-      expect(cached.headers()['x-cache-status']).toBe('HIT');
-      expect(cached.headers()['content-language']).toBe('en');
+      await page.goto(`${origin}/en/article`);
+      expect(page.url()).toBe(`${origin}/en/article`);
+      expect(await page.$eval('html', html => html.lang)).toBe('en');
+      for (const path of ['/en/cached', '/en/cached_.rsc']) {
+        const first = await fetch(origin + path, { headers: { cookie } });
+        await first.text();
+        expect(first.headers.get('x-cache-status')).toBe('MISS');
+        const cached = await fetch(origin + path, { headers: { cookie } });
+        await cached.text();
+        expect(cached.headers.get('x-cache-status')).toBe('HIT');
+        expect(cached.headers.get('content-language')).toBe('en');
+      }
+
+      const root = await fetch(`${origin}/?from=return`, {
+        headers: { 'accept-language': 'en', cookie },
+        redirect: 'manual',
+      });
+      expect(root.status).toBe(302);
+      expect(root.headers.get('location')).toBe('/zh-CN?from=return');
+      expect(root.headers.get('cache-control')).toMatch(/\bno-store\b/);
+      await page.goto(`${origin}/?from=return`);
+      expect(page.url()).toBe(`${origin}/zh-CN?from=return`);
+      expect(await page.$eval('html', html => html.lang)).toBe('zh-CN');
+      await page.goto('about:blank');
+      app.child.send('shutdown');
+      expect(await app.exited, app.output).toEqual({ code: 0, signal: null });
+    } finally {
+      app.kill();
     }
-
-    const root = await page.request.get(`${origin}/?from=return`, {
-      headers: { 'accept-language': 'en' },
-      maxRedirects: 0,
-    });
-    expect(root.status()).toBe(302);
-    expect(root.headers().location).toBe('/zh-CN?from=return');
-    expect(root.headers()['cache-control']).toMatch(/\bno-store\b/);
-    await page.goto(`${origin}/?from=return`);
-    await expect(page).toHaveURL(`${origin}/zh-CN?from=return`);
-    await expect(page.locator('html')).toHaveAttribute('lang', 'zh-CN');
-    app.child.send('shutdown');
-    expect(await app.exited, app.output).toEqual({ code: 0, signal: null });
-  } finally {
-    app.kill();
   }
-});
+);
 
 for (const legacy of [false, true]) {
-  test(
+  checkedBrowserTest(
     'RSC commits position anchors and restore distinct history entries (' +
       (legacy ? 'classic' : 'Navigation API') +
       ')',
-    async ({ page }) => {
+    async ({ checkedPage: page }) => {
       if (legacy) {
-        await page.addInitScript(() =>
+        await page.evaluateOnNewDocument(() =>
           Object.defineProperty(window, 'navigation', { value: undefined })
         );
       }
-      await page.goto('/');
-      await expect(page.getByRole('button', { name: 'Count 0' })).toBeEnabled();
+      await page.goto(productionUrl('/'));
+      await waitForHydratedCounter(page);
       const scrollY = () => page.evaluate(() => window.scrollY);
-      const routeLink = page.locator('[data-nav="route"]');
       await page.evaluate(() => window.scrollTo(0, 320));
-      await routeLink.evaluate((link: HTMLAnchorElement) => link.click());
-      await expect(page.getByRole('heading', { name: 'Article' })).toBeVisible();
+      await page.$eval('a[data-nav="route"]', link => link.click());
+      await page.waitForSelector(articleHeading, { visible: true });
       await expect.poll(scrollY).toBe(0);
 
       await page.evaluate(() => window.scrollTo(0, 440));
       await page.evaluate(() => history.pushState({ selection: 'home' }, '', '/'));
-      await expect(page.getByRole('heading', { name: 'Home' })).toBeVisible();
+      await page.waitForSelector(homeHeading, { visible: true });
       await expect.poll(scrollY).toBe(0);
       await page.evaluate(() => window.scrollTo(0, 210));
       await page.evaluate(() => history.pushState(null, '', '/article?section=1#details'));
-      await expect(page.getByRole('heading', { name: 'Article' })).toBeVisible();
+      await page.waitForSelector(articleHeading, { visible: true });
       await expect
         .poll(() =>
-          page
-            .locator('#details')
-            .evaluate(element => Math.abs(element.getBoundingClientRect().top))
+          page.$eval('#details', element => Math.abs(element.getBoundingClientRect().top))
         )
         .toBeLessThan(1);
 
       await page.goBack();
-      await expect(page.getByRole('heading', { name: 'Home' })).toBeVisible();
+      await page.waitForSelector(homeHeading, { visible: true });
       await expect.poll(scrollY).toBe(210);
       expect(await page.evaluate(() => history.state.selection)).toBe('home');
       await page.goBack();
-      await expect(page.getByRole('heading', { name: 'Article' })).toBeVisible();
+      await page.waitForSelector(articleHeading, { visible: true });
       await expect.poll(scrollY).toBe(440);
       await page.goBack();
-      await expect(page.getByRole('heading', { name: 'Home' })).toBeVisible();
+      await page.waitForSelector(homeHeading, { visible: true });
       await expect.poll(scrollY).toBe(320);
       await page.goForward();
-      await expect(page.getByRole('heading', { name: 'Article' })).toBeVisible();
+      await page.waitForSelector(articleHeading, { visible: true });
       await expect.poll(scrollY).toBe(440);
     }
   );
 }
 
-test('language negotiation returns 406 when every locale is rejected', async ({ request }) => {
+test('language negotiation returns 406 when every locale is rejected', async () => {
   const headers = { 'accept-language': '*;q=0' };
-  const unacceptable = await request.get('/article', { headers });
-  expect(unacceptable.status()).toBe(406);
-  expect(unacceptable.headers().vary).toMatch(/Accept-Language/i);
-  expect(unacceptable.headers()['cache-control']).toBe('no-store');
-  expect((await request.get('/en/article', { headers })).status()).toBe(200);
+  const unacceptable = await fetch(productionUrl('/article'), { headers });
+  expect(unacceptable.status).toBe(406);
+  expect(unacceptable.headers.get('vary')).toMatch(/Accept-Language/i);
+  expect(unacceptable.headers.get('cache-control')).toBe('no-store');
+  expect((await fetch(productionUrl('/en/article'), { headers })).status).toBe(200);
 });
 
 for (const [locale, title] of [
   ['en', 'Page not found'],
   ['zh-CN', '页面未找到'],
 ]) {
-  test(`localized missing routes return 404 and use the fallback module's SEO (${locale})`, async ({
-    request,
-  }) => {
-    const response = await request.get(`/${locale}/nonexistent`);
+  test(`localized missing routes return 404 and use the fallback module's SEO (${locale})`, async () => {
+    const response = await fetch(productionUrl(`/${locale}/nonexistent`));
     const html = await response.text();
     expect(html).toContain(`<h1>${title}</h1>`);
-    expect.soft(response.status()).toBe(404);
+    expect.soft(response.status).toBe(404);
     expect.soft(html).toContain(`<title data-isr-seo>${title}</title>`);
     expect.soft(html).toContain('name="robots" content="noindex, nofollow"');
     expect.soft(html).not.toContain('rel="canonical"');
 
-    const flight = await request.get(`/${locale}/nonexistent_.rsc`);
-    expect.soft(flight.status()).toBe(404);
-    expect(flight.headers()['content-type']).toContain('text/x-component');
+    const flight = await fetch(productionUrl(`/${locale}/nonexistent_.rsc`));
+    expect.soft(flight.status).toBe(404);
+    expect(flight.headers.get('content-type')).toContain('text/x-component');
     expect.soft(await flight.text()).toContain(title);
 
-    const matched = await request.get(`/${locale}/article`);
-    expect(matched.status()).toBe(200);
+    const matched = await fetch(productionUrl(`/${locale}/article`));
+    expect(matched.status).toBe(200);
     const matchedHtml = await matched.text();
     expect(matchedHtml).toContain('<h1>Article</h1>');
     expect(matchedHtml).not.toContain('name="robots" content="noindex, nofollow"');
   });
 }
 
-test('client navigation clears canonical on a 404 and restores it on a regular page', async ({
-  browser,
-  baseURL,
-}) => {
-  const page = await browser.newPage({ baseURL });
-  const errors: string[] = [];
-  page.on('pageerror', error => errors.push(error.message));
-  try {
-    const response = await page.goto('/en/nonexistent');
+browserTest(
+  'client navigation clears canonical on a 404 and restores it on a regular page',
+  async ({ page }) => {
+    const errors: string[] = [];
+    page.on('pageerror', error =>
+      errors.push(error instanceof Error ? error.message : String(error))
+    );
+    const response = await page.goto(productionUrl('/en/nonexistent'));
     expect(response?.status()).toBe(404);
-    await expect(page.getByRole('button', { name: 'Count 0' })).toBeEnabled();
-    await expect(page).toHaveTitle('Page not found');
-    const canonical = page.locator('head link[rel="canonical"]');
-    await expect.soft(canonical).toHaveCount(0);
+    await waitForHydratedCounter(page);
+    await expect.poll(() => page.title()).toBe('Page not found');
+    const canonical = 'head link[rel="canonical"]';
+    const robots = 'meta[name="robots"]';
+    const canonicalCount = () => page.$$eval(canonical, links => links.length);
+    expect.soft(await canonicalCount()).toBe(0);
 
-    const toArticle = page.waitForResponse(
-      response => new URL(response.url()).pathname === '/article_.rsc'
-    );
-    await page.evaluate(() => history.pushState(null, '', '/article'));
-    expect((await toArticle).status()).toBe(200);
-    await expect(page.getByRole('heading', { name: 'Article' })).toBeVisible();
-    await expect(page).toHaveTitle('Production regression app');
-    await expect(page.locator('meta[name="robots"]')).toHaveCount(0);
-    await expect(canonical).toHaveAttribute('href', /\/article$/);
+    const [toArticle] = await Promise.all([
+      page.waitForResponse(response => new URL(response.url()).pathname === '/article_.rsc'),
+      page.evaluate(() => history.pushState(null, '', '/article')),
+    ]);
+    expect(toArticle.status()).toBe(200);
+    await page.waitForSelector(articleHeading, { visible: true });
+    await expect.poll(() => page.title()).toBe('Production regression app');
+    await expect.poll(() => page.$$eval(robots, tags => tags.length)).toBe(0);
+    await expect.poll(() => page.$eval(canonical, link => link.href)).toMatch(/\/article$/);
 
-    const toMissing = page.waitForResponse(
-      response => new URL(response.url()).pathname === '/zh-CN/nonexistent_.rsc'
-    );
-    await page.evaluate(() => history.pushState(null, '', '/zh-CN/nonexistent'));
-    expect((await toMissing).status()).toBe(404);
-    await expect(page.getByRole('heading', { name: '页面未找到' })).toBeVisible();
-    await expect(page).toHaveTitle('页面未找到');
-    await expect(page.locator('meta[name="robots"]')).toHaveAttribute(
-      'content',
-      'noindex, nofollow'
-    );
-    await expect(canonical).toHaveCount(0);
+    const [toMissing] = await Promise.all([
+      page.waitForResponse(
+        response => new URL(response.url()).pathname === '/zh-CN/nonexistent_.rsc'
+      ),
+      page.evaluate(() => history.pushState(null, '', '/zh-CN/nonexistent')),
+    ]);
+    expect(toMissing.status()).toBe(404);
+    await page.waitForSelector('::-p-aria([name="页面未找到"][role="heading"])', { visible: true });
+    await expect.poll(() => page.title()).toBe('页面未找到');
+    await expect.poll(() => page.$eval(robots, tag => tag.content)).toBe('noindex, nofollow');
+    await expect.poll(canonicalCount).toBe(0);
     expect(errors).toEqual([]);
-  } finally {
-    await page.close();
   }
-});
+);
 
-test('missing assets and malformed image input leave the production service healthy', async ({
-  request,
-}) => {
-  const missing = await request.get('/assets/does-not-exist.js');
-  expect(missing.status()).toBe(404);
-  expect(missing.headers()['content-type'] ?? '').not.toContain('text/html');
-  const image = await request.get('/_/img?src=%E0%A4%A&w=10');
-  expect(image.status()).toBeGreaterThanOrEqual(400);
-  expect(image.status()).toBeLessThan(600);
-  const health = await request.get('/health');
-  expect(health.status()).toBe(200);
+test('missing assets and malformed image input leave the production service healthy', async () => {
+  const missing = await fetch(productionUrl('/assets/does-not-exist.js'));
+  expect(missing.status).toBe(404);
+  expect(missing.headers.get('content-type') ?? '').not.toContain('text/html');
+  const image = await fetch(productionUrl('/_/img?src=%E0%A4%A&w=10'));
+  expect(image.status).toBeGreaterThanOrEqual(400);
+  expect(image.status).toBeLessThan(600);
+  const health = await fetch(productionUrl('/health'));
+  expect(health.status).toBe(200);
   expect((await health.json()).status).toBe('healthy');
-  expect((await request.get('/article')).status()).toBe(200);
+  expect((await fetch(productionUrl('/article'))).status).toBe(200);
 });
 
 test('production CLI exits successfully after SIGTERM', async () => {
@@ -419,15 +493,18 @@ test('production CLI exits successfully after SIGTERM', async () => {
   });
   try {
     await expect
-      .poll(async () => {
-        try {
-          return (await fetch(`http://127.0.0.1:${port}/health`)).status;
-        } catch {
-          return 0;
-        }
-      })
+      .poll(
+        async () => {
+          const health = await fetch(`http://127.0.0.1:${port}/health`, {
+            signal: AbortSignal.timeout(2_000),
+          });
+          await health.body?.cancel();
+          return health.status;
+        },
+        { timeout: 15_000 }
+      )
       .toBe(200);
-    if (process.env.PLAYWRIGHT_REDIS_URL) {
+    if (process.env.E2E_REDIS_URL) {
       const cached = await fetch(`http://127.0.0.1:${port}/cached`);
       await cached.text();
       const hit = await fetch(`http://127.0.0.1:${port}/cached`);
@@ -442,41 +519,40 @@ test('production CLI exits successfully after SIGTERM', async () => {
   }
 });
 
-test('custom HTML executes under parser-derived CSP and the manifest stays outside static hosting', async ({
-  page,
-  request,
-}) => {
-  const { readFile } = await import('node:fs/promises');
-  const manifest = JSON.parse(
-    await readFile(new URL('./dist/static-csp-manifest.json', import.meta.url), 'utf8')
-  ) as {
-    schemaVersion: number;
-    buildId: string;
-    files: Array<{ path: string; scriptHashes: string[] }>;
-  };
-  expect(manifest.schemaVersion).toBe(3);
-  expect(manifest.buildId).toMatch(/^[a-f0-9]{64}$/);
-  expect(manifest.files.map(file => file.path)).toEqual([
-    'parser.html',
-    'regenerated/index.html',
-    'static/index.html',
-  ]);
-  const parserEntry = manifest.files.find(file => file.path === 'parser.html');
-  expect(parserEntry?.scriptHashes).toHaveLength(1);
-  const response = await page.goto('/parser.html?mode=custom');
-  expect(response?.headers()['content-security-policy']).toContain(parserEntry!.scriptHashes[0]);
-  await page.getByRole('button', { name: 'Count 0' }).click();
-  await expect(page.getByRole('button', { name: 'Count 1' })).toBeVisible();
-  expect(
-    await page.evaluate(() =>
-      ['commentExecuted', 'attributeExecuted', 'templateExecuted'].some(key =>
-        Reflect.get(window, key)
+checkedBrowserTest(
+  'custom HTML executes under parser-derived CSP and the manifest stays outside static hosting',
+  async ({ checkedPage: page }) => {
+    const { readFile } = await import('node:fs/promises');
+    const manifest = JSON.parse(
+      await readFile(new URL('./dist/static-csp-manifest.json', import.meta.url), 'utf8')
+    ) as {
+      schemaVersion: number;
+      buildId: string;
+      files: Array<{ path: string; scriptHashes: string[] }>;
+    };
+    expect(manifest.schemaVersion).toBe(3);
+    expect(manifest.buildId).toMatch(/^[a-f0-9]{64}$/);
+    expect(manifest.files.map(file => file.path)).toEqual([
+      'parser.html',
+      'regenerated/index.html',
+      'static/index.html',
+    ]);
+    const parserEntry = manifest.files.find(file => file.path === 'parser.html');
+    expect(parserEntry?.scriptHashes).toHaveLength(1);
+    const response = await page.goto(productionUrl('/parser.html?mode=custom'));
+    expect(response?.headers()['content-security-policy']).toContain(parserEntry!.scriptHashes[0]);
+    await incrementCounter(page);
+    expect(
+      await page.evaluate(() =>
+        ['commentExecuted', 'attributeExecuted', 'templateExecuted'].some(key =>
+          Reflect.get(window, key)
+        )
       )
-    )
-  ).toBe(false);
-  const hidden = await request.get('/static-csp-manifest.json');
-  expect(hidden.headers()['content-type'] ?? '').not.toContain('application/json');
-});
+    ).toBe(false);
+    const hidden = await fetch(productionUrl('/static-csp-manifest.json'));
+    expect(hidden.headers.get('content-type') ?? '').not.toContain('application/json');
+  }
+);
 
 test('production startup rejects a corrupt manifest before loading application code', async () => {
   const { spawn } = await import('node:child_process');
@@ -514,199 +590,187 @@ test('production startup rejects a corrupt manifest before loading application c
   }
 });
 
-test('cached ISR HTML refreshes every script attribute and JavaScript nonce reference on HIT', async ({
-  browser,
-  baseURL,
-}) => {
-  const seen: string[] = [];
-  for (let attempt = 0; attempt < 3; attempt++) {
-    // A reload explicitly requests revalidation. Independent contexts exercise
-    // shared-cache HITs without a browser cache or a forced-refresh directive.
-    const context = await browser.newContext({ baseURL });
-    try {
-      const page = await context.newPage();
-      page.on('pageerror', error => browserErrors.push(error.message));
-      page.on('console', message => {
-        if (message.type() === 'error') browserErrors.push(message.text());
-      });
-      const response = await page.goto('/cached');
-      expect(response?.headers()['x-cache-status']).toBe(attempt === 0 ? 'MISS' : 'HIT');
-      const nonce = response?.headers()['content-security-policy'].match(/'nonce-([^']+)'/)?.[1];
-      expect(nonce).toMatch(/^[a-f0-9]{32}$/);
-      expect(seen).not.toContain(nonce);
-      const scripts = await page
-        .locator('script')
-        .evaluateAll(elements =>
+browserTest(
+  'cached ISR HTML refreshes every script attribute and JavaScript nonce reference on HIT',
+  async ({ browser }) => {
+    const seen: string[] = [];
+    for (let attempt = 0; attempt < 3; attempt++) {
+      // A reload explicitly requests revalidation. Independent contexts exercise
+      // shared-cache HITs without a browser cache or a forced-refresh directive.
+      const context = await browser.createBrowserContext();
+      try {
+        const page = await context.newPage();
+        const errors = collectBrowserErrors(page);
+        const response = await page.goto(productionUrl('/cached'));
+        expect(response?.headers()['x-cache-status']).toBe(attempt === 0 ? 'MISS' : 'HIT');
+        const nonce = response?.headers()['content-security-policy'].match(/'nonce-([^']+)'/)?.[1];
+        expect(nonce).toMatch(/^[a-f0-9]{32}$/);
+        expect(seen).not.toContain(nonce);
+        const scripts = await page.$$eval('script', elements =>
           elements.map(script => ({ nonce: script.nonce, text: script.textContent ?? '' }))
         );
-      expect(scripts.length).toBeGreaterThan(0);
-      expect(scripts.every(script => script.nonce === nonce)).toBe(true);
-      expect(
-        scripts.some(script => script.text.includes(`window.__nonceReference="${nonce}"`))
-      ).toBe(true);
-      expect(await page.evaluate(() => Reflect.get(window, '__nonceReference'))).toBe(nonce);
-      const html = await response!.text();
-      for (const previous of seen) expect(html).not.toContain(previous);
-      await page.getByRole('button', { name: 'Count 0' }).click();
-      await expect(page.getByRole('button', { name: 'Count 1' })).toBeVisible();
-      seen.push(nonce!);
-    } finally {
-      await context.close();
+        expect(scripts.length).toBeGreaterThan(0);
+        expect(scripts.every(script => script.nonce === nonce)).toBe(true);
+        expect(
+          scripts.some(script => script.text.includes(`window.__nonceReference="${nonce}"`))
+        ).toBe(true);
+        expect(await page.evaluate(() => Reflect.get(window, '__nonceReference'))).toBe(nonce);
+        const html = await response!.text();
+        for (const previous of seen) expect(html).not.toContain(previous);
+        await incrementCounter(page);
+        expect(errors).toEqual([]);
+        seen.push(nonce!);
+      } finally {
+        await context.close();
+      }
     }
   }
-});
+);
 
-test('browser reload requests origin freshness instead of replaying cached ISR HTML', async ({
-  page,
-}) => {
-  const first = await page.goto('/cached?browser-refresh=1');
-  expect(first?.headers()['x-cache-status']).toBe('MISS');
-  const refreshed = await page.reload();
-  const headers = await refreshed!.request().allHeaders();
-  expect(headers['cache-control']).toMatch(/no-cache|max-age=0/);
-  expect(refreshed?.headers()['x-cache-status']).toBe('BYPASS');
-  await page.getByRole('button', { name: 'Count 0' }).click();
-  await expect(page.getByRole('button', { name: 'Count 1' })).toBeVisible();
-});
-
-test('dynamic .html application routes render and hydrate without a static manifest entry', async ({
-  page,
-}) => {
-  const response = await page.goto('/articles/dynamic.html');
-  expect(response?.status()).toBe(200);
-  expect(response?.headers()['x-served-by']).toBeUndefined();
-  expect(response?.headers()['content-security-policy']).toContain("'nonce-");
-  await expect(page.getByRole('heading', { name: 'Home' })).toBeVisible();
-  await page.getByRole('button', { name: 'Count 0' }).click();
-  await expect(page.getByRole('button', { name: 'Count 1' })).toBeVisible();
-});
-
-test('published programmatic app renders, hydrates, invalidates ISR and shuts down naturally', async ({
-  page,
-  request,
-}) => {
-  const fs = await import('node:fs/promises');
-  const source = new URL('./ssg-source.txt', import.meta.url);
-  const app = startProgrammaticApp({ ISR_CACHE_NAMESPACE: `programmatic-${Date.now()}` });
-  const { child } = app;
-  try {
-    const url = await app.ready;
-    const response = await page.goto(`${url}/static?search=a.b`);
-    expect(response?.headers()['x-served-by']).toBe('ssg-runtime');
-    await page.getByRole('button', { name: 'Count 0' }).click();
-    await expect(page.getByRole('button', { name: 'Count 1' })).toBeVisible();
-    await page.locator('[data-nav="route"]').click();
-    await expect(page.getByRole('heading', { name: 'Article' })).toBeVisible();
-    const first = await request.get(`${url}/cached`);
-    expect(first.headers()['x-cache-status']).toBe('MISS');
-    expect((await request.get(`${url}/cached`)).headers()['x-cache-status']).toBe('HIT');
-    const invalidated = new Promise<void>(resolve => child.once('message', () => resolve()));
-    child.send('invalidate');
-    await invalidated;
-    expect((await request.get(`${url}/cached`)).headers()['x-cache-status']).toBe('MISS');
-    await fs.writeFile(source, 'programmatic-ssg-before');
-    await request.get(`${url}/regenerated`);
-    await fs.writeFile(source, 'programmatic-ssg-after');
-    const ssgInvalidated = new Promise<void>(resolve => child.once('message', () => resolve()));
-    child.send('invalidate-ssg');
-    await ssgInvalidated;
-    const fresh = await request.get(`${url}/regenerated/`);
-    expect(fresh.url()).toBe(`${url}/regenerated`);
-    expect(fresh.headers()['x-cache-status']).toBe('MISS');
-    expect(await fresh.text()).toContain('programmatic-ssg-after');
-    for (const alias of ['/regenerated/', '/regenerated/index.html']) {
-      const response = await page.goto(`${url}${alias}`);
-      await expect(page).toHaveURL(`${url}/regenerated`);
-      expect(response?.headers()['x-cache-key']).toBe(fresh.headers()['x-cache-key']);
-      expect(response?.headers()['x-served-by']).toBe('ssg-runtime');
-      expect(response?.headers()['content-security-policy']).toContain("'nonce-");
-      await expect(page.locator('[data-ssg-source]')).toHaveText('programmatic-ssg-after');
-      await page.getByRole('button', { name: 'Count 0' }).click();
-      await expect(page.getByRole('button', { name: 'Count 1' })).toBeVisible();
-    }
-    expect((await request.get(`${url}/health`)).headers()['content-type']).toContain('text/html');
-    const restarted = new Promise<string>(resolve =>
-      child.once('message', message => resolve((message as { ready: string }).ready))
-    );
-    child.send('restart');
-    const restartedUrl = await restarted;
-    expect((await request.get(`${restartedUrl}/health`)).headers()['content-type']).toContain(
-      'text/html'
-    );
-    // Redis responses survive runtime shutdown; the in-process store is recreated.
-    expect((await request.get(`${restartedUrl}/cached`)).headers()['x-cache-status']).toBe(
-      process.env.PLAYWRIGHT_REDIS_URL ? 'HIT' : 'MISS'
-    );
-    const invalidatedAfterRestart = new Promise<void>(resolve =>
-      child.once('message', () => resolve())
-    );
-    child.send('invalidate');
-    await invalidatedAfterRestart;
-    expect((await request.get(`${restartedUrl}/cached`)).headers()['x-cache-status']).toBe('MISS');
-    expect((await request.get(`${restartedUrl}/cached`)).headers()['x-cache-status']).toBe('HIT');
-    await page.goto(`${restartedUrl}/article`);
-    await page.getByRole('button', { name: 'Count 0' }).click();
-    await expect(page.getByRole('button', { name: 'Count 1' })).toBeVisible();
-    child.send('shutdown');
-    expect(await app.exited, app.output).toEqual({ code: 0, signal: null });
-    await expect(fetch(`${url}/health`)).rejects.toThrow();
-  } finally {
-    await fs.rm(source, { force: true });
-    app.kill();
+checkedBrowserTest(
+  'browser reload requests origin freshness instead of replaying cached ISR HTML',
+  async ({ checkedPage: page }) => {
+    const first = await page.goto(productionUrl('/cached?browser-refresh=1'));
+    expect(first?.headers()['x-cache-status']).toBe('MISS');
+    const refreshed = await page.reload();
+    const headers = refreshed!.request().headers();
+    expect(headers['cache-control']).toMatch(/no-cache|max-age=0/);
+    expect(refreshed?.headers()['x-cache-status']).toBe('BYPASS');
+    await incrementCounter(page);
   }
-});
+);
 
-test('SSG regenerates changed source after TTL with coherent hydration and CSP', async ({
-  page,
-  request,
-}) => {
-  const fs = await import('node:fs/promises');
-  const source = new URL('./ssg-source.txt', import.meta.url);
-  const manifest = new URL('./dist/static-csp-manifest.json', import.meta.url);
-  const immutable = await fs.readFile(manifest, 'utf8');
-  try {
-    await fs.writeFile(source, 'runtime-source-one');
-    await page.goto('/regenerated');
-    await expect
-      .poll(async () => {
-        const response = await request.get('/regenerated');
-        return response.text();
-      })
-      .toContain('runtime-source-one');
-    await fs.writeFile(source, 'runtime-source-two');
-    await expect
-      .poll(async () => {
-        const response = await request.get('/regenerated');
-        return response.text();
-      })
-      .toContain('runtime-source-two');
-    const response = await page.goto('/regenerated');
-    const canonicalCacheKey = response?.headers()['x-cache-key'];
-    expect(canonicalCacheKey).toBeTruthy();
-    expect(response?.headers()['x-served-by']).toBe('ssg-runtime');
+checkedBrowserTest(
+  'dynamic .html application routes render and hydrate without a static manifest entry',
+  async ({ checkedPage: page }) => {
+    const response = await page.goto(productionUrl('/articles/dynamic.html'));
+    expect(response?.status()).toBe(200);
+    expect(response?.headers()['x-served-by']).toBeUndefined();
     expect(response?.headers()['content-security-policy']).toContain("'nonce-");
-    await expect(page.locator('[data-ssg-source]')).toHaveText('runtime-source-two');
-    await page.getByRole('button', { name: 'Count 0' }).click();
-    await expect(page.getByRole('button', { name: 'Count 1' })).toBeVisible();
-    for (const alias of ['/regenerated/', '/regenerated/index.html']) {
-      const redirect = await request.get(`${alias}?keep=a%2Fb`, { maxRedirects: 0 });
-      expect(redirect.status()).toBe(308);
-      expect(redirect.headers()['location']).toBe('/regenerated?keep=a%2Fb');
-      const response = await page.goto(alias);
-      await expect(page).toHaveURL(/\/regenerated$/);
-      expect(response?.headers()['x-cache-key']).toBe(canonicalCacheKey);
+    await page.waitForSelector(homeHeading, { visible: true });
+    await incrementCounter(page);
+  }
+);
+
+checkedBrowserTest(
+  'published programmatic app renders, hydrates, invalidates ISR and shuts down naturally',
+  async ({ checkedPage: page }) => {
+    const fs = await import('node:fs/promises');
+    const source = new URL('./ssg-source.txt', import.meta.url);
+    const app = startProgrammaticApp({ ISR_CACHE_NAMESPACE: `programmatic-${Date.now()}` });
+    const { child } = app;
+    try {
+      const url = await app.ready;
+      const response = await page.goto(`${url}/static?search=a.b`);
+      expect(response?.headers()['x-served-by']).toBe('ssg-runtime');
+      await incrementCounter(page);
+      await page.locator('[data-nav="route"]').click();
+      await page.waitForSelector(articleHeading, { visible: true });
+      expect(await cacheStatus(`${url}/cached`)).toBe('MISS');
+      expect(await cacheStatus(`${url}/cached`)).toBe('HIT');
+      const invalidated = new Promise<void>(resolve => child.once('message', () => resolve()));
+      child.send('invalidate');
+      await invalidated;
+      expect(await cacheStatus(`${url}/cached`)).toBe('MISS');
+      await fs.writeFile(source, 'programmatic-ssg-before');
+      await (await fetch(`${url}/regenerated`)).text();
+      await fs.writeFile(source, 'programmatic-ssg-after');
+      const ssgInvalidated = new Promise<void>(resolve => child.once('message', () => resolve()));
+      child.send('invalidate-ssg');
+      await ssgInvalidated;
+      const fresh = await fetch(`${url}/regenerated/`);
+      expect(fresh.url).toBe(`${url}/regenerated`);
+      expect(fresh.headers.get('x-cache-status')).toBe('MISS');
+      expect(await fresh.text()).toContain('programmatic-ssg-after');
+      for (const alias of ['/regenerated/', '/regenerated/index.html']) {
+        const response = await page.goto(`${url}${alias}`);
+        expect(page.url()).toBe(`${url}/regenerated`);
+        expect(response?.headers()['x-cache-key']).toBe(fresh.headers.get('x-cache-key'));
+        expect(response?.headers()['x-served-by']).toBe('ssg-runtime');
+        expect(response?.headers()['content-security-policy']).toContain("'nonce-");
+        await expect
+          .poll(() => page.$eval('[data-ssg-source]', element => element.textContent))
+          .toBe('programmatic-ssg-after');
+        await incrementCounter(page);
+      }
+      expect((await fetch(`${url}/health`)).headers.get('content-type')).toContain('text/html');
+      const restarted = new Promise<string>(resolve =>
+        child.once('message', message => resolve((message as { ready: string }).ready))
+      );
+      await page.goto('about:blank');
+      child.send('restart');
+      const restartedUrl = await restarted;
+      expect((await fetch(`${restartedUrl}/health`)).headers.get('content-type')).toContain(
+        'text/html'
+      );
+      // Redis responses survive runtime shutdown; the in-process store is recreated.
+      expect(await cacheStatus(`${restartedUrl}/cached`)).toBe(
+        process.env.E2E_REDIS_URL ? 'HIT' : 'MISS'
+      );
+      const invalidatedAfterRestart = new Promise<void>(resolve =>
+        child.once('message', () => resolve())
+      );
+      child.send('invalidate');
+      await invalidatedAfterRestart;
+      expect(await cacheStatus(`${restartedUrl}/cached`)).toBe('MISS');
+      expect(await cacheStatus(`${restartedUrl}/cached`)).toBe('HIT');
+      await page.goto(`${restartedUrl}/article`);
+      await incrementCounter(page);
+      await page.goto('about:blank');
+      child.send('shutdown');
+      expect(await app.exited, app.output).toEqual({ code: 0, signal: null });
+      await expect(fetch(`${url}/health`)).rejects.toThrow();
+    } finally {
+      await fs.rm(source, { force: true });
+      app.kill();
+    }
+  }
+);
+
+checkedBrowserTest(
+  'SSG regenerates changed source after TTL with coherent hydration and CSP',
+  async ({ checkedPage: page }) => {
+    const fs = await import('node:fs/promises');
+    const source = new URL('./ssg-source.txt', import.meta.url);
+    const manifest = new URL('./dist/static-csp-manifest.json', import.meta.url);
+    const immutable = await fs.readFile(manifest, 'utf8');
+    try {
+      await fs.writeFile(source, 'runtime-source-one');
+      await page.goto(productionUrl('/regenerated'));
+      const regeneratedHtml = async () => (await fetch(productionUrl('/regenerated'))).text();
+      await expect.poll(regeneratedHtml, { timeout: 15_000 }).toContain('runtime-source-one');
+      await fs.writeFile(source, 'runtime-source-two');
+      await expect.poll(regeneratedHtml, { timeout: 15_000 }).toContain('runtime-source-two');
+      const response = await page.goto(productionUrl('/regenerated'));
+      const canonicalCacheKey = response?.headers()['x-cache-key'];
+      expect(canonicalCacheKey).toBeTruthy();
       expect(response?.headers()['x-served-by']).toBe('ssg-runtime');
       expect(response?.headers()['content-security-policy']).toContain("'nonce-");
-      await expect(page.locator('[data-ssg-source]')).toHaveText('runtime-source-two');
-      await page.getByRole('button', { name: 'Count 0' }).click();
-      await expect(page.getByRole('button', { name: 'Count 1' })).toBeVisible();
+      await expect
+        .poll(() => page.$eval('[data-ssg-source]', element => element.textContent))
+        .toBe('runtime-source-two');
+      await incrementCounter(page);
+      for (const alias of ['/regenerated/', '/regenerated/index.html']) {
+        const redirect = await fetch(productionUrl(`${alias}?keep=a%2Fb`), { redirect: 'manual' });
+        expect(redirect.status).toBe(308);
+        expect(redirect.headers.get('location')).toBe('/regenerated?keep=a%2Fb');
+        const response = await page.goto(productionUrl(alias));
+        expect(page.url()).toMatch(/\/regenerated$/);
+        expect(response?.headers()['x-cache-key']).toBe(canonicalCacheKey);
+        expect(response?.headers()['x-served-by']).toBe('ssg-runtime');
+        expect(response?.headers()['content-security-policy']).toContain("'nonce-");
+        await expect
+          .poll(() => page.$eval('[data-ssg-source]', element => element.textContent))
+          .toBe('runtime-source-two');
+        await incrementCounter(page);
+      }
+      const rscAlias = await fetch(productionUrl('/regenerated/_.rsc'));
+      expect(rscAlias.url).toMatch(/\/regenerated_\.rsc$/);
+      expect(rscAlias.headers.get('content-type')).toContain('text/x-component');
+      expect(await rscAlias.text()).toContain('runtime-source-two');
+      expect(await fs.readFile(manifest, 'utf8')).toBe(immutable);
+    } finally {
+      await fs.rm(source, { force: true });
     }
-    const rscAlias = await request.get('/regenerated/_.rsc');
-    expect(rscAlias.url()).toMatch(/\/regenerated_\.rsc$/);
-    expect(rscAlias.headers()['content-type']).toContain('text/x-component');
-    expect(await rscAlias.text()).toContain('runtime-source-two');
-    expect(await fs.readFile(manifest, 'utf8')).toBe(immutable);
-  } finally {
-    await fs.rm(source, { force: true });
   }
-});
+);

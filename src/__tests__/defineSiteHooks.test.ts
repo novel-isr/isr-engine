@@ -437,6 +437,31 @@ describe('admin loaders', () => {
     expect(meta).toEqual({ title: '关于' });
   });
 
+  it('prefers the first matching locale snapshot and falls back to a locale-neutral row', async () => {
+    const hooks = applyRuntimeToServerHooks<Partial<ServerHooksOutput>>(
+      {},
+      runtime({
+        i18n: { locales: ['en', 'ja', 'zh-CN'], defaultLocale: 'en' },
+        seo: {
+          fallbackLocal: [
+            { path: '/about', title: 'About', group: 'shared' },
+            { path: '/about/', title: 'Duplicate shared row' },
+            { locale: 'ja', path: '/about/', title: 'サイトについて', group: 'marketing' },
+            { locale: 'ja', path: '/about', title: 'Duplicate' },
+            { locale: 'zh-cn', path: '/about', title: '关于本站' },
+            { locale: 'ja', path: '/only-in-ja', title: '日本語' },
+          ],
+        },
+      })
+    );
+    const load = (path: string) => hooks.loadSeoMeta?.(new Request(`https://site.test${path}`));
+
+    expect(await load('/ja/about_.rsc')).toEqual({ title: 'サイトについて' });
+    expect(await load('/zh-CN/about')).toEqual({ title: '关于本站' });
+    expect(await load('/about/')).toEqual({ title: 'About' });
+    expect(await load('/only-in-ja')).toBeNull();
+  });
+
   it('defineAdminSiteHooks 从 runtime.i18n/runtime.seo 生成商业默认 SiteHooks', async () => {
     vi.spyOn(globalThis, 'fetch').mockRejectedValue(new Error('down'));
     const hooks = applyRuntimeToServerHooks(

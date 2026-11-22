@@ -130,9 +130,11 @@ TTL 与 SWR 单位为秒。`routes` 控制渲染策略；页面路由可使用 `
 
 `paths` 使用实际页面路径，`tags` 失效声明了对应标签的页面，`locales` 指定字典语言，`sitemap: true` 刷新站点地图。使用 `{ localizedPaths: ['/work/arcane'], locales: ['ja'] }` 可按站点语言配置将业务路径展开为 `/ja/work/arcane`，同时保留其他语言的 ISR 页面缓存。引擎先刷新元数据，再失效页面响应。其他实例的进程内元数据通过 Redis 广播刷新，断连后可在回放或缓存到期时更新。
 
-`runtime.seo.sitemap.load({ services })` 从已提交的数据批量读取完整目录。每条包含站内绝对路径 `path`、`status`，可带 `noindex` 和真实内容更新时间 `modifiedTime`。引擎只输出已发布且可索引的条目，缺少更新时间时省略 `lastmod`。单份 sitemap 上限为 50,000 个 URL 和 50 MiB。
+`runtime.seo.sitemap` 可以声明 `endpoint` 或提供 `load({ services })` 来批量读取完整目录。端点支持 HTTP(S) URL 或相对于 `runtime.services.api` 的路径，使用 `runtime.seo.timeoutMs`，接受 JSON 数组或 `{ code: 0, data: [...] }`。每条包含站内绝对路径 `path`、`status`，可带 `noindex` 和真实内容更新时间 `modifiedTime`。引擎只输出已发布且可索引的条目，缺少更新时间时省略 `lastmod`。单份 sitemap 上限为 50,000 个 URL 和 50 MiB。
 
 临时降级或使用过期字典及 SEO 数据的响应跳过 ISR 写入。动态 sitemap 刷新失败时，默认可在目录过期后的 5 分钟内沿用上一份有效结果，可用 `runtime.seo.sitemap.staleIfErrorMs` 调整。发布事件会丢弃旧目录，缺少可用目录时返回 `503`。
+
+`runtime.seo.fallbackLocal` 的条目可以声明 `locale` 和无语言前缀的 `path`。后台 SEO 和动态解析器均未命中时，引擎先找当前语言的条目，再查通用条目。
 
 在模块初始化时创建 `siteHooks = applyRuntimeToServerHooks({}, runtime)`，再用 `siteHooks.loadLanguageCatalog?.()` 读取 `runtime.i18n.locales` 的显示名称。可选的 `runtime.i18n.catalog.endpoint` 一次返回 `{ locale, name }[]`，缺少的名称按语言自身的显示名补齐。引擎合并并发加载，语言发布时刷新目录。
 

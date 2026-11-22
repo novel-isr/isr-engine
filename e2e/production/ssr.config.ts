@@ -1,6 +1,6 @@
 import type { ISRConfig } from 'isr-engine';
 
-const rememberLocale = process.env.PLAYWRIGHT_REMEMBER_LOCALE === '1';
+const rememberLocale = process.env.E2E_REMEMBER_LOCALE === '1';
 
 export default {
   renderMode: 'ssr',
@@ -16,9 +16,9 @@ export default {
   runtime: {
     site: 'http://127.0.0.1:43138',
     services: { api: undefined, telemetry: undefined },
-    redis: process.env.PLAYWRIGHT_REDIS_URL
+    redis: process.env.E2E_REDIS_URL
       ? {
-          url: process.env.PLAYWRIGHT_REDIS_URL,
+          url: process.env.E2E_REDIS_URL,
           host: undefined,
           port: undefined,
           password: undefined,
@@ -54,7 +54,7 @@ export default {
     failBuildThreshold: 0,
   },
   server: {
-    port: Number(process.env.PLAYWRIGHT_PRODUCTION_PORT ?? process.env.PORT ?? 43138),
+    port: Number(process.env.E2E_PRODUCTION_PORT ?? process.env.PORT ?? 43138),
     host: '127.0.0.1',
     strictPort: true,
     ops: {

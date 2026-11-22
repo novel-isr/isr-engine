@@ -9,8 +9,10 @@ import {
   createCoherentCacheStore,
   Logger,
   type LanguageCatalogEntry,
+  type PageSeoMeta,
   type ResponseCacheBackend,
   type RuntimeConfig,
+  type RuntimeSeoConfig,
 } from 'isr-engine';
 import { getEdgeContext, type EdgeContext } from 'isr-engine/runtime';
 import { applyRuntimeToServerHooks } from 'isr-engine/site-hooks';
@@ -26,6 +28,16 @@ const catalog: Promise<readonly LanguageCatalogEntry[]> | undefined = applyRunti
   {},
   runtime
 ).loadLanguageCatalog?.();
+declare const seoSnapshot: readonly (PageSeoMeta & { locale: string; path: string })[];
+declare const legacySeo: readonly Record<string, unknown>[];
+const seo: Pick<RuntimeSeoConfig, 'fallbackLocal' | 'sitemap'> = {
+  fallbackLocal: seoSnapshot,
+  sitemap: { endpoint: '/api/sitemap' },
+};
+const legacySeoConfig: Pick<RuntimeSeoConfig, 'fallbackLocal' | 'sitemap'> = {
+  fallbackLocal: legacySeo,
+  sitemap: { load: () => [] },
+};
 declare const spinner: ReturnType<ReturnType<typeof Logger.getInstance>['spin']>;
 const prefix: string | (() => string) = spinner.prefixText;
 const suffix: string | (() => string) = spinner.suffixText;
@@ -45,4 +57,17 @@ const edge: EdgeContext<{ token: string }> | undefined = getEdgeContext<{ token:
 );
 // @ts-expect-error Edge context lookup requires a Request.
 getEdgeContext();
-void [factory, ctx, hooks, dsn, store, invalid, labels, unresolved, edge, catalog];
+void [
+  factory,
+  ctx,
+  hooks,
+  dsn,
+  store,
+  invalid,
+  labels,
+  unresolved,
+  edge,
+  catalog,
+  seo,
+  legacySeoConfig,
+];

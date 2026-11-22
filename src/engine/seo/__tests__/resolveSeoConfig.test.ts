@@ -7,18 +7,21 @@
  *   3. prod 未配置 → 空串
  */
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { resolveSeoConfig } from '../resolveSeoConfig';
+import {
+  resolveSeoConfig,
+  resolveSitemapLastModified,
+  resolveSitemapLoader,
+} from '../resolveSeoConfig';
 import type { ISRConfig } from '../../../types';
+import { SEOEngine } from '../SEOEngine';
 
 const ORIG = process.env;
 
-type DeepPartial<T> = {
-  [K in keyof T]?: T[K] extends (...args: never[]) => unknown
-    ? T[K]
-    : T[K] extends object
-      ? DeepPartial<T[K]>
-      : T[K];
-};
+type DeepPartial<T> = T extends (...args: never[]) => unknown
+  ? T
+  : T extends object
+    ? { [K in keyof T]?: DeepPartial<T[K]> }
+    : T;
 
 function config(extra: DeepPartial<ISRConfig> = {}): ISRConfig {
   const runtime: ISRConfig['runtime'] = {
@@ -80,6 +83,8 @@ beforeEach(() => {
 afterEach(() => {
   process.env = ORIG;
   vi.unstubAllEnvs();
+  vi.restoreAllMocks();
+  SEOEngine.resetInstance();
 });
 
 describe('resolveSeoConfig', () => {
@@ -127,4 +132,54 @@ describe('resolveSeoConfig', () => {
     expect(r).not.toHaveProperty('generateSitemap');
     expect(r).not.toHaveProperty('generateRobots');
   });
+});
+
+it('uses timestamps only for the matching localized sitemap URL', () => {
+  const timestamps = resolveSitemapLastModified(
+    config({
+      runtime: {
+        i18n: { locales: ['en', 'ja'], defaultLocale: 'en' },
+        seo: {
+          fallbackLocal: [
+            { path: '/about', modifiedTime: '2024-01-01' },
+            { path: '/about', locale: 'ja', modifiedTime: '2024-01-02' },
+            { path: '/about', locale: 'en', modifiedTime: '2024-01-03' },
+            { path: '/about', locale: 'en', modifiedTime: '2024-01-04' },
+            { path: '/about', locale: 'unsupported', modifiedTime: '2024-01-05' },
+            { path: '/legacy', modifiedTime: '2024-01-06' },
+          ],
+        },
+      },
+    })
+  );
+
+  expect(timestamps).toEqual(
+    new Map([
+      ['/about', '2024-01-03'],
+      ['/ja/about', '2024-01-02'],
+      ['/legacy', '2024-01-06'],
+    ])
+  );
+});
+
+it('loads an absolute catalog endpoint with the SEO timeout and propagates timeouts', async () => {
+  const endpoint = 'https://metadata.example.com/catalog';
+  const fetch = vi.spyOn(globalThis, 'fetch').mockImplementation(async (url, options) => {
+    expect(url).toBe(endpoint);
+    expect(new Headers(options?.headers).get('accept')).toBe('application/json');
+    expect(options?.signal).toBeInstanceOf(AbortSignal);
+    await new Promise<void>(resolve => {
+      options?.signal?.addEventListener('abort', () => resolve(), { once: true });
+    });
+    options?.signal?.throwIfAborted();
+    throw new Error('Expected an aborted request');
+  });
+  const source = resolveSitemapLoader(
+    config({
+      runtime: { site: 'https://example.com', seo: { sitemap: { endpoint }, timeoutMs: 10 } },
+    })
+  );
+
+  await expect(source?.load()).rejects.toMatchObject({ name: 'TimeoutError' });
+  expect(fetch).toHaveBeenCalledTimes(1);
 });

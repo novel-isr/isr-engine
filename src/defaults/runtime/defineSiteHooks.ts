@@ -34,6 +34,7 @@ import { trimTrailingSlashes } from '../../utils/trimTrailingSlashes';
 import { contentPathname, RSC_URL_POSTFIX } from '../../utils/isrPath';
 import { createCachedFetcher } from './createCachedFetcher';
 import { registerContentInvalidator } from './contentRevalidation';
+import { MetadataHttpError, requestMetadataJson, resolveMetadataUrl } from './metadataTransport';
 import type { IntlPayload, PageSeoMeta } from './seo-runtime';
 import type {
   DynamicSeoResolver,
@@ -41,6 +42,7 @@ import type {
   LanguageCatalogEntry,
   RuntimeI18nConfig,
   RuntimeSeoConfig,
+  RuntimeSeoFallbackEntry,
 } from '../../types';
 import { readCookie } from '../../utils/cookie';
 import {
@@ -105,8 +107,7 @@ export interface CreateAdminIntlLoaderOptions {
   fallbackSource?: string;
 }
 
-export interface AdminSeoFallbackEntry extends PageSeoMeta {
-  path: string;
+export interface AdminSeoFallbackEntry extends RuntimeSeoFallbackEntry {
   group?: string;
 }
 
@@ -118,7 +119,7 @@ export interface CreateAdminSeoLoaderOptions {
   /** 远端请求超时，默认 1200ms */
   timeoutMs?: number;
   /**
-   * 参数化路径解析器；admin endpoint 没命中且 fallback 也没命中时按 pattern 匹配
+   * 参数化路径解析器；admin endpoint 没命中时按 pattern 匹配
    * 调一个用户函数。让业务页面零 SEO 代码，所有动态 SEO 集中在 ssr.config.ts。
    */
   dynamicResolvers?: readonly DynamicSeoResolver[];
@@ -140,7 +141,7 @@ export interface DefineAdminSiteHooksOptions {
   seo?: {
     endpoint?: string;
     ttl?: number;
-    fallbackLocal?: readonly Record<string, unknown>[];
+    fallbackLocal?: RuntimeSeoConfig['fallbackLocal'];
     timeoutMs?: number;
     /** 参数化路径的 SEO 解析器（参考 RuntimeSeoConfig.dynamicResolvers）。 */
     dynamicResolvers?: readonly DynamicSeoResolver[];
@@ -335,7 +336,11 @@ export function createAdminSeoLoader(
   options: CreateAdminSeoLoaderOptions = {}
 ): SeoLocalEntry['load'] {
   const endpoint = options.endpoint ?? '/api/seo?path={pathname}';
-  const fallbackEntries = options.fallbackEntries ?? [];
+  const fallbacks = new Map<string, AdminSeoFallbackEntry>();
+  for (const entry of options.fallbackEntries ?? []) {
+    const key = seoFallbackKey(normalizePathname(entry.path), entry.locale);
+    if (!fallbacks.has(key)) fallbacks.set(key, entry);
+  }
   // 编译一次 + 缓存。N 个 resolver 在每个请求里只是 N 次正则 test，cost 可忽略。
   const compiledResolvers = (options.dynamicResolvers ?? []).map(resolver => ({
     ...compileSeoPattern(resolver.pattern, true),
@@ -381,10 +386,13 @@ export function createAdminSeoLoader(
     }
 
     // 3. fallbackLocal —— build 期冻结的兜底
-    const fallback = fallbackEntries.find(entry => normalizePathname(entry.path) === pathname);
+    const fallback =
+      fallbacks.get(seoFallbackKey(pathname, params.locale)) ??
+      fallbacks.get(seoFallbackKey(pathname));
     if (!fallback) return null;
     const meta = { ...fallback } as Record<string, unknown>;
     delete meta.path;
+    delete meta.locale;
     delete meta.group;
     return meta as PageSeoMeta;
   };
@@ -945,7 +953,7 @@ function extractSeoMetaOrNull(data: unknown): PageSeoMeta | null {
 }
 
 function normalizeAdminSeoFallbackEntries(
-  entries: readonly Record<string, unknown>[] = []
+  entries: NonNullable<RuntimeSeoConfig['fallbackLocal']> = []
 ): readonly AdminSeoFallbackEntry[] {
   return entries.filter(
     entry => typeof entry.path === 'string'
@@ -1078,22 +1086,9 @@ async function fetchMetadataJson(
   markDegraded?: () => void
 ): Promise<unknown> {
   try {
-    const response =
-      timeoutMs === null
-        ? await fetch(url)
-        : await fetch(url, {
-            headers: { Accept: 'application/json' },
-            signal: timeoutMs > 0 ? AbortSignal.timeout(timeoutMs) : undefined,
-          });
-    if (!response.ok) {
-      if (response.status !== 404) markDegraded?.();
-      void response.body?.cancel().catch(() => undefined);
-      return null;
-    }
-    if (response.status === 204) return null;
-    return await response.json();
-  } catch {
-    markDegraded?.();
+    return await requestMetadataJson(url, timeoutMs);
+  } catch (error) {
+    if (!(error instanceof MetadataHttpError && error.status === 404)) markDegraded?.();
     return null;
   }
 }
@@ -1104,11 +1099,9 @@ function resolveAdminUrl(
   ctx: SiteRuntimeContext,
   options: { baseUrl?: RuntimeServiceBase } = {}
 ): string | null {
-  const filled = fillTemplate(endpoint, vars);
-  if (/^(https?:)?\/\//i.test(filled)) return filled;
-  const base = resolveRuntimeServiceBase(ctx, options.baseUrl);
-  if (!base) return null;
-  return `${trimTrailingSlashes(base)}/${filled.replace(/^\/+/, '')}`;
+  return resolveMetadataUrl(fillTemplate(endpoint, vars), () =>
+    resolveRuntimeServiceBase(ctx, options.baseUrl)
+  );
 }
 
 function resolveRuntimeServiceBase(
@@ -1144,6 +1137,10 @@ function hasRuntimeContentConfig(runtime: SiteRuntimeConfig): boolean {
 function normalizePathname(pathname: string): string {
   if (pathname === '/') return '/';
   return trimTrailingSlashes(pathname) || '/';
+}
+
+function seoFallbackKey(pathname: string, locale?: string): string {
+  return JSON.stringify([typeof locale === 'string' ? locale.toLowerCase() : undefined, pathname]);
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
