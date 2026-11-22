@@ -56,6 +56,10 @@ it('keeps negotiated and case-folded redirects on-origin and preserves query byt
 
 it('redirects to an acceptable locale or returns 406 when all are rejected', async () => {
   const app = express();
+  app.use((_req, res, next) => {
+    res.vary('Origin');
+    next();
+  });
   app.use(
     createLocaleRedirectMiddleware({
       i18n: { locales: ['en-US', 'en-AU', 'zh-CN'], defaultLocale: 'en-US', prefixDefault: true },
@@ -77,6 +81,9 @@ it('redirects to an acceptable locale or returns 406 when all are rejected', asy
       expect(result.status).toBe(status);
       expect(result.headers.get('location')).toBe(location);
       expect(result.headers.get('cache-control')).toBe('no-store');
+      expect(result.headers.get('vary')?.split(', ')).toEqual(
+        expect.arrayContaining(['Origin', 'Accept-Language', 'Cookie'])
+      );
       await result.body?.cancel();
     }
   } finally {

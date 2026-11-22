@@ -35,6 +35,34 @@ async function fixture(
     },
   };
 }
+
+it.each([false, true])(
+  'preserves bytes and the end callback with a final chunk (%s)',
+  async final => {
+    let callbackCount = 0;
+    const done = () => callbackCount++;
+    const f = await fixture((_req, res) => {
+      res.setHeader('content-type', 'text/html; charset=iso-8859-1');
+      if (final) {
+        res.end('é', 'latin1', done);
+      } else {
+        res.write('é', 'latin1');
+        res.end(done);
+      }
+    });
+    try {
+      for (const status of ['MISS', 'HIT']) {
+        const response = await fetch(f.url + '/encoded');
+        expect(response.headers.get('x-cache-status')).toBe(status);
+        expect(new Uint8Array(await response.arrayBuffer())).toEqual(Uint8Array.of(0xe9));
+      }
+      expect(callbackCount).toBe(1);
+    } finally {
+      await f.close();
+    }
+  }
+);
+
 it('authenticated private responses never enter the shared cache', async () => {
   const f = await fixture((req, res) => {
     res.setHeader('content-type', 'text/html');
