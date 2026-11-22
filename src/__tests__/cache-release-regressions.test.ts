@@ -1,4 +1,5 @@
 import { it, expect } from 'vitest';
+import express from 'express';
 import http from 'node:http';
 import type { AddressInfo } from 'node:net';
 import type { ISRConfig, RuntimeConfig, RouteRule } from '../types';
@@ -8,6 +9,7 @@ import type { IsrCacheMiddlewareOptions } from '../plugin/isrCacheMiddleware';
 import { createIsrCacheHandler } from '../plugin/isrCacheMiddleware';
 import { createHybridCacheStore } from '../plugin/isrCacheStore';
 import { revalidateContent, revalidatePath, revalidateTag } from '../rsc/revalidate';
+import { createCompressionMiddleware } from '../server/middleware';
 import {
   applyRuntimeToServerHooks,
   defineAdminSiteHooks,
@@ -16,13 +18,28 @@ import {
 async function fixture(
   render: (req: http.IncomingMessage, res: http.ServerResponse) => void,
   options: IsrCacheMiddlewareOptions = {},
-  config: { routes?: Record<string, RouteRule>; runtime?: Partial<RuntimeConfig> } = {}
+  {
+    compression,
+    ...config
+  }: {
+    routes?: Record<string, RouteRule>;
+    runtime?: Partial<RuntimeConfig>;
+    compression?: boolean;
+  } = {}
 ) {
   const handler = createIsrCacheHandler(
     { renderMode: 'isr', revalidate: 3600, ...config } as Partial<ISRConfig>,
     options
   );
-  const server = http.createServer((req, res) => handler(req, res, () => render(req, res)));
+  const handle = (req: http.IncomingMessage, res: http.ServerResponse) =>
+    handler(req, res, () => render(req, res));
+  const server = compression
+    ? http.createServer(
+        express()
+          .use(createCompressionMiddleware({ threshold: 0 }))
+          .use(handle)
+      )
+    : http.createServer(handle);
   await new Promise<void>(r => server.listen(0, '127.0.0.1', r));
   const url = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
   return {
@@ -35,6 +52,71 @@ async function fixture(
     },
   };
 }
+
+it.each([
+  { final: false, compression: false },
+  { final: true, compression: false },
+  { final: false, compression: true },
+  { final: true, compression: true },
+])(
+  'preserves bytes and the end callback (final chunk: $final, gzip: $compression)',
+  async ({ final, compression }) => {
+    let callbackCount = 0;
+    const done = () => callbackCount++;
+    const f = await fixture(
+      (_req, res) => {
+        res.setHeader('content-type', 'text/html; charset=iso-8859-1');
+        if (final) {
+          expect(res.end('é', 'latin1', done)).toBe(res);
+        } else {
+          res.write('é', 'latin1');
+          expect(res.end(done)).toBe(res);
+        }
+      },
+      {},
+      { compression }
+    );
+    try {
+      for (const status of ['MISS', 'HIT']) {
+        const response = await fetch(f.url + '/encoded', {
+          headers: { 'accept-encoding': 'gzip' },
+          signal: AbortSignal.timeout(2_000),
+        });
+        expect(response.headers.get('x-cache-status')).toBe(status);
+        expect(response.headers.get('content-encoding')).toBe(compression ? 'gzip' : null);
+        expect(new Uint8Array(await response.arrayBuffer())).toEqual(Uint8Array.of(0xe9));
+      }
+      expect(callbackCount).toBe(1);
+    } finally {
+      await f.close();
+    }
+  }
+);
+
+it('keeps the first complete response while gzip finishes asynchronously', async () => {
+  const f = await fixture(
+    (_req, res) => {
+      res.setHeader('content-type', 'text/html');
+      res.end('first body');
+      res.end('late body');
+    },
+    {},
+    { compression: true }
+  );
+  try {
+    for (const status of ['MISS', 'HIT']) {
+      const response = await fetch(f.url + '/twice', {
+        headers: { 'accept-encoding': 'gzip' },
+        signal: AbortSignal.timeout(2_000),
+      });
+      expect(response.headers.get('x-cache-status')).toBe(status);
+      expect(await response.text()).toBe('first body');
+    }
+  } finally {
+    await f.close();
+  }
+});
+
 it('authenticated private responses never enter the shared cache', async () => {
   const f = await fixture((req, res) => {
     res.setHeader('content-type', 'text/html');

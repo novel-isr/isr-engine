@@ -27,8 +27,9 @@ test('development HEAD skips rendering and a disconnected Flight request cancels
       ['/article', 'text/html'],
       ['/article_.rsc', 'text/x-component'],
     ]) {
-      const head = await fetch(origin + path + '?render-error=1', { method: 'HEAD' });
+      const head = await fetch(origin + path + '?mode=isr&render-error=1', { method: 'HEAD' });
       expect(head.status).toBe(200);
+      expect(head.headers.get('x-resolved-mode')).toBe('isr');
       expect(head.headers.get('content-type')).toContain(contentType);
       expect(await head.text()).toBe('');
     }
@@ -37,15 +38,20 @@ test('development HEAD skips rendering and a disconnected Flight request cancels
       server.prependOnceListener('request', (_req, res) => res.once('close', resolve));
     });
     const controller = new AbortController();
-    const response = await fetch(origin + '/article_.rsc?delay=2000', {
+    const response = await fetch(origin + '/article_.rsc?mode=isr&delay=2000', {
       signal: controller.signal,
     });
     expect(response.status).toBe(200);
+    expect(response.headers.get('x-cache-status')).toBe('MISS');
     const reader = response.body!.getReader();
     expect((await reader.read()).done).toBe(false);
     controller.abort();
     await reader.closed.catch(() => undefined);
     await disconnected;
+    const retry = await fetch(origin + '/article_.rsc?mode=isr&delay=2000');
+    expect(retry.status).toBe(200);
+    expect(retry.headers.get('x-cache-status')).toBe('MISS');
+    await retry.text();
     expect(errors).toEqual([]);
 
     const failed = await fetch(origin + '/article_.rsc?render-error=1');

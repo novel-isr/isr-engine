@@ -151,7 +151,7 @@ export function createCompressionMiddleware(
     level?: number;
   } = {}
 ): RequestHandler {
-  return compression({
+  const compress = compression({
     threshold: options.threshold ?? 1024,
     level: options.level ?? 6,
     filter: (req: Request, res: Response) => {
@@ -162,6 +162,37 @@ export function createCompressionMiddleware(
       return compression.filter(req, res);
     },
   });
+
+  return (req, res, next) => {
+    const nativeEnd = res.end;
+    compress(req, res, () => {
+      const compressedEnd = res.end;
+      res.end = function (...args: unknown[]) {
+        if (res.destroyed || res.writableEnded) return Reflect.apply(nativeEnd, res, args);
+
+        // compression accepts only chunk and encoding. Keep Node's callback on the response.
+        let [chunk, encoding, callback] = args;
+        if (typeof chunk === 'function') {
+          callback = chunk;
+          chunk = encoding = undefined;
+        } else if (typeof encoding === 'function') {
+          callback = encoding;
+          encoding = undefined;
+        }
+
+        const finish = typeof callback === 'function' ? (callback as () => void) : undefined;
+        if (finish) res.once('finish', finish);
+        try {
+          Reflect.apply(compressedEnd, res, [chunk, encoding]);
+        } catch (error) {
+          if (finish) res.removeListener('finish', finish);
+          throw error;
+        }
+        return res;
+      } as typeof res.end;
+      next();
+    });
+  };
 }
 
 /**

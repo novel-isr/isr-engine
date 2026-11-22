@@ -123,9 +123,9 @@ export function createLocaleRedirectMiddleware(
         i18n
       );
 
-    res.set('Cache-Control', 'no-store');
+    res.set('Cache-Control', 'no-store').vary('Accept-Language').vary('Cookie');
     if (target === null) {
-      res.vary('Accept-Language').vary('Cookie').status(406).end();
+      res.status(406).end();
       return;
     }
     const prefix = localePrefixes.get(target);

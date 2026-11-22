@@ -37,6 +37,7 @@ import type { CacheRenderLease } from '../cache/ResponseCacheBackend';
 
 import http from 'node:http';
 import { randomBytes } from 'node:crypto';
+import { isUint8Array } from 'node:util/types';
 import { selectRouteRule } from '../engine/RenderMode';
 import { assertCacheDuration, resolveCacheDurations } from '../utils/cacheDuration';
 import { LRUCache } from 'lru-cache';
@@ -1710,12 +1711,23 @@ function captureAndStore(
   let chunks: Buffer[] | null = [];
   let totalBytes = 0;
   let overflow = false;
+  let captureEnded = false;
   const originalWrite = res.write.bind(res);
   const originalEnd = res.end.bind(res);
 
-  const ingest = (chunk: unknown): void => {
+  const ingest = (chunk: unknown, encoding: unknown): void => {
     if (!chunk || overflow) return;
-    const buf = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk as string | Uint8Array);
+    let buf: Buffer;
+    if (typeof chunk === 'string') {
+      buf = Buffer.from(
+        chunk,
+        typeof encoding === 'string' ? (encoding as BufferEncoding) : undefined
+      );
+    } else if (isUint8Array(chunk)) {
+      buf = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+    } else {
+      return;
+    }
     totalBytes += buf.length;
     if (maxBytes > 0 && totalBytes > maxBytes) {
       overflow = true;
@@ -1729,13 +1741,21 @@ function captureAndStore(
     if (chunks) chunks.push(buf);
   };
 
-  res.write = function patchedWrite(chunk: unknown, ...args: unknown[]): boolean {
-    ingest(chunk);
-    return (originalWrite as (...a: unknown[]) => boolean)(chunk, ...args);
+  res.write = function patchedWrite(...args: unknown[]): boolean {
+    if (!captureEnded && !res.destroyed && !res.writableEnded) ingest(args[0], args[1]);
+    return (originalWrite as (...a: unknown[]) => boolean)(...args);
   } as typeof res.write;
 
-  res.end = function patchedEnd(chunk?: unknown, ...args: unknown[]): ServerResponse {
-    ingest(chunk);
+  res.end = function patchedEnd(...args: unknown[]): ServerResponse {
+    const shouldCapture = !captureEnded && !res.destroyed && !res.writableEnded;
+    if (shouldCapture) {
+      ingest(args[0], args[1]);
+      // Compression can still be flushing after the application has ended the response.
+      captureEnded = true;
+    }
+    // Preserve Node's complete argument list, including end(callback) and end().
+    const response = (originalEnd as (...a: unknown[]) => ServerResponse)(...args);
+    if (!shouldCapture || res.destroyed) return response;
     try {
       // 由于 cache 中间件在 compression 之后挂载，res.write 拦截到的 chunk 是 *压缩前*
       // 的原始字节，但 res.getHeaders() 此时已经包含了 compression 添加的 content-encoding /
@@ -1764,7 +1784,7 @@ function captureAndStore(
     } catch (err) {
       logger.warn('ISR cache 存储回调异常:', err);
     }
-    return (originalEnd as (...a: unknown[]) => ServerResponse)(chunk, ...args);
+    return response;
   } as typeof res.end;
 }
 
