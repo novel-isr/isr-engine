@@ -93,6 +93,30 @@ it.each([
   }
 );
 
+it('keeps the first complete response while gzip finishes asynchronously', async () => {
+  const f = await fixture(
+    (_req, res) => {
+      res.setHeader('content-type', 'text/html');
+      res.end('first body');
+      res.end('late body');
+    },
+    {},
+    { compression: true }
+  );
+  try {
+    for (const status of ['MISS', 'HIT']) {
+      const response = await fetch(f.url + '/twice', {
+        headers: { 'accept-encoding': 'gzip' },
+        signal: AbortSignal.timeout(2_000),
+      });
+      expect(response.headers.get('x-cache-status')).toBe(status);
+      expect(await response.text()).toBe('first body');
+    }
+  } finally {
+    await f.close();
+  }
+});
+
 it('authenticated private responses never enter the shared cache', async () => {
   const f = await fixture((req, res) => {
     res.setHeader('content-type', 'text/html');

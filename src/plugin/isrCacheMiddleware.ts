@@ -1711,6 +1711,7 @@ function captureAndStore(
   let chunks: Buffer[] | null = [];
   let totalBytes = 0;
   let overflow = false;
+  let captureEnded = false;
   const originalWrite = res.write.bind(res);
   const originalEnd = res.end.bind(res);
 
@@ -1741,13 +1742,17 @@ function captureAndStore(
   };
 
   res.write = function patchedWrite(...args: unknown[]): boolean {
-    if (!res.destroyed && !res.writableEnded) ingest(args[0], args[1]);
+    if (!captureEnded && !res.destroyed && !res.writableEnded) ingest(args[0], args[1]);
     return (originalWrite as (...a: unknown[]) => boolean)(...args);
   } as typeof res.write;
 
   res.end = function patchedEnd(...args: unknown[]): ServerResponse {
-    const shouldCapture = !res.destroyed && !res.writableEnded;
-    if (shouldCapture) ingest(args[0], args[1]);
+    const shouldCapture = !captureEnded && !res.destroyed && !res.writableEnded;
+    if (shouldCapture) {
+      ingest(args[0], args[1]);
+      // Compression can still be flushing after the application has ended the response.
+      captureEnded = true;
+    }
     // Preserve Node's complete argument list, including end(callback) and end().
     const response = (originalEnd as (...a: unknown[]) => ServerResponse)(...args);
     if (!shouldCapture || res.destroyed) return response;
