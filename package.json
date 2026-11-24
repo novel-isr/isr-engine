@@ -167,7 +167,7 @@
     "sass-embedded": "^1.108.2",
     "semantic-release": "25.0.9",
     "tsc-alias": "^1.9.10",
-    "undici": "8.12.4",
+    "undici": "8.13.1",
     "vite": "8.3.8",
     "vitest": "^4.1.12"
   },
