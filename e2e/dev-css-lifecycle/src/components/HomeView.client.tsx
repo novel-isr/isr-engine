@@ -5,6 +5,7 @@ import { useEffect, useState } from 'react';
 import TransientPanel from './TransientPanel.client';
 import removalStyles from '../styles/Removal.module.scss';
 import styles from '../styles/Home.module.scss';
+import '../styles/HomeColor.scss';
 
 export default function HomeView() {
   const [hydrated, setHydrated] = useState(false);
