@@ -107,7 +107,7 @@
   "dependencies": {
     "@vitejs/plugin-rsc": "0.5.39",
     "chalk": "^6.0.1",
-    "commander": "^12.1.0",
+    "commander": "^15.1.0",
     "compression": "^1.8.2",
     "css-tree": "^3.2.1",
     "esbuild": "^0.28.2",
@@ -167,7 +167,7 @@
     "sass-embedded": "^1.108.2",
     "semantic-release": "25.0.9",
     "tsc-alias": "^1.9.10",
-    "undici": "8.12.4",
+    "undici": "8.13.1",
     "vite": "8.3.8",
     "vitest": "^4.1.12"
   },

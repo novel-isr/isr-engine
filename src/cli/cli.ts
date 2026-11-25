@@ -24,6 +24,8 @@ const program = new Command();
 program
   .name('isr-engine')
   .description('ISR Engine — Vite + React 19 RSC 的 ISR/SSG/SSR 编排层')
+  // Existing launchers may append positional arguments after the server flags.
+  .allowExcessArguments(true)
   .version(pkg.version);
 
 /**

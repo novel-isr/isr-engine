@@ -455,7 +455,7 @@ test('missing assets and malformed image input leave the production service heal
   expect((await fetch(productionUrl('/article'))).status).toBe(200);
 });
 
-test('production CLI exits successfully after SIGTERM', async () => {
+test('production CLI accepts launcher arguments and exits successfully after SIGTERM', async () => {
   const { spawn } = await import('node:child_process');
   const { createServer } = await import('node:net');
   const probe = createServer();
@@ -471,6 +471,7 @@ test('production CLI exits successfully after SIGTERM', async () => {
       '127.0.0.1',
       '--port',
       String(port),
+      'launcher-token',
     ],
     {
       cwd: fileURLToPath(new URL('.', import.meta.url)),

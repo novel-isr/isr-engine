@@ -36,7 +36,9 @@ interface Diagnostics {
 }
 
 const fixtureRoot = path.dirname(fileURLToPath(import.meta.url));
-const homeStylePath = path.join(fixtureRoot, 'src/styles/Home.module.scss');
+// Vite self-accepts regular stylesheets. CSS Modules can require a full page reload.
+const homeColorFile = 'HomeColor.scss';
+const homeColorPath = path.join(fixtureRoot, 'src/styles', homeColorFile);
 const homeViewPath = path.join(fixtureRoot, 'src/components/HomeView.client.tsx');
 const homeSentinel = '[data-style-sentinel="home"]';
 const generationHeader = 'x-isr-engine-dev-style-generation';
@@ -170,29 +172,38 @@ test('twenty rapid alternating navigations preserve the latest committed route',
 test('CSS HMR replaces bytes without an unstyled frame or zero-owner mutation', async ({
   page,
 }) => {
-  const original = await readFile(homeStylePath, 'utf8');
+  const original = await readFile(homeColorPath, 'utf8');
   const updatedColor = 'rgb(11, 121, 71)';
 
   await page.goto(url('/'));
   await waitForRoute(page, 'home');
   await waitForNavigationReady(page);
+  await expectManagedOwner(page, homeColorFile);
+  const documentTimeOrigin = await page.evaluate(() => performance.timeOrigin);
   await resetTemporalHistory(page);
 
   try {
-    await writeFile(homeStylePath, original.replace('rgb(1, 101, 51)', updatedColor));
+    await writeFile(homeColorPath, original.replace(expectedColors.home[0], updatedColor));
     await expect.poll(() => readStyle(page, homeSentinel, 'color')).toBe(updatedColor);
     await settleFrames(page);
-
-    await assertTemporalInvariants(page, {
-      home: [...expectedColors.home, updatedColor],
-      article: expectedColors.article,
-      server: expectedColors.server,
-    });
+    expect(await page.evaluate(() => performance.timeOrigin), 'CSS edit reloaded the page').toBe(
+      documentTimeOrigin
+    );
     await assertManagedOwnerCardinality(page);
   } finally {
-    await writeFile(homeStylePath, original);
+    await writeFile(homeColorPath, original);
     await expect.poll(() => readStyle(page, homeSentinel, 'color')).toBe(expectedColors.home[0]);
   }
+  await settleFrames(page);
+  expect(await page.evaluate(() => performance.timeOrigin), 'CSS restore reloaded the page').toBe(
+    documentTimeOrigin
+  );
+  await assertTemporalInvariants(
+    page,
+    { ...expectedColors, home: [...expectedColors.home, updatedColor] },
+    homeColorFile
+  );
+  await assertManagedOwnerCardinality(page);
 });
 
 test('component prune and reimport commit the replacement stylesheet atomically', async ({
@@ -619,7 +630,8 @@ async function resetTemporalHistory(page: Page): Promise<void> {
 
 async function assertTemporalInvariants(
   page: Page,
-  colors: Record<RouteName, string[]> = expectedColors
+  colors: Record<RouteName, string[]> = expectedColors,
+  retainedStylesheet?: string
 ): Promise<void> {
   const history = await page.evaluate(() => {
     const browserWindow = window as Window & {
@@ -651,6 +663,14 @@ async function assertTemporalInvariants(
     history.ownerEvents.filter(event => event.ownerCount === 0),
     'a DOM mutation exposed a committed route with no active stylesheet owner'
   ).toEqual([]);
+  if (retainedStylesheet) {
+    expect(
+      history.ownerEvents.filter(
+        event => !event.owners.some(owner => owner.id.endsWith(`/src/styles/${retainedStylesheet}`))
+      ),
+      `a DOM mutation removed the active owner of ${retainedStylesheet}`
+    ).toEqual([]);
+  }
 }
 
 async function expectManagedOwner(page: Page, fileName: string): Promise<void> {
